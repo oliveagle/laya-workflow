@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: lint + tests (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (locked)
+        run: cargo build --locked --bins
+
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+
+      # Reports but does not gate: the codebase currently has ~20 pre-existing
+      # clippy warnings; make them visible without blocking CI.
+      - name: Clippy (report only)
+        run: cargo clippy --locked --bins --no-deps
+
+      # Offline suite: LAYA_MOCK_URL / LAYA_MOCK3 / LAYA_WEB_PORT are
+      # deliberately unset, so the network-dependent sections skip instead of
+      # hanging (they wait on listeners that never come up).
+      - name: Tests (offline harness)
+        run: ./target/debug/laya-workflow-tests
+
+      - name: DSL smoke (offline)
+        run: python3 bench/dsl_smoke.py
+
+  integration:
+    name: tests + DSL smoke (mock services)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LAYA_TEST_PYTHON: python3
+      LAYA_MOCK_URL: http://127.0.0.1:8791
+      LAYA_WEB_PORT: "8793"
+      LAYA_MOCK3: 127.0.0.1:6380:4223:1884:2526:9000:9091:8083:9999
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (locked, release)
+        run: cargo build --release --locked --bins
+
+      - name: Start mock services (protocols + web)
+        run: bench/mock_services.sh start
+
+      - name: Start mock server (score/agent)
+        run: |
+          python3 bench/mock_server.py --port 8791 > /tmp/mock_server.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
+              -d '{"text":"ping"}' http://127.0.0.1:8791/score && exit 0
+            sleep 0.25
+          done
+          echo "mock_server did not become ready" >&2
+          cat /tmp/mock_server.log >&2 || true
+          exit 1
+
+      - name: Tests (mocked harness)
+        run: ./target/release/laya-workflow-tests
+
+      - name: CLI smoke (offline backend)
+        run: |
+          ./target/release/laya-workflow validate --spec dsl/routing/support_ticket_router.json
+          ./target/release/laya-workflow apps
+
+      - name: Stop mock services
+        if: always()
+        run: bench/mock_services.sh stop || true
