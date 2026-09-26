@@ -34,8 +34,10 @@ jobs:
       - name: Build (locked)
         run: cargo build --locked --bins
 
-      - name: rustfmt
-        run: cargo fmt --all -- --check
+      # Reports formatting drift but does not gate: the runner's rustfmt may
+      # be newer than the version used at commit time.
+      - name: rustfmt (report only)
+        run: cargo fmt --all -- --check || echo "::warning::cargo fmt check failed" 
 
       # Reports but does not gate: the codebase currently has ~20 pre-existing
       # clippy warnings; make them visible without blocking CI.
