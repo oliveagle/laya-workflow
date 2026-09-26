@@ -73,17 +73,25 @@ jobs:
       - name: Start mock services (protocols + web)
         run: bench/mock_services.sh start
 
-      - name: Start mock server (score/agent)
+      - name: Start mock servers (8791 score/agent + 8792 rpc/agent)
         run: |
-          python3 bench/mock_server.py --port 8791 > /tmp/mock_server.log 2>&1 &
-          for i in $(seq 1 40); do
-            curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
-              -d '{"text":"ping"}' http://127.0.0.1:8791/score && exit 0
-            sleep 0.25
+          for PORT in 8791 8792; do
+            python3 bench/mock_server.py --port "$PORT" > /tmp/mock_server_$PORT.log 2>&1 &
           done
-          echo "mock_server did not become ready" >&2
-          cat /tmp/mock_server.log >&2 || true
-          exit 1
+          for PORT in 8791 8792; do
+            for i in $(seq 1 40); do
+              curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
+                -d '{"text":"ping"}' "http://127.0.0.1:$PORT/score" && break
+              sleep 0.25
+            done
+            curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
+              -d '{"text":"ping"}' "http://127.0.0.1:$PORT/score" || {
+                echo "mock_server $PORT did not become ready" >&2
+                cat /tmp/mock_server_$PORT.log >&2 || true
+                exit 1
+              }
+          done
+          echo "mock servers 8791+8792 ready"
 
       - name: Tests (mocked harness)
         run: ./target/release/laya-workflow-tests
