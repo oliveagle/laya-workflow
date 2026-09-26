@@ -42,7 +42,7 @@ jobs:
       # Reports but does not gate: the codebase currently has ~20 pre-existing
       # clippy warnings; make them visible without blocking CI.
       - name: Clippy (report only)
-        run: cargo clippy --locked --bins --no-deps
+        run: cargo clippy --locked --bins --no-deps -- --cap-lints warn
 
       # Offline suite: LAYA_MOCK_URL / LAYA_MOCK3 / LAYA_WEB_PORT are
       # deliberately unset, so the network-dependent sections skip instead of
