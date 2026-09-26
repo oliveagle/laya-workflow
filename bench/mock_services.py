@@ -25,8 +25,8 @@ The process stays in the foreground (it is meant to be supervised). Use
 
 Examples::
 
-    $PYTHON code/laya-tch/bench/mock_services.py --redis 6380 --nats 4223
-    $PYTHON code/laya-tch/bench/mock_services.py --smtp 2525 --s3 9000
+    $PYTHON laya-tch/bench/mock_services.py --redis 6380 --nats 4223
+    $PYTHON laya-tch/bench/mock_services.py --smtp 2525 --s3 9000
 """
 from __future__ import annotations
 

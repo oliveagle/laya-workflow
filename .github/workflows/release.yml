@@ -33,7 +33,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build release binaries
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }} -p laya-workflow
 
       - name: Package (unix)
         shell: bash

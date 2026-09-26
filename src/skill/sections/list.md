@@ -4,7 +4,7 @@
 every discoverable spec, its version, and its path:
 
 ```
-DSL root: code/laya-tch/dsl  (engine dsl_version: 2)
+DSL root: laya-tch/dsl  (engine dsl_version: 2)
 20 spec(s):
   goal_runner              v2  capabilities/goal_runner.json
   …

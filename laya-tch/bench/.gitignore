@@ -1,0 +1,12 @@
+# local reference artifacts (regenerate with ref_capture.py / ref_raw_capture.py)
+reference_trace.json
+reference_raw.json
+reference_encoder.npz
+reference_probe/
+ref_request.json
+apps_parity.json
+
+# local secrets for tests/demos
+.env
+.env.*
+*.secrets.json

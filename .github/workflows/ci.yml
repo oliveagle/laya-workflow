@@ -32,7 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build (locked)
-        run: cargo build --locked --bins
+        run: cargo build --locked --bins -p laya-workflow
 
       # Reports formatting drift but does not gate: the runner's rustfmt may
       # be newer than the version used at commit time.
@@ -42,16 +42,13 @@ jobs:
       # Reports but does not gate: the codebase currently has ~20 pre-existing
       # clippy warnings; make them visible without blocking CI.
       - name: Clippy (report only)
-        run: cargo clippy --locked --bins --no-deps -- --cap-lints warn
+        run: cargo clippy --locked --bins -p laya-workflow --no-deps -- --cap-lints warn
 
       # Offline suite: LAYA_MOCK_URL / LAYA_MOCK3 / LAYA_WEB_PORT are
       # deliberately unset, so the network-dependent sections skip instead of
       # hanging (they wait on listeners that never come up).
       - name: Tests (offline harness)
         run: ./target/debug/laya-workflow-tests
-
-      - name: DSL smoke (offline)
-        run: python3 bench/dsl_smoke.py
 
   integration:
     name: tests + DSL smoke (mock services)
@@ -71,7 +68,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build (locked, release)
-        run: cargo build --release --locked --bins
+        run: cargo build --release --locked --bins -p laya-workflow
 
       - name: Start mock services (protocols + web)
         run: bench/mock_services.sh start
@@ -90,6 +87,9 @@ jobs:
 
       - name: Tests (mocked harness)
         run: ./target/release/laya-workflow-tests
+
+      - name: DSL smoke (mocked backend)
+        run: python3 bench/dsl_smoke.py
 
       - name: CLI smoke (offline backend)
         run: |

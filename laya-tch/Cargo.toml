@@ -1,0 +1,28 @@
+[package]
+name = "laya-tch"
+version = "0.1.0"
+edition = "2021"
+description = "Laya inference engine — tch-rs (PyTorch Rust bindings), served over HTTP for the `laya-workflow` crate in this workspace."
+
+[dependencies]
+tch = { version = "0.26", features = ["download-libtorch"] }
+safetensors = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+tokenizers = "0.21"
+
+[[bin]]
+name = "laya-tch"
+path = "src/main.rs"
+
+[[bin]]
+name = "micro"
+path = "src/micro.rs"
+
+[[bin]]
+name = "bench_parity"
+path = "src/bench_parity.rs"

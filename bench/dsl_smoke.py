@@ -2,13 +2,13 @@
 """Run every DSL workflow spec through the Rust engine and report the result.
 
 This is the verification harness for "no Rust code changes are needed to build
-new workflows": each spec in `code/laya-tch/dsl/*.json` is validated and then run
+new workflows": each spec in `laya-tch/dsl/*.json` is validated and then run
 via `laya-workflow run --spec …` against a live `laya-tch` server (or offline).
 
 Usage::
 
-    $PYTHON code/laya-tch/bench/dsl_smoke.py                         # offline
-    $PYTHON code/laya-tch/bench/dsl_smoke.py --base-url http://127.0.0.1:8400
+    $PYTHON laya-tch/bench/dsl_smoke.py                         # offline
+    $PYTHON laya-tch/bench/dsl_smoke.py --base-url http://127.0.0.1:8400
 """
 from __future__ import annotations
 

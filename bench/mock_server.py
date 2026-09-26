@@ -13,8 +13,8 @@ Two servers in one process (used by tests and the DSL demos):
 
 Usage::
 
-    $PYTHON code/laya-tch/bench/mock_server.py --port 8791        # HTTP mode
-    $PYTHON code/laya-tch/bench/mock_server.py --stdio            # stdio agent
+    $PYTHON laya-tch/bench/mock_server.py --port 8791        # HTTP mode
+    $PYTHON laya-tch/bench/mock_server.py --stdio            # stdio agent
 
 No third-party dependencies (stdlib only), so it runs anywhere.
 """

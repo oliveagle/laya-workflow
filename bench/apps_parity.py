@@ -10,8 +10,8 @@ asserts the produced action/label/suggestion matches exactly, then reports:
 
 Usage::
 
-    $PYTHON code/laya-tch/bench/apps_parity.py                 # both engines, default port 8400
-    $PYTHON code/laya-tch/bench/apps_parity.py --base-url http://127.0.0.1:8400
+    $PYTHON laya-tch/bench/apps_parity.py                 # both engines, default port 8400
+    $PYTHON laya-tch/bench/apps_parity.py --base-url http://127.0.0.1:8400
 
 `$PYTHON` must have torch + transformers installed (for the Python reference).
 The Rust side is exercised through `laya-workflow --base-url`, so a `laya-tch`
@@ -26,8 +26,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
-RUST_CLI = Path(os.environ.get("LAYA_TCH_BIN_DIR", REPO / "code/laya-tch/target/release")) / "laya-workflow"
+REPO = Path(__file__).resolve().parents[1]
+RUST_CLI = Path(os.environ.get("LAYA_TCH_BIN_DIR", REPO / "laya-tch/target/release")) / "laya-workflow"
 
 sys.path.insert(0, str(REPO))
 from code.laya.apps import (  # noqa: E402

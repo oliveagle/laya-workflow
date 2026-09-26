@@ -1,15 +1,23 @@
 # laya-workflow
 
 Pure-Rust port of the Laya workflow engine — validate, run, and optimize
-decision-graph workflows (DSL v2). This crate ships two binaries:
+decision-graph workflows (DSL v2). This repository is a Cargo **workspace**
+containing everything the workflow engine needs:
 
-- `laya-workflow` — CLI: `validate`, `run`, `list`, `apps`, `describe`, `demo`,
-  `optimize`, `improve`, `export`, `secrets`, `skill`.
-- `laya-workflow-tests` — the embedded test harness (426 cases).
+- `.` — **`laya-workflow`** crate (workflow DSL / engine / CLI)
+  - `laya-workflow` — CLI: `validate`, `run`, `list`, `apps`, `describe`,
+    `demo`, `optimize`, `improve`, `export`, `secrets`, `skill`.
+  - `laya-workflow-tests` — the embedded test harness (492 cases).
+- [`laya-tch/`](./laya-tch) — **`laya-tch`** inference engine crate
+  (`tch-rs` / PyTorch bindings). Serves the Laya model over
+  `POST /v1/systemone` for real decisions; `laya-workflow --base-url`
+  points at it. The model weights themselves are **not** part of the repo —
+  point `--model-dir` at a local checkout
+  (e.g. `~/models/convaiinnovations--laya`).
 
 ## Install
 
-Download the latest release for your platform:
+Download the latest release for your platform (workflow CLI + offline tests):
 
 ```bash
 # macOS arm64
@@ -22,9 +30,15 @@ sudo mv laya-workflow laya-workflow-tests /usr/local/bin/
 ## Build from source
 
 ```bash
-cargo build --release
+# workflow engine only (fast; no libtorch needed)
+cargo build --release --locked -p laya-workflow
 ./target/release/laya-workflow --help
 ./target/release/laya-workflow-tests
+
+# inference engine too (downloads libtorch on first build; heavy)
+cargo build --release --locked -p laya-tch
+MODEL_DIR="$HOME/models/convaiinnovations--laya" \
+  ./target/release/laya-tch --model-dir "$MODEL_DIR" --port 8400
 ```
 
 ## DSL
