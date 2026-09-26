@@ -1,0 +1,52 @@
+{
+  "name": "agent_session_probe",
+  "dsl_version": 2,
+  "description": "Calls an external agent/app-server (HTTP transport) and merges its reply. Swap `transport` to stdio + `command` to talk to a codex-style line-delimited JSON-RPC server instead.",
+  "start": "ask_agent",
+  "max_iterations": 5,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": ["127.0.0.1", "localhost"],
+    "max_timeout_ms": 10000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "app_server": {
+      "kind": "agent",
+      "transport": "http",
+      "url": "http://127.0.0.1:8791/agent",
+      "session": "probe-1",
+      "timeout_ms": 5000
+    },
+    "app_server_stdio": {
+      "kind": "agent",
+      "transport": "stdio",
+      "command": ["python3", "bench/mock_server.py", "--stdio"],
+      "session": "probe-stdio",
+      "timeout_ms": 10000
+    }
+  },
+  "nodes": [
+    {
+      "name": "ask_agent",
+      "primary_q": "route",
+      "questions": {
+        "route": {
+          "type": "choice",
+          "instructions": "Should this request be handled by the local engine, or forwarded to the external agent?",
+          "criteria": {
+            "local": "the local engine can decide this itself",
+            "agent": "an external agent should be consulted"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "app_server",
+        "with": { "text": "${state.text}" },
+        "project": { "agent_output": "/body/output" }
+      }
+    }
+  ]
+}

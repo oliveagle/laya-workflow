@@ -1,0 +1,38 @@
+{
+  "name": "refund_policy",
+  "dsl_version": 2,
+  "description": "v2: adds a fraud signal — high fraud prob forces manual review regardless of amount.",
+  "start": "band",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "band",
+      "primary_q": "amount_band",
+      "questions": {
+        "amount_band": {
+          "type": "score",
+          "instructions": "Rough size of the refund request?",
+          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+        },
+        "is_suspicious": {
+          "type": "choice",
+          "instructions": "Does the request look fraudulent or scripted?",
+          "criteria": {
+            "A": "no, it looks like a genuine customer request",
+            "B": "yes, it looks fraudulent, scripted, or otherwise suspicious"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "amount_band",
+        "rules": [
+          { "when": { "question": "is_suspicious", "option": "B", "gte": 0.5 }, "label": "V2_MANUAL_REVIEW" },
+          { "when": { "value_gte": 1.5 }, "label": "V2_ESCALATE" },
+          { "when": { "always": true }, "label": "V2_AUTO_APPROVE" }
+        ]
+      }
+    }
+  ]
+}

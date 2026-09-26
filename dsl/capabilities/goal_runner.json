@@ -1,0 +1,162 @@
+{
+  "name": "goal_runner",
+  "dsl_version": 2,
+  "description": "Hand a whole goal to an external agent harness and act on its externally-verified verdict. `cmdgo` drives command-code headless (cmd -p) and `cxgo` drives codex app-server; both decide 'done' from acceptance reports and hash de-duplication rather than the model's own claim, so the returned `ok` is real evidence. Spawning an agent is gated by policy.allow_exec, the runner must be a known harness, and the goal doc must sit under policy.allow_paths.",
+  "start": "route",
+  "max_iterations": 6,
+  "convergence_window": 3,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "max_timeout_ms": 600000,
+    "max_output": 262144,
+    "retries": 0,
+    "allow_paths": [
+      "${env.LAYA_GOAL_DIR}"
+    ]
+  },
+  "capabilities": {
+    "codex_goal": {
+      "kind": "goal_runner",
+      "runner": "cxgo",
+      "args": [
+        "--fresh",
+        "--max-turns",
+        "8",
+        "--check-interval",
+        "30",
+        "--stall-timeout",
+        "120",
+        "--sandbox",
+        "workspace-write",
+        "--approval",
+        "never"
+      ],
+      "timeout_ms": 540000,
+      "max_output": 131072
+    },
+    "cmd_goal": {
+      "kind": "goal_runner",
+      "runner": "cmdgo",
+      "args": [
+        "--fresh",
+        "--max-rounds",
+        "4",
+        "--round-timeout",
+        "240",
+        "--stall-rounds",
+        "2"
+      ],
+      "timeout_ms": 540000,
+      "max_output": 131072
+    }
+  },
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "harness",
+      "questions": {
+        "harness": {
+          "type": "choice",
+          "instructions": "Which agent harness should pursue the goal doc?",
+          "criteria": {
+            "codex": "codex app-server (cxgo)",
+            "command_code": "command-code headless (cmdgo)"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "codex": "run_codex",
+          "command_code": "run_cmd"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "harness"
+        ]
+      }
+    },
+    {
+      "name": "run_codex",
+      "primary_q": "run",
+      "questions": {
+        "run": {
+          "type": "choice",
+          "instructions": "Run ${state.goal} through cxgo?",
+          "criteria": {
+            "yes": "start the codex goal loop and keep its externally-checked verdict"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "codex_goal",
+        "with": {
+          "goal": "${state.goal}",
+          "workdir": "${state.workdir}"
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "timed_out": "/timed_out",
+          "elapsed_ms": "/elapsed_ms",
+          "report_count": "/report_count",
+          "reports_dir": "/reports_dir",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "run_cmd",
+      "primary_q": "run",
+      "questions": {
+        "run": {
+          "type": "choice",
+          "instructions": "Run ${state.goal} through cmdgo?",
+          "criteria": {
+            "yes": "start the command-code goal loop and keep its externally-checked verdict"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "cmd_goal",
+        "with": {
+          "goal": "${state.goal}",
+          "workdir": "${state.workdir}"
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "timed_out": "/timed_out",
+          "elapsed_ms": "/elapsed_ms",
+          "report_count": "/report_count",
+          "reports_dir": "/reports_dir",
+          "stderr": "/stderr"
+        }
+      }
+    }
+  ]
+}

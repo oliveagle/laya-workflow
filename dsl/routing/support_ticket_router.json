@@ -1,0 +1,55 @@
+{
+  "name": "support_ticket_router",
+  "description": "Multi-node routing: classify (choice) -> escalate (score threshold) or STOP; demonstrates data-driven edges and ordered threshold rules.",
+  "start": "classify",
+  "max_iterations": 20,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "classify",
+      "primary_q": "category",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which team should handle this ticket?",
+          "criteria": {
+            "billing": "invoices, payments, refunds",
+            "technical": "bugs, outages, system errors",
+            "sales": "pricing, new contracts",
+            "other": "everything else"
+          }
+        }
+      },
+      "edge": {
+        "condition": { "technical": "severity_probe", "billing": "severity_probe" },
+        "default": "STOP"
+      },
+      "min_confidence": 0.4,
+      "max_retries": 3,
+      "action": { "kind": "copy_keys", "keys": ["category"] }
+    },
+    {
+      "name": "severity_probe",
+      "primary_q": "severity",
+      "questions": {
+        "severity": {
+          "type": "score",
+          "instructions": "How severe is the impact?",
+          "criteria": ["minor", "degraded", "outage"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "severity",
+        "rules": [
+          { "when": { "value_gte": 1.5 }, "label": "PAGE_ONCALL" },
+          { "when": { "value_gte": 0.5 }, "label": "QUEUE_TODAY" },
+          { "when": { "always": true }, "label": "BACKLOG" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "name": "integration_hub",
+  "dsl_version": 2,
+  "description": "Network capabilities: rpc + graphql + llm + mcp + vector + webhook + sse, all pointed at the local mock server so no external network is required.",
+  "start": "lookup",
+  "max_iterations": 20,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": ["127.0.0.1", "localhost"],
+    "max_timeout_ms": 8000,
+    "max_output": 65536,
+    "retries": 1
+  },
+  "capabilities": {
+    "backend_rpc": {
+      "kind": "rpc",
+      "url": "http://127.0.0.1:8792/rpc",
+      "timeout_ms": 4000
+    },
+    "catalog": {
+      "kind": "graphql",
+      "url": "http://127.0.0.1:8792/graphql",
+      "query": "query Lookup($q: String!) { search(q: $q) { id } }",
+      "timeout_ms": 4000
+    },
+    "summarizer": {
+      "kind": "llm",
+      "url": "http://127.0.0.1:8792/chat/completions",
+      "model": "mock-model",
+      "system": "Summarize briefly.",
+      "max_tokens": 64,
+      "timeout_ms": 5000
+    },
+    "tool_gateway": {
+      "kind": "mcp",
+      "transport": "http",
+      "url": "http://127.0.0.1:8792/mcp",
+      "tool": "echo",
+      "timeout_ms": 4000
+    },
+    "index": {
+      "kind": "vector",
+      "url": "http://127.0.0.1:8792/vector",
+      "op": "search",
+      "collection": "support-kb",
+      "timeout_ms": 4000
+    },
+    "notify": {
+      "kind": "webhook",
+      "url": "http://127.0.0.1:8792/webhook",
+      "sign_header": "x-signature",
+      "sign_secret": "${env.LAYA_WEBHOOK_SECRET}",
+      "timeout_ms": 4000
+    },
+    "stream": {
+      "kind": "sse",
+      "url": "http://127.0.0.1:8792/events",
+      "max_events": 3,
+      "timeout_ms": 4000
+    }
+  },
+  "nodes": [
+    {
+      "name": "lookup",
+      "primary_q": "channel",
+      "questions": {
+        "channel": {
+          "type": "choice",
+          "instructions": "Which integration channel should handle this request?",
+          "criteria": {
+            "rpc": "an internal RPC backend call",
+            "graphql": "the federated graph",
+            "llm": "an LLM summarizer",
+            "mcp": "a tool gateway (MCP)",
+            "vector": "a retrieval / vector search",
+            "notify": "fire-and-forget notification",
+            "stream": "watch an event stream"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "rpc": "via_rpc",
+          "graphql": "via_graphql",
+          "llm": "via_llm",
+          "mcp": "via_mcp",
+          "vector": "via_vector",
+          "notify": "via_webhook",
+          "stream": "via_sse"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": { "kind": "copy_keys", "keys": ["channel"] }
+    },
+    {
+      "name": "via_rpc",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "backend_rpc",
+                  "with": { "method": "sum", "params": { "a": 1, "b": 2 } },
+                  "project": { "rpc_method": "/result/method" } }
+    },
+    {
+      "name": "via_graphql",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "catalog",
+                  "with": { "variables": { "q": "${state.text}" } },
+                  "project": { "graph_echo": "/data/echo/q" } }
+    },
+    {
+      "name": "via_llm",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "summarizer",
+                  "with": { "prompt": "${state.text}" },
+                  "project": { "summary": "/content" } }
+    },
+    {
+      "name": "via_mcp",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "tool_gateway",
+                  "with": { "arguments": { "text": "${state.text}" } },
+                  "project": { "tool_text": "/result/content/0/text" } }
+    },
+    {
+      "name": "via_vector",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "index",
+                  "with": { "vector": [0.1, 0.2, 0.3], "top_k": 1 },
+                  "project": { "top_score": "/hits/0/score" } }
+    },
+    {
+      "name": "via_webhook",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "notify",
+                  "with": { "event": "routed", "payload": { "text": "${state.text}" } },
+                  "project": { "notify_status": "/status" } }
+    },
+    {
+      "name": "via_sse",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "Should we proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "call", "capability": "stream",
+                  "project": { "event_count": "/count" } }
+    }
+  ]
+}

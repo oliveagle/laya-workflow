@@ -1,0 +1,216 @@
+{
+  "name": "web_research",
+  "dsl_version": 2,
+  "description": "Internet research as a workflow capability: web_search turns a query into structured results, web_fetch turns a URL into readable text. Egress stays inside policy.allow_hosts, only http/https URLs are accepted, and redirects are reported rather than followed (so an unlisted host cannot be reached by hopping through the first hop).",
+  "start": "route",
+  "max_iterations": 10,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 8000,
+    "max_output": 32768,
+    "retries": 1,
+    "allow_paths": []
+  },
+  "capabilities": {
+    "search": {
+      "kind": "web_search",
+      "endpoint": "${env.LAYA_WEB_SEARCH_URL}",
+      "max_results": 3,
+      "timeout_ms": 6000,
+      "headers": {
+        "accept": "application/json"
+      }
+    },
+    "read_page": {
+      "kind": "web_fetch",
+      "format": "text",
+      "timeout_ms": 6000,
+      "headers": {
+        "user-agent": "laya-workflow/1.0"
+      }
+    },
+    "read_markdown": {
+      "kind": "web_fetch",
+      "format": "markdown",
+      "timeout_ms": 6000
+    }
+  },
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "mode",
+      "questions": {
+        "mode": {
+          "type": "choice",
+          "instructions": "What should this request do with the internet?",
+          "criteria": {
+            "search": "find pages for a query and then read the top hit",
+            "read": "fetch one known URL and turn it into readable text",
+            "markdown": "fetch one known URL and keep its heading/link structure"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "search": "do_search",
+          "read": "do_read",
+          "markdown": "do_markdown"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "mode"
+        ]
+      }
+    },
+    {
+      "name": "do_search",
+      "primary_q": "use",
+      "questions": {
+        "use": {
+          "type": "choice",
+          "instructions": "Run the search and keep the first result?",
+          "criteria": {
+            "yes": "query the search endpoint with ${state.query}"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "read_top"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "search",
+        "with": {
+          "query": "${state.query}"
+        },
+        "project": {
+          "search_status": "/status",
+          "result_count": "/count",
+          "top_title": "/results/0/title",
+          "top_url": "/results/0/url",
+          "top_snippet": "/results/0/snippet"
+        }
+      }
+    },
+    {
+      "name": "read_top",
+      "primary_q": "read",
+      "questions": {
+        "read": {
+          "type": "choice",
+          "instructions": "Read the page the search returned?",
+          "criteria": {
+            "yes": "fetch ${state.top_url} and extract its text"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "read_page",
+        "with": {
+          "url": "${state.top_url}"
+        },
+        "project": {
+          "page_status": "/status",
+          "page_title": "/title",
+          "page_chars": "/chars",
+          "page_truncated": "/truncated",
+          "page_text": "/text"
+        }
+      }
+    },
+    {
+      "name": "do_read",
+      "primary_q": "read",
+      "questions": {
+        "read": {
+          "type": "choice",
+          "instructions": "Fetch the supplied URL as plain text?",
+          "criteria": {
+            "yes": "extract readable text from ${state.url}"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "read_page",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "status": "/status",
+          "title": "/title",
+          "chars": "/chars",
+          "truncated": "/truncated",
+          "text": "/text"
+        }
+      }
+    },
+    {
+      "name": "do_markdown",
+      "primary_q": "read",
+      "questions": {
+        "read": {
+          "type": "choice",
+          "instructions": "Fetch the supplied URL and keep its structure?",
+          "criteria": {
+            "yes": "convert ${state.url} to markdown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "read_markdown",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "status": "/status",
+          "format": "/format",
+          "chars": "/chars",
+          "markdown": "/text"
+        }
+      }
+    }
+  ]
+}

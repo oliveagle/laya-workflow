@@ -1,0 +1,197 @@
+{
+  "name": "protocol_services",
+  "dsl_version": 2,
+  "description": "Batch-3 capabilities: TCP/UDP raw sockets, redis/nats/mqtt/smtp plaintext protocols, s3 object storage, prometheus metrics and kafka REST. All targets are local mocks (no public network).",
+  "start": "route",
+  "max_iterations": 20,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": ["127.0.0.1", "localhost"],
+    "max_timeout_ms": 8000,
+    "max_output": 65536,
+    "retries": 0
+  },
+  "capabilities": {
+    "ping_upstream": {
+      "kind": "tcp",
+      "host": "127.0.0.1",
+      "port": 6380,
+      "timeout_ms": 3000
+    },
+    "echo_udp": {
+      "kind": "udp",
+      "host": "127.0.0.1",
+      "port": 9999,
+      "timeout_ms": 3000
+    },
+    "cache_rw": {
+      "kind": "redis",
+      "host": "127.0.0.1",
+      "port": 6380,
+      "timeout_ms": 3000
+    },
+    "bus_publish": {
+      "kind": "nats",
+      "host": "127.0.0.1",
+      "port": 4223,
+      "timeout_ms": 3000
+    },
+    "iot_publish": {
+      "kind": "mqtt",
+      "host": "127.0.0.1",
+      "port": 1884,
+      "client_id": "laya-workflow",
+      "timeout_ms": 3000
+    },
+    "notify_mail": {
+      "kind": "smtp",
+      "host": "127.0.0.1",
+      "port": 2526,
+      "from": "workflow@example.com",
+      "username": "${env.LAYA_SMTP_USER}",
+      "password": "${env.LAYA_SMTP_PASS}",
+      "timeout_ms": 5000
+    },
+    "objects": {
+      "kind": "s3",
+      "endpoint": "http://127.0.0.1:9000",
+      "bucket": "bucket",
+      "timeout_ms": 5000
+    },
+    "metrics_endpoint": {
+      "kind": "prometheus",
+      "url": "http://127.0.0.1:9091/metrics",
+      "timeout_ms": 5000
+    },
+    "event_stream": {
+      "kind": "kafka",
+      "url": "http://127.0.0.1:8083",
+      "topic": "events",
+      "timeout_ms": 5000
+    }
+  },
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "channel",
+      "questions": {
+        "channel": {
+          "type": "choice",
+          "instructions": "Which protocol or service should carry this action?",
+          "criteria": {
+            "raw_socket": "a raw TCP/UDP socket exchange",
+            "cache": "a key/value cache read or write",
+            "message_bus": "a pub/sub message bus",
+            "notification": "an outbound notification",
+            "object_store": "an object storage operation",
+            "observability": "metrics or observability data"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "raw_socket": "do_tcp",
+          "cache": "do_redis",
+          "message_bus": "do_bus",
+          "notification": "do_mail",
+          "object_store": "do_s3",
+          "observability": "do_metrics"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": { "kind": "copy_keys", "keys": ["channel"] }
+    },
+    {
+      "name": "do_tcp",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "ping_upstream",
+        "chain": [
+          { "capability": "echo_udp", "as": "udp", "with": { "send": "probe" } }
+        ],
+        "with": { "send": "*1\r\n$4\r\nPING\r\n" },
+        "project": { "tcp_reply": "/reply", "udp_reply": "/udp/reply" }
+      }
+    },
+    {
+      "name": "do_redis",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "cache_rw",
+        "with": { "op": "set", "key": "workflow:last", "value": "${state.text}" },
+        "project": { "redis_reply": "/reply" }
+      }
+    },
+    {
+      "name": "do_bus",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "bus_publish",
+        "chain": [
+          { "capability": "iot_publish", "as": "mqtt",
+            "with": { "topic": "workflow/events", "message": "${state.text}" } }
+        ],
+        "with": { "subject": "workflow.events", "message": "${state.text}" },
+        "project": { "nats_bytes": "/sent_bytes", "mqtt_connected": "/mqtt/connected" }
+      }
+    },
+    {
+      "name": "do_mail",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "notify_mail",
+        "with": {
+          "to": ["ops@example.com"],
+          "subject": "workflow notice",
+          "body": "${state.text}"
+        },
+        "project": { "mail_recipients": "/to", "mail_authed": "/authed" }
+      }
+    },
+    {
+      "name": "do_s3",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "objects",
+        "with": { "op": "put", "key": "artifacts/run.txt", "body": "${state.text}" },
+        "project": { "s3_status": "/status", "s3_key": "/key" }
+      }
+    },
+    {
+      "name": "do_metrics",
+      "primary_q": "ok",
+      "questions": { "ok": { "type": "choice", "instructions": "proceed?",
+                             "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "metrics_endpoint",
+        "project": { "metric_samples": "/count", "metric_mode": "/mode" }
+      }
+    }
+  ]
+}

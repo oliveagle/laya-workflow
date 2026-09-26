@@ -1,0 +1,84 @@
+{
+  "name": "refund_with_external_checks",
+  "dsl_version": 2,
+  "description": "Calls an external risk scorer over HTTP and an agent/app-server, then decides. All wiring is data — swap the URL/protocol without touching Rust.",
+  "start": "score_risk",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": ["127.0.0.1", "localhost"],
+    "max_timeout_ms": 5000,
+    "max_output": 65536,
+    "retries": 1
+  },
+  "capabilities": {
+    "risk_scorer": {
+      "kind": "http",
+      "method": "POST",
+      "url": "http://127.0.0.1:8791/score",
+      "headers": { "content-type": "application/json" },
+      "body": { "text": "${state.text}" },
+      "timeout_ms": 2000
+    },
+    "case_agent": {
+      "kind": "agent",
+      "transport": "http",
+      "url": "http://127.0.0.1:8791/agent",
+      "session": "refund-case",
+      "timeout_ms": 3000
+    },
+    "local_echo": {
+      "kind": "exec",
+      "argv": ["/bin/echo", "risk-label=${projected_label}"],
+      "timeout_ms": 5000,
+      "max_output": 4096
+    }
+  },
+  "nodes": [
+    {
+      "name": "score_risk",
+      "primary_q": "amount_band",
+      "questions": {
+        "amount_band": {
+          "type": "score",
+          "instructions": "Rough size of the refund request?",
+          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+        }
+      },
+      "edge": { "condition": {}, "default": "assess" },
+      "action": {
+        "kind": "call",
+        "capability": "risk_scorer",
+        "with": { "text": "${state.text}" },
+        "project": { "projected_label": "/label", "projected_risk": "/risk" }
+      }
+    },
+    {
+      "name": "assess",
+      "primary_q": "decision",
+      "questions": {
+        "decision": {
+          "type": "choice",
+          "instructions": "Based on the external risk label and the amount band, what should happen?",
+          "criteria": {
+            "approve": "low risk and small/medium amount — approve automatically",
+            "review": "needs a human reviewer",
+            "reject": "high risk — decline the refund"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "decision",
+        "rules": [
+          { "when": { "answer": "reject" }, "label": "REJECTED" },
+          { "when": { "answer": "review" }, "label": "NEEDS_REVIEW" },
+          { "when": { "always": true }, "label": "APPROVED" }
+        ]
+      }
+    }
+  ]
+}

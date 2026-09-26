@@ -1,0 +1,80 @@
+{
+  "name": "stateful_pipeline",
+  "dsl_version": 2,
+  "description": "Stateful local capabilities: durable keyvalue + queue + cache(TTL) + cron scheduling, all path-scoped under LAYA_STORE_DIR.",
+  "start": "intake",
+  "max_iterations": 10,
+  "policy": {
+    "allow_exec": false,
+    "allow_paths": ["${env.LAYA_STORE_DIR}"],
+    "max_timeout_ms": 5000,
+    "max_output": 32768
+  },
+  "capabilities": {
+    "dedupe_put": { "kind": "keyvalue", "op": "set", "path": "${env.LAYA_STORE_DIR}/seen.json" },
+    "dedupe_has": { "kind": "keyvalue", "op": "has", "path": "${env.LAYA_STORE_DIR}/seen.json" },
+    "counters": { "kind": "keyvalue", "op": "incr", "path": "${env.LAYA_STORE_DIR}/counters.json" },
+    "backlog": { "kind": "queue", "op": "push", "path": "${env.LAYA_STORE_DIR}/backlog.json" },
+    "backlog_len": { "kind": "queue", "op": "length", "path": "${env.LAYA_STORE_DIR}/backlog.json" },
+    "ttl_cache": { "kind": "cache", "op": "set", "path": "${env.LAYA_STORE_DIR}/ttl.json", "ttl_secs": 600 },
+    "next_run": { "kind": "cron", "expr": "0 3 * * *", "path": "" },
+    "note": { "kind": "notify", "path": "${env.LAYA_STORE_DIR}/intake.log", "timestamp": true }
+  },
+  "nodes": [
+    {
+      "name": "intake",
+      "primary_q": "is_duplicate",
+      "questions": {
+        "is_duplicate": {
+          "type": "choice",
+          "instructions": "Does this message look like a duplicate of something already handled?",
+          "criteria": {
+            "A": "no, it is a new distinct message",
+            "B": "yes, it repeats an earlier message"
+          }
+        }
+      },
+      "edge": { "condition": { "A": "enqueue" }, "default": "STOP" },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "counters",
+        "chain": [
+          { "capability": "backlog", "as": "queued", "with": { "value": "${state.text}" } },
+          { "capability": "ttl_cache", "as": "cached", "with": { "key": "intake", "value": 1 } },
+          { "capability": "next_run", "as": "cron" },
+          { "capability": "note", "as": "logged", "with": { "event": "intake", "message": "${state.text}" } }
+        ],
+        "with": { "key": "intake_count" },
+        "project": {
+          "count": "/to",
+          "backlog_len": "/queued/length",
+          "cache_expires_at": "/cached/expires_at",
+          "next_daily_epoch": "/cron/next_epoch",
+          "logged_bytes": "/logged/bytes"
+        }
+      }
+    },
+    {
+      "name": "enqueue",
+      "primary_q": "priority",
+      "questions": {
+        "priority": {
+          "type": "score",
+          "instructions": "What priority should this be queued at?",
+          "criteria": ["low", "normal", "urgent"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "priority",
+        "rules": [
+          { "when": { "value_gte": 1.5 }, "label": "PRIORITY_HIGH" },
+          { "when": { "always": true }, "label": "PRIORITY_NORMAL" }
+        ]
+      }
+    }
+  ]
+}

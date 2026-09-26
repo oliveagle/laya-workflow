@@ -1,0 +1,191 @@
+{
+  "name": "web_research_tinyfish",
+  "dsl_version": 2,
+  "description": "Live internet research through TinyFish. The API key comes from ${secret.TINYFISH_API_KEY} so it never appears in this spec. Note that allow_hosts must list BOTH the API endpoint and every page host you are willing to fetch: a search result URL pointing anywhere else is refused, which is the point of the guard.",
+  "start": "route",
+  "max_iterations": 10,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [
+      "agent.tinyfish.ai",
+      "docs.vllm.ai",
+      "developers.redhat.com",
+      "github.com"
+    ],
+    "max_timeout_ms": 60000,
+    "max_output": 262144,
+    "retries": 0,
+    "allow_paths": []
+  },
+  "capabilities": {
+    "search": {
+      "kind": "web_search",
+      "endpoint": "https://agent.tinyfish.ai/v1/search",
+      "method": "GET",
+      "query_param": "query",
+      "max_results": 5,
+      "timeout_ms": 30000,
+      "headers": {
+        "x-api-key": "${secret.TINYFISH_API_KEY}",
+        "accept": "application/json"
+      }
+    },
+    "read_page": {
+      "kind": "web_fetch",
+      "format": "markdown",
+      "endpoint": "https://agent.tinyfish.ai/v1/fetch",
+      "method": "POST",
+      "body_field": "urls",
+      "body_urls_array": true,
+      "body": {
+        "format": "markdown"
+      },
+      "result_path": "/results/0",
+      "text_field": "text",
+      "title_field": "title",
+      "timeout_ms": 45000,
+      "headers": {
+        "x-api-key": "${secret.TINYFISH_API_KEY}",
+        "accept": "application/json"
+      }
+    }
+  },
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "mode",
+      "questions": {
+        "mode": {
+          "type": "choice",
+          "instructions": "Research the web how?",
+          "criteria": {
+            "search": "search a query, then read the top hit through TinyFish",
+            "read": "fetch one known URL through TinyFish"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "search": "do_search",
+          "read": "do_read"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "mode"
+        ]
+      }
+    },
+    {
+      "name": "do_search",
+      "primary_q": "use",
+      "questions": {
+        "use": {
+          "type": "choice",
+          "instructions": "Run the live search and read the top result?",
+          "criteria": {
+            "yes": "query TinyFish with ${state.query}"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "read_top"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "search",
+        "with": {
+          "query": "${state.query}"
+        },
+        "project": {
+          "search_status": "/status",
+          "result_count": "/count",
+          "top_title": "/results/0/title",
+          "top_url": "/results/0/url",
+          "top_snippet": "/results/0/snippet"
+        }
+      }
+    },
+    {
+      "name": "read_top",
+      "primary_q": "read",
+      "questions": {
+        "read": {
+          "type": "choice",
+          "instructions": "Read ${state.top_url} through TinyFish?",
+          "criteria": {
+            "yes": "extract the page text"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "read_page",
+        "with": {
+          "url": "${state.top_url}"
+        },
+        "project": {
+          "page_status": "/status",
+          "page_title": "/title",
+          "page_chars": "/chars",
+          "page_truncated": "/truncated",
+          "page_text": "/text"
+        }
+      }
+    },
+    {
+      "name": "do_read",
+      "primary_q": "read",
+      "questions": {
+        "read": {
+          "type": "choice",
+          "instructions": "Fetch ${state.url} through TinyFish?",
+          "criteria": {
+            "yes": "extract the page text"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "read_page",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "status": "/status",
+          "title": "/title",
+          "chars": "/chars",
+          "truncated": "/truncated",
+          "text": "/text"
+        }
+      }
+    }
+  ]
+}

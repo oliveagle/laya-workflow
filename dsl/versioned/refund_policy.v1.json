@@ -1,0 +1,29 @@
+{
+  "name": "refund_policy",
+  "dsl_version": 1,
+  "description": "v1: single-threshold refund policy (legacy spec, no dsl_version required).",
+  "start": "band",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "band",
+      "primary_q": "amount_band",
+      "questions": {
+        "amount_band": {
+          "type": "score",
+          "instructions": "Rough size of the refund request?",
+          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "amount_band",
+        "rules": [
+          { "when": { "value_gte": 1.5 }, "label": "V1_ESCALATE" },
+          { "when": { "always": true }, "label": "V1_AUTO_APPROVE" }
+        ]
+      }
+    }
+  ]
+}

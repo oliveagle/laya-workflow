@@ -1,0 +1,88 @@
+{
+  "name": "triage_then_moderate",
+  "description": "Two-hop composition in one DSL file: triage (multi-class choice) routes to a moderation gate; shows long chains without any Rust code.",
+  "start": "triage",
+  "max_iterations": 30,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "triage",
+      "primary_q": "queue",
+      "questions": {
+        "queue": {
+          "type": "choice",
+          "instructions": "Which downstream queue should this item go through first?",
+          "criteria": {
+            "safety_review": "content that may violate policy",
+            "billing": "money-related requests",
+            "support": "product or technical questions",
+            "drop": "low value, no action"
+          }
+        }
+      },
+      "edge": {
+        "condition": { "safety_review": "safety_gate", "billing": "billing_gate" },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1
+    },
+    {
+      "name": "safety_gate",
+      "primary_q": "is_unsafe",
+      "questions": {
+        "is_unsafe": {
+          "type": "choice",
+          "instructions": "Is this content unsafe to publish or forward as-is?",
+          "criteria": {
+            "A": "no, it is safe to forward",
+            "B": "yes, it should not be forwarded"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "gate",
+        "question": "is_unsafe",
+        "option": "B",
+        "block_at": 0.6,
+        "allow_at": 0.7
+      }
+    },
+    {
+      "name": "billing_gate",
+      "primary_q": "is_refund",
+      "questions": {
+        "is_refund": {
+          "type": "choice",
+          "instructions": "Is the user asking for money back?",
+          "criteria": { "A": "no, it is informational", "B": "yes, it requests a refund or credit" }
+        }
+      },
+      "edge": { "condition": { "B": "refund_amount" }, "default": "STOP" },
+      "action": { "kind": "copy_keys", "keys": ["is_refund"] }
+    },
+    {
+      "name": "refund_amount",
+      "primary_q": "amount_band",
+      "questions": {
+        "amount_band": {
+          "type": "score",
+          "instructions": "Rough size of the refund request?",
+          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "amount_band",
+        "rules": [
+          { "when": { "value_gte": 2.0 }, "label": "ESCALATE_MANAGER" },
+          { "when": { "value_gte": 1.0 }, "label": "AUTO_APPROVE" },
+          { "when": { "always": true }, "label": "AUTO_APPROVE_SMALL" }
+        ]
+      }
+    }
+  ]
+}

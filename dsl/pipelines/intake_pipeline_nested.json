@@ -1,0 +1,55 @@
+{
+  "name": "intake_pipeline_nested",
+  "description": "Nested/referenced workflow: the intake node embeds the standalone 'support_ticket_router' workflow as a sub-graph, then adds a local audit step. Proves workflows can compose by reference with no Rust changes.",
+  "start": "intake",
+  "max_iterations": 30,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "prefilter",
+      "primary_q": "is_noise",
+      "questions": {
+        "is_noise": {
+          "type": "choice",
+          "instructions": "Is this message noise that should be dropped before routing?",
+          "criteria": {
+            "A": "no, it is a real request that needs routing",
+            "B": "yes, it is automated noise or a duplicate"
+          }
+        }
+      },
+      "edge": { "condition": { "A": "intake" }, "default": "STOP" },
+      "min_confidence": 0.0,
+      "max_retries": 1
+    },
+    {
+      "name": "intake",
+      "workflow": "support_ticket_router"
+    },
+    {
+      "name": "audit",
+      "primary_q": "needs_human",
+      "questions": {
+        "needs_human": {
+          "type": "choice",
+          "instructions": "Given the routing outcome, does a human need to double-check it?",
+          "criteria": {
+            "A": "no, the automated routing is trustworthy",
+            "B": "yes, a human should verify before acting"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "needs_human",
+        "rules": [
+          { "when": { "option": "B", "gte": 0.5 }, "label": "AUDIT_REQUIRED" },
+          { "when": { "always": true }, "label": "AUDIT_SKIPPED" }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "name": "ticket_structuring",
+  "dsl_version": 2,
+  "description": "Structure capabilities: text extraction/validation/transforms used to normalise a raw ticket before routing. Pure computation + path-scoped stores; no network.",
+  "start": "normalise",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_paths": ["${env.LAYA_STORE_DIR}"],
+    "max_timeout_ms": 5000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "rows": { "kind": "csv", "op": "parse", "headers": true },
+    "required_fields": {
+      "kind": "validate",
+      "op": "check"
+    },
+    "fingerprint": { "kind": "hash", "op": "sha256" },
+    "budget": { "kind": "tokenize", "op": "count", "chars_per_token": 4.0 },
+    "queue": { "kind": "queue", "op": "push", "path": "${env.LAYA_STORE_DIR}/tickets.json" },
+    "metrics": { "kind": "metrics", "what": "mem,load" }
+  },
+  "nodes": [
+    {
+      "name": "normalise",
+      "primary_q": "well_formed",
+      "questions": {
+        "well_formed": {
+          "type": "choice",
+          "instructions": "Is this ticket well-formed enough to route automatically, or does it need a human to clean it up first?",
+          "criteria": {
+            "A": "well-formed: it has the fields and structure needed for automatic routing",
+            "B": "malformed: missing fields, broken structure, or unclear — needs human cleanup"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "fingerprint",
+        "chain": [
+          { "capability": "budget", "as": "tok", "with": { "text": "${state.text}" } },
+          { "capability": "metrics", "as": "sys" }
+        ],
+        "with": { "text": "${state.text}" },
+        "project": {
+          "sha256": "/hex",
+          "estimated_tokens": "/tok/estimated_tokens",
+          "mem_used_pct": "/sys/mem/used_pct"
+        }
+      }
+    }
+  ]
+}

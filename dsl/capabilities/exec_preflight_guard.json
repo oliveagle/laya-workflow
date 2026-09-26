@@ -1,0 +1,44 @@
+{
+  "name": "exec_preflight_guard",
+  "dsl_version": 2,
+  "description": "Runs a local preflight command and lets the model's risk verdict decide whether to proceed. exec is opt-in and host/time/output-bounded.",
+  "start": "preflight",
+  "max_iterations": 6,
+  "policy": {
+    "allow_exec": true,
+    "max_timeout_ms": 5000,
+    "max_output": 8192,
+    "retries": 0
+  },
+  "capabilities": {
+    "disk_check": {
+      "kind": "exec",
+      "argv": ["/bin/sh", "-c", "echo 'target=${state.target}'; df -Pk '${state.target}' | tail -1 | awk '{print $4}'"],
+      "timeout_ms": 4000,
+      "max_output": 4096
+    }
+  },
+  "nodes": [
+    {
+      "name": "preflight",
+      "primary_q": "is_risky",
+      "questions": {
+        "is_risky": {
+          "type": "choice",
+          "instructions": "Given that this is a destructive-looking operation on the target path, is it risky to proceed?",
+          "criteria": {
+            "A": "no, it is a safe operation on this path",
+            "B": "yes, it could destroy or corrupt important state"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "disk_check",
+        "with": { "target": "${state.target}" },
+        "project": { "free_kb_line": "/stdout" }
+      }
+    }
+  ]
+}

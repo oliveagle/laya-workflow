@@ -1,0 +1,44 @@
+{
+  "name": "iterative_refine_loop",
+  "description": "Loop workflow: a review node routes back to itself while the draft is not yet good enough. Demonstrates RETRY/self-loop edges, retry budget, convergence and the max_iterations safety valve — all from data.",
+  "start": "review",
+  "max_iterations": 8,
+  "convergence_window": 3,
+  "convergence_eps": 0.01,
+  "nodes": [
+    {
+      "name": "review",
+      "primary_q": "verdict",
+      "questions": {
+        "verdict": {
+          "type": "choice",
+          "instructions": "Given the current draft and the number of revision rounds already spent, should we accept it, revise once more, or escalate to a human editor?",
+          "criteria": {
+            "accept": "the draft is good enough to send as-is",
+            "revise": "it can be improved by another revision round",
+            "escalate": "it needs a human editor's judgement"
+          }
+        },
+        "quality": {
+          "type": "score",
+          "instructions": "How good is the current draft?",
+          "criteria": ["poor", "usable with edits", "publication ready"]
+        }
+      },
+      "edge": {
+        "condition": {
+          "accept": "STOP",
+          "revise": "review",
+          "escalate": "STOP"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 3,
+      "action": {
+        "kind": "merge_open_probs",
+        "question": "verdict"
+      }
+    }
+  ]
+}

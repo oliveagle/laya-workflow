@@ -1,0 +1,72 @@
+{
+  "name": "data_pipeline_local",
+  "dsl_version": 2,
+  "description": "Local/pure capabilities: datetime + text + file + shell + passthrough. No network needed; file access is path-allow-listed and shell is opt-in.",
+  "start": "stamp",
+  "max_iterations": 10,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": ["${env.LAYA_WORK_DIR}"],
+    "max_timeout_ms": 8000,
+    "max_output": 65536,
+    "retries": 0
+  },
+  "capabilities": {
+    "clock": { "kind": "datetime", "op": "now" },
+    "stamp": { "kind": "datetime", "op": "format", "format": "%Y-%m-%d %H:%M:%S" },
+    "slug": { "kind": "text", "op": "extract", "pattern": "[a-z0-9-]+" },
+    "report": { "kind": "file", "op": "write", "max_bytes": 65536 },
+    "disk": { "kind": "shell", "command": "du -sk \"${state.work_dir}\" | awk '{print $1}'" },
+    "raw": { "kind": "passthrough" }
+  },
+  "nodes": [
+    {
+      "name": "stamp",
+      "primary_q": "kind_of_record",
+      "questions": {
+        "kind_of_record": {
+          "type": "choice",
+          "instructions": "What kind of record is this?",
+          "criteria": {
+            "note": "a short note or memo",
+            "incident": "an incident or outage report",
+            "invoice": "a billing document"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "enrich" },
+      "action": {
+        "kind": "call",
+        "capability": "stamp",
+        "chain": [ { "capability": "clock", "as": "clock" } ],
+        "with": { "epoch": "${with.clock.epoch}" },
+        "project": { "stamped": "/text" }
+      }
+    },
+    {
+      "name": "enrich",
+      "primary_q": "sensitivity",
+      "questions": {
+        "sensitivity": {
+          "type": "choice",
+          "instructions": "Does this record contain sensitive data that should not be written to disk as-is?",
+          "criteria": {
+            "A": "no, it is safe to persist",
+            "B": "yes, it contains sensitive data"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "sensitivity",
+        "rules": [
+          { "when": { "option": "B", "gte": 0.5 }, "label": "WITHHOLD" },
+          { "when": { "always": true }, "label": "PERSIST" }
+        ]
+      }
+    }
+  ]
+}
