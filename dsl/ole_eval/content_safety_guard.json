@@ -6,7 +6,7 @@
   "nodes": [
     {
       "name": "policy",
-      "primary_q": "severity",
+      "primary_q": "effective_severity",
       "questions": {
         "is_prohibited": {
           "type": "choice",
@@ -43,7 +43,7 @@
           "instructions": "Is any semantic not allowed in this context at review severity (< 75)?",
           "criteria": { "A": "all allowed here", "B": "yes, out-of-context review content" }
         },
-        "severity": {
+        "effective_severity": {
           "type": "score",
           "instructions": "Effective severity 0-100 (base taxonomy severity plus repeat-violation boost up to +30).",
           "criteria": ["0 benign", "50 reviewable", "90 blocking", "100 maximum"]
@@ -53,7 +53,7 @@
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
-        "question": "severity",
+        "question": "effective_severity",
         "rules": [
           { "when": { "question": "is_prohibited", "answer": "B" }, "label": "BLOCK" },
           { "when": { "question": "pii_public_high", "answer": "B" }, "label": "BLOCK" },

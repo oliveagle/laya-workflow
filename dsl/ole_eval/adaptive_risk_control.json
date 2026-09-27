@@ -6,7 +6,7 @@
   "nodes": [
     {
       "name": "risk_score",
-      "primary_q": "risk",
+      "primary_q": "composite_risk",
       "questions": {
         "intent": {
           "type": "choice",
@@ -37,7 +37,7 @@
           "instructions": "Did MFA fail while a challenge was already pending?",
           "criteria": { "A": "no", "B": "yes" }
         },
-        "risk": {
+        "composite_risk": {
           "type": "score",
           "instructions": "Composite risk score 0-100 (intent + behaviour + velocity + amount + new device).",
           "criteria": ["0 clean", "40 reviewable", "70 deny", "100 maximum"]
@@ -47,7 +47,7 @@
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
-        "question": "risk",
+        "question": "composite_risk",
         "rules": [
           { "when": { "question": "intent", "answer_in": ["credential_stuffing", "card_testing", "account_takeover"] }, "label": "DENY" },
           { "when": { "question": "mfa_failed_pending", "answer": "B" }, "label": "DENY" },

@@ -512,6 +512,88 @@ impl Decide for HeuristicBackend {
                 } else {
                     0.2
                 }),
+                // --- ole_eval / dsl/ole_eval/ question handlers ---
+                // Content safety guard: choice questions are A=no / B=yes.
+                "is_prohibited" => bchoice(if contains_any(&text, &["targeted_abuse", "prohibited", "harassment"]) { 0.95 } else { 0.05 }),
+                "pii_public_high" => bchoice(if contains_any(&text, &["personal_address", "ssn", "contact_information"]) && contains_any(&text, &["public_feed", "public"]) { 0.9 } else { 0.05 }),
+                "pii_public_low" => bchoice(if contains_any(&text, &["contact_information", "financial_promotion"]) && contains_any(&text, &["public_feed", "public"]) { 0.7 } else { 0.05 }),
+                "age_blocking" => bchoice(if contains_any(&text, &["graphic_violence", "self_harm", "artistic_nudity"]) && contains_any(&text, &["child", "teen", "audience_age"]) { 0.9 } else { 0.05 }),
+                "age_review" => bchoice(if contains_any(&text, &["violence_simulation", "medical_information", "contact_information"]) && contains_any(&text, &["child", "teen"]) { 0.7 } else { 0.05 }),
+                "context_blocking" => bchoice(if contains_any(&text, &["graphic_violence", "self_harm", "artistic_nudity"]) && contains_any(&text, &["public_feed", "not_allowed"]) { 0.9 } else { 0.05 }),
+                "context_review" => bchoice(if contains_any(&text, &["violence_simulation", "medical_information", "financial_promotion"]) && contains_any(&text, &["public_feed", "not_allowed"]) { 0.7 } else { 0.05 }),
+                "effective_severity" => {
+                    let v = if contains_any(&text, &["targeted_abuse", "prohibited"]) { 100.0 }
+                        else if contains_any(&text, &["graphic_violence", "self_harm"]) { 95.0 }
+                        else if contains_any(&text, &["personal_address"]) { 80.0 }
+                        else if contains_any(&text, &["artistic_nudity"]) { 75.0 }
+                        else if contains_any(&text, &["violence_simulation"]) { 60.0 }
+                        else if contains_any(&text, &["contact_information"]) { 45.0 }
+                        else if contains_any(&text, &["financial_promotion"]) { 35.0 }
+                        else if contains_any(&text, &["medical_information"]) { 30.0 }
+                        else { 10.0 };
+                    // Use a small-ordinal helper to keep the value f64 clean for value_gte rules.
+                    let mut m = Map::new();
+                    m.insert("0".to_string(), serde_json::json!(if v < 50.0 { 0.9 } else { 0.02 }));
+                    m.insert("1".to_string(), serde_json::json!(if v >= 50.0 && v < 90.0 { 0.9 } else { 0.02 }));
+                    m.insert("2".to_string(), serde_json::json!(if v >= 90.0 { 0.9 } else { 0.02 }));
+                    (serde_json::json!(v), m, 0.9)
+                }
+                // Adaptive risk control: intent/behaviour are multi-choice (not A/B).
+                "intent" => {
+                    let pick = if contains_any(&text, &["credential_stuffing", "credential stuffing"]) { "credential_stuffing" }
+                        else if contains_any(&text, &["card_testing", "card testing"]) { "card_testing" }
+                        else if contains_any(&text, &["account_takeover", "account takeover"]) { "account_takeover" }
+                        else if contains_any(&text, &["recovery"]) { "legitimate_recovery" }
+                        else { "legitimate_purchase" };
+                    let keys = ["legitimate_purchase", "legitimate_recovery", "credential_stuffing", "card_testing", "account_takeover", "unknown"];
+                    let mut m = Map::new();
+                    for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
+                    (serde_json::json!(pick), m, 0.9)
+                }
+                "behaviour" => {
+                    let pick = if contains_any(&text, &["repeated_failure", "repeated failure"]) { "repeated_failures" }
+                        else if contains_any(&text, &["micro_transaction", "micro transaction", "burst"]) { "micro_transaction_burst" }
+                        else if contains_any(&text, &["new_device", "new device"]) { "new_device_payment" }
+                        else if contains_any(&text, &["recovery_then_withdrawal", "recovery then withdrawal", "withdrawal"]) { "recovery_then_withdrawal" }
+                        else if contains_any(&text, &["inconsistent", "session signals"]) { "inconsistent_session" }
+                        else { "normal_usage" };
+                    let keys = ["normal_usage", "repeated_failures", "micro_transaction_burst", "new_device_payment", "recovery_then_withdrawal", "inconsistent_session"];
+                    let mut m = Map::new();
+                    for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
+                    (serde_json::json!(pick), m, 0.9)
+                }
+                "mfa_failed_pending" => bchoice(if contains_any(&text, &["mfa_failed", "mfa failed", "mfa-failed", "challenge_pending"]) { 0.9 } else { 0.05 }),
+                "composite_risk" => {
+                    let v = if contains_any(&text, &["credential_stuffing", "card_testing", "account_takeover"]) { 80.0 }
+                        else if contains_any(&text, &["recovery_then_withdrawal"]) { 60.0 }
+                        else if contains_any(&text, &["micro_transaction_burst", "new_device_payment"]) { 45.0 }
+                        else if contains_any(&text, &["repeated_failures", "inconsistent_session"]) { 25.0 }
+                        else { 10.0 };
+                    let mut m = Map::new();
+                    m.insert("0".to_string(), serde_json::json!(if v < 20.0 { 0.9 } else { 0.02 }));
+                    m.insert("1".to_string(), serde_json::json!(if v >= 20.0 && v < 40.0 { 0.9 } else { 0.02 }));
+                    m.insert("2".to_string(), serde_json::json!(if v >= 40.0 { 0.9 } else { 0.02 }));
+                    (serde_json::json!(v), m, 0.9)
+                }
+                // Deployment canary guard: all choice questions are A=ok / B=violated.
+                "service_name_safe" => bchoice(if contains_any(&text, &["eval(", "exec(", "subprocess", "rm -rf", "javascript:", "os.system"]) { 0.95 } else { 0.05 }),
+                "health_path_safe" => bchoice(if contains_any(&text, &["eval(", "javascript:", "data:", "os.system"]) { 0.9 } else { 0.05 }),
+                "canary_within_cap" => bchoice(if contains_any(&text, &["exceed_cap", "over_cap", "canary_percent_high"]) { 0.9 } else { 0.05 }),
+                "rollback_threshold_ok" => bchoice(if contains_any(&text, &["error_rate_high", "latency_high", "rollback_breach"]) { 0.9 } else { 0.05 }),
+                "stage_shape_ok" => bchoice(if contains_any(&text, &["no_stages", "empty_stages", "too_many_stages", "negative_percent"]) { 0.9 } else { 0.05 }),
+                "hold_within_cap" => bchoice(if contains_any(&text, &["hold_too_long", "hold_exceeds", "extended_hold"]) { 0.9 } else { 0.05 }),
+                "canary_risk" => {
+                    let v = if contains_any(&text, &["eval(", "rm -rf", "javascript:", "subprocess"]) { 90.0 }
+                        else if contains_any(&text, &["error_rate_high", "latency_high", "rollback_breach"]) { 60.0 }
+                        else if contains_any(&text, &["exceed_cap", "hold_too_long"]) { 40.0 }
+                        else if contains_any(&text, &["stages_wide"]) { 45.0 }
+                        else { 10.0 };
+                    let mut m = Map::new();
+                    m.insert("0".to_string(), serde_json::json!(if v < 30.0 { 0.9 } else { 0.02 }));
+                    m.insert("1".to_string(), serde_json::json!(if v >= 30.0 && v < 70.0 { 0.9 } else { 0.02 }));
+                    m.insert("2".to_string(), serde_json::json!(if v >= 70.0 { 0.9 } else { 0.02 }));
+                    (serde_json::json!(v), m, 0.9)
+                }
                 _ => match qtype {
                     "score" => bscore(1.0),
                     "noul" => {

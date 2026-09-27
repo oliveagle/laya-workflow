@@ -6,7 +6,7 @@
   "nodes": [
     {
       "name": "policy",
-      "primary_q": "risk",
+      "primary_q": "canary_risk",
       "questions": {
         "service_name_safe": {
           "type": "choice",
@@ -38,7 +38,7 @@
           "instructions": "Is every stage's hold_minutes <= max_hold_minutes (default 120)?",
           "criteria": { "A": "yes", "B": "no, a stage holds too long" }
         },
-        "risk": {
+        "canary_risk": {
           "type": "score",
           "instructions": "Overall risky-canary risk 0-100 (stage count, hold magnitude, rollback severity, dangerous tokens).",
           "criteria": ["0 clean", "30 reviewable", "70 blocking", "100 maximum"]
@@ -48,7 +48,7 @@
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
-        "question": "risk",
+        "question": "canary_risk",
         "rules": [
           { "when": { "question": "service_name_safe", "answer": "B" }, "label": "REJECT" },
           { "when": { "question": "health_path_safe", "answer": "B" }, "label": "REJECT" },

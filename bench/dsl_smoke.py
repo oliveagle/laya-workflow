@@ -104,6 +104,22 @@ STATES: dict[str, dict] = {
         "billing": {"text": "We were billed twice for March. Please refund the duplicate invoice today."},
         "support": {"text": "How do I change my notification preferences?"},
     },
+    # ole-eval ports: one sample per decision label (BLOCK / ALLOW / DENY / REVIEW / REJECT / APPROVE).
+    "content_safety_guard": {
+        "blocked": {"text": "targeted_abuse on public_feed graphic_violence child audience"},
+        "allowed": {"text": "educational_science medical_support adult"},
+        "review": {"text": "violence_simulation public_feed adult"},
+    },
+    "adaptive_risk_control": {
+        "deny": {"text": "credential_stuffing micro_transaction_burst mfa_failed"},
+        "allow": {"text": "legitimate_purchase normal_usage"},
+        "review": {"text": "new_device_payment repeated_failures risk 55"},
+    },
+    "deployment_canary_guard": {
+        "reject": {"text": "eval( rm -rf service"},
+        "escalate": {"text": "stages_wide clean-canary"},
+        "approve": {"text": "normal-service clean"},
+    },
 }
 
 
