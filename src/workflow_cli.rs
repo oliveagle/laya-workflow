@@ -24,6 +24,11 @@ struct Cli {
     #[arg(long)]
     base_url: Option<String>,
 
+    /// Pin the spec root, replacing the layered lookup (repo → user → builtin).
+    /// Equivalent to setting `LAYA_DSL_DIR`; use it to point at a specific tree.
+    #[arg(long, value_name = "PATH")]
+    dsl_dir: Option<String>,
+
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -118,7 +123,7 @@ enum Cmd {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// List every spec found in the DSL tree (`LAYA_DSL_DIR` or `<crate>/dsl`)
+    /// List every spec found across the layered DSL roots (repo → user → builtin)
     List,
 }
 
@@ -132,8 +137,14 @@ fn make_backend(url: Option<&str>) -> (Box<dyn Decide>, String) {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Pin the spec root only when asked (`--dsl-dir` > `LAYA_DSL_DIR`); otherwise
+    // leave it unpinned so the layered lookup (repo → user → builtin) applies.
+    if let Some(dir) = explicit_dsl_dir(&cli) {
+        laya_workflow::spec::set_dsl_dir(&dir);
+    }
     // Load secrets (environment + .env files) before anything can reference them.
-    laya_workflow::capability::secret::init(Some(std::path::Path::new(&dsl_dir())))?;
+    let secrets_dir = laya_workflow::spec::primary_spec_dir();
+    laya_workflow::capability::secret::init(Some(secrets_dir.as_path()))?;
     let (backend, label) = make_backend(cli.base_url.as_deref());
     match &cli.cmd {
         Cmd::Apps => run_apps(backend.as_ref(), &label),
@@ -154,7 +165,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Validate { spec } => {
-            laya_workflow::spec::set_dsl_dir(&dsl_dir());
             let raw = std::fs::read_to_string(spec)?;
             let sv: Value = serde_json::from_str(&raw)?;
             match laya_workflow::spec::check_version(&sv)? {
@@ -211,7 +221,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Run { spec, state } => {
-            laya_workflow::spec::set_dsl_dir(&dsl_dir());
             let wf = laya_workflow::spec::load_file(spec)?;
             let st: Value = serde_json::from_str(state)?;
             println!("backend: {label}");
@@ -241,7 +250,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Resume { spec, dir, from, state } => {
-            laya_workflow::spec::set_dsl_dir(&dsl_dir());
             let wf = laya_workflow::spec::load_file(spec)?;
             let mut store = laya_workflow::persist::NodeStore::open(dir)?;
             let initial: Option<serde_json::Value> = if state == "{}" { None } else {
@@ -255,7 +263,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Replay { spec, dir, iter } => {
-            laya_workflow::spec::set_dsl_dir(&dsl_dir());
             let wf = laya_workflow::spec::load_file(spec)?;
             let mut store = laya_workflow::persist::NodeStore::open(dir)?;
             let (backend, label) = make_backend(cli.base_url.as_deref());
@@ -269,17 +276,30 @@ fn main() -> Result<()> {
             run_skill(section.as_deref(), recipe.as_deref(), *list, format)
         }
         Cmd::List => {
-            let root = dsl_dir();
-            let found = laya_workflow::spec::discover(&root)?;
+            let roots = laya_workflow::spec::spec_roots_low_to_high();
+            println!("DSL search path (low → high; later overrides earlier):");
+            for r in &roots {
+                let mark = if r.path.is_dir() { "" } else { "  (missing)" };
+                println!("  {:<8} {}{}", r.layer.as_str(), r.path.display(), mark);
+            }
+            let found = laya_workflow::spec::discover_layered()?;
             println!(
-                "DSL root: {root}  (engine dsl_version: {})\n{} spec(s):",
-                laya_workflow::spec::DSL_VERSION,
-                found.len()
+                "\n{} spec(s)  (engine dsl_version: {}):",
+                found.len(),
+                laya_workflow::spec::DSL_VERSION
             );
-            for (name, path) in found {
-                let rel = path.strip_prefix(&root).unwrap_or(&path);
-                let ver = laya_workflow::spec::read_version(&path).unwrap_or(1);
-                println!("  {name:24} v{ver:<2} {}", rel.display());
+            for s in &found {
+                let mut line = format!(
+                    "  {:<24} {:<8} v{:<3} {}",
+                    s.name,
+                    s.layer.as_str(),
+                    s.version,
+                    s.path.display()
+                );
+                if let Some((layer, root)) = &s.shadowed_by {
+                    line.push_str(&format!("  (shadowed by {} {})", layer.as_str(), root.display()));
+                }
+                println!("{line}");
             }
             Ok(())
         }
@@ -327,7 +347,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("overview",  "Top-level map of what `laya-workflow` can do and how subcommands relate.", "skill"),
         ("validate",  "Run `laya-workflow validate --spec <file>` to lint a workflow spec before any execution.", "validate"),
         ("run",       "Run a spec end-to-end (`run --spec S --state '{}'`) on the offline heuristic or a live server (`--base-url`).", "run"),
-        ("list",      "List every spec discoverable under `LAYA_DSL_DIR` (default `<crate>/dsl`).", "list"),
+        ("list",      "List every spec discoverable across the layered roots (repo `.laya-workflow/dsl`/`dsl` → user → builtin), with the search path.", "list"),
         ("apps",      "Run the four built-in apps' reference cases against a live `laya-tch` server.", "apps"),
         ("describe",  "Print the graph description (`start`, `nodes`, edges, retries) for one built-in app.", "describe"),
         ("demo",      "Run the built-in composition demo (`gate → triage` chain) on whatever backend is selected.", "demo"),
@@ -401,7 +421,7 @@ fn print_overview() {
     println!("  export <a>     write a built-in app as a generic JSON spec");
     println!("  validate -s S  lint a spec (graph, capabilities, policy, secrets)");
     println!("  run -s S     run a spec end-to-end");
-    println!("  list           enumerate specs in LAYA_DSL_DIR (default <crate>/dsl)");
+    println!("  list           enumerate specs across the layered roots (repo → user → builtin)");
     println!("  state -d D    list every per-node record in a NodeStore");
     println!("  resume -s S -d D [-from N] [-state JSON]");
     println!("                 continue a partial run from the last stored iter");
@@ -417,7 +437,8 @@ fn print_overview() {
     println!("  * New to the tool?                        → skill --recipe agent-onboarding");
     println!();
     println!("Common env vars:");
-    println!("  LAYA_DSL_DIR     spec root (default: <crate>/dsl)");
+    println!("  LAYA_DSL_DIR     pin the spec root (overrides the layered repo/user/builtin lookup)");
+    println!("  LAYA_USER_DSL_DIR  per-user spec root (default: ~/.config/laya-workflow/dsl)");
     println!("  LAYA_TEST_PYTHON python3 binary for mock agent capability");
     println!("  LAYA_MOCK3       host:redis:nats:mqtt:smtp:s3:prom:kafka:udp");
     println!("  LAYA_AGENT_BIN_DIR  dir containing `cxgo` / `cmdgo` wrappers");
@@ -500,14 +521,13 @@ static RECIPE_ROLLBACK_BAD_ITER: &str = include_str!("skill/recipes/rollback_bad
 static RECIPE_HARDEN_SPEC: &str = include_str!("skill/recipes/harden_spec.md");
 static RECIPE_AGENT_ONBOARDING: &str = include_str!("skill/recipes/agent_onboarding.md");
 
-/// Directory containing the DSL specs (used to resolve nested `workflow` refs).
-fn dsl_dir() -> String {
-    if let Ok(d) = std::env::var("LAYA_DSL_DIR") {
-        return d;
-    }
-    // default: `<crate>/dsl` relative to the executable's crate root
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    format!("{manifest}/dsl")
+/// The explicitly requested spec root, if any: `--dsl-dir` beats
+/// `LAYA_DSL_DIR`. `None` means "no pin" — fall back to the layered lookup
+/// (repo → user → builtin) resolved by `spec::spec_roots()`.
+fn explicit_dsl_dir(cli: &Cli) -> Option<String> {
+    cli.dsl_dir
+        .clone()
+        .or_else(|| std::env::var("LAYA_DSL_DIR").ok().filter(|d| !d.is_empty()))
 }
 
 fn app_workflow(app: &str) -> Result<ResilientWorkflow> {

@@ -75,6 +75,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-nesting", t_spec::test_spec_nesting),
         ("spec-folders", t_spec::test_spec_folders),
         ("spec-version", t_spec::test_spec_version),
+        ("spec-layers", t_spec::test_spec_layers),
         ("capabilities", capabilities::test_capabilities),
         ("capabilities-extra", capabilities::test_capabilities_extra),
         ("capabilities-batch2", capabilities2::test_capabilities_batch2),

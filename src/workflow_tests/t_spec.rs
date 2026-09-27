@@ -264,7 +264,7 @@ pub fn test_spec_folders(h: &mut Harness) {
     let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
     h.check("folders: discover finds nested specs",
             names.contains(&"refund") && names.contains(&"parent"));
-    spec::set_dsl_dir("dsl"); // restore the default used by the CLI
+    spec::clear_dsl_dir(); // restore the CLI default (unpinned → layered)
     let _ = std::fs::remove_dir_all(&root);
 
     // ── DSL versioning ──────────────────────────────────────────────
@@ -332,9 +332,134 @@ pub fn test_spec_version(h: &mut Harness) {
     let listed: Vec<String> = spec::discover(vroot.to_str().unwrap()).unwrap().into_iter().map(|(n, _)| n).collect();
     h.check("dsl: discover lists both versions",
             listed.iter().filter(|n| n.starts_with("svc")).count() == 2);
-    spec::set_dsl_dir("dsl");
+    spec::clear_dsl_dir();
     let _ = std::fs::remove_dir_all(&vroot);
 
     // ── external capabilities ───────────────────────────────────────
 }
 
+
+// ── layered spec roots: builtin -> user -> repo, explicit pins ──────
+//
+// Every layer is a plain spec directory; the engine picks the highest-priority
+// root that defines a name. cwd + HOME + the pin flag are process-wide, so this
+// section snapshots and restores them to keep later sections clean.
+pub fn test_spec_layers(h: &mut Harness) {
+    let saved_cwd = std::env::current_dir().unwrap();
+    let saved_home = std::env::var_os("HOME");
+    let saved_xdg = std::env::var_os("XDG_CONFIG_HOME");
+    let saved_user = std::env::var_os("LAYA_USER_DSL_DIR");
+    spec::clear_dsl_dir();
+
+    let base = std::env::temp_dir().join("laya_spec_layers_test");
+    let _ = std::fs::remove_dir_all(&base);
+
+    let write = |path: &std::path::Path, label: &str| {
+        if let Some(d) = path.parent() { std::fs::create_dir_all(d).unwrap(); }
+        let s = json!({
+            "name": "common", "dsl_version": 2, "start": label,
+            "nodes": [{"name": label, "primary_q": "q",
+                       "questions": {"q": {"type": "choice", "instructions": "?",
+                                           "criteria": {"A": "a"}}},
+                       "edge": {"condition": {}, "default": "STOP"}}]
+        });
+        std::fs::write(path, serde_json::to_string(&s).unwrap()).unwrap();
+    };
+
+    // repo layer: <base>/repo with a .git boundary and a dsl/ dir
+    let repo = base.join("repo");
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    let repo_dsl = repo.join("dsl");
+    write(&repo_dsl.join("common.json"), "REPO");
+    write(&repo_dsl.join("only_repo.json"), "REPO_ONLY");
+    let repo_work = repo.join("work/nested");
+    std::fs::create_dir_all(&repo_work).unwrap();
+    // a stray dsl/ ABOVE the git root must never be adopted
+    write(&base.join("dsl/common.json"), "ABOVE_GIT");
+    write(&base.join("dsl/above_only.json"), "ABOVE_ONLY");
+
+    // user layer: <base>/home/.config/laya-workflow/dsl
+    let home = base.join("home");
+    let user_dsl = home.join(".config/laya-workflow/dsl");
+    write(&user_dsl.join("common.json"), "USER");
+    write(&user_dsl.join("only_user.json"), "USER_ONLY");
+
+    std::env::set_var("HOME", &home);
+    std::env::remove_var("XDG_CONFIG_HOME");
+    std::env::remove_var("LAYA_USER_DSL_DIR");
+    std::env::set_current_dir(&repo_work).unwrap();
+
+    // Resolve a bare ref through the layers; nesting namespaces the start node
+    // as `<ref-node>::<start>`, which tells us which root won.
+    let resolved = |reference: &str| -> Result<String, String> {
+        let caller = json!({"name": "c", "start": "go",
+                            "nodes": [{"name": "go", "workflow": reference}]});
+        spec::from_spec(&caller).map(|wf| wf.start.clone()).map_err(|e| e.to_string())
+    };
+
+    h.eq("layers: repo overrides user", resolved("common"), Ok("go::REPO".to_string()));
+    h.eq("layers: repo-only spec resolves", resolved("only_repo"), Ok("go::REPO_ONLY".to_string()));
+    h.eq("layers: user-only spec resolves", resolved("only_user"), Ok("go::USER_ONLY".to_string()));
+    h.check("layers: walk stops at the git root", resolved("above_only").is_err());
+    h.eq("layers: above-git spec never wins", resolved("common"), Ok("go::REPO".to_string()));
+
+    // Search-path order is low -> high, and builtin is always the floor.
+    let chain = spec::spec_roots_low_to_high();
+    let layers: Vec<&str> = chain.iter().map(|r| r.layer.as_str()).collect();
+    h.eq("layers: low->high order", layers, vec!["builtin", "user", "repo"]);
+    h.eq(
+        "layers: primary root is repo",
+        spec::primary_spec_dir().canonicalize().unwrap(),
+        repo_dsl.canonicalize().unwrap(),
+    );
+
+    // discover_layered marks the shadowed lower-priority duplicate.
+    let found = spec::discover_layered().unwrap();
+    let common: Vec<_> = found.iter().filter(|s| s.name == "common").collect();
+    h.eq("layers: common listed twice", common.len(), 2);
+    h.eq("layers: repo copy wins", common[0].layer, spec::SpecLayer::Repo);
+    h.eq("layers: repo copy not shadowed", common[0].shadowed_by.is_none(), true);
+    h.eq("layers: user copy shadowed by repo",
+         common[1].shadowed_by.as_ref().map(|(l, _)| *l), Some(spec::SpecLayer::Repo));
+    h.check("layers: builtin spec still discoverable",
+            found.iter().any(|s| s.layer == spec::SpecLayer::Builtin));
+
+    // Explicit pin replaces the whole chain (single root, legacy behaviour).
+    spec::set_dsl_dir(user_dsl.to_str().unwrap());
+    h.eq("layers: explicit pin -> single root", spec::spec_roots().len(), 1);
+    h.eq("layers: explicit layer tagged", spec::spec_roots()[0].layer, spec::SpecLayer::Explicit);
+    h.eq("layers: explicit ignores repo", resolved("common"), Ok("go::USER".to_string()));
+    spec::clear_dsl_dir();
+    h.eq("layers: clear_dsl_dir restores repo", resolved("common"), Ok("go::REPO".to_string()));
+
+    // `.laya-workflow/dsl` is preferred over a bare `dsl/`.
+    let repo2 = base.join("repo2");
+    std::fs::create_dir_all(repo2.join(".git")).unwrap();
+    std::fs::create_dir_all(repo2.join("work")).unwrap();
+    write(&repo2.join(".laya-workflow/dsl/common.json"), "DOT");
+    write(&repo2.join("dsl/common.json"), "BARE");
+    std::env::set_current_dir(repo2.join("work")).unwrap();
+    h.eq(
+        "layers: .laya-workflow/dsl preferred",
+        spec::primary_spec_dir().canonicalize().unwrap(),
+        repo2.join(".laya-workflow/dsl").canonicalize().unwrap(),
+    );
+    h.eq("layers: dot-dir spec wins", resolved("common"), Ok("go::DOT".to_string()));
+
+    // Builtin fallback: a repo-less cwd with an empty user root still finds the
+    // engine-shipped specs under <crate>/dsl.
+    let empty = base.join("emptyrepo");
+    std::fs::create_dir_all(empty.join(".git")).unwrap();
+    std::env::set_var("HOME", base.join("emptyhome"));
+    std::env::set_current_dir(&empty).unwrap();
+    h.check("layers: builtin fallback resolves",
+            matches!(resolved("status_snapshot"), Ok(s) if s.starts_with("go::")));
+
+    // Restore the process-wide globals.
+    std::env::set_current_dir(&saved_cwd).unwrap();
+    match saved_home { Some(v) => std::env::set_var("HOME", v), None => std::env::remove_var("HOME") }
+    match saved_xdg { Some(v) => std::env::set_var("XDG_CONFIG_HOME", v), None => std::env::remove_var("XDG_CONFIG_HOME") }
+    match saved_user { Some(v) => std::env::set_var("LAYA_USER_DSL_DIR", v), None => std::env::remove_var("LAYA_USER_DSL_DIR") }
+    spec::clear_dsl_dir();
+    let _ = std::fs::remove_dir_all(&base);
+}

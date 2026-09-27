@@ -117,8 +117,226 @@ pub fn dsl_dir() -> &'static std::sync::Mutex<String> {
     D.get_or_init(|| std::sync::Mutex::new("dsl".to_string()))
 }
 
+/// Explicitly set the spec root and **pin** it: layered discovery collapses to
+/// this single root (the legacy single-root behaviour). The CLI pins here for
+/// `--dsl-dir` / `LAYA_DSL_DIR`. Use [`clear_dsl_dir`] to restore layering.
 pub fn set_dsl_dir(dir: &str) {
     *dsl_dir().lock().unwrap() = dir.to_string();
+    DSL_DIR_PINNED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Drop the explicit pin set by [`set_dsl_dir`] and return to layered lookup.
+pub fn clear_dsl_dir() {
+    DSL_DIR_PINNED.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// True when the spec root was pinned explicitly (single-root mode).
+pub fn dsl_dir_pinned() -> bool {
+    DSL_DIR_PINNED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Which layer a spec root belongs to. Later layers override earlier ones.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecLayer {
+    /// `<crate>/dsl` — the specs shipped with the engine.
+    Builtin,
+    /// `~/.config/laya-workflow/dsl` (or `$XDG_CONFIG_HOME` / `$LAYA_USER_DSL_DIR`).
+    User,
+    /// `.laya-workflow/dsl` or `dsl/`, found by walking up to the git root.
+    /// Committed with the repo, so it travels with the code.
+    Repo,
+    /// `--dsl-dir` / `LAYA_DSL_DIR` / `set_dsl_dir` — replaces every other layer.
+    Explicit,
+}
+
+impl SpecLayer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SpecLayer::Builtin => "builtin",
+            SpecLayer::User => "user",
+            SpecLayer::Repo => "repo",
+            SpecLayer::Explicit => "explicit",
+        }
+    }
+}
+
+/// One resolved spec root and the layer it came from.
+#[derive(Debug, Clone)]
+pub struct SpecRoot {
+    pub path: std::path::PathBuf,
+    pub layer: SpecLayer,
+}
+
+/// Repo-relative spec directories, searched upward from the cwd (nearest first).
+///
+/// `.laya-workflow/dsl` wins over a bare `dsl/` so a repo can keep a dedicated,
+/// tool-namespaced spec folder without colliding with other `dsl/` uses.
+pub const REPO_SPEC_REL_PATHS: [&str; 2] = [".laya-workflow/dsl", "dsl"];
+
+static DSL_DIR_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `<crate>/dsl` — the specs compiled into the engine's source tree.
+pub fn builtin_spec_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dsl"))
+}
+
+/// Per-user spec root: `$LAYA_USER_DSL_DIR` → `$XDG_CONFIG_HOME/laya-workflow/dsl`
+/// → `~/.config/laya-workflow/dsl`.
+pub fn user_spec_dir() -> Option<std::path::PathBuf> {
+    if let Some(d) = std::env::var_os("LAYA_USER_DSL_DIR").filter(|v| !v.is_empty()) {
+        return Some(std::path::PathBuf::from(d));
+    }
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return Some(std::path::PathBuf::from(x).join("laya-workflow").join("dsl"));
+    }
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(|h| std::path::PathBuf::from(h).join(".config").join("laya-workflow").join("dsl"))
+}
+
+/// The explicitly pinned root, if any.
+pub fn explicit_dsl_dir() -> Option<std::path::PathBuf> {
+    if dsl_dir_pinned() {
+        Some(std::path::PathBuf::from(dsl_dir().lock().unwrap().clone()))
+    } else {
+        None
+    }
+}
+
+/// Walk up from `start` looking for a repo-local spec dir, stopping at the git
+/// root.
+///
+/// A `.git` entry (directory, or a file for worktrees/submodules) marks the
+/// repo boundary: the walk checks that directory and then stops, so a `dsl/`
+/// belonging to an unrelated parent directory is never adopted.
+pub fn discover_repo_spec_dir(start: &std::path::Path) -> Option<std::path::PathBuf> {
+    let absolute = if start.is_absolute() {
+        start.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(start)
+    };
+    let mut dir: Option<&std::path::Path> = Some(absolute.as_path());
+    while let Some(d) = dir {
+        for rel in REPO_SPEC_REL_PATHS {
+            let cand = d.join(rel);
+            if cand.is_dir() {
+                return Some(cand);
+            }
+        }
+        if d.join(".git").exists() {
+            break;
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// Spec roots **high → low** priority.
+///
+/// When the root is pinned explicitly the result is exactly that one root;
+/// otherwise it is `repo → user → builtin`. Duplicate directories (e.g. a repo
+/// that *is* the checkout) are collapsed, keeping the higher-priority layer.
+pub fn spec_roots() -> Vec<SpecRoot> {
+    if let Some(ex) = explicit_dsl_dir() {
+        return vec![SpecRoot { path: ex, layer: SpecLayer::Explicit }];
+    }
+    let mut roots: Vec<SpecRoot> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(repo) = discover_repo_spec_dir(&cwd) {
+            roots.push(SpecRoot { path: repo, layer: SpecLayer::Repo });
+        }
+    }
+    if let Some(user) = user_spec_dir() {
+        roots.push(SpecRoot { path: user, layer: SpecLayer::User });
+    }
+    roots.push(SpecRoot { path: builtin_spec_dir(), layer: SpecLayer::Builtin });
+    dedup_by_real_path(roots)
+}
+
+/// Spec roots **low → high** priority — the order a reader should apply them in,
+/// since each later root overrides the ones before it.
+pub fn spec_roots_low_to_high() -> Vec<SpecRoot> {
+    let mut roots = spec_roots();
+    roots.reverse();
+    roots
+}
+
+/// Directory used for secrets and as the implicit working root: the explicit
+/// pin, else the highest-priority root that exists on disk, else the builtin
+/// root.
+pub fn primary_spec_dir() -> std::path::PathBuf {
+    if let Some(ex) = explicit_dsl_dir() {
+        return ex;
+    }
+    for r in spec_roots() {
+        if r.path.is_dir() {
+            return r.path;
+        }
+    }
+    builtin_spec_dir()
+}
+
+/// Drop duplicate roots that resolve to the same directory, keeping the
+/// highest-priority occurrence.
+fn dedup_by_real_path(roots: Vec<SpecRoot>) -> Vec<SpecRoot> {
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    let mut out: Vec<SpecRoot> = Vec::new();
+    for r in roots {
+        let real = r.path.canonicalize().unwrap_or_else(|_| r.path.clone());
+        if seen.iter().any(|s| *s == real) {
+            continue;
+        }
+        seen.push(real);
+        out.push(r);
+    }
+    out
+}
+
+/// One spec found by [`discover_layered`].
+#[derive(Debug, Clone)]
+pub struct DiscoveredSpec {
+    pub name: String,
+    pub path: std::path::PathBuf,
+    /// Root directory the spec was found under.
+    pub root: std::path::PathBuf,
+    /// Layer that root belongs to.
+    pub layer: SpecLayer,
+    /// Declared `dsl_version` (missing → 1).
+    pub version: u64,
+    /// Present on a lower-priority spec whose name is already claimed by a
+    /// higher-priority `(layer, root)`.
+    pub shadowed_by: Option<(SpecLayer, std::path::PathBuf)>,
+}
+
+/// Layered discovery over [`spec_roots`] (high → low). The first root to define
+/// a name wins; later definitions are reported with `shadowed_by` set so
+/// callers can surface the shadowing instead of silently hiding it.
+pub fn discover_layered() -> Result<Vec<DiscoveredSpec>> {
+    let mut winner: std::collections::HashMap<String, (SpecLayer, std::path::PathBuf)> =
+        std::collections::HashMap::new();
+    let mut out: Vec<DiscoveredSpec> = Vec::new();
+    for root in spec_roots() {
+        let root_str = root.path.to_string_lossy().to_string();
+        for (name, path) in discover(&root_str)? {
+            let version = read_version(&path).unwrap_or(1);
+            let shadowed_by = match winner.get(&name) {
+                None => {
+                    winner.insert(name.clone(), (root.layer, root.path.clone()));
+                    None
+                }
+                Some(hit) => Some(hit.clone()),
+            };
+            out.push(DiscoveredSpec {
+                name,
+                path,
+                root: root.path.clone(),
+                layer: root.layer,
+                version,
+                shadowed_by,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// Like `resolve_ref_in` but also returns the directory the sub-spec came from,
@@ -142,29 +360,43 @@ fn resolve_ref_dir(
                     return Ok((s.clone(), None));
                 }
             }
-            let root = dsl_dir().lock().unwrap().clone();
-            let mut cands: Vec<std::path::PathBuf> = Vec::new();
+            // 1. relative to the referring file's own directory (highest priority)
             if let Some(dir) = from_dir {
-                cands.push(dir.join(&name));
-                cands.push(dir.join(format!("{name}.json")));
-            }
-            let base = std::path::Path::new(&root);
-            cands.push(base.join(&name));
-            cands.push(base.join(format!("{name}.json")));
-            for c in cands {
-                if c.is_file() {
-                    return Ok((read_spec_file(&c)?, c.parent().map(|d| d.to_path_buf())));
+                for c in [dir.join(&name), dir.join(format!("{name}.json"))] {
+                    if c.is_file() {
+                        return Ok((read_spec_file(&c)?, c.parent().map(|d| d.to_path_buf())));
+                    }
                 }
             }
-            // tree search, honouring the version pin (or picking the highest)
-            if let Some(found) = find_in_tree_versioned(base, &name, pinned)? {
-                return Ok((read_spec_file(&found)?, found.parent().map(|d| d.to_path_buf())));
+            // 2. layered roots, high → low; the first hit wins
+            let roots = spec_roots();
+            for root in &roots {
+                let base = root.path.as_path();
+                if !base.is_dir() {
+                    continue;
+                }
+                for c in [base.join(&name), base.join(format!("{name}.json"))] {
+                    if c.is_file() {
+                        return Ok((read_spec_file(&c)?, c.parent().map(|d| d.to_path_buf())));
+                    }
+                }
+                // tree search, honouring the version pin (or picking the highest)
+                if let Some(found) = find_in_tree_versioned(base, &name, pinned)? {
+                    return Ok((read_spec_file(&found)?, found.parent().map(|d| d.to_path_buf())));
+                }
             }
             let hint = match pinned {
                 Some(v) => format!(" (version {v} pinned)"),
                 None => String::new(),
             };
-            bail!("workflow reference {raw:?} not found{hint} (searched referring dir, {root}/ and its subtree)")
+            let searched: Vec<String> = roots
+                .iter()
+                .map(|r| format!("{} [{}]", r.path.display(), r.layer.as_str()))
+                .collect();
+            bail!(
+                "workflow reference {raw:?} not found{hint} (searched referring dir, {})",
+                searched.join(", ")
+            )
         }
         other => bail!("workflow reference must be a string or {{\"inline\": …}}, got {other}"),
     }

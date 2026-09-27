@@ -7,7 +7,7 @@ containing everything the workflow engine needs:
 - `.` — **`laya-workflow`** crate (workflow DSL / engine / CLI)
   - `laya-workflow` — CLI: `validate`, `run`, `list`, `apps`, `describe`,
     `demo`, `optimize`, `improve`, `export`, `secrets`, `skill`.
-  - `laya-workflow-tests` — the embedded test harness (492 cases).
+  - `laya-workflow-tests` — the embedded test harness (500 cases with the local mocks; 445 offline).
 - [`laya-tch/`](./laya-tch) — **`laya-tch`** inference engine crate
   (`tch-rs` / PyTorch bindings). Serves the Laya model over
   `POST /v1/systemone` for real decisions; `laya-workflow --base-url`
@@ -51,8 +51,24 @@ MODEL_DIR="$HOME/models/convaiinnovations--laya" \
 
 ## DSL
 
-Specs live under `dsl/`. See `bench/dsl_smoke.py` for end-to-end smoke tests
-(`python3 bench/dsl_smoke.py`).
+Specs live under `dsl/`, organised by domain. See `bench/dsl_smoke.py` for
+end-to-end smoke tests (`python3 bench/dsl_smoke.py`).
+
+A bare `"workflow": "<name>"` reference — and `laya-workflow list` — resolves
+through a **layered** set of spec roots (highest priority first):
+
+1. **explicit** — `--dsl-dir <path>` / `$LAYA_DSL_DIR` *pins* the root and
+   replaces the layers below (legacy single-root behaviour).
+2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, found by walking up
+   from the cwd and stopping at the git root. Committed with the repo, so each
+   repo's topology travels with its code.
+3. **user** — `$LAYA_USER_DSL_DIR` → `$XDG_CONFIG_HOME/laya-workflow/dsl` →
+   `~/.config/laya-workflow/dsl`. Personal, never committed.
+4. **builtin** — `<crate>/dsl`, the specs shipped with the binary.
+
+The first root that defines a name wins; a same-named spec in a lower-priority
+root is reported by `list` as `(shadowed by …)`. `laya-workflow list` prints the
+search path (low → high) it actually used.
 
 ### Singleton Chrome CDP
 
