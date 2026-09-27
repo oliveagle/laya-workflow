@@ -1,0 +1,28 @@
+[package]
+name = "laya-mlx"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust MLX inference for the Laya decision model (Apple GPU)"
+
+# Standalone crate: opting out of the repo workspace keeps the heavy MLX build
+# (mlx-rs compiles MLX from source) away from `cargo build` for laya-workflow /
+# laya-tch. Build with `cargo build -p` nowhere — cd into this directory.
+[workspace]
+
+[lib]
+name = "laya_mlx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "laya-mlx"
+path = "src/main.rs"
+
+[dependencies]
+mlx-rs = "0.32"
+safetensors = "0.4"
+tokenizers = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+half = "2"
