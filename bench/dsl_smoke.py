@@ -120,6 +120,10 @@ STATES: dict[str, dict] = {
         "review": {"text": "crypto category transaction large_amount above threshold"},
         "clear": {"text": "goods_services payroll wire small amount US CA"},
     },
+    "dialogue_policy": {
+        "start": {"text": "hi hello greet"},
+        "escalation": {"text": "escalate handoff human reason cannot verify"},
+    },
     "intrusion_signal_guard": {
         "block": {"text": "sql_injection signature union select port_scan unusual_country"},
         "challenge": {"text": "impossible_travel single strong signal"},

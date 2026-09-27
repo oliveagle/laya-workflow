@@ -540,15 +540,41 @@ impl Decide for HeuristicBackend {
                 }
                 // Adaptive risk control: intent/behaviour are multi-choice (not A/B).
                 "intent" => {
-                    let pick = if contains_any(&text, &["credential_stuffing", "credential stuffing"]) { "credential_stuffing" }
-                        else if contains_any(&text, &["card_testing", "card testing"]) { "card_testing" }
-                        else if contains_any(&text, &["account_takeover", "account takeover"]) { "account_takeover" }
-                        else if contains_any(&text, &["recovery"]) { "legitimate_recovery" }
-                        else { "legitimate_purchase" };
-                    let keys = ["legitimate_purchase", "legitimate_recovery", "credential_stuffing", "card_testing", "account_takeover", "unknown"];
-                    let mut m = Map::new();
-                    for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
-                    (serde_json::json!(pick), m, 0.9)
+                    // Criteria-aware: the same question id serves two specs with
+                    // different criteria sets (same trick as "category" below).
+                    let crit = qdef.get("criteria").and_then(|c| c.as_object());
+                    let has_aml = crit.map(|o| o.contains_key("legitimate_purchase")).unwrap_or(false);
+                    if has_aml {
+                        let pick = if contains_any(&text, &["credential_stuffing", "credential stuffing"]) { "credential_stuffing" }
+                            else if contains_any(&text, &["card_testing", "card testing"]) { "card_testing" }
+                            else if contains_any(&text, &["account_takeover", "account takeover"]) { "account_takeover" }
+                            else if contains_any(&text, &["recovery"]) { "legitimate_recovery" }
+                            else { "legitimate_purchase" };
+                        let keys = ["legitimate_purchase", "legitimate_recovery", "credential_stuffing", "card_testing", "account_takeover", "unknown"];
+                        let mut m = Map::new();
+                        for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
+                        (serde_json::json!(pick), m, 0.9)
+                    } else if crit.map(|o| o.contains_key("greet")).unwrap_or(false) {
+                        // Dialogue policy: pick by the keywords present for each state.
+                        let pick = if contains_any(&text, &["stop_path", "confirm execute", "confirm_transfer"]) { "confirm" }
+                            else if contains_any(&text, &["provide_slots", "provide slot", "store_slots", "fill slots", "amount recipient"]) { "provide_slot" }
+                            else if contains_any(&text, &["request_confirm", "all slots", "ask confirm"]) { "request_confirm" }
+                            else if contains_any(&text, &["authenticate", "mfa_code", "auth_method"]) { "authenticate" }
+                            else if contains_any(&text, &["identify", "user_id"]) { "identify" }
+                            else if contains_any(&text, &["start_collection", "start collection", "operation transfer"]) { "start_collection" }
+                            else if contains_any(&text, &["escalate", "handoff", "hand off"]) { "escalate" }
+                            else if contains_any(&text, &["abort", "cancel session", "discard"]) { "abort" }
+                            else if crit.map(|o| o.contains_key("noop")).unwrap_or(false) { "noop" }
+                            else { "greet" };
+                        let keys: Vec<String> = crit
+                            .map(|o| o.keys().cloned().collect())
+                            .unwrap_or_else(|| vec![pick.to_string()]);
+                        let mut m = Map::new();
+                        for k in &keys { m.insert(k.clone(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
+                        (serde_json::json!(pick), m, 0.9)
+                    } else {
+                        default_choice(qdef)
+                    }
                 }
                 "behaviour" => {
                     let pick = if contains_any(&text, &["repeated_failure", "repeated failure"]) { "repeated_failures" }

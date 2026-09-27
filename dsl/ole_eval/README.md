@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 5 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 6 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -15,6 +15,7 @@
 | `deployment_canary_guard.json` | `deployment_canary_guard/` | 危险 token / 容量 / 形状校验，有序 **REJECT → ESCALATE → APPROVE** |
 | `aml_screener.json` | `aml_screener/` | 制裁国 / 风险分，有序 **BLOCK → REVIEW → CLEAR**（R001 制裁国强制 BLOCK） |
 | `intrusion_signal_guard.json` | `intrusion_signal_guard/` | 签名 / 速率 / 端口 / 地理时间信号 → 4 级裁决 **block → challenge → monitor → allow** |
+| `dialogue_policy.json` | `dialogue_policy/` | Intent→State→Action DFA（8 节点）：edge routing 驱动 **greeting → identifying → authenticated → collecting → confirm → done / escalated / aborted** 状态迁移 |
 
 ## 映射方式
 
@@ -46,7 +47,7 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 已为 5 个 spec 注册样本状态，每个决策 label
+`bench/dsl_smoke.py` 的 `STATES` 已为 6 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
@@ -77,7 +78,7 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 ## 边界说明
 
 - DSL `Edge` 目前只按 `answer → node` 路由（无分支式数值条件），所以这些
-  单节点"判定 → 出结论"的策略最契合 DSL 现状；若未来要树状多级审核流，
+  单节点"判定 → 出结论"的策略（5 个）和多节点 DFA 状态机（`dialogue_policy`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
   可把 `REVIEW` 语义拆成单独节点。
 - DSL action kinds 仅 `none` / `copy_keys` / `merge_open_probs` / `threshold`
   / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 5 个 spec

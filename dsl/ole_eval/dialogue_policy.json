@@ -1,0 +1,176 @@
+{
+  "name": "dialogue_policy",
+  "description": "Port of ole-eval code/qwen_vm/app_scenarios/dialogue_policy. The deterministic Intent→State→Action DFA is preserved as edge routing across nodes: each node asks the LLM for the user's intent given the current dialogue state, and the edge condition advances to the next state node. Final escalation abort and duplicate-confirm guards map to terminal-state STOP rules.",
+  "start": "greeting",
+  "max_iterations": 12,
+  "nodes": [
+    {
+      "name": "greeting",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "What is the user's intent at this turn?",
+          "criteria": {
+            "greet": "open the conversation",
+            "escalate": "hand off to a human",
+            "abort": "cancel the session"
+          }
+        }
+      },
+      "edge": {
+        "condition": { "greet": "identifying", "escalate": "escalated", "abort": "aborted" },
+        "default": "STOP"
+      },
+      "action": { "kind": "copy_keys", "keys": ["intent"] },
+      "state": { "keep": ["user_id", "reason"] }
+    },
+    {
+      "name": "identifying",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "In the identifying state the user must identify or authenticate.",
+          "criteria": {
+            "identify": "supply user_id",
+            "authenticate": "supply auth_method + mfa_code",
+            "escalate": "hand off",
+            "abort": "cancel"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "identify": "identifying",
+          "authenticate": "authenticated",
+          "escalate": "escalated",
+          "abort": "aborted"
+        },
+        "default": "STOP"
+      },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    },
+    {
+      "name": "authenticated",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "After authentication, the user must choose an operation to start collection for.",
+          "criteria": {
+            "start_collection": "declare the operation",
+            "escalate": "hand off",
+            "abort": "cancel"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "start_collection": "collecting",
+          "escalate": "escalated",
+          "abort": "aborted"
+        },
+        "default": "STOP"
+      },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    },
+    {
+      "name": "collecting",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "While collecting transfer slots, the user may provide more slots or move to confirm.",
+          "criteria": {
+            "provide_slot": "fill in a slot",
+            "request_confirm": "all slots are present, ask to confirm",
+            "escalate": "hand off",
+            "abort": "cancel"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "provide_slot": "collecting",
+          "request_confirm": "confirm",
+          "escalate": "escalated",
+          "abort": "aborted"
+        },
+        "default": "STOP"
+      },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    },
+    {
+      "name": "confirm",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "The user is at the final confirmation step. confirm runs the (single) sensitive execute_transfer once.",
+          "criteria": {
+            "confirm": "execute the transfer once",
+            "escalate": "hand off",
+            "abort": "cancel"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "confirm": "done",
+          "escalate": "escalated",
+          "abort": "aborted"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "intent",
+        "rules": [
+          { "when": { "answer": "confirm" }, "label": "execute_transfer" },
+          { "when": { "always": true }, "label": "noop" }
+        ]
+      },
+      "state": { "keep": ["request_id", "user_id", "recipient_id", "amount", "currency", "purpose"] }
+    },
+    {
+      "name": "done",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Terminal DONE state accepts no further intents except a duplicate confirm (rejected).",
+          "criteria": { "noop": "no action" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    },
+    {
+      "name": "escalated",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Terminal ESCALATED state accepts no further intents.",
+          "criteria": { "noop": "no action" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    },
+    {
+      "name": "aborted",
+      "primary_q": "intent",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Terminal ABORTED state accepts no further intents.",
+          "criteria": { "noop": "no action" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": { "kind": "copy_keys", "keys": ["intent"] }
+    }
+  ]
+}
