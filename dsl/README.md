@@ -13,8 +13,9 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`, `ole_eval/`). `laya-workflow list` walks the tree recursively.
-See `ole_eval/README.md` for the ole-eval scenario mapping.
+`pipelines/`, `ole_eval/`, `devine/`). `laya-workflow list` walks the tree recursively.
+See `ole_eval/README.md` for the ole-eval scenario mapping, and
+`devine/README.md` for the devine_utils release/test/integration flow.
 
 Nesting: a node may reference another workflow
 
@@ -48,6 +49,7 @@ Specs in this directory:
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
+| `devine/release_gate.json` | http probe merged into state, then ordered `threshold` (BLOCK → ALLOW) |
 
 External capabilities: declare them under `"capabilities"` and call them from a node
 with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An action may

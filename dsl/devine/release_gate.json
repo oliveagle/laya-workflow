@@ -1,0 +1,103 @@
+{
+  "name": "devine_release_gate",
+  "dsl_version": 2,
+  "description": "workflow promote 的发布门禁（规则 1）：integration-01 的 /version 必须返回 HTTP 200 且 app_version 与即将 promote 的 rc 完全相等，否则 BLOCK。对应 devine-utils-ci workflow promote 的 gateCheckIntegration01BeforePromote（cmd/devine-utils-ci/internal/workflow_gate.go）。规则原文：没有完成集成测试 01 的生产发布测试的，不允许发布正式版本。",
+  "start": "probe_integration_01",
+  "max_iterations": 4,
+  "convergence_window": 4,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [
+      "devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com"
+    ],
+    "max_timeout_ms": 10000,
+    "max_output": 65536,
+    "retries": 1
+  },
+  "capabilities": {
+    "integration_01_version": {
+      "kind": "http",
+      "method": "GET",
+      "url": "http://devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com/version",
+      "timeout_ms": 10000,
+      "expect_json": true
+    }
+  },
+  "nodes": [
+    {
+      "name": "probe_integration_01",
+      "primary_q": "probe_ran",
+      "questions": {
+        "probe_ran": {
+          "type": "choice",
+          "instructions": "本节点只做一次 integration-01 /version 探针，判定在下一个节点。",
+          "criteria": {
+            "A": "探针已执行",
+            "B": "探针无法执行"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "enforce_release_gate"
+      },
+      "state": {
+        "keep": [
+          "rc"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "integration_01_version",
+        "project": {
+          "integration_01_app_version": "/app_version",
+          "integration_01_http_status": "/status"
+        }
+      }
+    },
+    {
+      "name": "enforce_release_gate",
+      "primary_q": "gate_verdict",
+      "questions": {
+        "gate_verdict": {
+          "type": "choice",
+          "instructions": "发布门禁（规则 1）：没有完成集成测试 01 的生产发布测试的，不允许发布正式版本。判定依据（已合并进 state）：integration_01_http_status 必须为 200，且 integration_01_app_version 必须与 state.rc 完全相等（字符串相等，含 -rc.N 后缀）。任一不满足即 block。",
+          "criteria": {
+            "proceed": "HTTP 200 且 app_version == state.rc —— 允许 promote",
+            "block": "非 200、不可访问、或 app_version != state.rc —— 禁止 promote"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "rc",
+          "integration_01_app_version",
+          "integration_01_http_status"
+        ]
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "gate_verdict",
+        "rules": [
+          {
+            "when": {
+              "answer": "block"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALLOW"
+          }
+        ]
+      }
+    }
+  ]
+}
