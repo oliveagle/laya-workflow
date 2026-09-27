@@ -3,6 +3,7 @@
 //! The workflow runner / DSL engine has moved to the standalone
 //! `laya-workflow` crate (https://github.com/oliveagle/laya-workflow).
 
+pub mod device;
 pub mod model;
 
 /// Load `libtorch_cuda.so` eagerly (Linux only).

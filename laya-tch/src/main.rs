@@ -37,9 +37,10 @@ struct Cli {
     /// One-shot: read a request JSON ({state, questions}), print the response JSON, exit.
     #[arg(long)]
     once: Option<String>,
-    /// Compute device: cpu, cuda, or auto (cuda if available, else cpu).
-    /// Also read from LAYA_TCH_DEVICE when the flag is not given.
-    #[arg(long, value_name = "cpu|cuda[:N]|auto", default_value = "auto")]
+    /// Compute device: cpu, cuda, cuda:N, mlx, or auto.
+    /// `auto` prefers mlx on Apple Silicon (when the MLX runtime is importable),
+    /// else cuda when the linked libtorch has it, else cpu.
+    #[arg(long, value_name = "cpu|cuda[:N]|mlx|auto", default_value = "auto")]
     device: String,
 }
 
@@ -542,47 +543,61 @@ async fn health() -> &'static str {
 }
 
 
-/// Resolve the compute device: `cpu`, `cuda`, or `auto` (cuda if available).
-/// `auto` is also the behaviour when `LAYA_TCH_DEVICE` is set instead of the flag.
-///
-/// On `auto`/`cuda`, we verify CUDA is actually available before loading the
-/// model; if the linked libtorch build is CPU-only this surfaces a clear
-/// error at startup instead of an opaque panic from `aten`.
-fn resolve_device(flag: &str) -> Result<tch::Device> {
-    let requested = match flag {
-        "cpu" => Some(tch::Device::Cpu),
-        "auto" => None, // decided below
-        "cuda" => Some(tch::Device::Cuda(0)),
-        other if other.starts_with("cuda:") => {
-            let idx: usize = other["cuda:".len()..]
-                .parse()
-                .map_err(|_| anyhow!("invalid --device {other:?} (expected cpu | cuda | cuda:N | auto)"))?;
-            Some(tch::Device::Cuda(idx))
-        }
-        other => {
-            return Err(anyhow!(
-                "unknown --device {other:?} (expected cpu | cuda | cuda:N | auto)"
-            ))
-        }
-    };
-    let dev = requested.unwrap_or_else(tch::Device::cuda_if_available);
-    if let tch::Device::Cuda(idx) = dev {
-        if !tch::Cuda::is_available() {
-            return Err(anyhow!(
-                "--device cuda (or auto) requested but the linked libtorch has no CUDA \
-                 support. Build with `LIBTORCH=/path/to/site-packages/torch` pointing at \
-                 a CUDA-enabled PyTorch install (and LIBTORCH_BYPASS_VERSION_CHECK=1 if \
-                 the version differs from 2.13.0), then rerun."
-            ));
-        }
-        let n = tch::Cuda::device_count();
-        if idx >= n as usize {
-            return Err(anyhow!(
-                "--device cuda:{idx} requested but only {n} CUDA device(s) available"
-            ));
-        }
+/// Whether an importable MLX runtime is present. macOS only; on other platforms
+/// the MLX backend does not exist, so this is always `false`.
+fn mlx_runtime_available() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let python = std::env::var("LAYA_MLX_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        std::process::Command::new(python)
+            .args(["-c", "import mlx.core"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
-    Ok(dev)
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// Resolve the compute backend (`cpu`, `cuda[:N]`, `mlx` or `auto`).
+///
+/// The pure rules live in [`laya_tch::device::resolve`]; here we just gather the
+/// runtime facts (platform, CUDA, MLX) so `auto` can prefer MLX on Apple
+/// Silicon. CUDA is verified before the model is loaded, so a CPU-only libtorch
+/// surfaces a clear error at startup instead of an opaque panic from `aten`.
+///
+/// The tch engine cannot *execute* the MLX backend in Phase 1 (MLX compute lives
+/// in the separate Python runtime under `laya-tch/mlx/`), so `auto` must only
+/// select backends this engine can actually run: if the pure resolver prefers
+/// `mlx` under `auto`, we degrade to CUDA when available, else CPU. An explicit
+/// `--device mlx` is still honoured and produces the guidance error in `main`.
+fn resolve_backend(flag: &str) -> Result<laya_tch::device::Backend> {
+    let cuda_available = tch::Cuda::is_available();
+    let env = laya_tch::device::DeviceEnv {
+        platform: laya_tch::device::Platform::current(),
+        mlx_available: mlx_runtime_available(),
+        cuda_available,
+        cuda_count: if cuda_available { tch::Cuda::device_count() as usize } else { 0 },
+    };
+    let backend = laya_tch::device::resolve(flag, &env)?;
+    if flag == "auto" && backend == laya_tch::device::Backend::Mlx {
+        let fallback = if env.cuda_available && env.cuda_count > 0 {
+            laya_tch::device::Backend::Cuda(0)
+        } else {
+            laya_tch::device::Backend::Cpu
+        };
+        eprintln!(
+            "[laya-tch] auto: MLX runtime is present but the tch engine cannot serve it; \
+             using {fallback}. Use the Python MLX runtime (`laya-tch/mlx/`) for MLX, or pass \
+             `--device mlx` for details."
+        );
+        return Ok(fallback);
+    }
+    Ok(backend)
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -590,7 +605,19 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     laya_tch::preload_torch_cuda();
     let t0 = Instant::now();
-    let device = resolve_device(&cli.device)?;
+    let backend = resolve_backend(&cli.device)?;
+    eprintln!("[laya-tch] resolved device: {backend}");
+    let device = match backend {
+        laya_tch::device::Backend::Cpu => tch::Device::Cpu,
+        laya_tch::device::Backend::Cuda(idx) => tch::Device::Cuda(idx),
+        laya_tch::device::Backend::Mlx => bail!(
+            "--device {backend} selects the Apple MLX backend. The tch engine (HTTP/--once) \
+             runs on libtorch and cannot execute MLX; the native MLX implementation is the \
+             Rust crate `laya-mlx` (`cd laya-mlx && cargo build --release`, then \
+             `./target/release/laya-mlx --request laya-tch/mlx/examples/ref_request.json`). \
+             Re-run the tch engine with `--device cpu` (or `cuda` where available)."
+        ),
+    };
     eprintln!("[laya-tch] loading model from {} on {:?}", cli.model_dir, device);
     let engine = Engine::load_on(&cli.model_dir, device)?;
     eprintln!("[laya-tch] loaded in {:.1}s", t0.elapsed().as_secs_f64());
