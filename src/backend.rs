@@ -678,7 +678,7 @@ impl Decide for HeuristicBackend {
                 // evaluates them uniformly. Longest-first substring match on the
                 // serialised state, case-insensitive (same helper as the named
                 // handlers above).
-                _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex"))).is_some() => {
+                _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
                     // `match_any`: literal substring needles (word-boundary aware).
                     // `match_regex`: full regex patterns (any match counts as a hit),
@@ -714,8 +714,19 @@ impl Decide for HeuristicBackend {
                     }
                     match qtype {
                         "score" => {
-                            let v = if hit { h.get("score_hit").and_then(|x| x.as_f64()).unwrap_or(2.0) }
-                                    else { h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5) };
+                            // `heuristic.extract_numeric: "field"` pulls the raw
+                            // numeric value out of a state field and uses it as the
+                            // score, so threshold rules can compare the real value
+                            // (days_left, error_rate, byte size, …) instead of a
+                            // two-constant hit/miss pair. Field missing/unparsable
+                            // falls back to `score_miss` (fail-closed for scores
+                            // that gate on a number).
+                            let v = if let Some(field) = h.get("extract_numeric").and_then(|x| x.as_str()) {
+                                state.get(field)
+                                    .and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|sv| sv.parse::<f64>().ok())))
+                                    .unwrap_or_else(|| h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.0))
+                            } else if hit { h.get("score_hit").and_then(|x| x.as_f64()).unwrap_or(2.0) }
+                            else { h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5) };
                             bscore(v)
                         }
                         _ => {

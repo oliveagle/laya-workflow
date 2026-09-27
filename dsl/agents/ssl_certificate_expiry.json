@@ -1,0 +1,52 @@
+{
+  "name": "ssl_certificate_expiry",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/code/scripts/ssl-expiry-check.sh + ssl-renew-olehome.sh shared decision. Probe layer computes days_left (whole days to expiry) and passes it as a string; three choice questions classify it (expired <0, threshold <30, plus cert-readable and force flags) and the ordered rules reproduce the shell's EXPIRED / WARN_RENEW / OK ladder plus RENEW_FORCED and FAIL_UNREADABLE.",
+  "start": "check",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "check",
+      "primary_q": "cert_readable",
+      "questions": {
+        "cert_readable": {
+          "type": "choice",
+          "instructions": "Could the probe retrieve the certificate info?",
+          "criteria": { "A": "yes, readable", "B": "no, unreadable/missing" },
+          "heuristic": { "field": "cert_status", "match_any": ["unreadable", "missing", "fetch_failed"], "p_hit": 0.95, "p_miss": 0.05 }
+        },
+        "renew_forced": {
+          "type": "choice",
+          "instructions": "Was renewal requested with --force?",
+          "criteria": { "A": "no force", "B": "yes, forced" },
+          "heuristic": { "field": "force_mode", "match_any": ["force", "forced"], "p_hit": 0.9, "p_miss": 0.1 }
+        },
+        "cert_expired": {
+          "type": "choice",
+          "instructions": "Is the certificate already expired (days_left < 0)?",
+          "criteria": { "A": "not expired", "B": "already expired" },
+          "heuristic": { "field": "days_left", "match_regex": ["^-"], "p_hit": 0.95, "p_miss": 0.05 }
+        },
+        "cert_below_threshold": {
+          "type": "choice",
+          "instructions": "Is days_left below the renewal threshold (0 <= days_left < 30)?",
+          "criteria": { "A": "at/above threshold", "B": "below threshold" },
+          "heuristic": { "field": "days_left", "match_regex": ["^([0-9]|[12][0-9])$"], "p_hit": 0.95, "p_miss": 0.05 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "cert_readable",
+        "rules": [
+          { "when": { "question": "cert_readable", "answer": "B" }, "label": "FAIL_UNREADABLE" },
+          { "when": { "question": "renew_forced", "answer": "B" }, "label": "RENEW_FORCED" },
+          { "when": { "question": "cert_expired", "answer": "B" }, "label": "EXPIRED" },
+          { "when": { "question": "cert_below_threshold", "answer": "B" }, "label": "WARN_RENEW" },
+          { "when": { "always": true }, "label": "OK" }
+        ]
+      },
+      "state": { "keep": ["cert_status", "days_left", "force_mode", "domain"] }
+    }
+  ]
+}

@@ -178,6 +178,15 @@ STATES: dict[str, dict] = {
         "warn_know": {"task_layer": "ok", "knowledge_layer": "warn"},
         "fail_collab": {"task_layer": "ok", "knowledge_layer": "ok", "collaboration_layer": "machines_missing"},
     },
+    "ssl_certificate_expiry": {
+        "ok":       {"cert_status": "ok", "days_left": 90, "force_mode": "none"},
+        "warn":     {"cert_status": "ok", "days_left": 15, "force_mode": "none"},
+        "warn0":    {"cert_status": "ok", "days_left": 0, "force_mode": "none"},
+        "expired":  {"cert_status": "ok", "days_left": -3, "force_mode": "none"},
+        "unreadable": {"cert_status": "missing", "days_left": 90},
+        "forced":   {"cert_status": "ok", "days_left": 90, "force_mode": "force"},
+        "ok30":     {"cert_status": "ok", "days_left": 30, "force_mode": "none"},
+    },
 }
 
 
