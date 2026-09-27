@@ -1,0 +1,136 @@
+{
+  "name": "agents_security_scan",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/code/scripts/security-scan.sh decision logic. Nine malicious-pattern probes map to two heuristic questions (critical/high hit) plus a whitelist override and binary skip. Ordered rules reproduce the shell's quarantine (CRITICAL/HIGH) vs allow (CLEAN) semantics. Side effects (cp to quarantine, inject warning header) stay in the probe layer; this spec only decides the verdict.",
+  "start": "scan",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "scan",
+      "primary_q": "critical_pattern_hit",
+      "questions": {
+        "critical_pattern_hit": {
+          "type": "choice",
+          "instructions": "Does the file contain any CRITICAL-severity pattern (curl_to_shell / eval_base64 / silent_exfil / reverse_shell / suspicious_network)?",
+          "criteria": {
+            "A": "no critical pattern",
+            "B": "yes, critical pattern found"
+          },
+          "heuristic": {
+            "match_regex": [
+              "curl.*\\|.*sh",
+              "eval.*base64",
+              ">\\s*/dev/tcp",
+              "bash\\s+-i\\s+>&\\s*/dev/tcp",
+              "nc\\s+-l\\s+-p"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "high_pattern_hit": {
+          "type": "choice",
+          "instructions": "Does the file contain any HIGH-severity pattern (keylogger / crypto_miner / rm_dash_rf / data_exfil_ssh)?",
+          "criteria": {
+            "A": "no high pattern",
+            "B": "yes, high pattern found"
+          },
+          "heuristic": {
+            "match_regex": [
+              "read.*-s.*pass",
+              "cpuminer",
+              "rm\\s+-rf\\s+/",
+              "ssh\\s+-R"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "file_whitelisted": {
+          "type": "choice",
+          "instructions": "Is the file on the documented educational/reference whitelist?",
+          "criteria": {
+            "A": "not whitelisted",
+            "B": "yes, whitelisted"
+          },
+          "heuristic": {
+            "match_any": [
+              "whitelisted",
+              "whitelist_hit"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "binary_file": {
+          "type": "choice",
+          "instructions": "Is the file binary (non-text, so regex scan does not apply)?",
+          "criteria": {
+            "A": "not binary",
+            "B": "yes, binary file"
+          },
+          "heuristic": {
+            "match_any": [
+              "binary_file",
+              "non_text_binary"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "critical_pattern_hit",
+        "rules": [
+          {
+            "when": {
+              "question": "file_whitelisted",
+              "answer": "B"
+            },
+            "label": "CLEAN"
+          },
+          {
+            "when": {
+              "question": "binary_file",
+              "answer": "B"
+            },
+            "label": "SKIP"
+          },
+          {
+            "when": {
+              "question": "critical_pattern_hit",
+              "answer": "B"
+            },
+            "label": "QUARANTINE_CRITICAL"
+          },
+          {
+            "when": {
+              "question": "high_pattern_hit",
+              "answer": "B"
+            },
+            "label": "QUARANTINE_HIGH"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "CLEAN"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "text",
+          "file",
+          "scan_dir"
+        ]
+      }
+    }
+  ]
+}

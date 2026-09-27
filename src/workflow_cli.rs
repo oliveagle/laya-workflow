@@ -479,6 +479,34 @@ fn main() -> Result<()> {
                     hard.join(", ")
                 );
             }
+            // Static regex lint for `heuristic.match_regex` so a typo in a spec
+            // is caught at validate-time, not on the first matching input.
+            let mut bad_regex = Vec::new();
+            if let Some(Value::Array(nodes)) = sv.get("nodes") {
+                for n in nodes {
+                    let nname = n.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    if let Some(qs) = n.get("questions").and_then(|v| v.as_object()) {
+                        for (qid, qdef) in qs {
+                            if let Some(rxs) = qdef.get("heuristic")
+                                .and_then(|h| h.get("match_regex"))
+                                .and_then(|a| a.as_array())
+                            {
+                                for rx in rxs.iter().filter_map(|v| v.as_str()) {
+                                    if let Err(e) = regex_lite::Regex::new(rx) {
+                                        bad_regex.push(format!(
+                                            "node={nname} question={qid} pattern={rx:?} error={e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !bad_regex.is_empty() {
+                println!("# WARNING: heuristic.match_regex has invalid patterns:");
+                for b in &bad_regex { println!("#   {b}"); }
+            }
             println!("{}", serde_json::to_string_pretty(&wf.describe())?);
             Ok(())
         }

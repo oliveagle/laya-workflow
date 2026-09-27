@@ -669,6 +669,50 @@ impl Decide for HeuristicBackend {
                     for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
                     (serde_json::json!(pick), m, 0.9)
                 }
+                // Generic, **spec-declared** heuristic: if the question definition
+                // carries `"heuristic": {"match_any": [...], "p_hit":…, "p_miss":…}`
+                // (choice) or `{"match_any": [...], "score_hit":…, "score_miss":…}`
+                // (score), evaluate it right here — no per-question Rust code.
+                // This keeps the "new project == new JSON only" promise: the DSL
+                // author declares the tokens that indicate a hit, the engine
+                // evaluates them uniformly. Longest-first substring match on the
+                // serialised state, case-insensitive (same helper as the named
+                // handlers above).
+                _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex"))).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    // `match_any`: literal substring needles (word-boundary aware).
+                    // `match_regex`: full regex patterns (any match counts as a hit),
+                    // letting a spec port a shell `grep -E` rule verbatim.
+                    let mut hit = false;
+                    if let Some(any) = h.get("match_any").and_then(|a| a.as_array()) {
+                        let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();
+                        hit = contains_any(&text, &toks);
+                    }
+                    if !hit {
+                        if let Some(rxs) = h.get("match_regex").and_then(|a| a.as_array()) {
+                            for rx in rxs.iter().filter_map(|x| x.as_str()) {
+                                // Fail closed: a broken regex is a spec error, not a
+                                // silent miss (a security scanner that skips a bad
+                                // pattern could let a real threat through).
+                                let re = regex_lite::Regex::new(rx)
+                                    .map_err(|e| anyhow!("heuristic match_regex {rx:?} for {qid}: {e}"))?;
+                                if re.is_match(&text) { hit = true; break; }
+                            }
+                        }
+                    }
+                    match qtype {
+                        "score" => {
+                            let v = if hit { h.get("score_hit").and_then(|x| x.as_f64()).unwrap_or(2.0) }
+                                    else { h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5) };
+                            bscore(v)
+                        }
+                        _ => {
+                            let p_b = if hit { h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9) }
+                                      else { h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.1) };
+                            bchoice(p_b)
+                        }
+                    }
+                }
                 _ => match qtype {
                     "score" => bscore(1.0),
                     "noul" => {

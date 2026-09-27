@@ -1,0 +1,155 @@
+{
+  "name": "agents_quality_gate",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/.githooks/quality-gate.sh decision logic. Five checks are folded into choice questions (staged placeholder hard-fail; repo placeholder / file-line / AGENTS.md-line / archived-naming soft warnings). Ordered threshold rules reproduce the shell's ERROR (exit 1) vs WARNING (exit 0) semantics: staged_placeholder B -> FAIL, any soft violation -> WARN, else PASS. Side effects (exit code / git diff enumeration) stay in the probe layer; this spec only decides the verdict.",
+  "start": "gate",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "gate",
+      "primary_q": "staged_placeholder",
+      "questions": {
+        "staged_placeholder": {
+          "type": "choice",
+          "instructions": "Do the staged (git diff --cached) code files contain placeholder/TODO/stub patterns that must block the commit?",
+          "criteria": {
+            "A": "no staged placeholder/TODO",
+            "B": "yes, staged placeholder/TODO found"
+          },
+          "heuristic": {
+            "match_any": [
+              "staged_placeholder",
+              "placeholder_in_staged",
+              "todo_in_staged"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "repo_placeholder": {
+          "type": "choice",
+          "instructions": "Does the repo-wide placeholder/TODO scan (excluding vendored/3rd-party paths) find any files with real stubs?",
+          "criteria": {
+            "A": "no repo-wide real stubs",
+            "B": "yes, some files contain stubs"
+          },
+          "heuristic": {
+            "match_any": [
+              "repo_placeholder",
+              "placeholder_count_nonzero"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "file_lines_over": {
+          "type": "choice",
+          "instructions": "Do any code/doc files exceed the 500-line limit?",
+          "criteria": {
+            "A": "all files within limit",
+            "B": "yes, files over 500 lines"
+          },
+          "heuristic": {
+            "match_any": [
+              "file_lines_over",
+              "lines_over_500"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "agents_md_over": {
+          "type": "choice",
+          "instructions": "Does AGENTS.md exceed 500 lines?",
+          "criteria": {
+            "A": "AGENTS.md within 500 lines",
+            "B": "yes, AGENTS.md over 500 lines"
+          },
+          "heuristic": {
+            "match_any": [
+              "agents_md_over",
+              "agents_md_lines_over"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "archived_naming": {
+          "type": "choice",
+          "instructions": "Do any files in knowledge/docs/archived/ lack the _YYYYMMDD date suffix?",
+          "criteria": {
+            "A": "archived docs all dated",
+            "B": "yes, archived docs missing date suffix"
+          },
+          "heuristic": {
+            "match_any": [
+              "archived_missing_date",
+              "naming_violation"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "staged_placeholder",
+        "rules": [
+          {
+            "when": {
+              "question": "staged_placeholder",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "repo_placeholder",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "question": "file_lines_over",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "question": "agents_md_over",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "question": "archived_naming",
+              "answer": "B"
+            },
+            "label": "NOTE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "text",
+          "repo",
+          "branch"
+        ]
+      }
+    }
+  ]
+}

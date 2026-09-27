@@ -13,7 +13,7 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`, `ole_eval/`, `browser/`). `laya-workflow list` walks the tree recursively.
+`pipelines/`, `ole_eval/`, `browser/`, `agents/`). `laya-workflow list` walks the tree recursively.
 
 Spec roots are **layered**. A bare `"workflow": "name"` ref (and `list`) resolves
 against, highest priority first: an explicit pin (`--dsl-dir` / `$LAYA_DSL_DIR`,
@@ -22,11 +22,13 @@ found by walking up to the git root → **user** `~/.config/laya-workflow/dsl`
 (`$LAYA_USER_DSL_DIR` / `$XDG_CONFIG_HOME` override) → **builtin** `<crate>/dsl`.
 This directory is the repo layer for the checkout; commit changes here so the
 topology follows the repo. The first root to define a name wins.
-See `ole_eval/README.md` for the ole-eval scenario mapping and
-`docs/browser_singleton.md` for singleton Chrome CDP automation.
+See `ole_eval/README.md` for the ole-eval scenario mapping,
+`agents/README.md` for the agent-toolbox workflow ports (quality gate / security scan),
+and `docs/browser_singleton.md` for singleton Chrome CDP automation.
 The devine_utils release/test/integration flow (`devine/*.json`) now lives,
 and is tracked, in the **devine_utils** repo at `.laya-workflow/dsl/devine/`
 (repo layer) instead of here.
+
 
 Nesting: a node may reference another workflow
 
@@ -71,6 +73,24 @@ Specs in this directory:
 | `browser/browser_base_probe.json` | generic localhost-page smoke probe via the bundled `plugins/browser_base` plugin (open → wait_htmx → assert → done), no site logic |
 | `browser/browser_orchestrate_probe.json` | end-to-end local orchestration: runs `laya-workflow browser ensure --backend chrome` + `laya-workflow server ensure` (idempotent, cold-starts `state.server_cmd` if the port is dead) via `exec`, then probes the ensured URL with `plugins/browser_base` |
 | `browser/alphaxiv_paper.json` | the alphaXiv downloader, driven by the `websites/alphaxiv.org` Rhai plugin |
+| `agents/quality_gate.json` | shell quality-gate → ordered FAIL/WARN/NOTE/PASS (`match_any` heuristics) |
+| `agents/security_scan.json` | shell security scan → quarantine verdicts (`match_regex` heuristics) |
+
+Spec-declared offline heuristic: a question may carry a `heuristic` block so a new
+spec evaluates without any Rust change —
+
+```jsonc
+"heuristic": {
+  "match_any":    ["staged_placeholder", "todo_in_staged"],   // literal needles
+  "match_regex":  ["curl.*\\|.*sh", ">\\s*/dev/tcp"],       // regex (either may be used)
+  "p_hit": 0.95, "p_miss": 0.05,   // choice: answer B/A probability
+  "score_hit": 2.0, "score_miss": 0.5 // score: value on hit/miss
+}
+```
+
+Any match → `B`/`score_hit`, otherwise `A`/`score_miss`. Questions without a
+`heuristic` block keep the previous behaviour (built-in handler or `default_choice`).
+
 
 External capabilities: declare them under `"capabilities"` and call them from a node
 with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An action may
