@@ -93,9 +93,14 @@ pub fn from_spec_in(spec: &Value, base_dir: Option<&std::path::Path>) -> Result<
 
 /// Resolve a nested `workflow` reference to a spec.
 ///
+/// A bare name is looked up across the layered spec roots (see [`spec_roots`]),
+/// highest priority first: the explicit pin (`set_dsl_dir` / `--dsl-dir`), the
+/// repo `.laya-workflow/dsl` / `dsl` tree, the user root, then `<crate>/dsl` —
+/// the first root that has the name wins.
+///
 /// Accepted forms:
-///   * `"workflow": "support_ticket_router"`        → `<dsl_dir>/support_ticket_router.json`
-///   * `"workflow": "./sub/triage.json"`            → relative to the `dsl_dir`
+///   * `"workflow": "support_ticket_router"`        → first layered root that has it
+///   * `"workflow": "./sub/triage.json"`            → relative to the referring file
 ///   * `"workflow": {"inline": { …spec… }}`         → an inline sub-spec
 ///   * a registry entry registered via `register`
 pub type SpecRegistry = std::collections::HashMap<String, Value>;
@@ -111,7 +116,8 @@ pub fn register(name: &str, spec: Value) {
     registry().lock().unwrap().insert(name.to_string(), spec);
 }
 
-/// Directory used to resolve bare `"workflow": "name"` references.
+/// The pinned spec root. Only consulted when a root was pinned via
+/// [`set_dsl_dir`]; otherwise resolution is layered (see [`spec_roots`]).
 pub fn dsl_dir() -> &'static std::sync::Mutex<String> {
     static D: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
     D.get_or_init(|| std::sync::Mutex::new("dsl".to_string()))

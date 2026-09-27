@@ -8,7 +8,7 @@
 //!   2. `.env`-style files, in this order:
 //!        * `$LAYA_SECRETS_FILE` (a single file)
 //!        * `$LAYA_SECRETS_DIR/*.env` (sorted)
-//!        * `<dsl_dir>/.env`
+//!        * `<spec_root>/.env`  (the layered primary spec root)
 //!        * `./.env`
 //!   3. JSON secrets files found alongside a spec, under a
 //!      `policy.allow_paths` root (`{"NAME": "value"}`)
