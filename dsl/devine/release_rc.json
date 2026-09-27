@@ -14,7 +14,7 @@
     "allow_hosts": [
       "artifactory.release.ctripcorp.com"
     ],
-    "max_timeout_ms": 120000,
+    "max_timeout_ms": 600000,
     "max_output": 65536,
     "retries": 0
   },
@@ -25,10 +25,12 @@
         "devine-utils-ci",
         "workflow",
         "release-rc",
-        "--verbose"
+        "--verbose",
+        "--timeout",
+        "270"
       ],
       "cwd": "${env.DEVINE_BINARY_REPO}",
-      "timeout_ms": 120000,
+      "timeout_ms": 600000,
       "max_output": 65536
     },
     "uat_artifact": {

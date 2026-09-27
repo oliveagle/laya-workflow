@@ -1,0 +1,205 @@
+{
+  "name": "devine_promote",
+  "dsl_version": 2,
+  "description": "workflow promote（rc → stable）的声明式镜像，把三条证据按顺序取齐后做一次复合判定：① 规则 1 门禁 —— integration-01 /version 必须 == 即将 promote 的 rc（否则 CLI 内部即 BLOCK）；② 委托冻结的 devine-utils-ci workflow promote 执行 bump/push main + tag + 轮询 PROD artifactory（变更动作不重写，仍走已测试的 Go 实现）；③ 规则 2 post-check —— integration-02 /version 必须 == 刚发布的 stable。规则 1 / 规则 2 也各自有独立 spec：release_gate.json / post_promote_check.json。对应 WorkflowPromote（cmd/devine-utils-ci/internal/workflow_release.go）。",
+  "start": "probe_gate_integration_01",
+  "max_iterations": 8,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": [
+      "${env.DEVINE_BINARY_REPO}"
+    ],
+    "allow_hosts": [
+      "artifactory.release.ctripcorp.com",
+      "devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com",
+      "devine-app-integration-02-function.fws.faas.qa.nt.ctripcorp.com"
+    ],
+    "max_timeout_ms": 600000,
+    "max_output": 65536,
+    "retries": 0
+  },
+  "capabilities": {
+    "integration_01_version": {
+      "kind": "http",
+      "method": "GET",
+      "url": "http://devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com/version",
+      "timeout_ms": 10000,
+      "expect_json": true
+    },
+    "promote_cli": {
+      "kind": "exec",
+      "argv": [
+        "devine-utils-ci",
+        "workflow",
+        "promote",
+        "--verbose",
+        "--timeout",
+        "360",
+        "--poll-timeout",
+        "180"
+      ],
+      "cwd": "${env.DEVINE_BINARY_REPO}",
+      "timeout_ms": 600000,
+      "max_output": 65536
+    },
+    "integration_02_version": {
+      "kind": "http",
+      "method": "GET",
+      "url": "http://devine-app-integration-02-function.fws.faas.qa.nt.ctripcorp.com/version",
+      "timeout_ms": 10000,
+      "expect_json": true
+    }
+  },
+  "nodes": [
+    {
+      "name": "probe_gate_integration_01",
+      "primary_q": "probed",
+      "questions": {
+        "probed": {
+          "type": "choice",
+          "instructions": "规则 1 取证：读 integration-01 /version 的 app_version + HTTP 状态（promote 的发布门禁）。",
+          "criteria": {
+            "A": "已读取",
+            "B": "不可访问"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "run_promote_cli"
+      },
+      "state": {
+        "keep": [
+          "rc",
+          "stable"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "integration_01_version",
+        "project": {
+          "gate_app_version": "/app_version",
+          "gate_http_status": "/status"
+        }
+      }
+    },
+    {
+      "name": "run_promote_cli",
+      "primary_q": "promoted",
+      "questions": {
+        "promoted": {
+          "type": "choice",
+          "instructions": "委托冻结的 devine-utils-ci workflow promote：内部会再次执行规则 1 门禁（integration-01 == 当前 VERSION），然后 checkout main → bump 到 stable → commit → push main + tag → 轮询 PROD artifactory（默认 1800s）→ 规则 2 post-check。",
+          "criteria": {
+            "A": "promote 已执行",
+            "B": "promote 失败"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "probe_post_integration_02"
+      },
+      "state": {
+        "keep": [
+          "rc",
+          "stable",
+          "gate_app_version",
+          "gate_http_status"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "promote_cli",
+        "project": {
+          "promote_exit_code": "/exit_code",
+          "promote_stdout": "/stdout"
+        }
+      }
+    },
+    {
+      "name": "probe_post_integration_02",
+      "primary_q": "probed",
+      "questions": {
+        "probed": {
+          "type": "choice",
+          "instructions": "规则 2 取证：读 integration-02 /version 的 app_version + HTTP 状态（stable 是否真正上线）。",
+          "criteria": {
+            "A": "已读取",
+            "B": "不可访问"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "promote_verdict"
+      },
+      "state": {
+        "keep": [
+          "rc",
+          "stable",
+          "gate_app_version",
+          "gate_http_status",
+          "promote_exit_code"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "integration_02_version",
+        "project": {
+          "post_app_version": "/app_version",
+          "post_http_status": "/status"
+        }
+      }
+    },
+    {
+      "name": "promote_verdict",
+      "primary_q": "promote_verdict",
+      "questions": {
+        "promote_verdict": {
+          "type": "choice",
+          "instructions": "复合判定：gate_http_status == 200 且 gate_app_version == state.rc（规则 1 通过）且 promote_exit_code == 0（bump/push/tag 与 PROD artifactory 轮询成功）且 post_http_status == 200 且 post_app_version == state.stable（规则 2 通过）。任一不满足即 FAIL。注意：真实 CLI 内部已 fail-closed 地执行规则 1 与规则 2；本 spec 对同一批证据做一次复合快照判定。",
+          "criteria": {
+            "ok": "门禁 rc 匹配、promote 成功、且 integration-02 == stable",
+            "fail": "门禁不匹配、promote 失败、或 integration-02 != stable"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "rc",
+          "stable",
+          "gate_app_version",
+          "gate_http_status",
+          "promote_exit_code",
+          "post_app_version",
+          "post_http_status"
+        ]
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "promote_verdict",
+        "rules": [
+          {
+            "when": {
+              "answer": "fail"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "OK"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # dsl/devine/ — devine_utils 的 release / test / integration 流移植
 
-这 5 个 spec 把 **devine_utils** 里 `devine-utils-ci workflow` 的
+这 8 个 spec 把 **devine_utils** 里 `devine-utils-ci workflow` 的
 二进制发布 / 测试 / 集成流程（Go 实现）移植成 laya-workflow DSL（声明式 JSON），
 仿照 `dsl/ole_eval/` 的做法：**不改 Rust 即可增减规则**。
 
@@ -18,6 +18,9 @@
 | `deploy_prod.json` | `workflow_deploy_prod.go` | FAT 最新 SUCCESS 镜像 → PROD group `auto_deploy` → `rollout` → 要求 **SUCCESS** + PROD `/spec` 工具存在（spec-drift 防护） |
 | `release_rc.json` | `workflow_release.go: WorkflowReleaseRC` + `workflow_util.go: pollArtifactory` | bump rc → push main + tag → 校验 UAT / PROD artifactory 出现该版本（UAT → PROD） |
 | `status_snapshot.json` | `workflow_status.go: WorkflowStatus` | 只读快照：binary repo 的 VERSION/tags + 四个 app 的 FAT `/version` |
+| `test_rc.json` | `workflow_apps.go: WorkflowTestRC` + `workflow_gate.go: triggerAndPollApp` | 触发 dev-test app（devine-test-004-function）的 main pipeline（`--wait`）→ 读 `/version`，要求 `app_version == rc` |
+| `integration_rc.json` | `workflow_apps.go: WorkflowIntegrationRC` + `triggerAndPollApp` | 参数化：触发任意 app（01/02/任一 dev-test）的 main pipeline → 读其 `/version`，要求 `app_version == rc` |
+| `promote.json` | `workflow_release.go: WorkflowPromote` | 复合判定：规则 1 门禁（integration-01）→ 委托 CLI `workflow promote`（bump/push/tag + PROD artifactory）→ 规则 2 post-check（integration-02） |
 
 ## 映射方式
 
@@ -95,6 +98,21 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 laya-workflow --base-url http://127.0.0.1:8400 run \
     --spec dsl/devine/deploy_prod.json \
     --state '{"app_name":"devine-test-004-function","fat_group_id":1050478,"prod_group_id":1050772,"prod_url":"http://devine-test-004-function.faas.ctripcorp.com","spec_tool":"http_self_ping"}'
+
+# test-rc：触发 dev-test app（004）并校验 /version == rc
+laya-workflow --base-url http://127.0.0.1:8400 run \
+    --spec dsl/devine/test_rc.json \
+    --state '{"rc": "1.2.0-rc.1"}'
+
+# integration-rc：参数化指定 app（01/02/任一 dev-test）
+laya-workflow --base-url http://127.0.0.1:8400 run \
+    --spec dsl/devine/integration_rc.json \
+    --state '{"app_name":"devine-app-integration-01-function","project":"faas/devine-app-integration-01-function","version_url":"http://devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com/version","rc":"1.2.0-rc.1"}'
+
+# promote：规则 1 门禁 + 委托 CLI + 规则 2 post-check（rc / stable 由 state 注入）
+laya-workflow --base-url http://127.0.0.1:8400 run \
+    --spec dsl/devine/promote.json \
+    --state '{"rc":"1.2.0-rc.1","stable":"1.2.0"}'
 ```
 
 ## 边界说明
@@ -110,6 +128,15 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
   与 Go 实现"PENDING 时自动点 rollout"语义一致（Go 是轮询中触发，这里是一次）。
 - **只读 vs 写**：`status_snapshot.json` / `release_gate.json` 只读（`allow_exec=false`）；
   `release_rc.json` / `post_promote_check.json` 含写操作，故开 `allow_exec` 并限定 `allow_paths`。
+
+- **600s 引擎硬上限**：`policy.max_timeout_ms` 在引擎里被硬夹到 `600000`（10 分钟），
+  spec 里写更大也会被截断。因此委托 CLI 的 spec 显式把 CLI 自身的轮询窗口收进这个上限：
+  `release_rc.json` 传 `--timeout 270`（UAT + PROD 各一次），`promote.json` 传
+  `--timeout 360 --poll-timeout 180`。CLI 默认的 1800s artifactory 轮询在 DSL 内**无法**完整表达；
+  需要完整窗口时直接跑 `devine-utils-ci workflow ...`（权威实现）。
+- **`apps` / `list` 不建 spec**：`workflow apps`（打印内置目录）与 `workflow list`（枚举命名 workflow）
+  是注册表 / 自省命令，不含任何"取证 → 判定"的流——前者是静态数据（见本页"内置目录"表，并已固化进各 spec 的
+  `allow_hosts` / capability），后者的 DSL 对应物就是 `laya-workflow list`。故不为它们建退化 spec。
 
 ## 延伸
 

@@ -50,6 +50,7 @@ Specs in this directory:
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
 | `devine/release_gate.json` | http probe merged into state, then ordered `threshold` (BLOCK → ALLOW) |
+| `devine/promote.json` | composite verdict: gate probe → delegated `exec` (`workflow promote`) → post-check probe → ordered `threshold` |
 
 External capabilities: declare them under `"capabilities"` and call them from a node
 with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An action may

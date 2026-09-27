@@ -1,0 +1,166 @@
+{
+  "name": "devine_integration_rc",
+  "dsl_version": 2,
+  "description": "workflow integration-rc 的声明式镜像：触发指定 app（integration-01 / integration-02 / 任一 dev-test app）的 main pipeline，随后读取其 /version，要求 app_version == rc。对应 WorkflowIntegrationRC / triggerAndPollApp（cmd/devine-utils-ci/internal/workflow_apps.go + workflow_gate.go）。参数化：state 传 app_name / project / version_url / rc（rc 缺省时由 CLI 侧 VERSION 决定，这里必须显式给出）。",
+  "start": "trigger_app",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": [
+      "${env.DEVINE_BINARY_REPO}"
+    ],
+    "allow_hosts": [
+      "devine-test-004-function.fws.faas.qa.nt.ctripcorp.com",
+      "devine-test-001-function.fws.faas.qa.nt.ctripcorp.com",
+      "devine-app-integration-01-function.fws.faas.qa.nt.ctripcorp.com",
+      "devine-app-integration-02-function.fws.faas.qa.nt.ctripcorp.com"
+    ],
+    "max_timeout_ms": 600000,
+    "max_output": 65536,
+    "retries": 0
+  },
+  "capabilities": {
+    "trigger_app": {
+      "kind": "exec",
+      "argv": [
+        "devine-utils-ci",
+        "pipeline-run",
+        "${state.project}",
+        "--ref",
+        "main",
+        "--output",
+        "text",
+        "--wait",
+        "--wait-timeout",
+        "600"
+      ],
+      "cwd": "${env.DEVINE_BINARY_REPO}",
+      "timeout_ms": 600000,
+      "max_output": 65536
+    },
+    "app_version": {
+      "kind": "http",
+      "method": "GET",
+      "url": "${state.version_url}",
+      "timeout_ms": 10000,
+      "expect_json": true
+    }
+  },
+  "nodes": [
+    {
+      "name": "trigger_app",
+      "primary_q": "triggered",
+      "questions": {
+        "triggered": {
+          "type": "choice",
+          "instructions": "触发 state.project 的 main 分支 pipeline 并等待其结束（CI 自动拉取最新 prod artifactory 二进制）。",
+          "criteria": {
+            "A": "pipeline 已触发并结束",
+            "B": "触发或等待失败"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "probe_app_version"
+      },
+      "state": {
+        "keep": [
+          "app_name",
+          "project",
+          "version_url",
+          "rc"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "trigger_app",
+        "project": {
+          "trigger_exit_code": "/exit_code",
+          "trigger_stdout": "/stdout"
+        }
+      }
+    },
+    {
+      "name": "probe_app_version",
+      "primary_q": "probed",
+      "questions": {
+        "probed": {
+          "type": "choice",
+          "instructions": "读取 state.version_url 的 app_version（该 app 上 rc 是否真正上线的权威信号）。",
+          "criteria": {
+            "A": "已读取",
+            "B": "不可访问"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "integration_rc_verdict"
+      },
+      "state": {
+        "keep": [
+          "app_name",
+          "version_url",
+          "rc",
+          "trigger_exit_code"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "app_version",
+        "project": {
+          "app_version": "/app_version",
+          "app_http_status": "/status"
+        }
+      }
+    },
+    {
+      "name": "integration_rc_verdict",
+      "primary_q": "integration_rc_verdict",
+      "questions": {
+        "integration_rc_verdict": {
+          "type": "choice",
+          "instructions": "判定 integration-rc：trigger_exit_code 必须为 0，app_http_status 必须为 200，且 app_version 必须与 state.rc 完全相等。真实 CLI 会按 5s 间隔轮询 /version（默认 600s）；本 spec 只做一次快照判定。",
+          "criteria": {
+            "pass": "pipeline 成功、HTTP 200 且 app_version == state.rc",
+            "fail": "触发失败、非 200、或 app_version != state.rc"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "app_name",
+          "rc",
+          "app_version",
+          "app_http_status",
+          "trigger_exit_code"
+        ]
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "integration_rc_verdict",
+        "rules": [
+          {
+            "when": {
+              "answer": "fail"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      }
+    }
+  ]
+}
