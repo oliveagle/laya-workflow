@@ -21,6 +21,8 @@
 | `mlu270_smoke.json` | `code/scripts/mlu270-inference-test.sh` (138 行) | 4 个子检查（cntool / sample / torch_mlu / matmul smoke）→ **FAIL > WARN > PASS** |
 | `bitx_wrapper_test.json` | `code/bitx-stack/scripts/test-wrappers.sh` (224 行) | 12 个 wrapper 退出码对拍 → **FAIL > WARN > PASS**（`extract_numeric` 取 failed/skipped 计数） |
 | `zero_leftover_gate.json` | `skills/ole-commit-push/scripts/zero-leftover-check.sh` (64 行) | git 工作区健康 → **LEFTOVER > WARN > ALLOW > CLEAN**（shell exit 1/0 + --allow-leftover 覆盖） |
+| `commit_push_precheck.json` | `skills/ole-commit-push/scripts/run.sh` (128 行) 阶段 0 | 前置检查 → **FAIL_NO_GIT_USER > FAIL_AUTHOR_CHECK > NO_CHANGES > PASS**（`field` 状态串，probe 算 missing/ok/clean/dirty） |
+| `rebase_push_gate.json` | `skills/ole-commit-push/scripts/rebase-and-push.sh` (183 行) 阶段 5-6c | fetch/ahead/rebase/secret → **FAIL_FETCH > NO_COMMIT > FAIL_REBASE_CONFLICT > FAIL_SECRET_BLOCK > PASS**（secret 正则 `field:secret_diff` 限定 diff 字段） |
 
 ## 通用化：spec-declared heuristic（零 Rust）
 
@@ -73,7 +75,7 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 77 个样本（14 个 spec），覆盖每个 verdict label：
+`bench/dsl_smoke.py` 的 `STATES` 注册了 87 个样本（16 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
@@ -89,9 +91,11 @@ regex/needle 命中」。
 - mlu270_smoke: FAIL ×4 子检查 / WARN / PASS
 - bitx_wrapper_test: FAIL / WARN / PASS（含缺字段 fail-closed → FAIL）
 - zero_leftover_gate: LEFTOVER ×2 / WARN / ALLOW / CLEAN
+- commit_push_precheck: FAIL_NO_GIT_USER / FAIL_AUTHOR_CHECK / NO_CHANGES / PASS（含空字段 NO_CHANGES）
+- rebase_push_gate: FAIL_FETCH / NO_COMMIT / FAIL_REBASE_CONFLICT / FAIL_SECRET_BLOCK / PASS
 
 ```bash
-python3 bench/dsl_smoke.py     # 77 agents 样本全部 label 断言通过
+python3 bench/dsl_smoke.py     # 87 agents 样本全部 label 断言通过
 ```
 
 ## 运行
