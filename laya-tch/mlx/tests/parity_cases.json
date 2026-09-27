@@ -1,0 +1,73 @@
+{
+  "billing_short": {
+    "state": "I was billed twice this month; please refund the duplicate today.",
+    "questions": {
+      "department": {
+        "type": "choice",
+        "instructions": "Which department should handle this request?",
+        "criteria": [
+          "billing",
+          "technical",
+          "sales"
+        ]
+      },
+      "refund": {
+        "type": "noul",
+        "instructions": "Does the customer ask for money back?"
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgent is this request?",
+        "criteria": [
+          "low",
+          "normal",
+          "high"
+        ]
+      }
+    }
+  },
+  "billing_long": {
+    "state": "Customer writes: I was billed twice this month for the same subscription and I need the duplicate refunded today. Account email a@b.com; invoice ids INV-1 and INV-2. This has happened before and I am considering cancelling. Customer writes: I was billed twice this month for the same subscription and I need the duplicate refunded today. Account email a@b.com; invoice ids INV-1 and INV-2. This has happened before and I am considering cancelling. Customer writes: I was billed twice this month for the same subscription and I need the duplicate refunded today. Account email a@b.com; invoice ids INV-1 and INV-2. This has happened before and I am considering cancelling. ",
+    "questions": {
+      "department": {
+        "type": "choice",
+        "instructions": "Which department should handle this request?",
+        "criteria": [
+          "billing",
+          "technical",
+          "sales",
+          "retention"
+        ]
+      },
+      "refund": {
+        "type": "noul",
+        "instructions": "Does the customer ask for money back?"
+      }
+    }
+  },
+  "single_noul": {
+    "state": "The weather today is sunny and warm.",
+    "questions": {
+      "money": {
+        "type": "noul",
+        "instructions": "Does the text mention any amount of money?"
+      }
+    }
+  },
+  "score5": {
+    "state": "The product arrived late and damaged; support was unhelpful.",
+    "questions": {
+      "severity": {
+        "type": "score",
+        "instructions": "How severe is this complaint?",
+        "criteria": [
+          "trivial",
+          "minor",
+          "moderate",
+          "major",
+          "critical"
+        ]
+      }
+    }
+  }
+}

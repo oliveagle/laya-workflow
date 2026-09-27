@@ -1,0 +1,19 @@
+{
+  "state": "Customer writes: I was billed twice this month for the same subscription and I need the duplicate refunded today. Account email a@b.com; invoices INV-1, INV-2.",
+  "questions": {
+    "department": {
+      "type": "choice",
+      "instructions": "Which department should handle this request?",
+      "criteria": ["billing", "technical", "sales"]
+    },
+    "refund": {
+      "type": "noul",
+      "instructions": "Does the customer ask for money back?"
+    },
+    "urgency": {
+      "type": "score",
+      "instructions": "How urgent is this request?",
+      "criteria": ["low", "normal", "high"]
+    }
+  }
+}

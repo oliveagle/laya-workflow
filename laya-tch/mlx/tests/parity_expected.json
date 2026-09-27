@@ -1,0 +1,129 @@
+{
+  "billing_short": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "department": {
+        "type": "choice",
+        "confidence": 0.8185,
+        "action": {
+          "act_probability": 1.0
+        },
+        "choice": "billing",
+        "probabilities": {
+          "billing": 0.9582,
+          "technical": 0.0292,
+          "sales": 0.0127
+        }
+      },
+      "refund": {
+        "type": "noul",
+        "confidence": 0.8215,
+        "action": {
+          "act_probability": 1.0
+        },
+        "noul": 0.8215
+      },
+      "urgency": {
+        "type": "score",
+        "confidence": 0.1311,
+        "action": {
+          "act_probability": 1.0
+        },
+        "score": 1.4301,
+        "legend": {
+          "0": "low",
+          "1": "normal",
+          "2": "high"
+        },
+        "probabilities": {
+          "0": 0.1395,
+          "1": 0.2909,
+          "2": 0.5696
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 121,
+      "output_tokens": 0
+    }
+  },
+  "billing_long": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "department": {
+        "type": "choice",
+        "confidence": 0.6722,
+        "action": {
+          "act_probability": 1.0
+        },
+        "choice": "billing",
+        "probabilities": {
+          "billing": 0.8925,
+          "technical": 0.0302,
+          "sales": 0.0258,
+          "retention": 0.0515
+        }
+      },
+      "refund": {
+        "type": "noul",
+        "confidence": 0.8661,
+        "action": {
+          "act_probability": 1.0
+        },
+        "noul": 0.8661
+      }
+    },
+    "usage": {
+      "input_tokens": 382,
+      "output_tokens": 0
+    }
+  },
+  "single_noul": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "money": {
+        "type": "noul",
+        "confidence": 0.9998,
+        "action": {
+          "act_probability": 1.0
+        },
+        "noul": 0.0002
+      }
+    },
+    "usage": {
+      "input_tokens": 43,
+      "output_tokens": 0
+    }
+  },
+  "score5": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "severity": {
+        "type": "score",
+        "confidence": 0.2837,
+        "action": {
+          "act_probability": 1.0
+        },
+        "score": 2.3705,
+        "legend": {
+          "0": "trivial",
+          "1": "minor",
+          "2": "moderate",
+          "3": "major",
+          "4": "critical"
+        },
+        "probabilities": {
+          "0": 0.0115,
+          "1": 0.1601,
+          "2": 0.3024,
+          "3": 0.4983,
+          "4": 0.0277
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 51,
+      "output_tokens": 0
+    }
+  }
+}
