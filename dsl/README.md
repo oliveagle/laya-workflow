@@ -13,7 +13,8 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`). `laya-workflow list` walks the tree recursively.
+`pipelines/`, `ole_eval/`). `laya-workflow list` walks the tree recursively.
+See `ole_eval/README.md` for the ole-eval scenario mapping.
 
 Nesting: a node may reference another workflow
 
