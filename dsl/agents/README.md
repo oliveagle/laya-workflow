@@ -16,6 +16,10 @@
 | `ssl_certificate_expiry.json` | `code/scripts/ssl-expiry-check.sh` + `ssl-renew-olehome.sh` | 剩余天数阶梯 → **EXPIRED > WARN_RENEW > RENEW_FORCED > OK / FAIL_UNREADABLE**（`extract_numeric` 读真实天数） |
 | `project_structure_guard.json` | `code/agents/project-structure-guardian/scripts/scan-all.sh` (493 行) | 六维结构检查（根目录 / 日志 / 文档 / 目录 / 配置 / gitignore）→ **FAIL > WARN > OK**（exit 1/2/0；`health_score = 100 - failures*10 - warnings*3` 随 payload 透传） |
 | `task_quality_gate.json` | `skills/ole-task-check/quality-gate-template.sh` (261 行) | 7 组检查（编译 / 测试+覆盖率 / placeholder / 文件行数 / AGENTS.md 行数 / 安全 / 文档命名）→ **FAIL > WARN > PASS**（`value_lt 80` 覆盖率阈值 + `value_gte 500.5` AGENTS.md 严格 >500；`field` 把 security regex 限定到字段值避免信封转义误报） |
+| `htmx_app_lint.json` | `skills/devine-gen-htmx-app/scripts/lint.sh` (184 行) | YAML schema + Go 模板解析 → **FAIL_YAML_SCHEMA > FAIL_TEMPLATES_MISSING > FAIL_TEMPLATE_PARSE > WARN > PASS**（probe 跑 python/yaml + go run，spec 只决策） |
+| `coding_env_check.json` | `knowledge/skills/local/ole-coding-agent-env/scripts/check-env.sh` (336 行) | 环境体检计数 → **FAIL > WARN > PERFECT**（`extract_numeric` 取 failed/warned 计数，exit 1/0 语义） |
+| `mlu270_smoke.json` | `code/scripts/mlu270-inference-test.sh` (138 行) | 4 个子检查（cntool / sample / torch_mlu / matmul smoke）→ **FAIL > WARN > PASS** |
+| `bitx_wrapper_test.json` | `code/bitx-stack/scripts/test-wrappers.sh` (224 行) | 12 个 wrapper 退出码对拍 → **FAIL > WARN > PASS**（`extract_numeric` 取 failed/skipped 计数） |
 
 ## 通用化：spec-declared heuristic（零 Rust）
 
@@ -68,7 +72,7 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 55 个样本（9 个 spec），覆盖每个 verdict label：
+`bench/dsl_smoke.py` 的 `STATES` 注册了 72 个样本（13 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
@@ -79,9 +83,13 @@ regex/needle 命中」。
 - ssl_certificate_expiry: OK / WARN_RENEW / EXPIRED / RENEW_FORCED / FAIL_UNREADABLE（含 0 / 30 天边界）
 - project_structure_guard: FAIL / WARN / OK（含缺字段 fail-closed → FAIL）
 - task_quality_gate: FAIL ×9 分支 / WARN（文档命名）/ PASS（含 AGENTS.md 500/501、coverage 80/79.9 边界）
+- htmx_app_lint: FAIL_YAML_SCHEMA / FAIL_TEMPLATES_MISSING / FAIL_TEMPLATE_PARSE / WARN / PASS
+- coding_env_check: FAIL / WARN / PERFECT（含缺字段 fail-closed → FAIL）
+- mlu270_smoke: FAIL ×4 子检查 / WARN / PASS
+- bitx_wrapper_test: FAIL / WARN / PASS（含缺字段 fail-closed → FAIL）
 
 ```bash
-python3 bench/dsl_smoke.py     # 55 agents 样本全部 label 断言通过
+python3 bench/dsl_smoke.py     # 72 agents 样本全部 label 断言通过
 ```
 
 ## 运行
