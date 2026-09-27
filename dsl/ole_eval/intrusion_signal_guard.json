@@ -1,0 +1,69 @@
+{
+  "name": "intrusion_signal_guard",
+  "description": "Port of ole-eval code/qwen_vm/app_scenarios/intrusion_signal_guard. Verdict ladder mirrors Python _decide: known_signature OR strong>=2 OR (strong>=1 AND weak>=2) -> block; strong==1 OR weak>=2 -> challenge; weak==1 -> monitor; else allow. Actions: block=quarantine_proposal, challenge=step_up_mfa, monitor=watch, allow=none. No real blocking/quarantine side effect.",
+  "start": "signals",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "signals",
+      "primary_q": "intrusion_verdict",
+      "questions": {
+        "known_signature": {
+          "type": "choice",
+          "instructions": "Does the request match a known signature (sql_injection / path_traversal / log4j_injection / shellshock, or sqlmap/nikto/masscan/zgrab user-agent)?",
+          "criteria": { "A": "no signature match", "B": "yes, known signature" }
+        },
+        "failed_login_velocity": {
+          "type": "choice",
+          "instructions": "Strong signal: >=5 failed logins in the last 600s?",
+          "criteria": { "A": "below threshold", "B": "yes, failed-login velocity" }
+        },
+        "port_scan_window": {
+          "type": "choice",
+          "instructions": "Strong signal: >=20 unique ports probed in the last 60s?",
+          "criteria": { "A": "below threshold", "B": "yes, port scan" }
+        },
+        "impossible_travel": {
+          "type": "choice",
+          "instructions": "Strong signal: country changed with 0 <= delta <= 1800s?",
+          "criteria": { "A": "no impossible travel", "B": "yes, impossible travel" }
+        },
+        "unusual_country": {
+          "type": "choice",
+          "instructions": "Weak signal: current country outside the user's usual countries?",
+          "criteria": { "A": "usual country", "B": "yes, unusual country" }
+        },
+        "off_hours_access": {
+          "type": "choice",
+          "instructions": "Weak signal: event clock hour outside 07:00-20:00?",
+          "criteria": { "A": "within hours", "B": "yes, off-hours access" }
+        },
+        "intrusion_verdict": {
+          "type": "choice",
+          "instructions": "Which verdict does the signal combination imply? block: signature OR strong>=2 OR (strong>=1 AND weak>=2). challenge: strong==1 OR weak>=2. monitor: weak==1. allow: none.",
+          "criteria": {
+            "allow": "no signals; action=none",
+            "monitor": "exactly one weak signal; action=watch",
+            "challenge": "one strong, or two weak, or strong+weak<2; action=step_up_mfa",
+            "block": "signature, or >=2 strong, or >=1 strong and >=2 weak; action=quarantine_proposal"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "intrusion_verdict",
+        "rules": [
+          { "when": { "question": "known_signature", "answer": "B" }, "label": "block" },
+          { "when": { "question": "intrusion_verdict", "answer": "block" }, "label": "block" },
+          { "when": { "question": "intrusion_verdict", "answer": "challenge" }, "label": "challenge" },
+          { "when": { "question": "intrusion_verdict", "answer": "monitor" }, "label": "monitor" },
+          { "when": { "question": "intrusion_verdict", "answer": "allow" }, "label": "allow" },
+          { "when": { "always": true }, "label": "allow" }
+        ]
+      },
+      "state": { "keep": ["request_id", "event_id"] }
+    }
+  ]
+}

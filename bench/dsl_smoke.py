@@ -115,6 +115,17 @@ STATES: dict[str, dict] = {
         "allow": {"text": "legitimate_purchase normal_usage"},
         "review": {"text": "new_device_payment repeated_failures risk 55"},
     },
+    "aml_screener": {
+        "block": {"text": "sanctioned country_cu wire payment"},
+        "review": {"text": "crypto category transaction large_amount above threshold"},
+        "clear": {"text": "goods_services payroll wire small amount US CA"},
+    },
+    "intrusion_signal_guard": {
+        "block": {"text": "sql_injection signature union select port_scan unusual_country"},
+        "challenge": {"text": "impossible_travel single strong signal"},
+        "monitor": {"text": "unusual_country only"},
+        "allow": {"text": "routine access normal"},
+    },
     "deployment_canary_guard": {
         "reject": {"text": "eval( rm -rf service"},
         "escalate": {"text": "stages_wide clean-canary"},

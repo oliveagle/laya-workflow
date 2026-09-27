@@ -1,0 +1,52 @@
+{
+  "name": "aml_screener",
+  "description": "Port of ole-eval code/qwen_vm/app_scenarios/aml_screener. Ordered rules: mandatory BLOCK on sanctioned country, then BLOCK >= 70, REVIEW >= 25, else CLEAR. Python arithmetic (crypto +30, large_amount +25, high_risk_country +35, exchange +20, near_threshold +15) folded into a single model-judged composite_risk score.",
+  "start": "screen",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "screen",
+      "primary_q": "aml_risk",
+      "questions": {
+        "sanctioned_country": {
+          "type": "choice",
+          "instructions": "Is origin or destination country in the sanctioned set (CU, IR, KP, SY)?",
+          "criteria": { "A": "no sanctioned country", "B": "yes, sanctioned country" }
+        },
+        "crypto_category": {
+          "type": "choice",
+          "instructions": "Is the transaction category crypto?",
+          "criteria": { "A": "not crypto", "B": "yes, crypto category" }
+        },
+        "crypto_exchange_counterparty": {
+          "type": "choice",
+          "instructions": "Is the counterparty type a crypto exchange?",
+          "criteria": { "A": "not crypto exchange", "B": "yes, crypto exchange" }
+        },
+        "high_risk_country": {
+          "type": "choice",
+          "instructions": "Is origin or destination country in the high-risk set (BY, MM, NG, RU + sanctioned)?",
+          "criteria": { "A": "no high-risk country", "B": "yes, high-risk country" }
+        },
+        "aml_risk": {
+          "type": "score",
+          "instructions": "Composite AML risk 0-100 (sum rule points for crypto +30, large_amount +25, high_risk_country +35, crypto_exchange +20, near_threshold +15, charity_high_risk +20).",
+          "criteria": ["0 clear", "25 reviewable", "70 block", "100 maximum"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "aml_risk",
+        "rules": [
+          { "when": { "question": "sanctioned_country", "answer": "B" }, "label": "BLOCK" },
+          { "when": { "value_gte": 70.0 }, "label": "BLOCK" },
+          { "when": { "value_gte": 25.0 }, "label": "REVIEW" },
+          { "when": { "always": true }, "label": "CLEAR" }
+        ]
+      },
+      "state": { "keep": ["request_id", "transaction_id"] }
+    }
+  ]
+}

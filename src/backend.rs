@@ -594,6 +594,55 @@ impl Decide for HeuristicBackend {
                     m.insert("2".to_string(), serde_json::json!(if v >= 70.0 { 0.9 } else { 0.02 }));
                     (serde_json::json!(v), m, 0.9)
                 }
+                // AML screener: choice questions A=no / B=yes; aml_risk is 0..100.
+                "sanctioned_country" => bchoice(if contains_any(&text, &["cuba", "iran", "north korea", "syria", " country_cu", "country_ir", "country_kp", "country_sy", "\"CU\"", "\"IR\"", "\"KP\"", "\"SY\""]) { 0.95 } else { 0.05 }),
+                "crypto_category" => bchoice(if contains_any(&text, &["crypto", "bitcoin", "ethereum"]) { 0.9 } else { 0.1 }),
+                "crypto_exchange_counterparty" => bchoice(if contains_any(&text, &["crypto_exchange", "exchange"]) { 0.9 } else { 0.1 }),
+                "high_risk_country" => bchoice(if contains_any(&text, &["belarus", "myanmar", "nigeria", "russia", "belarus", "country_by", "country_mm", "country_ng", "country_ru"]) { 0.9 } else { 0.1 }),
+                "aml_risk" => {
+                    let mut v = 0.0f64;
+                    if contains_any(&text, &["crypto", "bitcoin", "ethereum"]) { v += 30.0; }
+                    if contains_any(&text, &["large_amount", "large amount", "above threshold"]) { v += 25.0; }
+                    if contains_any(&text, &["high_risk", "high risk", "belarus", "russia", "country_by", "country_ru"]) { v += 35.0; }
+                    if contains_any(&text, &["crypto_exchange", "exchange"]) { v += 20.0; }
+                    if contains_any(&text, &["near_threshold", "near threshold"]) { v += 15.0; }
+                    if contains_any(&text, &["charity_high_risk", "charity"]) { v += 20.0; }
+                    if contains_any(&text, &["sanctioned", "country_cu", "country_ir", "country_kp", "country_sy"]) { v = 100.0; }
+                    let v = v.min(100.0);
+                    let mut m = Map::new();
+                    m.insert("0".to_string(), serde_json::json!(if v < 25.0 { 0.9 } else { 0.02 }));
+                    m.insert("1".to_string(), serde_json::json!(if v >= 25.0 && v < 70.0 { 0.9 } else { 0.02 }));
+                    m.insert("2".to_string(), serde_json::json!(if v >= 70.0 { 0.9 } else { 0.02 }));
+                    (serde_json::json!(v), m, 0.9)
+                }
+                // Intrusion signal guard: signal flags + the derived verdict.
+                "known_signature" => bchoice(if contains_any(&text, &["sql_injection", "union select", " or 1=1", "sleep(", "../", "/etc/passwd", "${jndi:", "() { :;", "sqlmap", "nikto", "masscan", "zgrab"]) { 0.95 } else { 0.05 }),
+                "failed_login_velocity" => bchoice(if contains_any(&text, &["failed_login_velocity", "failed login velocity", "5 failed", "repeated_failures"]) { 0.9 } else { 0.1 }),
+                "port_scan_window" => bchoice(if contains_any(&text, &["port_scan", "port scan", "unique_ports", "masscan", "zgrab"]) { 0.9 } else { 0.1 }),
+                "impossible_travel" => bchoice(if contains_any(&text, &["impossible_travel", "impossible travel", "fast travel"]) { 0.9 } else { 0.1 }),
+                "unusual_country" => bchoice(if contains_any(&text, &["unusual_country", "unusual country", "unexpected country"]) { 0.8 } else { 0.2 }),
+                "off_hours_access" => bchoice(if contains_any(&text, &["off_hours", "off hours", "night access"]) { 0.8 } else { 0.2 }),
+                "intrusion_verdict" => {
+                    // Recompute the Python _decide ladder from the same state text.
+                    let strong_count = [
+                        contains_any(&text, &["failed_login_velocity", "failed login velocity"]),
+                        contains_any(&text, &["port_scan", "port scan", "masscan", "zgrab"]),
+                        contains_any(&text, &["impossible_travel", "impossible travel"]),
+                    ].iter().filter(|x| **x).count();
+                    let weak_count = [
+                        contains_any(&text, &["unusual_country", "unusual country"]),
+                        contains_any(&text, &["off_hours", "off hours"]),
+                    ].iter().filter(|x| **x).count();
+                    let signature = contains_any(&text, &["sql_injection", "union select", " or 1=1", "sleep(", "../", "/etc/passwd", "${jndi:", "() { :;", "sqlmap", "nikto"]);
+                    let pick = if signature || strong_count >= 2 || (strong_count >= 1 && weak_count >= 2) { "block" }
+                        else if strong_count == 1 || weak_count >= 2 { "challenge" }
+                        else if weak_count == 1 { "monitor" }
+                        else { "allow" };
+                    let keys = ["allow", "monitor", "challenge", "block"];
+                    let mut m = Map::new();
+                    for k in keys { m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 })); }
+                    (serde_json::json!(pick), m, 0.9)
+                }
                 _ => match qtype {
                     "score" => bscore(1.0),
                     "noul" => {
