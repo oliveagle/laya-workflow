@@ -1,4 +1,5 @@
 /target/
+laya-mlx/target/
 
 # reference/ ONNX weights (~5GB) — regenerate with reference/laya/export_onnx.py
 reference/**/*.onnx
@@ -12,3 +13,8 @@ reference/**/*.onnx.data
 # __pycache__ from reference/laya
 __pycache__/
 *.pyc
+
+# cmdgo / command-code local run artifacts
+.cmdgo/
+.commandcode/
+acceptance-reports/
