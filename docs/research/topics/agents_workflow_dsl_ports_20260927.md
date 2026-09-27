@@ -109,6 +109,25 @@
 > 每一行都直接对应一条**可审计的策略**。shell 里的 102/155 行有大量 grep/wc/find/sed
 > 的过程型代码，与"规则是什么"无关。
 
+### 3.1.1 CPU vs GPU 部署架构
+
+| 组件 | 语言 / 依赖 | 角色 | 何时使用 |
+|------|------------|------|---------|
+| `laya-workflow`（CLI） | Rust，5 个 crate（serde / clap / anyhow / ureq / regex-lite）—— **无 CUDA / 无 torch** | 决策引擎 + HeuristicBackend | **当前所有离线样本都在这里跑，CPU** |
+| `laya-tch`（workspace 另一个 crate） | Python，torch + transformers | 远程 GPU 推理服务（HTTP） | question 无 `heuristic` 声明时，CLI 通过 `--base-url` 连过去 |
+
+权威证据（`Cargo.toml` 全依赖清单）：
+```
+serde / serde_json / clap / anyhow / ureq / regex-lite
+```
+源码 `src/` 中 `cuda|cudnn|cublas|torch::` 零命中。
+
+结论：
+- 当前跑的这 6 + 2 个 spec 全部走 **CPU** 路径，不启模型 server
+- 6 个 ole_eval spec 之所以能离线跑，是因为它们对应的 question id 在 Rust 里有 hardcoded heuristic handler
+- 2 个新加的 agents spec 走通用 `heuristic` 字段求值，**永不调 GPU**
+- 真要跑 GPU 推理需要：写 spec question 但不加 `heuristic`，且有匹配的 GPU server 在 `--base-url` 后 listen
+
 ### 3.2 Wall time（单次决策）
 
 | spec | shell parse（只做 `bash -n`） | DSL offline run（`laya-workflow run`） |
