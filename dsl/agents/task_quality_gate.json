@@ -1,0 +1,279 @@
+{
+  "name": "task_quality_gate",
+  "dsl_version": 2,
+  "description": "Port of agent-toolbox ole-task-check/quality-gate-template.sh decision semantics. Seven check groups (compile, test+coverage, placeholder, file-line, AGENTS.md-line, security, doc-naming) collapse into a single FAIL/PASS ladder; doc-naming is the only WARN (non-blocking, like the shell). Side effects (go build / go test / cargo check / gobco / file scan / secret grep) live in the probe layer; this spec only decides. Coverage defaults to 100 (no failure) when the probe omits the field, mirroring the shell's skip-with-WARN behaviour. AGENTS.md threshold is strict-greater than 500 lines via value_gte 500.5, line-cover / branch-cover threshold is value_lt 80.",
+  "start": "gate",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "gate",
+      "primary_q": "compile_ok",
+      "questions": {
+        "compile_ok": {
+          "type": "choice",
+          "instructions": "Did go build / cargo check succeed for the detected language?",
+          "criteria": {
+            "A": "compile passed",
+            "B": "compile failed"
+          },
+          "heuristic": {
+            "match_any": [
+              "compile_failed",
+              "go_build_failed",
+              "cargo_check_failed"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "test_ok": {
+          "type": "choice",
+          "instructions": "Did the test command succeed (go test / cargo test)?",
+          "criteria": {
+            "A": "tests passed",
+            "B": "tests failed"
+          },
+          "heuristic": {
+            "match_any": [
+              "test_failed",
+              "go_test_failed",
+              "cargo_test_failed"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "line_cover_pct": {
+          "type": "score",
+          "instructions": "Go line coverage percent (0-100). Missing field defaults to 100 so non-Go projects / unparseable coverprofiles do not fail.",
+          "criteria": [
+            "0 none",
+            "40 low",
+            "80 acceptable",
+            "100 full"
+          ],
+          "heuristic": {
+            "extract_numeric": "line_cover_pct",
+            "score_miss": 100.0
+          }
+        },
+        "branch_cover_pct": {
+          "type": "score",
+          "instructions": "Go branch coverage percent from gobco (0-100). Missing field defaults to 100 so the no-gobco case does not fail.",
+          "criteria": [
+            "0 none",
+            "40 low",
+            "80 acceptable",
+            "100 full"
+          ],
+          "heuristic": {
+            "extract_numeric": "branch_cover_pct",
+            "score_miss": 100.0
+          }
+        },
+        "placeholder_clean": {
+          "type": "choice",
+          "instructions": "Did the grep scan of source files find any placeholder/TODO/FIXME/stub/TBD/Not implemented marker?",
+          "criteria": {
+            "A": "no placeholder found",
+            "B": "placeholder found"
+          },
+          "heuristic": {
+            "match_any": [
+              "placeholder_found",
+              "todo_found",
+              "fixme_found",
+              "stub_found",
+              "tbd_found",
+              "not_implemented_found"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "files_within_limit": {
+          "type": "choice",
+          "instructions": "Are all source/doc files within the 500-line limit?",
+          "criteria": {
+            "A": "all within limit",
+            "B": "file(s) over 500 lines"
+          },
+          "heuristic": {
+            "match_any": [
+              "oversized_file",
+              "files_over_500",
+              "over_500_lines"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "agents_md_lines": {
+          "type": "score",
+          "instructions": "AGENTS.md line count. Strict greater-than 500 trips FAIL (shell uses -gt 500).",
+          "criteria": [
+            "0 missing",
+            "200 fine",
+            "500 fine",
+            "501 too big"
+          ],
+          "heuristic": {
+            "extract_numeric": "agents_md_lines",
+            "score_miss": 0.0
+          }
+        },
+        "secrets_clean": {
+          "type": "choice",
+          "instructions": "Are there any hardcoded password/secret/api_key/token/auth literals longer than 8 chars?",
+          "criteria": {
+            "A": "no hardcoded secret",
+            "B": "secret pattern hit"
+          },
+          "heuristic": {
+            "field": "secret_hit",
+            "match_regex": [
+              "(?i)(password|secret|api_key|token|auth)\\s*=\\s*\"[^\"]{8,}\""
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "sql_clean": {
+          "type": "choice",
+          "instructions": "Are there any Go SQL-string-concat patterns (fmt.Sprintf / strings.Join + SELECT|INSERT|UPDATE|DELETE)?",
+          "criteria": {
+            "A": "no SQL concat",
+            "B": "SQL concat pattern hit"
+          },
+          "heuristic": {
+            "field": "sql_injection",
+            "match_regex": [
+              "(fmt\\.Sprintf|strings\\.Join).*(\"SELECT|INSERT|UPDATE|DELETE)"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "doc_naming_ok": {
+          "type": "choice",
+          "instructions": "Are plan/design/prd/todo/research/meeting/adr/implementation/test_plan/release/review docs in docs/{development,research,records}/ all carrying the _YYYYMMDD date suffix?",
+          "criteria": {
+            "A": "all dated",
+            "B": "some missing date suffix"
+          },
+          "heuristic": {
+            "match_any": [
+              "bad_doc_naming",
+              "missing_date_suffix"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "compile_ok",
+        "rules": [
+          {
+            "when": {
+              "question": "compile_ok",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "test_ok",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "line_cover_pct",
+              "value_lt": 80
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "branch_cover_pct",
+              "value_lt": 80
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "placeholder_clean",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "files_within_limit",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "agents_md_lines",
+              "value_gte": 500.5
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "secrets_clean",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "sql_clean",
+              "answer": "B"
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "doc_naming_ok",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "branch",
+          "compile_failed",
+          "test_failed",
+          "line_cover_pct",
+          "branch_cover_pct",
+          "placeholder_found",
+          "oversized_file",
+          "agents_md_lines",
+          "secret_hit",
+          "sql_injection",
+          "bad_doc_naming"
+        ]
+      }
+    }
+  ]
+}

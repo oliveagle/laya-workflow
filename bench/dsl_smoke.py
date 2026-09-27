@@ -187,6 +187,77 @@ STATES: dict[str, dict] = {
         "forced":   {"cert_status": "ok", "days_left": 90, "force_mode": "force"},
         "ok30":     {"cert_status": "ok", "days_left": 30, "force_mode": "none"},
     },
+    "project_structure_guard": {
+        "fail":  {"failures": 2, "warnings": 3, "health_score": 74},
+        "warn":  {"failures": 0, "warnings": 1, "health_score": 97},
+        "ok":    {"failures": 0, "warnings": 0, "health_score": 100},
+        "missing": {},
+    },
+    "task_quality_gate": {
+        "fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_test":     {"test_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_linecov":  {"line_cover_pct": 65, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_branchcov": {"line_cover_pct": 92, "branch_cover_pct": 50, "agents_md_lines": 100},
+        "fail_ph":       {"placeholder_found": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_oversize": {"oversized_file": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_agentsmd": {"agents_md_lines": 620, "line_cover_pct": 92, "branch_cover_pct": 88},
+        "fail_secret":   {"secret_hit": "password=\"hunter2hunter2\"", "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "fail_sql":      {"sql_injection": "fmt.Sprintf(\"SELECT * FROM %s\", table)", "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "warn_naming":   {"bad_doc_naming": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+        "pass":          {"line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 420},
+        "pass_agents500": {"agents_md_lines": 500, "line_cover_pct": 92, "branch_cover_pct": 88},
+        "fail_agents501": {"agents_md_lines": 501, "line_cover_pct": 92, "branch_cover_pct": 88},
+        "pass_no_branch": {"line_cover_pct": 92, "agents_md_lines": 100},
+    },
+}
+
+
+# Expected verdict label per sample state for specs that declare one. Only
+# specs listed here are label-asserted, so existing capability specs (whose
+# samples depend on external services) keep their current report-only flow.
+EXPECT: dict[str, dict[str, str]] = {
+    "quality_gate": {
+        "fail": "FAIL", "warn": "WARN", "note": "NOTE", "pass": "PASS",
+    },
+    "security_scan": {
+        "critical": "QUARANTINE_CRITICAL", "critical_tcp": "QUARANTINE_CRITICAL",
+        "high": "QUARANTINE_HIGH", "whitelisted": "CLEAN",
+        "binary": "SKIP", "clean": "CLEAN",
+    },
+    "commit_msg_gate": {
+        "empty": "FAIL_EMPTY", "short": "FAIL_TOO_SHORT",
+        "placeholder": "FAIL_PLACEHOLDER", "pass": "PASS",
+    },
+    "version_gate": {
+        "stable": "PASS_STABLE", "rc": "PASS_RC",
+        "bad_format": "FAIL_INVALID_VERSION", "no_tag": "FAIL_TAG_UNREACHABLE",
+        "diverged": "FAIL_ORIGIN_DIVERGED", "dirty": "FAIL_DIRTY_TREE",
+        "clean": "PASS_STABLE",
+    },
+    "skill_publish_gate": {
+        "pass": "PASS", "fail_struct": "FAIL_STRUCTURE",
+        "fail_lines": "FAIL_LINE_COUNT", "fail_ph": "FAIL_PLACEHOLDER",
+        "fail_links": "FAIL_LINKS",
+    },
+    "workflow_guardian": {
+        "ok": "OK", "fail_task": "FAIL_TASK_LAYER",
+        "warn_know": "WARN_KNOWLEDGE_LAYER", "fail_collab": "FAIL_COLLABORATION_LAYER",
+    },
+    "project_structure_guard": {
+        "fail": "FAIL", "warn": "WARN", "ok": "OK", "missing": "FAIL",
+    },
+    "task_quality_gate": {
+        "fail_compile": "FAIL", "fail_test": "FAIL", "fail_linecov": "FAIL",
+        "fail_branchcov": "FAIL", "fail_ph": "FAIL", "fail_oversize": "FAIL",
+        "fail_agentsmd": "FAIL", "fail_secret": "FAIL", "fail_sql": "FAIL",
+        "warn_naming": "WARN", "pass": "PASS", "pass_agents500": "PASS",
+        "fail_agents501": "FAIL", "pass_no_branch": "PASS",
+    },
+    "ssl_certificate_expiry": {
+        "ok": "OK", "warn": "WARN_RENEW", "warn0": "WARN_RENEW",
+        "expired": "EXPIRED", "unreadable": "FAIL_UNREADABLE",
+        "forced": "RENEW_FORCED", "ok30": "OK",
+    },
 }
 
 
@@ -256,6 +327,11 @@ def main() -> int:
             print(f"       {label:10} final={res.get('trace', {}).get('final_action')}  {chain}")
             if keys:
                 print(f"                  payload={json.dumps(keys, ensure_ascii=False)}")
+            want = EXPECT.get(spec.stem, {}).get(label)
+            got = res.get("result", {}).get("label")
+            if want is not None and got != want:
+                fails += 1
+                print(f"       [FAIL] {label}: expected label {want!r}, got {got!r}")
 
     print(f"\n{total - fails}/{total} specs OK")
     return 0 if fails == 0 else 1

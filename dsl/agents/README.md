@@ -14,6 +14,8 @@
 | `skill_publish_gate.json` | `skills/devine-gen-mcp/scripts/quality-gate.sh` (207 行) | 4 项检查（结构 / 行数 / placeholder / 链接）→ **FAIL_STRUCTURE > FAIL_LINE_COUNT > FAIL_PLACEHOLDER > FAIL_LINKS > PASS** |
 | `workflow_guardian.json` | `code/agents/workflow-guardian/scripts/scan-all.sh` (216 行) | 3 层（任务 / 知识 / 协作）→ **FAIL_TASK_LAYER > FAIL_COLLABORATION_LAYER > WARN_KNOWLEDGE_LAYER > OK** |
 | `ssl_certificate_expiry.json` | `code/scripts/ssl-expiry-check.sh` + `ssl-renew-olehome.sh` | 剩余天数阶梯 → **EXPIRED > WARN_RENEW > RENEW_FORCED > OK / FAIL_UNREADABLE**（`extract_numeric` 读真实天数） |
+| `project_structure_guard.json` | `code/agents/project-structure-guardian/scripts/scan-all.sh` (493 行) | 六维结构检查（根目录 / 日志 / 文档 / 目录 / 配置 / gitignore）→ **FAIL > WARN > OK**（exit 1/2/0；`health_score = 100 - failures*10 - warnings*3` 随 payload 透传） |
+| `task_quality_gate.json` | `skills/ole-task-check/quality-gate-template.sh` (261 行) | 7 组检查（编译 / 测试+覆盖率 / placeholder / 文件行数 / AGENTS.md 行数 / 安全 / 文档命名）→ **FAIL > WARN > PASS**（`value_lt 80` 覆盖率阈值 + `value_gte 500.5` AGENTS.md 严格 >500；`field` 把 security regex 限定到字段值避免信封转义误报） |
 
 ## 通用化：spec-declared heuristic（零 Rust）
 
@@ -66,7 +68,7 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 42 个样本（7 个 spec），覆盖每个 verdict label：
+`bench/dsl_smoke.py` 的 `STATES` 注册了 55 个样本（9 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
@@ -75,9 +77,11 @@ regex/needle 命中」。
 - skill_publish_gate: PASS / FAIL_STRUCTURE / FAIL_LINE_COUNT / FAIL_PLACEHOLDER / FAIL_LINKS
 - workflow_guardian: OK / FAIL_TASK_LAYER / WARN_KNOWLEDGE_LAYER / FAIL_COLLABORATION_LAYER
 - ssl_certificate_expiry: OK / WARN_RENEW / EXPIRED / RENEW_FORCED / FAIL_UNREADABLE（含 0 / 30 天边界）
+- project_structure_guard: FAIL / WARN / OK（含缺字段 fail-closed → FAIL）
+- task_quality_gate: FAIL ×9 分支 / WARN（文档命名）/ PASS（含 AGENTS.md 500/501、coverage 80/79.9 边界）
 
 ```bash
-python3 bench/dsl_smoke.py     # 42 agents 样本 + 全量回归 = 全绿
+python3 bench/dsl_smoke.py     # 55 agents 样本全部 label 断言通过
 ```
 
 ## 运行
