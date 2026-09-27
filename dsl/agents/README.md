@@ -20,6 +20,7 @@
 | `coding_env_check.json` | `knowledge/skills/local/ole-coding-agent-env/scripts/check-env.sh` (336 行) | 环境体检计数 → **FAIL > WARN > PERFECT**（`extract_numeric` 取 failed/warned 计数，exit 1/0 语义） |
 | `mlu270_smoke.json` | `code/scripts/mlu270-inference-test.sh` (138 行) | 4 个子检查（cntool / sample / torch_mlu / matmul smoke）→ **FAIL > WARN > PASS** |
 | `bitx_wrapper_test.json` | `code/bitx-stack/scripts/test-wrappers.sh` (224 行) | 12 个 wrapper 退出码对拍 → **FAIL > WARN > PASS**（`extract_numeric` 取 failed/skipped 计数） |
+| `zero_leftover_gate.json` | `skills/ole-commit-push/scripts/zero-leftover-check.sh` (64 行) | git 工作区健康 → **LEFTOVER > WARN > ALLOW > CLEAN**（shell exit 1/0 + --allow-leftover 覆盖） |
 
 ## 通用化：spec-declared heuristic（零 Rust）
 
@@ -72,7 +73,7 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 72 个样本（13 个 spec），覆盖每个 verdict label：
+`bench/dsl_smoke.py` 的 `STATES` 注册了 77 个样本（14 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
@@ -87,9 +88,10 @@ regex/needle 命中」。
 - coding_env_check: FAIL / WARN / PERFECT（含缺字段 fail-closed → FAIL）
 - mlu270_smoke: FAIL ×4 子检查 / WARN / PASS
 - bitx_wrapper_test: FAIL / WARN / PASS（含缺字段 fail-closed → FAIL）
+- zero_leftover_gate: LEFTOVER ×2 / WARN / ALLOW / CLEAN
 
 ```bash
-python3 bench/dsl_smoke.py     # 72 agents 样本全部 label 断言通过
+python3 bench/dsl_smoke.py     # 77 agents 样本全部 label 断言通过
 ```
 
 ## 运行
