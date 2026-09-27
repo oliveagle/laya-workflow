@@ -353,12 +353,18 @@ fn scan_hardcoded(v: &Value, path: &str, out: &mut Vec<String>) {
             for (k, val) in o {
                 let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
                 let kl = k.to_ascii_lowercase();
+                // Prompt-text subtrees (`criteria` choice labels and score
+                // descriptions) are never credentials, and their keys are
+                // domain words: `criteria.credential_stuffing` used to trip
+                // the scanner on the "credential" substring. Skip the
+                // key-name check there, but still recurse for nested objects.
+                let in_prompt_text = p.contains(".criteria.") || p.starts_with("criteria.");
                 // Only flag *values* that look like a literal credential. A
                 // key that merely *mentions* token/secret (e.g. a `project`
                 // output name like `token_ttl_set`) is not a hard-coded secret.
                 // Also skip output-mapping sections, which name destination keys.
                 let in_output_map = path.ends_with("project") || path.ends_with("keys");
-                if !in_output_map && SECRETISH.iter().any(|s| kl.contains(s)) {
+                if !in_output_map && !in_prompt_text && SECRETISH.iter().any(|s| kl.contains(s)) {
                     if let Some(s) = val.as_str() {
                         if !s.trim().is_empty() && !s.contains("${") {
                             out.push(p.clone());

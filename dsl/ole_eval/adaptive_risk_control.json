@@ -1,0 +1,63 @@
+{
+  "name": "adaptive_risk_control",
+  "description": "Port of ole-eval code/qwen_vm/app_scenarios/adaptive_risk_control. Ordered rules: hard DENY reasons (intent in credential_stuffing/card_testing/account_takeover, or MFA failed while challenge pending, or risk >= 70) first, then REVIEW (>= 40), then CHALLENGE (>= 20), then ALLOW.",
+  "start": "risk_score",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "risk_score",
+      "primary_q": "risk",
+      "questions": {
+        "intent": {
+          "type": "choice",
+          "instructions": "Which user intent does this event match?",
+          "criteria": {
+            "legitimate_purchase": "normal payment / transfer",
+            "legitimate_recovery": "account recovery flow",
+            "credential_stuffing": "automated credential testing",
+            "card_testing": "many micro-charges to validate stolen cards",
+            "account_takeover": "anomalous session then drain",
+            "unknown": "unclear"
+          }
+        },
+        "behaviour": {
+          "type": "choice",
+          "instructions": "Which behaviour pattern dominates this event?",
+          "criteria": {
+            "normal_usage": "routine use",
+            "repeated_failures": "many prior failures",
+            "micro_transaction_burst": "burst of tiny charges",
+            "new_device_payment": "new device making a payment",
+            "recovery_then_withdrawal": "recovery followed by withdrawal",
+            "inconsistent_session": "session signals disagree"
+          }
+        },
+        "mfa_failed_pending": {
+          "type": "choice",
+          "instructions": "Did MFA fail while a challenge was already pending?",
+          "criteria": { "A": "no", "B": "yes" }
+        },
+        "risk": {
+          "type": "score",
+          "instructions": "Composite risk score 0-100 (intent + behaviour + velocity + amount + new device).",
+          "criteria": ["0 clean", "40 reviewable", "70 deny", "100 maximum"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "risk",
+        "rules": [
+          { "when": { "question": "intent", "answer_in": ["credential_stuffing", "card_testing", "account_takeover"] }, "label": "DENY" },
+          { "when": { "question": "mfa_failed_pending", "answer": "B" }, "label": "DENY" },
+          { "when": { "value_gte": 70.0 }, "label": "DENY" },
+          { "when": { "value_gte": 40.0 }, "label": "REVIEW" },
+          { "when": { "value_gte": 20.0 }, "label": "CHALLENGE" },
+          { "when": { "always": true }, "label": "ALLOW" }
+        ]
+      },
+      "state": { "keep": ["request_id", "actor_id"] }
+    }
+  ]
+}

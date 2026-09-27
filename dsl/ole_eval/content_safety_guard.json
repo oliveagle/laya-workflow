@@ -1,0 +1,73 @@
+{
+  "name": "content_safety_guard",
+  "description": "Port of ole-eval code/qwen_vm/app_scenarios/content_safety_guard. Ordered policy: hard BLOCK reasons (prohibited / PII-public / age / context / severity>=90) first, then REVIEW reasons, then ALLOW. The Python taxonomy table lookups (base_severity per semantic, audience age) are folded into direct model judgments on the choice questions.",
+  "start": "policy",
+  "max_iterations": 5,
+  "nodes": [
+    {
+      "name": "policy",
+      "primary_q": "severity",
+      "questions": {
+        "is_prohibited": {
+          "type": "choice",
+          "instructions": "Does the content hit a prohibited semantic category (never allowed in any context)?",
+          "criteria": { "A": "no, nothing prohibited", "B": "yes, prohibited content" }
+        },
+        "pii_public_high": {
+          "type": "choice",
+          "instructions": "Does this expose high-severity PII on a public feed (base_severity >= 80)?",
+          "criteria": { "A": "no PII exposure on public feed", "B": "yes, high-severity PII on a public feed" }
+        },
+        "pii_public_low": {
+          "type": "choice",
+          "instructions": "Does this expose low/mid-severity PII on a public feed (base_severity < 80)?",
+          "criteria": { "A": "no", "B": "yes, low/mid PII on a public feed" }
+        },
+        "age_blocking": {
+          "type": "choice",
+          "instructions": "Does any semantic exceed the audience minimum age at blocking severity (>= 80)?",
+          "criteria": { "A": "no age restriction violation", "B": "yes, age-blocking content" }
+        },
+        "age_review": {
+          "type": "choice",
+          "instructions": "Does any semantic exceed the audience minimum age at review severity (< 80)?",
+          "criteria": { "A": "no", "B": "yes, age-restricted (review)" }
+        },
+        "context_blocking": {
+          "type": "choice",
+          "instructions": "Is any semantic not allowed in this context at blocking severity (>= 75)?",
+          "criteria": { "A": "all allowed here", "B": "yes, out-of-context blocking content" }
+        },
+        "context_review": {
+          "type": "choice",
+          "instructions": "Is any semantic not allowed in this context at review severity (< 75)?",
+          "criteria": { "A": "all allowed here", "B": "yes, out-of-context review content" }
+        },
+        "severity": {
+          "type": "score",
+          "instructions": "Effective severity 0-100 (base taxonomy severity plus repeat-violation boost up to +30).",
+          "criteria": ["0 benign", "50 reviewable", "90 blocking", "100 maximum"]
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "severity",
+        "rules": [
+          { "when": { "question": "is_prohibited", "answer": "B" }, "label": "BLOCK" },
+          { "when": { "question": "pii_public_high", "answer": "B" }, "label": "BLOCK" },
+          { "when": { "question": "age_blocking", "answer": "B" }, "label": "BLOCK" },
+          { "when": { "question": "context_blocking", "answer": "B" }, "label": "BLOCK" },
+          { "when": { "value_gte": 90.0 }, "label": "BLOCK" },
+          { "when": { "question": "pii_public_low", "answer": "B" }, "label": "REVIEW" },
+          { "when": { "question": "age_review", "answer": "B" }, "label": "REVIEW" },
+          { "when": { "question": "context_review", "answer": "B" }, "label": "REVIEW" },
+          { "when": { "value_gte": 50.0 }, "label": "REVIEW" },
+          { "when": { "always": true }, "label": "ALLOW" }
+        ]
+      },
+      "state": { "keep": ["request_id", "content_case_id"] }
+    }
+  ]
+}
