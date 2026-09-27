@@ -1,0 +1,112 @@
+{
+  "name": "commit_push_precheck",
+  "dsl_version": 2,
+  "description": "Port of ole-commit-push/scripts/run.sh stage-0 decision layer. Probe runs git config --local user.name/email, optional bitx-ci/devine-utils-ci git-author check, and git status --porcelain. Decision: any of git user unset / git-author check fail -> FAIL (exit 1), worktree clean -> NO_CHANGES (advisory, run.sh jumps to rebase-and-push), else PASS. Side effects (git config read + external binary exec) stay in probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "git_user_set",
+      "questions": {
+        "git_user_set": {
+          "type": "choice",
+          "instructions": "Probe-derived status string from git config --local: 'missing' when user.name or user.email is unset, 'configured' otherwise.",
+          "criteria": {
+            "A": "git user configured",
+            "B": "git user missing"
+          },
+          "heuristic": {
+            "field": "git_user_status",
+            "match_any": [
+              "missing",
+              "unset"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "git_author_valid": {
+          "type": "choice",
+          "instructions": "Probe-derived status string from bitx-ci/devine-utils-ci git-author check: 'failed' on non-zero exit, 'ok' otherwise.",
+          "criteria": {
+            "A": "author OK",
+            "B": "author check failed"
+          },
+          "heuristic": {
+            "field": "git_author_status",
+            "match_any": [
+              "failed",
+              "fail",
+              "rejected"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "worktree_dirty": {
+          "type": "choice",
+          "instructions": "Probe-derived status string from git status --porcelain: 'dirty' when any changes exist, 'clean' when none.",
+          "criteria": {
+            "A": "worktree clean",
+            "B": "worktree dirty"
+          },
+          "heuristic": {
+            "field": "worktree_status",
+            "match_any": [
+              "dirty"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "git_user_set",
+        "rules": [
+          {
+            "when": {
+              "question": "git_user_set",
+              "answer": "B"
+            },
+            "label": "FAIL_NO_GIT_USER"
+          },
+          {
+            "when": {
+              "question": "git_author_valid",
+              "answer": "B"
+            },
+            "label": "FAIL_AUTHOR_CHECK"
+          },
+          {
+            "when": {
+              "question": "worktree_dirty",
+              "answer": "A"
+            },
+            "label": "NO_CHANGES"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "git_user_status",
+          "git_author_status",
+          "worktree_status",
+          "repo"
+        ]
+      }
+    }
+  ]
+}

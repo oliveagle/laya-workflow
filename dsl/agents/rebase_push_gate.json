@@ -1,0 +1,137 @@
+{
+  "name": "rebase_push_gate",
+  "dsl_version": 2,
+  "description": "Port of ole-commit-push/scripts/rebase-and-push.sh stage-5..6c decision layer. Probe runs git fetch origin / rev-list ahead-behind / git rebase --autostash / secret regex on origin..HEAD diff. Decision: fetch fail -> FAIL_FETCH, ahead==0 -> NO_COMMIT (exit 0 advisory), rebase conflict -> FAIL_REBASE_CONFLICT, secret regex hit -> FAIL_SECRET_BLOCK, else PASS. Side effects (git fetch/rebase/push + secret grep on diff) stay in probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "fetch_ok",
+      "questions": {
+        "fetch_ok": {
+          "type": "choice",
+          "instructions": "Did git fetch origin succeed?",
+          "criteria": {
+            "A": "fetch OK",
+            "B": "fetch failed"
+          },
+          "heuristic": {
+            "match_any": [
+              "fetch_failed",
+              "fetch_refused",
+              "origin_unreachable"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "ahead_positive": {
+          "type": "choice",
+          "instructions": "Are there local commits ahead of origin (ahead > 0)?",
+          "criteria": {
+            "A": "ahead > 0",
+            "B": "ahead == 0"
+          },
+          "heuristic": {
+            "match_any": [
+              "ahead_zero",
+              "no_new_commit",
+              "no_commit_to_push"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "rebase_clean": {
+          "type": "choice",
+          "instructions": "Did git rebase --autostash complete without conflicts?",
+          "criteria": {
+            "A": "rebase clean",
+            "B": "rebase conflict"
+          },
+          "heuristic": {
+            "match_any": [
+              "rebase_conflict",
+              "rebase_failed",
+              "unmerged_paths",
+              "CONFLICT"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "secret_scan_clean": {
+          "type": "choice",
+          "instructions": "Did the secret regex on origin..HEAD diff find any credential pattern?",
+          "criteria": {
+            "A": "no secret",
+            "B": "credential hit"
+          },
+          "heuristic": {
+            "field": "secret_diff",
+            "match_regex": [
+              "(?i)(api[_-]?key|secret|password|access[_-]?key|token)\\s*[:=]\\s*['\"]([a-z0-9]{16,}|sk-[a-zA-Z0-9]+|ghp_[a-zA-Z0-9]+|AKIA[0-9A-Z]{16})"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "fetch_ok",
+        "rules": [
+          {
+            "when": {
+              "question": "fetch_ok",
+              "answer": "B"
+            },
+            "label": "FAIL_FETCH"
+          },
+          {
+            "when": {
+              "question": "ahead_positive",
+              "answer": "B"
+            },
+            "label": "NO_COMMIT"
+          },
+          {
+            "when": {
+              "question": "rebase_clean",
+              "answer": "B"
+            },
+            "label": "FAIL_REBASE_CONFLICT"
+          },
+          {
+            "when": {
+              "question": "secret_scan_clean",
+              "answer": "B"
+            },
+            "label": "FAIL_SECRET_BLOCK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "fetch_failed",
+          "ahead_zero",
+          "rebase_conflict",
+          "secret_diff",
+          "branch"
+        ]
+      }
+    }
+  ]
+}

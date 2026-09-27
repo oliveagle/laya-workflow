@@ -225,8 +225,22 @@ STATES: dict[str, dict] = {
         "allow":      {"tracked_dirty": True, "allow_flag": "allow"},
         "clean":      {},
     },
+        "commit_push_precheck": {
+        "fail_user":   {"git_user_status": "missing"},
+        "fail_author": {"git_author_status": "failed"},
+        "clean":       {"worktree_status": "clean"},
+        "dirty":       {"worktree_status": "dirty", "git_user_status": "configured", "git_author_status": "ok"},
+        "missing":     {},
+    },
+    "rebase_push_gate": {
+        "fail_fetch":  {"fetch_failed": True},
+        "no_commit":   {"ahead_zero": True},
+        "fail_rebase": {"rebase_conflict": True},
+        "fail_secret": {"secret_diff": "password=\"abcdefghijklmnopqrstuvwxyz\""},
+        "pass":        {},
+    },
     "task_quality_gate": {
-    "fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+"fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_test":     {"test_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_linecov":  {"line_cover_pct": 65, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_branchcov": {"line_cover_pct": 92, "branch_cover_pct": 50, "agents_md_lines": 100},
@@ -282,6 +296,15 @@ EXPECT: dict[str, dict[str, str]] = {
     "zero_leftover_gate": {
         "leftover": "LEFTOVER", "untracked": "LEFTOVER", "submod": "WARN",
         "allow": "ALLOW", "clean": "CLEAN",
+    },
+    "commit_push_precheck": {
+        "fail_user": "FAIL_NO_GIT_USER", "fail_author": "FAIL_AUTHOR_CHECK",
+        "clean": "NO_CHANGES", "dirty": "PASS", "missing": "NO_CHANGES",
+    },
+    "rebase_push_gate": {
+        "fail_fetch": "FAIL_FETCH", "no_commit": "NO_COMMIT",
+        "fail_rebase": "FAIL_REBASE_CONFLICT", "fail_secret": "FAIL_SECRET_BLOCK",
+        "pass": "PASS",
     },
     "task_quality_gate": {
         "fail_compile": "FAIL", "fail_test": "FAIL", "fail_linecov": "FAIL",
