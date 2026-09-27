@@ -9,6 +9,10 @@
 |------|--------------------------|----------|
 | `quality_gate.json` | `.githooks/quality-gate.sh` (141 行) | 5 项检查 → **FAIL > WARN > NOTE > PASS** 有序规则 |
 | `security_scan.json` | `code/scripts/security-scan.sh` (234 行) | 9 个恶意 pattern + whitelist + binary 跳过 → **QUARANTINE_CRITICAL > QUARANTINE_HIGH > CLEAN / SKIP** |
+| `commit_msg_gate.json` | `.githooks/commit-msg` (40 行) | 3 条规则 → **FAIL_EMPTY > FAIL_TOO_SHORT > FAIL_PLACEHOLDER > PASS**（`heuristic.field: message` 检查 message 值本身） |
+| `version_gate.json` | `skills/ole-release/scripts/check_version.sh` (165 行) | 5 项检查 → **FAIL_INVALID_VERSION > FAIL_TAG_UNREACHABLE > FAIL_ORIGIN_DIVERGED > FAIL_DIRTY_TREE > PASS_RC / PASS_STABLE** |
+| `skill_publish_gate.json` | `skills/devine-gen-mcp/scripts/quality-gate.sh` (207 行) | 4 项检查（结构 / 行数 / placeholder / 链接）→ **FAIL_STRUCTURE > FAIL_LINE_COUNT > FAIL_PLACEHOLDER > FAIL_LINKS > PASS** |
+| `workflow_guardian.json` | `code/agents/workflow-guardian/scripts/scan-all.sh` (216 行) | 3 层（任务 / 知识 / 协作）→ **FAIL_TASK_LAYER > FAIL_COLLABORATION_LAYER > WARN_KNOWLEDGE_LAYER > OK** |
 
 ## 通用化：spec-declared heuristic（零 Rust）
 
@@ -36,6 +40,11 @@ JSON」的目标。现在 HeuristicBackend 支持**在 question 里声明启发�
 或 `default_choice`），不破坏任何已有 spec。choice 走 `p_hit/p_miss`，
 score 走 `score_hit/score_miss`。
 
+**`heuristic.field`**：把匹配范围从「整个 state JSON 信封」缩到**一个字段值**
+（如 `{"field":"message"}` 时正则直接作用于 `state.message` 的原始值，而不是
+信封字符串）。字段不存在按无命中处理，不报错。这对 commit-msg 长度 / 单 token
+判断、VERSION 格式检查这类「针对字段值而非整包」的场景是必要的。
+
 ## 映射方式
 
 与 `dsl/ole_eval/` 相同：原始 shell 的**规则表 / 阈值阶梯**压成
@@ -50,10 +59,14 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 10 个样本，覆盖每个 verdict label：
+`bench/dsl_smoke.py` 的 `STATES` 注册了 35 个样本（6 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
+- commit_msg_gate: FAIL_EMPTY / FAIL_TOO_SHORT / FAIL_PLACEHOLDER / PASS
+- version_gate: PASS_STABLE / PASS_RC / FAIL_INVALID_VERSION / FAIL_TAG_UNREACHABLE / FAIL_ORIGIN_DIVERGED / FAIL_DIRTY_TREE
+- skill_publish_gate: PASS / FAIL_STRUCTURE / FAIL_LINE_COUNT / FAIL_PLACEHOLDER / FAIL_LINKS
+- workflow_guardian: OK / FAIL_TASK_LAYER / WARN_KNOWLEDGE_LAYER / FAIL_COLLABORATION_LAYER
 
 ```bash
 python3 bench/dsl_smoke.py     # 10 agents 样本 + 426 回归 = 全绿

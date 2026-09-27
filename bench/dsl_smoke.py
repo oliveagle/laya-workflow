@@ -150,6 +150,34 @@ STATES: dict[str, dict] = {
         "binary": {"file": "img.bin", "text": "binary_file"},
         "clean": {"file": "ok.py", "text": "clean script"},
     },
+    "commit_msg_gate": {
+        "empty":  {"message": ""},
+        "short":  {"message": "wip"},
+        "placeholder": {"message": "X_BBZAI_MCP_TOKEN"},
+        "pass":   {"message": "feat(scope): add nice feature"},
+    },
+    "version_gate": {
+        "stable": {"version": "1.2.3"},
+        "rc":     {"version": "1.2.3-rc.1"},
+        "bad_format": {"version": "oops"},
+        "no_tag":     {"version": "1.2.3", "tag_status": "missing"},
+        "diverged":   {"version": "1.2.3", "tag_status": "reachable", "origin_status": "diverged"},
+        "dirty":      {"version": "1.2.3", "tag_status": "reachable", "origin_status": "clean", "tree_status": "dirty"},
+        "clean":      {"version": "1.2.3", "tag_status": "reachable", "origin_status": "clean", "tree_status": "clean"},
+    },
+    "skill_publish_gate": {
+        "pass":        {"structure_status": "ok", "line_count_status": "ok", "placeholder_status": "ok", "links_status": "ok"},
+        "fail_struct": {"structure_status": "missing_required"},
+        "fail_lines":  {"line_count_status": "over_limit"},
+        "fail_ph":     {"placeholder_status": "placeholder_found"},
+        "fail_links":  {"links_status": "broken_links"},
+    },
+    "workflow_guardian": {
+        "ok":     {"task_layer": "ok", "knowledge_layer": "ok", "collaboration_layer": "ok"},
+        "fail_task": {"task_layer": "fail"},
+        "warn_know": {"task_layer": "ok", "knowledge_layer": "warn"},
+        "fail_collab": {"task_layer": "ok", "knowledge_layer": "ok", "collaboration_layer": "machines_missing"},
+    },
 }
 
 

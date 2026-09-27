@@ -1,0 +1,105 @@
+{
+  "name": "commit_msg_gate",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/.githooks/commit-msg: three ordered rules rejecting empty/too-short/single-token commit messages. Each heuristic narrows matching to the 'message' field via heuristic.field, so the regex inspects the raw message value rather than the whole state envelope.",
+  "start": "check",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "check",
+      "primary_q": "msg_too_short",
+      "questions": {
+        "msg_empty": {
+          "type": "choice",
+          "instructions": "Is the commit message (after stripping comment/blank lines, first non-blank line) empty?",
+          "criteria": {
+            "A": "non-empty",
+            "B": "empty"
+          },
+          "heuristic": {
+            "field": "message",
+            "match_regex": [
+              "^\\s*$"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "msg_too_short": {
+          "type": "choice",
+          "instructions": "Is the message shorter than 5 characters?",
+          "criteria": {
+            "A": "len >= 5",
+            "B": "len < 5"
+          },
+          "heuristic": {
+            "field": "message",
+            "match_regex": [
+              "^.{0,4}$"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "msg_single_token": {
+          "type": "choice",
+          "instructions": "Is the message a single token (no whitespace, no colon, no paren, no em-dash) — looks like a placeholder?",
+          "criteria": {
+            "A": "has punctuation/whitespace",
+            "B": "yes, single-token placeholder"
+          },
+          "heuristic": {
+            "field": "message",
+            "match_regex": [
+              "^[A-Za-z0-9_.\\-]+$"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "msg_empty",
+        "rules": [
+          {
+            "when": {
+              "question": "msg_empty",
+              "answer": "B"
+            },
+            "label": "FAIL_EMPTY"
+          },
+          {
+            "when": {
+              "question": "msg_too_short",
+              "answer": "B"
+            },
+            "label": "FAIL_TOO_SHORT"
+          },
+          {
+            "when": {
+              "question": "msg_single_token",
+              "answer": "B"
+            },
+            "label": "FAIL_PLACEHOLDER"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "message"
+        ]
+      }
+    }
+  ]
+}

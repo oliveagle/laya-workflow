@@ -1,0 +1,45 @@
+{
+  "name": "workflow_guardian",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/code/agents/workflow-guardian/scripts/scan-all.sh decision logic. Three compliance layers (task / knowledge / collaboration) folded into choice questions with heuristic.field probes; ordered threshold rules reproduce the script's FAILURES > WARNINGS > OK verdict ladder.",
+  "start": "check",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "check",
+      "primary_q": "task_layer",
+      "questions": {
+        "task_layer": {
+          "type": "choice",
+          "instructions": "Does the task layer scan pass (tasks dir exists, all inbox .md have Front Matter, all active .md have agent field)?",
+          "criteria": { "A": "pass", "B": "FAIL (hard violation)" },
+          "heuristic": { "field": "task_layer", "match_any": ["fail", "missing_frontmatter", "missing_agent", "tasks_missing"], "p_hit": 0.95, "p_miss": 0.05 }
+        },
+        "knowledge_layer": {
+          "type": "choice",
+          "instructions": "Does the knowledge layer scan pass (records dir exists, all year records have work-item table)?",
+          "criteria": { "A": "pass", "B": "WARN (soft violation)" },
+          "heuristic": { "field": "knowledge_layer", "match_any": ["warn", "missing_table", "records_missing"], "p_hit": 0.9, "p_miss": 0.1 }
+        },
+        "collaboration_layer": {
+          "type": "choice",
+          "instructions": "Does the collaboration layer scan pass (machines dir exists)?",
+          "criteria": { "A": "pass", "B": "FAIL (hard violation)" },
+          "heuristic": { "field": "collaboration_layer", "match_any": ["fail", "machines_missing"], "p_hit": 0.95, "p_miss": 0.05 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "task_layer",
+        "rules": [
+          { "when": { "question": "task_layer", "answer": "B" }, "label": "FAIL_TASK_LAYER" },
+          { "when": { "question": "collaboration_layer", "answer": "B" }, "label": "FAIL_COLLABORATION_LAYER" },
+          { "when": { "question": "knowledge_layer", "answer": "B" }, "label": "WARN_KNOWLEDGE_LAYER" },
+          { "when": { "always": true }, "label": "OK" }
+        ]
+      },
+      "state": { "keep": ["task_layer", "knowledge_layer", "collaboration_layer", "scan_mode"] }
+    }
+  ]
+}

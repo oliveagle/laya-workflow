@@ -1,0 +1,52 @@
+{
+  "name": "skill_publish_gate",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/skills/devine-gen-mcp/scripts/quality-gate.sh decision logic. Four checks (file structure / line count / placeholder / markdown link validity) folded into choice questions with heuristic.field matching against the probed file set; ordered threshold rules reproduce the script's FAIL-on-any / PASS-if-all semantics.",
+  "start": "check",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "check",
+      "primary_q": "structure_ok",
+      "questions": {
+        "structure_ok": {
+          "type": "choice",
+          "instructions": "Are all required skill files present (skill.md, workflow.md, quickstart.md, examples.md, compose_tool.yaml, dsl/*, references/*)?",
+          "criteria": { "A": "all present", "B": "missing required file" },
+          "heuristic": { "field": "structure_status", "match_any": ["missing_required", "structure_fail"], "p_hit": 0.95, "p_miss": 0.05 }
+        },
+        "line_count_ok": {
+          "type": "choice",
+          "instructions": "Are all skill files within the line-count limit (no .md exceeds MAX_LINES)?",
+          "criteria": { "A": "all within limit", "B": "file(s) over limit" },
+          "heuristic": { "field": "line_count_status", "match_any": ["over_limit", "lines_fail"], "p_hit": 0.9, "p_miss": 0.1 }
+        },
+        "placeholder_clean": {
+          "type": "choice",
+          "instructions": "Are all skill files free of placeholder markers (TODO / FIXME / PLACEHOLDER / STUB / XXX / HACK / NOTE:)?",
+          "criteria": { "A": "clean", "B": "placeholder marker found" },
+          "heuristic": { "field": "placeholder_status", "match_any": ["placeholder_found", "placeholder_fail"], "p_hit": 0.9, "p_miss": 0.1 }
+        },
+        "links_ok": {
+          "type": "choice",
+          "instructions": "Are all in-skill markdown links resolved (no broken targets)?",
+          "criteria": { "A": "all links valid", "B": "broken link(s) found" },
+          "heuristic": { "field": "links_status", "match_any": ["broken_links", "link_fail"], "p_hit": 0.9, "p_miss": 0.1 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "threshold",
+        "question": "structure_ok",
+        "rules": [
+          { "when": { "question": "structure_ok", "answer": "B" }, "label": "FAIL_STRUCTURE" },
+          { "when": { "question": "line_count_ok", "answer": "B" }, "label": "FAIL_LINE_COUNT" },
+          { "when": { "question": "placeholder_clean", "answer": "B" }, "label": "FAIL_PLACEHOLDER" },
+          { "when": { "question": "links_ok", "answer": "B" }, "label": "FAIL_LINKS" },
+          { "when": { "always": true }, "label": "PASS" }
+        ]
+      },
+      "state": { "keep": ["structure_status", "line_count_status", "placeholder_status", "links_status", "skill_name"] }
+    }
+  ]
+}

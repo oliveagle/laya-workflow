@@ -683,10 +683,22 @@ impl Decide for HeuristicBackend {
                     // `match_any`: literal substring needles (word-boundary aware).
                     // `match_regex`: full regex patterns (any match counts as a hit),
                     // letting a spec port a shell `grep -E` rule verbatim.
+                    // `heuristic.field` narrows matching to one state key (e.g.
+                    // {"field":"message"} so a regex checks the message value
+                    // itself, not the serialised JSON envelope). Field-missing is
+                    // treated as no-hit rather than an error so probes that cannot
+                    // populate a field still yield a clean miss.
+                    let target_text: String = h.get("field").and_then(|f| f.as_str())
+                        .and_then(|k| state.get(k))
+                        .map(|v| match v {
+                            Value::String(sv) => sv.clone(),
+                            other => other.to_string(),
+                        })
+                        .unwrap_or_else(|| text.clone());
                     let mut hit = false;
                     if let Some(any) = h.get("match_any").and_then(|a| a.as_array()) {
                         let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();
-                        hit = contains_any(&text, &toks);
+                        hit = contains_any(&target_text, &toks);
                     }
                     if !hit {
                         if let Some(rxs) = h.get("match_regex").and_then(|a| a.as_array()) {
@@ -696,7 +708,7 @@ impl Decide for HeuristicBackend {
                                 // pattern could let a real threat through).
                                 let re = regex_lite::Regex::new(rx)
                                     .map_err(|e| anyhow!("heuristic match_regex {rx:?} for {qid}: {e}"))?;
-                                if re.is_match(&text) { hit = true; break; }
+                                if re.is_match(&target_text) { hit = true; break; }
                             }
                         }
                     }

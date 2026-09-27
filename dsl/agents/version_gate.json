@@ -1,0 +1,160 @@
+{
+  "name": "version_gate",
+  "dsl_version": 2,
+  "description": "Port of ~/.agents/skills/ole-release/scripts/check_version.sh decision logic. VERSION format well-formedness plus release-kind classification (stable vs release-candidate). Branch-aware main-only checks (tag reachability, origin divergence, dirty tree) stay in the probe layer; this spec decides the verdict given probe results.",
+  "start": "check",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "check",
+      "primary_q": "version_format_ok",
+      "questions": {
+        "version_format_ok": {
+          "type": "choice",
+          "instructions": "Is the VERSION string a well-formed x.y.z or x.y.z-rc.N? (B = well-formed; heuristic regex hits for valid versions)",
+          "criteria": {
+            "A": "invalid format",
+            "B": "yes, well-formed"
+          },
+          "heuristic": {
+            "field": "version",
+            "match_regex": [
+              "^[0-9]+\\.[0-9]+\\.[0-9]+(-rc\\.[0-9]+)?$"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "version_is_rc": {
+          "type": "choice",
+          "instructions": "Is the VERSION a release candidate (x.y.z-rc.N)?",
+          "criteria": {
+            "A": "stable (no -rc)",
+            "B": "yes, release candidate"
+          },
+          "heuristic": {
+            "field": "version",
+            "match_regex": [
+              "^[0-9]+\\.[0-9]+\\.[0-9]+-rc\\.[0-9]+$"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "tag_reachable": {
+          "type": "choice",
+          "instructions": "Is the expected tag v$VERSION reachable from main HEAD? (probe layer answers)",
+          "criteria": {
+            "A": "reachable",
+            "B": "not reachable or missing"
+          },
+          "heuristic": {
+            "field": "tag_status",
+            "match_any": [
+              "unreachable",
+              "missing",
+              "not_found"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "origin_diverged": {
+          "type": "choice",
+          "instructions": "Has main diverged from origin/main (ahead via non-MR path, or behind)?",
+          "criteria": {
+            "A": "no divergence",
+            "B": "diverged"
+          },
+          "heuristic": {
+            "field": "origin_status",
+            "match_any": [
+              "diverged",
+              "behind",
+              "ahead_unpushed"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "tree_dirty": {
+          "type": "choice",
+          "instructions": "Is the working tree dirty (untracked ignored, modified/staged tracked files present)?",
+          "criteria": {
+            "A": "clean",
+            "B": "dirty"
+          },
+          "heuristic": {
+            "field": "tree_status",
+            "match_any": [
+              "dirty",
+              "modified",
+              "staged"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "threshold",
+        "question": "version_format_ok",
+        "rules": [
+          {
+            "when": {
+              "question": "version_format_ok",
+              "answer": "A"
+            },
+            "label": "FAIL_INVALID_VERSION"
+          },
+          {
+            "when": {
+              "question": "tag_reachable",
+              "answer": "B"
+            },
+            "label": "FAIL_TAG_UNREACHABLE"
+          },
+          {
+            "when": {
+              "question": "origin_diverged",
+              "answer": "B"
+            },
+            "label": "FAIL_ORIGIN_DIVERGED"
+          },
+          {
+            "when": {
+              "question": "tree_dirty",
+              "answer": "B"
+            },
+            "label": "FAIL_DIRTY_TREE"
+          },
+          {
+            "when": {
+              "question": "version_is_rc",
+              "answer": "B"
+            },
+            "label": "PASS_RC"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS_STABLE"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "version",
+          "tag_status",
+          "origin_status",
+          "tree_status"
+        ]
+      }
+    }
+  ]
+}
