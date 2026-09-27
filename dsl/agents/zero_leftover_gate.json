@@ -1,0 +1,136 @@
+{
+  "name": "zero_leftover_gate",
+  "dsl_version": 2,
+  "description": "Port of ole-commit-push/scripts/zero-leftover-check.sh decision layer (stage-4 hard constraint #3: zero uncommitted leftover). Probe runs git status --porcelain / git ls-files --others / git submodule foreach and folds into three signals. Decision reproduces the shell exit semantics: tracked-dirty or untracked present -> LEFTOVER (exit 1) unless owner explicitly --allow-leftover (then ALLOW, advisory), submodule-dirty only -> WARN (out of this repo's scope), else CLEAN (exit 0). Side effects (none: probe only reads git status) stay in the probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "tracked_dirty",
+      "questions": {
+        "tracked_dirty": {
+          "type": "choice",
+          "instructions": "Does git status --porcelain show tracked files with uncommitted changes?",
+          "criteria": {
+            "A": "no tracked changes",
+            "B": "tracked changes present"
+          },
+          "heuristic": {
+            "match_any": [
+              "tracked_dirty",
+              "uncommitted_changes",
+              "leftover_tracked"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "untracked_present": {
+          "type": "choice",
+          "instructions": "Are there untracked files that should have been staged+committed (git ls-files --others --exclude-standard)?",
+          "criteria": {
+            "A": "no untracked files",
+            "B": "untracked files present"
+          },
+          "heuristic": {
+            "match_any": [
+              "untracked_present",
+              "untracked_leftover"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "submodule_dirty": {
+          "type": "choice",
+          "instructions": "Do submodules have uncommitted changes (out of this repo's scope, advisory only)?",
+          "criteria": {
+            "A": "submodules clean",
+            "B": "submodule dirty"
+          },
+          "heuristic": {
+            "match_any": [
+              "submodule_dirty",
+              "submodule_leftover"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "allow_leftover": {
+          "type": "choice",
+          "instructions": "Did the caller pass --allow-leftover='<reason>' to explicitly waive the hard constraint (not recommended)?",
+          "criteria": {
+            "A": "no allow flag",
+            "B": "allow-leftover set"
+          },
+          "heuristic": {
+            "field": "allow_flag",
+            "match_any": [
+              "allow",
+              "leftover",
+              "waived"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "tracked_dirty",
+        "rules": [
+          {
+            "when": {
+              "question": "allow_leftover",
+              "answer": "B"
+            },
+            "label": "ALLOW"
+          },
+          {
+            "when": {
+              "question": "tracked_dirty",
+              "answer": "B"
+            },
+            "label": "LEFTOVER"
+          },
+          {
+            "when": {
+              "question": "untracked_present",
+              "answer": "B"
+            },
+            "label": "LEFTOVER"
+          },
+          {
+            "when": {
+              "question": "submodule_dirty",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "CLEAN"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "tracked_dirty",
+          "untracked_present",
+          "submodule_dirty",
+          "allow_flag",
+          "repo"
+        ]
+      }
+    }
+  ]
+}

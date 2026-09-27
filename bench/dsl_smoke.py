@@ -218,8 +218,15 @@ STATES: dict[str, dict] = {
         "pass":     {"failed": 0, "skipped": 0, "passed": 12},
         "missing":  {},
     },
+        "zero_leftover_gate": {
+        "leftover":   {"tracked_dirty": True},
+        "untracked":  {"untracked_present": True},
+        "submod":     {"submodule_dirty": True},
+        "allow":      {"tracked_dirty": True, "allow_flag": "allow"},
+        "clean":      {},
+    },
     "task_quality_gate": {
-        "fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
+    "fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_test":     {"test_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_linecov":  {"line_cover_pct": 65, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_branchcov": {"line_cover_pct": 92, "branch_cover_pct": 50, "agents_md_lines": 100},
@@ -272,6 +279,10 @@ EXPECT: dict[str, dict[str, str]] = {
         "fail": "FAIL", "warn": "WARN", "ok": "OK", "missing": "FAIL",
     },
     "htmx_app_lint": {        "fail_yaml": "FAIL_YAML_SCHEMA", "fail_tpls": "FAIL_TEMPLATES_MISSING",        "fail_parse": "FAIL_TEMPLATE_PARSE", "warn_bb": "WARN", "pass": "PASS",    },    "coding_env_check": {        "fail": "FAIL", "warn": "WARN", "perfect": "PERFECT", "missing": "FAIL",    },    "mlu270_smoke": {        "fail_tool": "FAIL", "fail_smoke": "FAIL", "warn_ver": "WARN", "pass": "PASS",    },    "bitx_wrapper_test": {        "fail": "FAIL", "warn": "WARN", "pass": "PASS", "missing": "FAIL",    },
+    "zero_leftover_gate": {
+        "leftover": "LEFTOVER", "untracked": "LEFTOVER", "submod": "WARN",
+        "allow": "ALLOW", "clean": "CLEAN",
+    },
     "task_quality_gate": {
         "fail_compile": "FAIL", "fail_test": "FAIL", "fail_linecov": "FAIL",
         "fail_branchcov": "FAIL", "fail_ph": "FAIL", "fail_oversize": "FAIL",
