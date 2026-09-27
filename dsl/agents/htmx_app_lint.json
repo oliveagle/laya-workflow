@@ -1,0 +1,137 @@
+{
+  "name": "htmx_app_lint",
+  "dsl_version": 2,
+  "description": "Port of devine-gen-htmx-app/scripts/lint.sh decision layer. Probe runs the YAML schema check (apiVersion, app.name/title, routes, auth.mode oauth, ui.header.back_button advisory) and Go text/template parse of templates/*.html. Decision collapses to FAIL on any YAML schema violation / missing templates dir / template parse error, WARN on the back_button advisory, PASS otherwise. Side effects (YAML parse + go run lint_tpl.go) stay in the probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "yaml_schema_ok",
+      "questions": {
+        "yaml_schema_ok": {
+          "type": "choice",
+          "instructions": "Did app.yaml pass the schema check (apiVersion=webui/v1, app.name+title, routes[].path+template, auth.mode=oauth)?",
+          "criteria": {
+            "A": "schema OK",
+            "B": "schema violation(s)"
+          },
+          "heuristic": {
+            "match_any": [
+              "yaml_schema_fail",
+              "app_yaml_missing",
+              "routes_empty",
+              "auth_mode_non_oauth",
+              "api_version_wrong"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "templates_present": {
+          "type": "choice",
+          "instructions": "Does templates/ exist and contain at least one .html file?",
+          "criteria": {
+            "A": "templates present",
+            "B": "templates missing or empty"
+          },
+          "heuristic": {
+            "match_any": [
+              "templates_missing",
+              "no_templates_under"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "templates_parse_ok": {
+          "type": "choice",
+          "instructions": "Did all templates/*.html parse via Go text/template (chrome + chrome-partial defines)?",
+          "criteria": {
+            "A": "all parse OK",
+            "B": "parse error(s)"
+          },
+          "heuristic": {
+            "match_any": [
+              "template_parse_err",
+              "template_read_err",
+              "no_templates_under"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "back_button_advisory": {
+          "type": "choice",
+          "instructions": "Is ui.header.back_button.enabled explicitly false (no-effect advisory per ADR §D6#4)?",
+          "criteria": {
+            "A": "no advisory",
+            "B": "back_button=false advisory"
+          },
+          "heuristic": {
+            "match_any": [
+              "back_button_advisory",
+              "back_button_disabled"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "yaml_schema_ok",
+        "rules": [
+          {
+            "when": {
+              "question": "yaml_schema_ok",
+              "answer": "B"
+            },
+            "label": "FAIL_YAML_SCHEMA"
+          },
+          {
+            "when": {
+              "question": "templates_present",
+              "answer": "B"
+            },
+            "label": "FAIL_TEMPLATES_MISSING"
+          },
+          {
+            "when": {
+              "question": "templates_parse_ok",
+              "answer": "B"
+            },
+            "label": "FAIL_TEMPLATE_PARSE"
+          },
+          {
+            "when": {
+              "question": "back_button_advisory",
+              "answer": "B"
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "yaml_schema_fail",
+          "templates_missing",
+          "template_parse_err",
+          "back_button_advisory",
+          "app_dir"
+        ]
+      }
+    }
+  ]
+}

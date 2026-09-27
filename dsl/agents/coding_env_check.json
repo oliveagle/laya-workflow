@@ -1,0 +1,94 @@
+{
+  "name": "coding_env_check",
+  "dsl_version": 2,
+  "description": "Port of ole-coding-agent-env/scripts/check-env.sh decision layer. Probe walks the env checklist (go/rust/node/python/clangd/nvcc/nvidia-smi versions, directory/file existence, SSH key perms, cpu governor, fd limit, swappiness) and folds into passed/warned/failed counters + pass_rate. Decision mirrors the shell's exit-code ladder: 0 = PERFECT (no warns no fails), 1 = WARN (only warns), 1 = FAIL (any failed). Side effects (version parsing / permission probe / sysctl read) stay in the probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "failed_count",
+      "questions": {
+        "failed_count": {
+          "type": "score",
+          "instructions": "Number of FAIL-level env checks (missing tool, missing dir, wrong perms, nvidia-smi unavailable).",
+          "criteria": [
+            "0 clean",
+            "1 one fail",
+            "10 many fails"
+          ],
+          "heuristic": {
+            "extract_numeric": "failed",
+            "score_miss": 1.0
+          }
+        },
+        "warned_count": {
+          "type": "score",
+          "instructions": "Number of WARN-level env checks (version below min, sysctl sub-optimal, missing optional tool).",
+          "criteria": [
+            "0 clean",
+            "1 one warn",
+            "10 many warns"
+          ],
+          "heuristic": {
+            "extract_numeric": "warned",
+            "score_miss": 0.0
+          }
+        },
+        "pass_rate": {
+          "type": "score",
+          "instructions": "Pass rate percent passed/(passed+warned+failed)*100.",
+          "criteria": [
+            "0 broken",
+            "60 degraded",
+            "90 acceptable",
+            "100 perfect"
+          ],
+          "heuristic": {
+            "extract_numeric": "pass_rate",
+            "score_miss": 0.0
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "failed_count",
+        "rules": [
+          {
+            "when": {
+              "question": "failed_count",
+              "value_gte": 1
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "warned_count",
+              "value_gte": 1
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PERFECT"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "failed",
+          "warned",
+          "passed",
+          "pass_rate"
+        ]
+      }
+    }
+  ]
+}

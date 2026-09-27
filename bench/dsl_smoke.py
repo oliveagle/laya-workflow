@@ -193,6 +193,31 @@ STATES: dict[str, dict] = {
         "ok":    {"failures": 0, "warnings": 0, "health_score": 100},
         "missing": {},
     },
+    "htmx_app_lint": {
+        "fail_yaml":   {"yaml_schema_fail": True},
+        "fail_tpls":   {"templates_missing": True},
+        "fail_parse":  {"template_parse_err": True},
+        "warn_bb":     {"back_button_advisory": True},
+        "pass":        {},
+    },
+    "coding_env_check": {
+        "fail":     {"failed": 1, "warned": 0, "passed": 10, "pass_rate": 90},
+        "warn":     {"failed": 0, "warned": 2, "passed": 10, "pass_rate": 83},
+        "perfect":  {"failed": 0, "warned": 0, "passed": 12, "pass_rate": 100},
+        "missing":  {},
+    },
+    "mlu270_smoke": {
+        "fail_tool":   {"cntool_missing": True},
+        "fail_smoke":  {"inference_smoke_failed": True},
+        "warn_ver":    {"version_mismatch_warn": True},
+        "pass":        {},
+    },
+    "bitx_wrapper_test": {
+        "fail":     {"failed": 1, "skipped": 0, "passed": 11},
+        "warn":     {"failed": 0, "skipped": 2, "passed": 10},
+        "pass":     {"failed": 0, "skipped": 0, "passed": 12},
+        "missing":  {},
+    },
     "task_quality_gate": {
         "fail_compile":  {"compile_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
         "fail_test":     {"test_failed": True, "line_cover_pct": 92, "branch_cover_pct": 88, "agents_md_lines": 100},
@@ -246,6 +271,7 @@ EXPECT: dict[str, dict[str, str]] = {
     "project_structure_guard": {
         "fail": "FAIL", "warn": "WARN", "ok": "OK", "missing": "FAIL",
     },
+    "htmx_app_lint": {        "fail_yaml": "FAIL_YAML_SCHEMA", "fail_tpls": "FAIL_TEMPLATES_MISSING",        "fail_parse": "FAIL_TEMPLATE_PARSE", "warn_bb": "WARN", "pass": "PASS",    },    "coding_env_check": {        "fail": "FAIL", "warn": "WARN", "perfect": "PERFECT", "missing": "FAIL",    },    "mlu270_smoke": {        "fail_tool": "FAIL", "fail_smoke": "FAIL", "warn_ver": "WARN", "pass": "PASS",    },    "bitx_wrapper_test": {        "fail": "FAIL", "warn": "WARN", "pass": "PASS", "missing": "FAIL",    },
     "task_quality_gate": {
         "fail_compile": "FAIL", "fail_test": "FAIL", "fail_linecov": "FAIL",
         "fail_branchcov": "FAIL", "fail_ph": "FAIL", "fail_oversize": "FAIL",

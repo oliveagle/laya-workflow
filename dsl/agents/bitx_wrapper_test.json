@@ -1,0 +1,92 @@
+{
+  "name": "bitx_wrapper_test",
+  "dsl_version": 2,
+  "description": "Port of code/bitx-stack/scripts/test-wrappers.sh decision layer. Probe runs ~12 release/migrate/list/rollback wrapper invocations, comparing actual exit codes to expected. PASS/FAIL/SKIP aggregates into three counters. Decision: any FAIL → FAIL; else SKIP→WARN (advisory); else PASS. Side effects (fake-bitx invocation under TMP_SRC/TMP_DST) stay in the probe layer.",
+  "start": "decision",
+  "max_iterations": 2,
+  "nodes": [
+    {
+      "name": "decision",
+      "primary_q": "fail_count",
+      "questions": {
+        "fail_count": {
+          "type": "score",
+          "instructions": "Number of wrapper invocations whose exit code mismatched the expected one.",
+          "criteria": [
+            "0 all matched",
+            "1 one mismatch",
+            "10 many"
+          ],
+          "heuristic": {
+            "extract_numeric": "failed",
+            "score_miss": 1.0
+          }
+        },
+        "skip_count": {
+          "type": "score",
+          "instructions": "Number of wrapper cases skipped (env-only or unsupported by fake-bitx).",
+          "criteria": [
+            "0 none",
+            "1 one skipped",
+            "10 many"
+          ],
+          "heuristic": {
+            "extract_numeric": "skipped",
+            "score_miss": 0.0
+          }
+        },
+        "pass_count": {
+          "type": "score",
+          "instructions": "Number of wrapper cases that matched their expected exit code.",
+          "criteria": [
+            "0 none",
+            "5 few",
+            "12 all"
+          ],
+          "heuristic": {
+            "extract_numeric": "passed",
+            "score_miss": 0.0
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "fail_count",
+        "rules": [
+          {
+            "when": {
+              "question": "fail_count",
+              "value_gte": 1
+            },
+            "label": "FAIL"
+          },
+          {
+            "when": {
+              "question": "skip_count",
+              "value_gte": 1
+            },
+            "label": "WARN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "failed",
+          "skipped",
+          "passed"
+        ]
+      }
+    }
+  ]
+}
