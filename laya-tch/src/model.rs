@@ -20,7 +20,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::sync::Mutex;
-use tch::{Kind, Tensor};
+use tch::{Device, Kind, Tensor};
 
 pub const HIDDEN: i64 = 1024;
 pub const HEADS: i64 = 16;
@@ -85,6 +85,8 @@ pub struct LayaModel {
     // cached sliding band mask `[1,1,L,L]` keyed by seq_len
     band_cache: Mutex<HashMap<i64, Tensor>>,
     pub n_layers_seen: usize,
+    /// Device that all weight tensors live on (CPU or CUDA).
+    pub device: Device,
 }
 
 // ── tensor helpers ────────────────────────────────────────────────────
@@ -130,7 +132,7 @@ fn half_bits_to_f32(bits: u16) -> f32 {
 }
 
 /// Read a safetensors tensor into a contiguous f32 `Tensor` with `shape`.
-fn load_tensor(st: &safetensors::SafeTensors, name: &str) -> Result<Tensor> {
+fn load_tensor(st: &safetensors::SafeTensors, name: &str, device: Device) -> Result<Tensor> {
     let tv = st
         .tensor(name)
         .map_err(|e| anyhow!("missing tensor {}: {}", name, e))?;
@@ -145,7 +147,9 @@ fn load_tensor(st: &safetensors::SafeTensors, name: &str) -> Result<Tensor> {
             .collect(),
         other => return Err(anyhow!("unsupported dtype {:?} for {}", other, name)),
     };
-    let t = Tensor::from_slice(&flat).view(shape.as_slice());
+    let t = Tensor::from_slice(&flat)
+        .view(shape.as_slice())
+        .to_device(device);
     Ok(t.contiguous())
 }
 
@@ -178,7 +182,7 @@ fn apply_rope(x: &Tensor, cos: &Tensor, sin: &Tensor) -> Tensor {
     x * &cos + rotate_half(x) * &sin
 }
 
-fn rope_table(l: i64, theta: f64) -> (Tensor, Tensor) {
+fn rope_table(l: i64, theta: f64, device: Device) -> (Tensor, Tensor) {
     let half = (HEAD_DIM / 2) as usize;
     let mut inv_freq = vec![0f64; half];
     for (j, v) in inv_freq.iter_mut().enumerate() {
@@ -197,12 +201,12 @@ fn rope_table(l: i64, theta: f64) -> (Tensor, Tensor) {
         }
     }
     (
-        Tensor::from_slice(&cos).view([l, HEAD_DIM]),
-        Tensor::from_slice(&sin).view([l, HEAD_DIM]),
+        Tensor::from_slice(&cos).view([l, HEAD_DIM]).to_device(device),
+        Tensor::from_slice(&sin).view([l, HEAD_DIM]).to_device(device),
     )
 }
 
-fn sliding_mask(l: i64) -> Tensor {
+fn sliding_mask(l: i64, device: Device) -> Tensor {
     let lus = l as usize;
     let mut m = vec![0f32; lus * lus];
     for i in 0..lus {
@@ -212,7 +216,7 @@ fn sliding_mask(l: i64) -> Tensor {
             }
         }
     }
-    Tensor::from_slice(&m).view([l, l])
+    Tensor::from_slice(&m).view([l, l]).to_device(device)
 }
 
 /// One sequence for the batched forward path.
@@ -234,7 +238,7 @@ pub struct Output {
 /// the key-padding mask, sliding layers add the cached band mask plus key pad.
 
 /// Decision-head key padding mask `[B, 1, 1, L]` (broadcast over heads & queries).
-fn build_key_pad_mask(b: i64, l: i64, attn: &[f32]) -> Tensor {
+fn build_key_pad_mask(b: i64, l: i64, attn: &[f32], device: Device) -> Tensor {
     let lus = l as usize;
     let mut m = vec![0f32; (b as usize) * lus];
     for bi in 0..b as usize {
@@ -244,16 +248,22 @@ fn build_key_pad_mask(b: i64, l: i64, attn: &[f32]) -> Tensor {
             }
         }
     }
-    Tensor::from_slice(&m).view([b, 1, 1, l])
+    Tensor::from_slice(&m).view([b, 1, 1, l]).to_device(device)
 }
 
 impl LayaModel {
     pub fn load(model_dir: &str) -> Result<Self> {
+        Self::load_on(model_dir, Device::Cpu)
+    }
+
+    /// Load weights onto `device` (CPU or CUDA). All cached RoPE/mask tables
+    /// are also created on that device, so no per-forward copies are needed.
+    pub fn load_on(model_dir: &str, device: Device) -> Result<Self> {
         let weights_path = format!("{}/model.safetensors", model_dir);
         let data = std::fs::read(&weights_path)?;
         let st = safetensors::SafeTensors::deserialize(&data)?;
 
-        let load = |name: &str| -> Result<Tensor> { load_tensor(&st, name) };
+        let load = |name: &str| -> Result<Tensor> { load_tensor(&st, name, device) };
 
         let mut layers = Vec::with_capacity(N_LAYERS);
         for i in 0..N_LAYERS {
@@ -314,6 +324,7 @@ impl LayaModel {
             mask_cache: Mutex::new(HashMap::new()),
             band_cache: Mutex::new(HashMap::new()),
             n_layers_seen: N_LAYERS,
+            device,
         })
     }
 
@@ -324,7 +335,7 @@ impl LayaModel {
             return (v.0.shallow_clone(), v.1.shallow_clone());
         }
         let theta = if is_full { ROPE_THETA_FULL } else { ROPE_THETA_SLIDING };
-        let tables = rope_table(l, theta);
+        let tables = rope_table(l, theta, self.device);
         let out = (tables.0.shallow_clone(), tables.1.shallow_clone());
         cache.insert(key, tables);
         out
@@ -335,7 +346,7 @@ impl LayaModel {
         if let Some(v) = cache.get(&l) {
             return v.shallow_clone();
         }
-        let m = sliding_mask(l);
+        let m = sliding_mask(l, self.device);
         cache.insert(l, m.shallow_clone());
         m
     }
@@ -346,7 +357,7 @@ impl LayaModel {
         if let Some(v) = cache.get(&l) {
             return v.shallow_clone();
         }
-        let m = sliding_mask(l).view([1, 1, l, l]);
+        let m = sliding_mask(l, self.device).view([1, 1, l, l]);
         cache.insert(l, m.shallow_clone());
         m
     }
@@ -368,7 +379,7 @@ impl LayaModel {
         qtype: i64,
     ) -> Result<(Tensor, Tensor, Tensor, Vec<f32>)> {
         let l = ids.len() as i64;
-        let ids_t = Tensor::from_slice(ids);
+        let ids_t = Tensor::from_slice(ids).to_device(self.device);
         let mut h = self.tok_emb.index_select(0, &ids_t); // [L, HIDDEN]
         h = layer_norm(&h, &self.emb_norm_w, None);
 
@@ -411,7 +422,7 @@ impl LayaModel {
         let encoder_out = h.shallow_clone();
 
         // add type embedding (broadcast over sequence)
-        let te = self.type_emb.index_select(0, &Tensor::from_slice(&[qtype])); // [1, HIDDEN]
+        let te = self.type_emb.index_select(0, &Tensor::from_slice(&[qtype]).to_device(self.device)); // [1, HIDDEN]
         h = h + te;
         let after_type = h.shallow_clone();
 
@@ -443,7 +454,7 @@ impl LayaModel {
         let head_out = h.shallow_clone();
 
         // gather marker rows
-        let idx = Tensor::from_slice(marker_pos);
+        let idx = Tensor::from_slice(marker_pos).to_device(self.device);
         let m = h.index_select(0, &idx); // [K, HIDDEN]
 
         let m = layer_norm(&m, &self.scorer_ln_w, Some(&self.scorer_ln_b));
@@ -488,7 +499,7 @@ impl LayaModel {
                 attn_v[bi * lmax as usize + i] = 1.0;
             }
         }
-        let ids_t = Tensor::from_slice(&ids_v).view([bf, lmax]);
+        let ids_t = Tensor::from_slice(&ids_v).view([bf, lmax]).to_device(self.device);
         let mut h = self
             .tok_emb
             .index_select(0, &ids_t.view([-1]))
@@ -498,7 +509,7 @@ impl LayaModel {
 
         let has_pad = attn_v.iter().any(|&v| v == 0.0);
         let key_pad = if has_pad {
-            Some(build_key_pad_mask(bf, lmax, &attn_v))
+            Some(build_key_pad_mask(bf, lmax, &attn_v, self.device))
         } else {
             None
         };
@@ -551,12 +562,14 @@ impl LayaModel {
         lap!(5);
 
         let qt: Vec<i64> = seqs.iter().map(|s| s.qtype).collect();
-        let te = self.type_emb.index_select(0, &Tensor::from_slice(&qt)).unsqueeze(1); // [B,1,H]
+        let te = self.type_emb
+            .index_select(0, &Tensor::from_slice(&qt).to_device(self.device))
+            .unsqueeze(1); // [B,1,H]
         h = h + te;
 
         let pad_mask = match &key_pad {
             Some(kp) => kp.shallow_clone(),
-            None => build_key_pad_mask(bf, lmax, &attn_v),
+            None => build_key_pad_mask(bf, lmax, &attn_v, self.device),
         }; // [B,1,1,L]
 
         for layer in &self.head {
@@ -584,7 +597,7 @@ impl LayaModel {
 
         let mut out = Vec::with_capacity(b);
         for (bi, s) in seqs.iter().enumerate() {
-            let mp = Tensor::from_slice(s.markers);
+            let mp = Tensor::from_slice(s.markers).to_device(self.device);
             let hb = h.get(bi as i64); // [L,H] post-head
             let m = hb.index_select(0, &mp); // [K,H]
             let m = layer_norm(&m, &self.scorer_ln_w, Some(&self.scorer_ln_b));

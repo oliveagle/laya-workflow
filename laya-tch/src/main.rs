@@ -37,6 +37,10 @@ struct Cli {
     /// One-shot: read a request JSON ({state, questions}), print the response JSON, exit.
     #[arg(long)]
     once: Option<String>,
+    /// Compute device: cpu, cuda, or auto (cuda if available, else cpu).
+    /// Also read from LAYA_TCH_DEVICE when the flag is not given.
+    #[arg(long, value_name = "cpu|cuda[:N]|auto", default_value = "auto")]
+    device: String,
 }
 
 // ─── Python-compatible JSON serialization (json.dumps(ensure_ascii=False)) ──
@@ -361,14 +365,14 @@ struct Engine {
 }
 
 impl Engine {
-    fn load(model_dir: &str) -> Result<Self> {
+    fn load_on(model_dir: &str, device: tch::Device) -> Result<Self> {
         let tok_path = if std::path::Path::new(&format!("{model_dir}/tokenizer.json")).exists() {
             format!("{model_dir}/tokenizer.json")
         } else {
             format!("{model_dir}/tokenizer/tokenizer.json")
         };
         let tok = Tokenizer::from_file(&tok_path).map_err(|e| anyhow!("tokenizer: {e}"))?;
-        let model = LayaModel::load(model_dir)?;
+        let model = LayaModel::load_on(model_dir, device)?;
         Ok(Self { tok, model })
     }
 
@@ -537,12 +541,58 @@ async fn health() -> &'static str {
     "ok"
 }
 
+
+/// Resolve the compute device: `cpu`, `cuda`, or `auto` (cuda if available).
+/// `auto` is also the behaviour when `LAYA_TCH_DEVICE` is set instead of the flag.
+///
+/// On `auto`/`cuda`, we verify CUDA is actually available before loading the
+/// model; if the linked libtorch build is CPU-only this surfaces a clear
+/// error at startup instead of an opaque panic from `aten`.
+fn resolve_device(flag: &str) -> Result<tch::Device> {
+    let requested = match flag {
+        "cpu" => Some(tch::Device::Cpu),
+        "auto" => None, // decided below
+        "cuda" => Some(tch::Device::Cuda(0)),
+        other if other.starts_with("cuda:") => {
+            let idx: usize = other["cuda:".len()..]
+                .parse()
+                .map_err(|_| anyhow!("invalid --device {other:?} (expected cpu | cuda | cuda:N | auto)"))?;
+            Some(tch::Device::Cuda(idx))
+        }
+        other => {
+            return Err(anyhow!(
+                "unknown --device {other:?} (expected cpu | cuda | cuda:N | auto)"
+            ))
+        }
+    };
+    let dev = requested.unwrap_or_else(tch::Device::cuda_if_available);
+    if let tch::Device::Cuda(idx) = dev {
+        if !tch::Cuda::is_available() {
+            return Err(anyhow!(
+                "--device cuda (or auto) requested but the linked libtorch has no CUDA \
+                 support. Build with `LIBTORCH=/path/to/site-packages/torch` pointing at \
+                 a CUDA-enabled PyTorch install (and LIBTORCH_BYPASS_VERSION_CHECK=1 if \
+                 the version differs from 2.13.0), then rerun."
+            ));
+        }
+        let n = tch::Cuda::device_count();
+        if idx >= n as usize {
+            return Err(anyhow!(
+                "--device cuda:{idx} requested but only {n} CUDA device(s) available"
+            ));
+        }
+    }
+    Ok(dev)
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    laya_tch::preload_torch_cuda();
     let t0 = Instant::now();
-    eprintln!("[laya-tch] loading model from {}", cli.model_dir);
-    let engine = Engine::load(&cli.model_dir)?;
+    let device = resolve_device(&cli.device)?;
+    eprintln!("[laya-tch] loading model from {} on {:?}", cli.model_dir, device);
+    let engine = Engine::load_on(&cli.model_dir, device)?;
     eprintln!("[laya-tch] loaded in {:.1}s", t0.elapsed().as_secs_f64());
 
     if let Some(path) = &cli.once {
