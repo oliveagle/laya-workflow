@@ -14,6 +14,10 @@ containing everything the workflow engine needs:
   points at it. The model weights themselves are **not** part of the repo —
   point `--model-dir` at a local checkout
   (e.g. `~/models/convaiinnovations--laya`).
+- [`laya-mlx/`](./laya-mlx) — **`laya-mlx`** native MLX (Apple GPU) inference in
+  Rust, via `mlx-rs`. The macOS high-performance path for the decision model
+  (see also `laya-tch/mlx/`). Separate crate (its own workspace): `cd laya-mlx &&
+  cargo build --release`.
 
 ## Install
 
