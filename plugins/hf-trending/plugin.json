@@ -1,0 +1,9 @@
+{
+  "name": "hf-trending",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 8000000,
+  "description": "HuggingFace trending/search monitor: per-model rank, likes, downloads, trending score, card metadata and the full model card (README), saved as JSON snapshots, latest.json, a Markdown report and cards/."
+}

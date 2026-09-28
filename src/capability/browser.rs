@@ -2093,7 +2093,7 @@ AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /// Canonicalize as much of `path` as exists, keeping the non-existent suffix.
 /// Lets a policy check happen before the output directory is created.
-fn canonicalize_lenient(path: &Path) -> PathBuf {
+pub(crate) fn canonicalize_lenient(path: &Path) -> PathBuf {
     if let Ok(resolved) = std::fs::canonicalize(path) {
         return resolved;
     }
@@ -2122,9 +2122,13 @@ fn canonicalize_lenient(path: &Path) -> PathBuf {
 }
 
 /// Expand a leading `~/` to `$HOME`, then fail-closed against `policy.allow_paths`.
-fn allowed_out_dir(policy: &Policy, raw: &str) -> Result<PathBuf> {
+///
+/// Shared by `save_article`, the Rhai host's `write_file` / `read_file`, and any
+/// other path-writing capability: this is the single place that decides which
+/// filesystem locations a spec is allowed to touch.
+pub(crate) fn allowed_out_dir(policy: &Policy, raw: &str) -> Result<PathBuf> {
     if policy.allow_paths.is_empty() {
-        bail!("save_article out_dir {raw:?} denied: set policy.allow_paths to the allowed root(s)");
+        bail!("path {raw:?} denied: set policy.allow_paths to the allowed root(s)");
     }
     let expanded = if let Some(rest) = raw.strip_prefix("~/") {
         match std::env::var("HOME") {
@@ -2141,7 +2145,7 @@ fn allowed_out_dir(policy: &Policy, raw: &str) -> Result<PathBuf> {
         .any(|root| candidate.starts_with(canonicalize_lenient(Path::new(root))));
     if !allowed {
         bail!(
-            "save_article out_dir {:?} is outside policy.allow_paths {:?}",
+            "path {:?} is outside policy.allow_paths {:?}",
             candidate.display().to_string(),
             policy.allow_paths
         );

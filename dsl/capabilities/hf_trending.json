@@ -1,0 +1,77 @@
+{
+  "name": "hf_trending_monitor",
+  "dsl_version": 2,
+  "description": "HuggingFace model monitor, driven by the Rhai plugin `plugins/hf-trending` (kind: \"plugin\"). Pass a search phrase or a trending keyword via --query (or state.query); bare (or \"trending\"/\"热门\") means the trending feed, anything else is a search. For every model in the current ranking the plugin records rank, likes, downloads, trending score, card metadata (tags / pipeline / license / file list) and downloads the full model card (README) to out_dir (default ~/tmp/hf-trending): snapshot_<key>_<ts>.json, latest_<key>.json, report_<key>_<ts>.md, cards/<id>.md and history.jsonl. Reruns compute a per-model rank delta from latest_<key>.json, so rank moves are visible over time. Optional state: mode (auto|trending|search), limit (1-100, default 10), sort, direction, filter, author, pipeline_tag, out_dir, fetch_cards.",
+  "start": "monitor",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [
+      "huggingface.co"
+    ],
+    "allow_paths": [
+      "${env.HOME}/tmp/hf-trending"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 16777216,
+    "retries": 0
+  },
+  "capabilities": {
+    "hf": {
+      "kind": "plugin",
+      "plugin": "hf-trending",
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "monitor",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Fetch the current HuggingFace ranking and save the models + cards?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "hf",
+        "with": {
+          "query": "${state.query}",
+          "mode": "${state.mode}",
+          "limit": "${state.limit}",
+          "sort": "${state.sort}",
+          "direction": "${state.direction}",
+          "filter": "${state.filter}",
+          "author": "${state.author}",
+          "pipeline_tag": "${state.pipeline_tag}",
+          "out_dir": "${state.out_dir}",
+          "fetch_cards": "${state.fetch_cards}"
+        },
+        "project": {
+          "mode": "/mode",
+          "query": "/query",
+          "count": "/count",
+          "out_dir": "/out_dir",
+          "snapshot_path": "/snapshot_path",
+          "latest_path": "/latest_path",
+          "report_path": "/report_path",
+          "history_path": "/history_path",
+          "cards_dir": "/cards_dir",
+          "cards_saved": "/cards_saved",
+          "cards_failed": "/cards_failed",
+          "fetched_at": "/fetched_at",
+          "models": "/models"
+        }
+      }
+    }
+  ]
+}

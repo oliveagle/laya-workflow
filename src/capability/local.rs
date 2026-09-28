@@ -10,6 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+use super::browser::canonicalize_lenient;
 use super::{bounded_timeout, effective_op, expand, stringify, truncate, ExecCap, Policy};
 
 // ── datetime ────────────────────────────────────────────────────────
@@ -336,18 +337,11 @@ pub struct FileCap {
 }
 
 fn check_path(c: &FileCap, p: &str, policy: &Policy) -> Result<PathBuf> {
-    let path = Path::new(p);
-    let canon_parent = path
-        .parent()
-        .map(|d| d.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    let canon = if path.exists() {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-    } else {
-        std::fs::canonicalize(&canon_parent)
-            .map(|d| d.join(path.file_name().unwrap_or_default()))
-            .unwrap_or_else(|_| path.to_path_buf())
-    };
+    // Canonicalize leniently: the write may target a directory tree that does
+    // not exist yet, and a naive `canonicalize` on the parent would fail and
+    // leave the path un-resolved (so a `/var` → `/private/var` style symlink
+    // made a brand-new path look out of bounds).
+    let canon = canonicalize_lenient(Path::new(p));
     let roots: Vec<PathBuf> = if c.allow_roots.is_empty() {
         policy.allow_paths.iter().map(PathBuf::from).collect()
     } else {
@@ -357,7 +351,7 @@ fn check_path(c: &FileCap, p: &str, policy: &Policy) -> Result<PathBuf> {
         bail!("file capability has no allowed roots (set capability allow_roots or policy.allow_paths)");
     }
     for r in &roots {
-        let rc = std::fs::canonicalize(r).unwrap_or_else(|_| r.clone());
+        let rc = canonicalize_lenient(r);
         if canon.starts_with(&rc) {
             return Ok(canon);
         }
@@ -393,6 +387,12 @@ pub fn call_file(c: &FileCap, with: &Value, _state: &Value, policy: &Policy) -> 
                 .ok_or_else(|| anyhow!("file.{:?} needs 'text'", c.op))?;
             if text.len() > limit {
                 bail!("write payload {} bytes > cap {limit}", text.len());
+            }
+            // A write may target a fresh directory tree (e.g. a monitoring
+            // dump); create the parents so a first run does not fail on a
+            // missing folder. The path is already inside an allowed root.
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
             }
             use std::io::Write;
             let mut f = std::fs::OpenOptions::new()
@@ -527,4 +527,49 @@ pub fn call_shell(c: &ShellCap, with: &Value, state: &Value, policy: &Policy) ->
         "stdout": out["stdout"],
         "stderr": out["stderr"],
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_write_creates_missing_parent_dirs() {
+        let root = std::env::temp_dir().join(format!("laya-file-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let cap = FileCap {
+            op: "write".to_string(),
+            max_bytes: 1 << 20,
+            ..Default::default()
+        };
+        let mut policy = Policy::default();
+        policy.allow_paths = vec![root.display().to_string()];
+        let target = root.join("a/b/c/snap.json").display().to_string();
+        let out = call_file(
+            &cap,
+            &json!({ "path": target, "text": "{}\n" }),
+            &json!({}),
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(out["bytes"], json!(3));
+        assert!(root.join("a/b/c/snap.json").is_file());
+
+        // Denied outside the allowed root — and nothing is created.
+        let outside = root
+            .parent()
+            .unwrap()
+            .join("nope/x.json")
+            .display()
+            .to_string();
+        assert!(call_file(
+            &cap,
+            &json!({ "path": outside, "text": "x" }),
+            &json!({}),
+            &policy
+        )
+        .is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
 }

@@ -143,6 +143,21 @@ laya-workflow plugin list       # what the engine can see, and from where
 See [`docs/plugins.md`](./docs/plugins.md) for the host API and the DSL shape, or
 run `laya-workflow skill --section plugins` for the embedded guide.
 
+### HuggingFace model monitor
+
+`plugins/hf-trending` is a second, browser-free example: given a phrase (or the
+trending feed) it snapshots the current HuggingFace ranking and, per model,
+records the rank, likes, downloads, trending score, card metadata and the full
+model card — as JSON snapshots, a Markdown report, `cards/` and a `history.jsonl`
+time series.
+
+```bash
+laya-workflow run --spec dsl/capabilities/hf_trending.json --query trending --state '{"limit":5}'
+laya-workflow run --spec dsl/capabilities/hf_trending.json --query "llm memory"
+```
+
+See [`docs/hf_trending.md`](./docs/hf_trending.md).
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.

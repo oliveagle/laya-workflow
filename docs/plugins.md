@@ -132,7 +132,9 @@ capability code, so policy still applies and the tab lifecycle still has one own
 | `host.browser_evaluate(t, js, await_promise)` | evaluate in the page, get JSON back |
 | `host.browser_release(t)` | ask the engine to close that tab now |
 | `host.save_article(opts)` | render a page to Markdown + figures (the generic engine path) |
-| `host.http_get(url)` | allow-listed, bounded, truncating GET |
+| `host.http_get(url)` | allow-listed, bounded, truncating GET (raises on any non-2xx) |
+| `host.write_file(path, text)` | policy-gated write, creates parent dirs; returns `#{ path, bytes }` |
+| `host.read_file(path)` | policy-gated read; returns `#{ path, exists, bytes, text }` |
 
 ### Invariants the host enforces
 
@@ -170,6 +172,7 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 |--------|---------------|
 | `plugins/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
+| `plugins/hf-trending` | a HuggingFace model monitor (no browser): per-model rank / likes / downloads / card metadata + the model card, written to snapshots, a report, `cards/` and `history.jsonl` (`dsl/capabilities/hf_trending.json`) |
 
 `dsl/browser/alphaxiv_paper.json` is the plugin-driven spec:
 `laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" --state '{"count":3}'`.

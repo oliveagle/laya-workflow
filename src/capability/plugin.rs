@@ -149,6 +149,11 @@ fn builtin(name: &str) -> Option<Sources> {
             include_str!("../../plugins/textdigest/main.rhai"),
             Vec::new(),
         ),
+        "hf-trending" => (
+            include_str!("../../plugins/hf-trending/plugin.json"),
+            include_str!("../../plugins/hf-trending/main.rhai"),
+            Vec::new(),
+        ),
         _ => return None,
     };
     Some(Sources {
@@ -164,7 +169,7 @@ fn builtin(name: &str) -> Option<Sources> {
 
 /// Names of the plugins compiled into this binary.
 pub fn builtin_names() -> &'static [&'static str] {
-    &[ALPHAXIV_PLUGIN, "textdigest"]
+    &[ALPHAXIV_PLUGIN, "textdigest", "hf-trending"]
 }
 
 // ── installing plugins from a git repo ──────────────────────────────
@@ -805,6 +810,53 @@ fn build_engine(max_operations: u64) -> Engine {
             to_dyn(v)
         },
     );
+    // ── policy-gated filesystem: the base owns the gate, the plugin owns the
+    //    decision of *what* to persist ──
+    engine.register_fn(
+        "write_file",
+        |h: &mut Host, path: &str, text: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            let v = h
+                .with(|st| {
+                    let dest = browser::allowed_out_dir(&st.policy, path)?;
+                    if text.len() > st.policy.max_output {
+                        bail!(
+                            "write_file {} bytes > policy.max_output {}",
+                            text.len(),
+                            st.policy.max_output
+                        );
+                    }
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, text.as_bytes())?;
+                    Ok(json!({ "path": dest.display().to_string(), "bytes": text.len() }))
+                })
+                .map_err(rt)?;
+            to_dyn(v)
+        },
+    );
+    engine.register_fn(
+        "read_file",
+        |h: &mut Host, path: &str| -> Result<Dynamic, Box<EvalAltResult>> {
+            let v = h
+                .with(|st| {
+                    let src = browser::allowed_out_dir(&st.policy, path)?;
+                    if !src.is_file() {
+                        return Ok(json!({
+                            "path": src.display().to_string(),
+                            "exists": false, "bytes": 0, "text": ""
+                        }));
+                    }
+                    let text = truncate(std::fs::read_to_string(&src)?, st.policy.max_output);
+                    Ok(json!({
+                        "path": src.display().to_string(),
+                        "exists": true, "bytes": text.len(), "text": text
+                    }))
+                })
+                .map_err(rt)?;
+            to_dyn(v)
+        },
+    );
     engine.register_fn(
         "http_get",
         |h: &mut Host, url: &str| -> Result<Dynamic, Box<EvalAltResult>> {
@@ -1043,16 +1095,21 @@ mod tests {
         })))
     }
 
-    /// Evaluate a bundled-plugin function directly (the same engine the host
-    /// builds, minus the browser calls) so the *script's* behaviour is what gets
-    /// asserted — not a Rust re-implementation of it.
-    fn call(name: &str, args: Vec<Value>) -> Result<Value> {
-        let sources = builtin(ALPHAXIV_PLUGIN).expect("bundled alphaxiv plugin");
+    /// Compile one bundled plugin and return `(engine, ast, host)` for a direct
+    /// call — the same engine the host builds, minus the browser/network calls,
+    /// so the *script's* behaviour is what gets asserted.
+    fn harness(plugin: &str) -> (Engine, rhai::AST, Host) {
+        let sources = builtin(plugin).unwrap_or_else(|| panic!("bundled plugin {plugin}"));
         let engine = build_engine(0);
         let ast = engine
             .compile(&sources.entry)
-            .map_err(|e| anyhow!("compile: {e}"))?;
-        let host = test_host();
+            .unwrap_or_else(|e| panic!("compile {plugin}: {e}"));
+        (engine, ast, test_host())
+    }
+
+    /// Call `name` with JSON args (host injected into scope, not as an arg).
+    fn call_of(plugin: &str, name: &str, args: Vec<Value>) -> Result<Value> {
+        let (engine, ast, host) = harness(plugin);
         let mut scope = Scope::new();
         scope.push("host", host);
         let dyns: Vec<Dynamic> = args
@@ -1066,6 +1123,21 @@ mod tests {
         }
         .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Call a function whose first parameter is the host handle.
+    fn call_with_host(plugin: &str, name: &str, arg: Value) -> Result<Value> {
+        let (engine, ast, host) = harness(plugin);
+        let mut scope = Scope::new();
+        let dyn_arg = to_dyn(arg).map_err(|e| anyhow!("{e}"))?;
+        let out: Dynamic = engine
+            .call_fn(&mut scope, &ast, name, (host, dyn_arg))
+            .map_err(|e| anyhow!("{name}(): {e}"))?;
+        from_dyn(out).map_err(|e| anyhow!("{e}"))
+    }
+
+    fn call(name: &str, args: Vec<Value>) -> Result<Value> {
+        call_of(ALPHAXIV_PLUGIN, name, args)
     }
 
     fn plan(with: Value) -> Result<Value> {
@@ -1459,5 +1531,128 @@ mod tests {
         let ax = found.iter().find(|e| e.name == "alphaxiv").unwrap();
         assert!(!ax.version.is_empty());
         assert!(!ax.description.is_empty());
+    }
+
+    #[test]
+    fn host_file_io_is_policy_gated() {
+        let dir = std::env::temp_dir().join(format!("laya-plugin-fs-{}", std::process::id()));
+        let plugin_dir = dir.join("mini");
+        std::fs::create_dir_all(&plugin_dir).unwrap();
+        std::fs::write(
+            plugin_dir.join("plugin.json"),
+            r#"{"name":"mini","entry_op":"run"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            plugin_dir.join("main.rhai"),
+            r#"
+            fn run(host, ctx) {
+                let path = ctx["with"]["path"];
+                let wrote = host.write_file(path, "hello");
+                let back  = host.read_file(path);
+                #{ wrote: wrote, read: back }
+            }
+            "#,
+        )
+        .unwrap();
+        let cap = PluginCap {
+            plugin: "mini".to_string(),
+            dir: plugin_dir.display().to_string(),
+            ..Default::default()
+        };
+        // A path with no root allowed is denied (fail-closed), nested parents included.
+        let target = dir.join("out/deep/x.txt").display().to_string();
+        let err = run(
+            &cap,
+            &json!({ "path": target }),
+            &json!({}),
+            &Policy::default(),
+            None,
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("allow_paths"), "{err}");
+        assert!(!dir.join("out").exists());
+
+        // With the root allowed the parents are created and text round-trips.
+        let mut policy = Policy::default();
+        policy.allow_paths = vec![dir.display().to_string()];
+        let out = run(
+            &cap,
+            &json!({ "path": target }),
+            &json!({}),
+            &policy,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out["read"]["exists"], json!(true));
+        assert_eq!(out["read"]["text"], json!("hello"));
+        assert!(dir.join("out/deep/x.txt").is_file());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bundled_hf_trending_compiles_and_plans() {
+        // A compile failure (bad Rhai syntax) must be caught here, not at run time.
+        let src = builtin("hf-trending").expect("bundled hf-trending plugin");
+        let m = Manifest::parse(&src.manifest, "hf-trending").unwrap();
+        assert_eq!(m.name, "hf-trending");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+
+        let p = |v: Value| call_of("hf-trending", "plan", vec![v]).unwrap();
+        // No query → the trending feed, default 10.
+        let t = p(json!({}));
+        assert_eq!(t["mode"], json!("trending"));
+        assert_eq!(t["limit"], json!(10));
+        assert_eq!(t["search"], json!(""));
+        assert_eq!(t["sort"], json!("trendingScore"));
+        // Trending words (english + chinese) keep the trending mode.
+        for q in ["trending", "Trending models", "热门", "最新"] {
+            assert_eq!(p(json!({ "query": q }))["mode"], json!("trending"), "{q}");
+        }
+        // A plain phrase becomes a search, and the phrase is passed through.
+        let s = p(json!({ "query": "llm memory" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["search"], json!("llm memory"));
+        // limit is parsed from strings and clipped to 1..=100.
+        assert_eq!(p(json!({ "limit": "250" }))["limit"], json!(100));
+        assert_eq!(p(json!({ "limit": 0 }))["limit"], json!(1));
+        // Explicit mode wins; a search with no query is an error.
+        assert_eq!(
+            p(json!({ "query": "x", "mode": "trending" }))["mode"],
+            json!("trending")
+        );
+        assert!(call_of(
+            "hf-trending",
+            "plan",
+            vec![json!({ "query": "x", "mode": "bogus" })]
+        )
+        .is_err());
+        assert!(call_of("hf-trending", "plan", vec![json!({ "mode": "search" })]).is_err());
+    }
+
+    #[test]
+    fn hf_trending_builds_the_api_url() {
+        let plan = |v: Value| call_of("hf-trending", "plan", vec![v]).unwrap();
+        let url = |v: Value| {
+            call_with_host("hf-trending", "api_url", plan(v))
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let u = url(json!({ "query": "trending", "limit": 5 }));
+        assert!(u.starts_with("https://huggingface.co/api/models?"), "{u}");
+        assert!(u.contains("sort=trendingScore"), "{u}");
+        assert!(u.contains("direction=-1"), "{u}");
+        assert!(u.contains("limit=5"), "{u}");
+        assert!(u.contains("full=true"), "{u}");
+        assert!(!u.contains("search="), "{u}");
+        // A search phrase is url-encoded, not appended raw.
+        let s = url(json!({ "query": "llm memory" }));
+        assert!(s.contains("search=llm%20memory"), "{s}");
     }
 }

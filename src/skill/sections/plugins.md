@@ -153,7 +153,9 @@ owner.
 | `host.browser_evaluate(t, js, await_promise)` | evaluate in the page, get JSON back |
 | `host.browser_release(t)` | ask the engine to close that tab now |
 | `host.save_article(opts)` | render a page to Markdown + figures (the generic engine path) |
-| `host.http_get(url)` | allow-listed, bounded, truncating GET |
+| `host.http_get(url)` | allow-listed, bounded, truncating GET (raises on any non-2xx) |
+| `host.write_file(path, text)` | policy-gated write, creates parent dirs; returns `#{ path, bytes }` |
+| `host.read_file(path)` | policy-gated read; returns `#{ path, exists, bytes, text }` |
 
 ## Invariants the host enforces
 
@@ -192,10 +194,15 @@ owner.
 |--------|---------------|
 | `plugins/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
+| `plugins/hf-trending` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
   --query "trending" --state '{"count":3}'
+
+# a plugin with no browser: fetch + persist HuggingFace rankings (needs network)
+laya-workflow run --spec dsl/capabilities/hf_trending.json \
+  --query "llm memory" --state '{"limit":5}'
 ```
 
 Next: `skill --section dsl` (spec shape), `skill --section safety` (the gates a
