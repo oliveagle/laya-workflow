@@ -1,0 +1,12 @@
+{
+  "name": "crates",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": [
+    "search.js"
+  ],
+  "description": "crates.io (Rust package registry): turn a phrase into crate search rows (name / version / description / downloads / docs.rs link), or read one crate's page into Markdown."
+}

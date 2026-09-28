@@ -4,7 +4,7 @@
 //! lifecycle, secret redaction, page-to-Markdown rendering. Anything that is
 //! *site-* or *task*-specific (which selector to read, which endpoint to page,
 //! how a natural-language query maps to a mode) belongs in a **plugin** written
-//! in Rhai under `plugins/<name>/`.
+//! in Rhai — a site under `websites/<domain>/`, a tool under `plugins/<name>/`.
 //!
 //! A plugin can do exactly what the host registers for it — nothing more:
 //!
@@ -17,11 +17,17 @@
 //! * the language itself has no file, network, `eval`, `print` or `import`
 //!   access, and is bounded by an operation budget.
 //!
+//! Layout: **site** plugins live under `websites/<domain>/` (one folder per
+//! site, the plugin's short id comes from its `plugin.json`), while
+//! non-site/tool plugins live under `plugins/<name>/`. Both are just
+//! directories of the same shape; the resolver finds either by plugin name.
+//!
 //! Plugins are resolved in layers, highest priority first: an explicit `dir` →
-//! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` walking up to the git root →
-//! `~/.config/laya-workflow/plugins/<name>` (the `plugin install` default) →
-//! the copy compiled into this binary. That last layer is why the bundled
-//! alphaXiv downloader still works after `sudo install`-ing a single binary.
+//! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` / `websites/*/` walking up to
+//! the git root → `~/.config/laya-workflow/{plugins,websites}` (the
+//! `plugin install` default) → the copy compiled into this binary. That last
+//! layer is why the bundled alphaXiv downloader still works after
+//! `sudo install`-ing a single binary.
 
 use anyhow::{anyhow, bail, Result};
 use rhai::{Dynamic, Engine, EvalAltResult, Position, Scope};
@@ -42,8 +48,9 @@ pub const ALPHAXIV_PLUGIN: &str = "alphaxiv";
 /// A `kind: "plugin"` capability: which plugin to load and how to bound it.
 #[derive(Clone, Debug, Default)]
 pub struct PluginCap {
-    /// Plugin name (`plugins/<name>`), or an absolute/relative path when `dir`
-    /// is set.
+    /// Plugin id: matched against the folder name under `plugins/` and against
+    /// the `name` in a `websites/<domain>/plugin.json`. A path is used instead
+    /// when `dir` is set.
     pub plugin: String,
     /// Optional explicit plugin directory, bypassing the search layers.
     pub dir: String,
@@ -133,16 +140,16 @@ struct Sources {
 fn builtin(name: &str) -> Option<Sources> {
     let (manifest, entry, pages): (&str, &str, Vec<(&str, &str)>) = match name {
         ALPHAXIV_PLUGIN => (
-            include_str!("../../plugins/alphaxiv/plugin.json"),
-            include_str!("../../plugins/alphaxiv/main.rhai"),
+            include_str!("../../websites/alphaxiv.org/plugin.json"),
+            include_str!("../../websites/alphaxiv.org/main.rhai"),
             vec![
                 (
                     "links.js",
-                    include_str!("../../plugins/alphaxiv/page/links.js"),
+                    include_str!("../../websites/alphaxiv.org/page/links.js"),
                 ),
                 (
                     "feed.js",
-                    include_str!("../../plugins/alphaxiv/page/feed.js"),
+                    include_str!("../../websites/alphaxiv.org/page/feed.js"),
                 ),
             ],
         ),
@@ -152,68 +159,121 @@ fn builtin(name: &str) -> Option<Sources> {
             Vec::new(),
         ),
         "hf-trending" => (
-            include_str!("../../plugins/hf-trending/plugin.json"),
-            include_str!("../../plugins/hf-trending/main.rhai"),
+            include_str!("../../websites/huggingface.co/plugin.json"),
+            include_str!("../../websites/huggingface.co/main.rhai"),
             Vec::new(),
         ),
         "hackernews" => (
-            include_str!("../../plugins/hackernews/plugin.json"),
-            include_str!("../../plugins/hackernews/main.rhai"),
+            include_str!("../../websites/news.ycombinator.com/plugin.json"),
+            include_str!("../../websites/news.ycombinator.com/main.rhai"),
             vec![
                 (
                     "front.js",
-                    include_str!("../../plugins/hackernews/page/front.js"),
+                    include_str!("../../websites/news.ycombinator.com/page/front.js"),
                 ),
                 (
                     "story.js",
-                    include_str!("../../plugins/hackernews/page/story.js"),
+                    include_str!("../../websites/news.ycombinator.com/page/story.js"),
                 ),
             ],
         ),
         "arxiv" => (
-            include_str!("../../plugins/arxiv/plugin.json"),
-            include_str!("../../plugins/arxiv/main.rhai"),
+            include_str!("../../websites/arxiv.org/plugin.json"),
+            include_str!("../../websites/arxiv.org/main.rhai"),
             vec![
                 (
                     "search.js",
-                    include_str!("../../plugins/arxiv/page/search.js"),
+                    include_str!("../../websites/arxiv.org/page/search.js"),
                 ),
-                ("abs.js", include_str!("../../plugins/arxiv/page/abs.js")),
+                (
+                    "abs.js",
+                    include_str!("../../websites/arxiv.org/page/abs.js"),
+                ),
             ],
         ),
         "wikipedia" => (
-            include_str!("../../plugins/wikipedia/plugin.json"),
-            include_str!("../../plugins/wikipedia/main.rhai"),
+            include_str!("../../websites/wikipedia.org/plugin.json"),
+            include_str!("../../websites/wikipedia.org/main.rhai"),
             vec![
                 (
                     "search.js",
-                    include_str!("../../plugins/wikipedia/page/search.js"),
+                    include_str!("../../websites/wikipedia.org/page/search.js"),
                 ),
                 (
                     "clean.js",
-                    include_str!("../../plugins/wikipedia/page/clean.js"),
+                    include_str!("../../websites/wikipedia.org/page/clean.js"),
                 ),
             ],
         ),
         "mdn" => (
-            include_str!("../../plugins/mdn/plugin.json"),
-            include_str!("../../plugins/mdn/main.rhai"),
+            include_str!("../../websites/developer.mozilla.org/plugin.json"),
+            include_str!("../../websites/developer.mozilla.org/main.rhai"),
             Vec::new(),
         ),
         "bing" => (
-            include_str!("../../plugins/bing/plugin.json"),
-            include_str!("../../plugins/bing/main.rhai"),
+            include_str!("../../websites/bing.com/plugin.json"),
+            include_str!("../../websites/bing.com/main.rhai"),
             vec![(
                 "search.js",
-                include_str!("../../plugins/bing/page/search.js"),
+                include_str!("../../websites/bing.com/page/search.js"),
             )],
         ),
         "v2ex" => (
-            include_str!("../../plugins/v2ex/plugin.json"),
-            include_str!("../../plugins/v2ex/main.rhai"),
+            include_str!("../../websites/v2ex.com/plugin.json"),
+            include_str!("../../websites/v2ex.com/main.rhai"),
             vec![
-                ("list.js", include_str!("../../plugins/v2ex/page/list.js")),
-                ("topic.js", include_str!("../../plugins/v2ex/page/topic.js")),
+                (
+                    "list.js",
+                    include_str!("../../websites/v2ex.com/page/list.js"),
+                ),
+                (
+                    "topic.js",
+                    include_str!("../../websites/v2ex.com/page/topic.js"),
+                ),
+            ],
+        ),
+        "crates" => (
+            include_str!("../../websites/crates.io/plugin.json"),
+            include_str!("../../websites/crates.io/main.rhai"),
+            vec![(
+                "search.js",
+                include_str!("../../websites/crates.io/page/search.js"),
+            )],
+        ),
+        "pypi" => (
+            include_str!("../../websites/pypi.org/plugin.json"),
+            include_str!("../../websites/pypi.org/main.rhai"),
+            vec![
+                (
+                    "search.js",
+                    include_str!("../../websites/pypi.org/page/search.js"),
+                ),
+                (
+                    "project.js",
+                    include_str!("../../websites/pypi.org/page/project.js"),
+                ),
+            ],
+        ),
+        "docsrs" => (
+            include_str!("../../websites/docs.rs/plugin.json"),
+            include_str!("../../websites/docs.rs/main.rhai"),
+            vec![(
+                "search.js",
+                include_str!("../../websites/docs.rs/page/search.js"),
+            )],
+        ),
+        "github" => (
+            include_str!("../../websites/github.com/plugin.json"),
+            include_str!("../../websites/github.com/main.rhai"),
+            vec![
+                (
+                    "trending.js",
+                    include_str!("../../websites/github.com/page/trending.js"),
+                ),
+                (
+                    "repo.js",
+                    include_str!("../../websites/github.com/page/repo.js"),
+                ),
             ],
         ),
         _ => return None,
@@ -242,6 +302,10 @@ pub fn builtin_names() -> &'static [&'static str] {
         "mdn",
         "bing",
         "v2ex",
+        "crates",
+        "pypi",
+        "docsrs",
+        "github",
     ]
 }
 
@@ -314,7 +378,7 @@ pub fn validate_plugin_name(name: &str) -> Result<()> {
 pub fn normalize_subdir(path: &str) -> Result<String> {
     let p = path.trim().trim_matches('/');
     if p.is_empty() {
-        bail!("--path must name a directory inside the repo (e.g. plugins/alphaxiv)");
+        bail!("--path must name a directory inside the repo (e.g. websites/alphaxiv.org)");
     }
     for seg in p.split('/') {
         if seg.is_empty() || seg == "." || seg == ".." {
@@ -448,22 +512,33 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
-        let mut names: Vec<String> = entries
+        // A child directory is a plugin; its *name* is what `plugin.json`
+        // declares (so `websites/<domain>/` maps to a short plugin id).
+        let mut dirs: Vec<PathBuf> = entries
             .flatten()
-            .filter(|e| e.path().join("plugin.json").is_file())
-            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .map(|e| e.path())
+            .filter(|p| p.join("plugin.json").is_file())
             .collect();
-        names.sort();
-        for name in names {
+        dirs.sort();
+        for dir in dirs {
+            let folder = dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let manifest = std::fs::read_to_string(dir.join("plugin.json"))
+                .ok()
+                .and_then(|s| Manifest::parse(&s, &folder).ok());
+            let name = manifest
+                .as_ref()
+                .map(|m| m.name.clone())
+                .unwrap_or_else(|| folder.clone());
+            let (version, description) = manifest
+                .map(|m| (m.version, m.description))
+                .unwrap_or_else(|| ("0.0.0".to_string(), String::new()));
             if !seen.insert(name.clone()) {
                 continue;
             }
-            let dir = root.join(&name);
-            let (version, description) = std::fs::read_to_string(dir.join("plugin.json"))
-                .ok()
-                .and_then(|s| Manifest::parse(&s, &name).ok())
-                .map(|m| (m.version, m.description))
-                .unwrap_or_else(|| ("0.0.0".to_string(), String::new()));
             out.push(PluginEntry {
                 name,
                 layer,
@@ -559,9 +634,11 @@ pub enum PluginLayer {
     Dir,
     /// `$LAYA_PLUGIN_DIR/<name>`.
     Env,
-    /// `plugins/<name>` walking up from the cwd to the git root.
+    /// `plugins/<name>` or `websites/<domain>/` walking up from the cwd to the
+    /// git root.
     Repo,
-    /// `~/.config/laya-workflow/plugins/<name>` (where `plugin install` lands).
+    /// `~/.config/laya-workflow/plugins/<name>` (where `plugin install` lands)
+    /// or its `websites/` sibling.
     User,
     /// The copy compiled into the binary (`include_str!`).
     Builtin,
@@ -579,8 +656,14 @@ impl PluginLayer {
     }
 }
 
-/// Candidate on-disk `plugins/` roots, highest priority first: `$LAYA_PLUGIN_DIR`
-/// → `plugins/` up to the git root → the per-user install root.
+/// Candidate on-disk plugin roots, highest priority first: `$LAYA_PLUGIN_DIR` →
+/// `plugins/` and `websites/` up to the git root → the per-user install root
+/// (with its `websites/` sibling).
+///
+/// A root is a directory whose children are plugin directories. Under `plugins/`
+/// the child is named after the plugin; under `websites/<domain>/` the child is
+/// named after the site and the plugin name comes from its `plugin.json`. Both
+/// are found by [`plugin_dir_in`].
 fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     let mut roots = Vec::new();
     if let Ok(dir) = std::env::var("LAYA_PLUGIN_DIR") {
@@ -591,15 +674,55 @@ fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     let mut cur = std::env::current_dir().ok();
     while let Some(dir) = cur {
         roots.push((PluginLayer::Repo, dir.join("plugins")));
+        roots.push((PluginLayer::Repo, dir.join("websites")));
         if dir.join(".git").exists() {
             break;
         }
         cur = dir.parent().map(std::path::Path::to_path_buf);
     }
     if let Some(user) = user_plugin_dir() {
-        roots.push((PluginLayer::User, user));
+        roots.push((PluginLayer::User, user.clone()));
+        if let Some(parent) = user.parent() {
+            roots.push((PluginLayer::User, parent.join("websites")));
+        }
     }
     roots
+}
+
+/// The plugin directory under `root` that provides `name`: the same-named child
+/// (`plugins/<name>/`), or a child whose `plugin.json` declares that name
+/// (`websites/<domain>/`). `None` when the root has no such plugin.
+fn plugin_dir_in(root: &std::path::Path, name: &str) -> Option<PathBuf> {
+    let direct = root.join(name);
+    if direct.join("plugin.json").is_file() {
+        return Some(direct);
+    }
+    let mut children: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.join("plugin.json").is_file())
+        .collect();
+    children.sort();
+    for dir in children {
+        if dir.file_name().and_then(|n| n.to_str()) == Some(name) {
+            return Some(dir);
+        }
+        let folder = dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(name)
+            .to_string();
+        if let Ok(src) = std::fs::read_to_string(dir.join("plugin.json")) {
+            if Manifest::parse(&src, &folder)
+                .map(|m| m.name == name)
+                .unwrap_or(false)
+            {
+                return Some(dir);
+            }
+        }
+    }
+    None
 }
 
 /// Load every page script under `<dir>/page/` (sorted). Missing is fine.
@@ -718,14 +841,13 @@ fn load_sources(cap: &PluginCap) -> Result<Sources> {
         bail!("plugin capability needs 'plugin' (a name), 'dir', or a script 'entry'");
     }
     for (_, root) in plugin_roots() {
-        let d = root.join(&cap.plugin);
-        if d.join("plugin.json").is_file() {
+        if let Some(d) = plugin_dir_in(&root, &cap.plugin) {
             return read_dir_sources(&d, &cap.plugin, entry);
         }
     }
     builtin(&cap.plugin).ok_or_else(|| {
         anyhow!(
-            "plugin {:?} not found (looked in $LAYA_PLUGIN_DIR, plugins/ above the cwd, and the built-ins)",
+            "plugin {:?} not found (looked in $LAYA_PLUGIN_DIR, plugins/ and websites/ above the cwd, and the built-ins)",
             cap.plugin
         )
     })
@@ -1346,6 +1468,54 @@ mod tests {
             .any(|(_, s)| s.contains("api.alphaxiv.org")));
     }
 
+    /// A `websites/<domain>/` folder is found by the plugin *name* its
+    /// `plugin.json` declares, not by the folder name.
+    #[test]
+    fn resolves_a_website_folder_by_manifest_name() {
+        let root = std::env::temp_dir().join(format!("laya-web-root-{}", std::process::id()));
+        let dir = root.join("example.com");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"name":"example","entry":"main.rhai"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("main.rhai"), "fn run(host, ctx) { #{ ok: true } }").unwrap();
+
+        assert_eq!(
+            plugin_dir_in(&root, "example").as_deref(),
+            Some(dir.as_path())
+        );
+        // The folder name still matches too, so both conventions work.
+        assert_eq!(
+            plugin_dir_in(&root, "example.com").as_deref(),
+            Some(dir.as_path())
+        );
+        assert!(plugin_dir_in(&root, "nope").is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// From the crate root, a bundled site plugin resolves off `websites/…` on
+    /// disk (not from the compiled-in copy) under its short id.
+    #[test]
+    fn finds_a_repo_plugin_under_websites_by_name() {
+        let probe = std::path::Path::new("websites/news.ycombinator.com/plugin.json");
+        if !probe.exists() {
+            return; // not run from the repo root
+        }
+        let src = load_sources(&PluginCap {
+            plugin: "hackernews".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+        let dir = src.dir.expect("resolved from disk, not builtin");
+        assert!(
+            dir.ends_with("websites/news.ycombinator.com"),
+            "{}",
+            dir.display()
+        );
+    }
+
     #[test]
     fn resolves_plugins_in_layers() {
         // An explicit dir wins and is read from disk.
@@ -1680,12 +1850,12 @@ mod tests {
             assert!(validate_plugin_name(bad).is_err(), "{bad:?}");
         }
         assert_eq!(
-            normalize_subdir("plugins/alphaxiv").unwrap(),
-            "plugins/alphaxiv"
+            normalize_subdir("websites/alphaxiv.org").unwrap(),
+            "websites/alphaxiv.org"
         );
         assert_eq!(
-            normalize_subdir("/plugins/alphaxiv/").unwrap(),
-            "plugins/alphaxiv"
+            normalize_subdir("/websites/alphaxiv.org/").unwrap(),
+            "websites/alphaxiv.org"
         );
         for bad in ["", "/", "plugins/../etc", "./x", "plugins//x"] {
             assert!(normalize_subdir(bad).is_err(), "{bad:?}");
@@ -1878,6 +2048,147 @@ mod tests {
             p(json!({ "query": "hot", "count": 999 }))["limit"],
             json!(100)
         );
+    }
+
+    #[test]
+    fn bundled_crates_compiles_and_plans() {
+        let src = builtin("crates").expect("bundled crates plugin");
+        let m = Manifest::parse(&src.manifest, "crates").unwrap();
+        assert_eq!(m.name, "crates");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["search.js"]);
+
+        let p = |v: Value| call_of("crates", "plan", vec![v]).unwrap();
+        assert!(call_of("crates", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "serde" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        // A crates.io URL (or an explicit crate/name) reads one crate page.
+        let c = p(json!({ "query": "https://crates.io/crates/serde" }));
+        assert_eq!(c["mode"], json!("crate"));
+        assert_eq!(c["name"], json!("serde"));
+        let c = p(json!({ "crate": "tokio", "mode": "read" }));
+        assert_eq!(c["mode"], json!("crate"));
+        assert_eq!(c["name"], json!("tokio"));
+        // The search row count is bounded.
+        assert_eq!(
+            p(json!({ "query": "serde", "count": 999 }))["limit"],
+            json!(50)
+        );
+        assert!(call_of(
+            "crates",
+            "plan",
+            vec![json!({ "mode": "nope", "query": "x" })]
+        )
+        .is_err());
+        assert!(call_of("crates", "plan", vec![json!({ "mode": "crate" })]).is_err());
+    }
+
+    #[test]
+    fn bundled_pypi_compiles_and_plans() {
+        let src = builtin("pypi").expect("bundled pypi plugin");
+        let m = Manifest::parse(&src.manifest, "pypi").unwrap();
+        assert_eq!(m.name, "pypi");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["project.js", "search.js"]);
+
+        let p = |v: Value| call_of("pypi", "plan", vec![v]).unwrap();
+        assert!(call_of("pypi", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "requests" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        let c = p(json!({ "query": "https://pypi.org/project/requests/" }));
+        assert_eq!(c["mode"], json!("project"));
+        assert_eq!(c["name"], json!("requests"));
+        let c = p(json!({ "project": "flask", "mode": "read" }));
+        assert_eq!(c["mode"], json!("project"));
+        assert_eq!(c["name"], json!("flask"));
+        assert!(call_of(
+            "pypi",
+            "plan",
+            vec![json!({ "mode": "nope", "query": "x" })]
+        )
+        .is_err());
+        assert!(call_of("pypi", "plan", vec![json!({ "mode": "project" })]).is_err());
+    }
+
+    #[test]
+    fn bundled_docsrs_compiles_and_plans() {
+        let src = builtin("docsrs").expect("bundled docsrs plugin");
+        let m = Manifest::parse(&src.manifest, "docsrs").unwrap();
+        assert_eq!(m.name, "docsrs");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["search.js"]);
+
+        let p = |v: Value| call_of("docsrs", "plan", vec![v]).unwrap();
+        assert!(call_of("docsrs", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "serde" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        // A docs.rs URL, or an explicit crate/name, reads one crate's docs.
+        let c = p(json!({ "query": "https://docs.rs/serde/latest/serde/" }));
+        assert_eq!(c["mode"], json!("crate"));
+        assert_eq!(c["crate"], json!("serde"));
+        let c = p(json!({ "crate": "tokio", "mode": "docs" }));
+        assert_eq!(c["mode"], json!("crate"));
+        assert_eq!(c["crate"], json!("tokio"));
+        assert!(call_of(
+            "docsrs",
+            "plan",
+            vec![json!({ "mode": "nope", "query": "x" })]
+        )
+        .is_err());
+        assert!(call_of("docsrs", "plan", vec![json!({ "mode": "crate" })]).is_err());
+    }
+
+    #[test]
+    fn bundled_github_compiles_and_plans() {
+        let src = builtin("github").expect("bundled github plugin");
+        let m = Manifest::parse(&src.manifest, "github").unwrap();
+        assert_eq!(m.name, "github");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["repo.js", "trending.js"]);
+
+        let p = |v: Value| call_of("github", "plan", vec![v]).unwrap();
+        // No query -> today's trending repositories.
+        let t = p(json!({}));
+        assert_eq!(t["mode"], json!("trending"));
+        assert_eq!(t["since"], json!("daily"));
+        assert_eq!(t["limit"], json!(25));
+        // The trending window and language pass through.
+        let t = p(json!({ "query": "trending", "since": "weekly", "language": "rust" }));
+        assert_eq!(t["mode"], json!("trending"));
+        assert_eq!(t["since"], json!("weekly"));
+        assert_eq!(t["language"], json!("rust"));
+        // A github.com URL (or owner/repo) reads one repository.
+        let r = p(json!({ "query": "https://github.com/BurntSushi/ripgrep" }));
+        assert_eq!(r["mode"], json!("repo"));
+        assert_eq!(r["repo"], json!("BurntSushi/ripgrep"));
+        let r = p(json!({ "repo": "tokio-rs/tokio", "mode": "read" }));
+        assert_eq!(r["mode"], json!("repo"));
+        assert_eq!(r["repo"], json!("tokio-rs/tokio"));
+        // The trending row count is bounded.
+        assert_eq!(
+            p(json!({ "query": "trending", "count": 999 }))["limit"],
+            json!(50)
+        );
+        assert!(call_of(
+            "github",
+            "plan",
+            vec![json!({ "mode": "nope", "query": "x" })]
+        )
+        .is_err());
+        assert!(call_of("github", "plan", vec![json!({ "mode": "repo" })]).is_err());
     }
 
     #[test]

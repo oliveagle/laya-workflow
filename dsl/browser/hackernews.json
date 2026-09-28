@@ -1,7 +1,7 @@
 {
   "name": "hackernews_reader",
   "dsl_version": 2,
-  "description": "Read Hacker News in a background Chrome tab, driven by the Rhai plugin `plugins/hackernews` (kind: \"plugin\"). --query \"top\" (or best/new/ask/show/jobs) lists that front page; a plain phrase like \"rust async\" full-text-searches stories (public Algolia index); a story id or an item?id=<id> URL reads that discussion. Optional state: mode (auto|top|best|new|ask|show|jobs|item|search), count/limit (1-100). Every row carries rank, title, url, site, points, comments, user, age and the HN permalink; an item also returns its comment tree.",
+  "description": "Read Hacker News in a background Chrome tab, driven by the Rhai plugin `websites/news.ycombinator.com` (kind: \"plugin\"). --query \"top\" (or best/new/ask/show/jobs) lists that front page; a plain phrase like \"rust async\" full-text-searches stories (public Algolia index); a story id or an item?id=<id> URL reads that discussion. Optional state: mode (auto|top|best|new|ask|show|jobs|item|search), count/limit (1-100). Every row carries rank, title, url, site, points, comments, user, age and the HN permalink; an item also returns its comment tree.",
   "start": "read",
   "max_iterations": 2,
   "policy": {

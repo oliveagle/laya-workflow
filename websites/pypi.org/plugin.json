@@ -1,0 +1,13 @@
+{
+  "name": "pypi",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": [
+    "search.js",
+    "project.js"
+  ],
+  "description": "PyPI (pypi.org): turn a phrase into project search rows (name / description / last release) or read one project's page (name, version, description) into Markdown."
+}

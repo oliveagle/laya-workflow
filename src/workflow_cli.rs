@@ -150,7 +150,7 @@ enum PluginCmd {
     Install {
         /// Repo as `owner/repo` or a git URL (https://, ssh://, git@).
         repo: String,
-        /// Directory inside the repo that holds the plugin (e.g. plugins/alphaxiv).
+        /// Directory inside the repo that holds the plugin (e.g. websites/alphaxiv.org).
         #[arg(long)]
         path: String,
         /// Installed name (default: the last segment of --path).

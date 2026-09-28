@@ -1,18 +1,18 @@
 {
-  "name": "arxiv_reader",
+  "name": "docsrs_reader",
   "dsl_version": 2,
-  "description": "Read arXiv (arxiv.org) in a background Chrome tab, driven by the Rhai plugin `websites/arxiv.org` (kind: \"plugin\"). --query \"rust async\" searches papers (title, authors, abstract, categories, abs/pdf links); a bare id like \"2401.12345v2\" or an arxiv.org URL reads that paper's abstract page and writes a Markdown digest (<id>.md) plus a <id>_meta.json under out_dir. Optional state: mode (auto|search|abs), count/limit (1-50), out_dir (default ~/tmp/arxiv).",
+  "description": "Read docs.rs in a background Chrome tab, driven by the Rhai plugin `websites/docs.rs` (kind: \"plugin\"). --query \"serde\" searches crate releases and returns crate/version/description/released per row; --query \"https://docs.rs/serde/latest/serde/\" (or state crate, mode \"crate\") reads one crate's rendered API docs into Markdown under ~/tmp/docsrs. Optional state: mode (auto|search|crate), count/limit (1-50), out_dir.",
   "start": "read",
   "max_iterations": 2,
   "policy": {
     "allow_exec": true,
     "allow_hosts": [
       "127.0.0.1",
-      "arxiv.org"
+      "docs.rs"
     ],
     "allow_paths": [
       "${env.HOME}/.laya-workflow",
-      "${env.HOME}/tmp/arxiv"
+      "${env.HOME}/tmp/docsrs"
     ],
     "max_timeout_ms": 60000,
     "max_output": 4194304,
@@ -27,9 +27,9 @@
       "timeout_ms": 20000,
       "max_text": 6000
     },
-    "arxiv": {
+    "docsrs": {
       "kind": "plugin",
-      "plugin": "arxiv",
+      "plugin": "docsrs",
       "browser": "chrome",
       "timeout_ms": 30000
     }
@@ -41,7 +41,7 @@
       "questions": {
         "done": {
           "type": "choice",
-          "instructions": "Read arXiv as requested?",
+          "instructions": "Read the site as requested?",
           "criteria": {
             "A": "yes",
             "B": "no"
@@ -54,26 +54,25 @@
       },
       "action": {
         "kind": "call",
-        "capability": "arxiv",
+        "capability": "docsrs",
         "with": {
           "query": "${state.query}",
           "mode": "${state.mode}",
-          "count": "${state.count}",
-          "out_dir": "${state.out_dir}"
+          "count": "${state.count}"
         },
         "project": {
           "mode": "/mode",
           "query": "/query",
           "count": "/count",
           "url": "/url",
-          "arxiv_id": "/arxiv_id",
+          "page_title": "/page_title",
           "results": "/results",
-          "saved": "/saved",
-          "markdown_chars": "/markdown_chars",
           "written": "/written",
           "out_dir": "/out_dir",
-          "title": "/page_title",
-          "fetched_at": "/fetched_at"
+          "fetched_at": "/fetched_at",
+          "crate": "/crate",
+          "docs_url": "/docs_url",
+          "source": "/source"
         }
       }
     }

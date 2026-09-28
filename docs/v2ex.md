@@ -1,7 +1,7 @@
-# V2EX reader (`plugins/v2ex` + `dsl/browser/v2ex.json`)
+# V2EX reader (`websites/v2ex.com` + `dsl/browser/v2ex.json`)
 
 Read V2EX in a background Chrome tab over CDP. Site logic lives in
-`plugins/v2ex/main.rhai`, with `plugins/v2ex/page/{list,topic}.js` for the DOM.
+`websites/v2ex.com/main.rhai`, with `websites/v2ex.com/page/{list,topic}.js` for the DOM.
 
 ## Use it
 

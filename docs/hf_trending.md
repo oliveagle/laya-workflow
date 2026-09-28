@@ -1,4 +1,4 @@
-# HuggingFace model monitor (`plugins/hf-trending` + `dsl/capabilities/hf_trending.json`)
+# HuggingFace model monitor (`websites/huggingface.co` + `dsl/capabilities/hf_trending.json`)
 
 A plugin-driven workflow that snapshots the **current HuggingFace model ranking**
 and, for every model, records the data you would otherwise click through the UI
@@ -15,7 +15,7 @@ over plain HTTP, so the only host it touches is `huggingface.co`.
 
 The Rust engine stays the base (transport, policy, path gate); the *site* logic —
 how a phrase maps to a mode, which fields matter, how the ranking is written out —
-lives entirely in `plugins/hf-trending/main.rhai`.
+lives entirely in `websites/huggingface.co/main.rhai`.
 
 ## Run it
 

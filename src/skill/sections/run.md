@@ -28,7 +28,7 @@ replace the set with `--state '{"skip_kinds":[]}'`. Skipped rows appear in the
 result as `skipped`/`skipped_found`, not silently dropped.
 
 `dsl/browser/alphaxiv_paper.json` is a natural-language alphaXiv downloader
-driven by the Rhai plugin `plugins/alphaxiv` (`kind: "plugin"`) — a bare `--query`
+driven by the Rhai plugin `websites/alphaxiv.org` (`kind: "plugin"`) — a bare `--query`
 decides the mode:
 
 ```
@@ -40,7 +40,7 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  
 ```
 
 The site logic (mode inference, locale URLs, feed paging) lives in
-`plugins/alphaxiv/main.rhai`, so it can change without rebuilding the engine; the
+`websites/alphaxiv.org/main.rhai`, so it can change without rebuilding the engine; the
 same plugin can be called from your own spec as
 `{"kind": "plugin", "plugin": "alphaxiv", "browser": "chrome"}`. See
 `skill --section plugins` (write/install your own), `skill --section dsl`, and

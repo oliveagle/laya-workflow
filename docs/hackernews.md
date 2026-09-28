@@ -1,8 +1,8 @@
-# Hacker News reader (`plugins/hackernews` + `dsl/browser/hackernews.json`)
+# Hacker News reader (`websites/news.ycombinator.com` + `dsl/browser/hackernews.json`)
 
 Read Hacker News in a background Chrome tab over CDP. The site logic — which
 feed a word means, how a front-page row is read, how a comment tree is flattened
-— lives entirely in `plugins/hackernews/main.rhai`, so it can change without
+— lives entirely in `websites/news.ycombinator.com/main.rhai`, so it can change without
 rebuilding the engine. The Rust base owns the tab, the CDP transport, the policy
 gate and the tab lifecycle.
 

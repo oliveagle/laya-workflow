@@ -1,9 +1,9 @@
-# arXiv reader (`plugins/arxiv` + `dsl/browser/arxiv.json`)
+# arXiv reader (`websites/arxiv.org` + `dsl/browser/arxiv.json`)
 
 Read arXiv in a background Chrome tab over CDP. The site logic — which arXiv id
 a phrase means, how a search row is read, where a paper's digest is written —
-lives in `plugins/arxiv/main.rhai`, with the page scrapers in
-`plugins/arxiv/page/*.js`.
+lives in `websites/arxiv.org/main.rhai`, with the page scrapers in
+`websites/arxiv.org/page/*.js`.
 
 ## Use it
 

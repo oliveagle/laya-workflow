@@ -20,7 +20,7 @@ they use separate page targets through the same CDP endpoint.
 ## Site logic lives in plugins
 
 The `alphaxiv` op is a thin forwarder: the downloader itself is the Rhai plugin
-`plugins/alphaxiv`, running on the plugin host described in
+`websites/alphaxiv.org`, running on the plugin host described in
 [`plugins.md`](./plugins.md). It drives the same CDP primitives through
 `host.browser_open` / `browser_evaluate` / `save_article`, so the singleton,
 policy and cleanup rules below apply unchanged to plugin-driven work.

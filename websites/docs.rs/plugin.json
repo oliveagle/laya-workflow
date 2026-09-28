@@ -1,0 +1,10 @@
+{
+  "name": "docsrs",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": ["search.js"],
+  "description": "docs.rs (Rust API docs): turn a phrase into crate-release rows (name / version / description / release date), or read one crate's rendered API docs into Markdown."
+}

@@ -1,7 +1,7 @@
 {
   "name": "wikipedia_reader",
   "dsl_version": 2,
-  "description": "Read Wikipedia in a background Chrome tab, driven by the Rhai plugin `plugins/wikipedia` (kind: \"plugin\"). --query \"transformer neural network\" searches articles (title / snippet / link); a title or a wikipedia.org/wiki/ URL reads that article into Markdown + figures under out_dir (default ~/tmp/wikipedia). Optional state: mode (auto|search|page), lang (default en), count/limit (1-50), out_dir.",
+  "description": "Read Wikipedia in a background Chrome tab, driven by the Rhai plugin `websites/wikipedia.org` (kind: \"plugin\"). --query \"transformer neural network\" searches articles (title / snippet / link); a title or a wikipedia.org/wiki/ URL reads that article into Markdown + figures under out_dir (default ~/tmp/wikipedia). Optional state: mode (auto|search|page), lang (default en), count/limit (1-50), out_dir.",
   "start": "read",
   "max_iterations": 2,
   "policy": {

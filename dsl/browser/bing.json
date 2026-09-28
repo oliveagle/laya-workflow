@@ -1,7 +1,7 @@
 {
   "name": "bing_search",
   "dsl_version": 2,
-  "description": "Web search on Bing in a background Chrome tab, driven by the Rhai plugin `plugins/bing` (kind: \"plugin\"). --query \"typescript ai framework\" returns organic result rows (title / url / display site / snippet). Optional state: count/limit (1-30), mkt (e.g. en-US, zh-CN).",
+  "description": "Web search on Bing in a background Chrome tab, driven by the Rhai plugin `websites/bing.com` (kind: \"plugin\"). --query \"typescript ai framework\" returns organic result rows (title / url / display site / snippet). Optional state: count/limit (1-30), mkt (e.g. en-US, zh-CN).",
   "start": "search",
   "max_iterations": 2,
   "policy": {

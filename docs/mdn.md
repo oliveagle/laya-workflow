@@ -1,8 +1,8 @@
-# MDN Web Docs reader (`plugins/mdn` + `dsl/browser/mdn.json`)
+# MDN Web Docs reader (`websites/developer.mozilla.org` + `dsl/browser/mdn.json`)
 
 Read MDN Web Docs. Search uses MDN's public search API (no tab, fast); reading a
 doc opens the page in a background Chrome tab. Site logic lives in
-`plugins/mdn/main.rhai`.
+`websites/developer.mozilla.org/main.rhai`.
 
 ## Use it
 

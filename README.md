@@ -116,11 +116,14 @@ monitoring what is trending over time.
 
 ## Script plugins (Rhai)
 
-Site- and task-specific logic lives in **Rhai plugins** under `plugins/`, not in
-the compiled engine — the Rust base keeps the transport, policy gates, resource
-lifecycle and rendering, and a plugin adds the site logic. A plugin can only call
-a small, audited host API, so `allow_hosts` / `allow_paths` / `allow_exec` and the
-"the engine owns tab cleanup" invariant still hold.
+Site- and task-specific logic lives in **Rhai plugins**, not in the compiled
+engine — the Rust base keeps the transport, policy gates, resource lifecycle and
+rendering, and a plugin adds the site logic. A plugin can only call a small,
+audited host API, so `allow_hosts` / `allow_paths` / `allow_exec` and the
+"the engine owns tab cleanup" invariant still hold. Site plugins live under
+`websites/<domain>/` (e.g. `websites/news.ycombinator.com/`); tool plugins live
+under `plugins/<name>/`. A site folder is matched by the `name` its
+`plugin.json` declares.
 
 ```bash
 # fully offline: a workflow calling a local plugin
@@ -129,14 +132,14 @@ laya-workflow run --spec dsl/capabilities/script_plugin.json \
 ```
 
 Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
-`plugins/<name>` walking up to the git root, then
-`~/.config/laya-workflow/plugins` (the install default), then the copy compiled
-into the binary. `plugins/alphaxiv` (natural-language alphaXiv downloader) and
+`plugins/<name>` / `websites/*` walking up to the git root, then
+`~/.config/laya-workflow/plugins` / `~/.config/laya-workflow/websites` (the
+install default), then the copy compiled into the binary. `websites/alphaxiv.org` (natural-language alphaXiv downloader) and
 `plugins/textdigest` (offline demo) ship with the repo. Install a single plugin
 out of any git repo (sparse clone — not the whole repo):
 
 ```bash
-laya-workflow plugin install <owner/repo> --path plugins/alphaxiv
+laya-workflow plugin install <owner/repo> --path websites/alphaxiv.org
 laya-workflow plugin list       # what the engine can see, and from where
 ```
 
@@ -145,7 +148,7 @@ run `laya-workflow skill --section plugins` for the embedded guide.
 
 ### HuggingFace model monitor
 
-`plugins/hf-trending` is a second, browser-free example: given a phrase (or the
+`websites/huggingface.co` is a second, browser-free example: given a phrase (or the
 trending feed) it snapshots the current HuggingFace ranking and, per model,
 records the rank, likes, downloads, trending score, card metadata and the full
 model card — as JSON snapshots, a Markdown report, `cards/` and a `history.jsonl`
@@ -163,9 +166,9 @@ See [`docs/hf_trending.md`](./docs/hf_trending.md).
 Two more examples drive a real Chrome tab over CDP and keep all site logic in
 Rhai + page JS, so the engine can stay generic:
 
-`plugins/hackernews` reads Hacker News — a front page (`top`/`best`/`new`/`ask`/
+`websites/news.ycombinator.com` reads Hacker News — a front page (`top`/`best`/`new`/`ask`/
 `show`/`jobs`), a full-text search over story titles/URLs, or one discussion with
-its comment tree; `plugins/arxiv` searches arXiv papers or reads a single paper's
+its comment tree; `websites/arxiv.org` searches arXiv papers or reads a single paper's
 abstract page into a Markdown digest.
 
 ```bash
@@ -178,10 +181,10 @@ laya-workflow run --spec dsl/browser/arxiv.json --query "1706.03762"
 See [`docs/hackernews.md`](./docs/hackernews.md) and
 [`docs/arxiv.md`](./docs/arxiv.md).
 
-Three more keep the same shape: `plugins/wikipedia` searches articles and reads a
+Three more keep the same shape: `websites/wikipedia.org` searches articles and reads a
 whole article into Markdown (after stripping the site chrome in-page);
-`plugins/mdn` searches MDN through its public API and reads one doc through a
-tab; `plugins/bing` turns a phrase into Bing organic result rows.
+`websites/developer.mozilla.org` searches MDN through its public API and reads one doc through a
+tab; `websites/bing.com` turns a phrase into Bing organic result rows.
 
 ```bash
 laya-workflow run --spec dsl/browser/wikipedia.json --query "transformer neural network" --state '{"count":5}'
@@ -192,8 +195,26 @@ laya-workflow run --spec dsl/browser/bing.json --query "typescript ai framework"
 laya-workflow run --spec dsl/browser/v2ex.json --query hot --state '{"count":10}'
 ```
 
+Four more read the developer registries and GitHub: `websites/crates.io` and
+`websites/pypi.org` search their package indexes (or read one crate / project
+page into Markdown); `websites/docs.rs` searches crate releases or reads a
+crate's rendered API docs; `websites/github.com` lists the trending page
+(day/week/month, optional language) or reads one repository's stars / forks /
+description and its README as Markdown.
+
+```bash
+laya-workflow run --spec dsl/browser/crates.json --query "serde"
+laya-workflow run --spec dsl/browser/crates.json --query "https://crates.io/crates/serde"
+laya-workflow run --spec dsl/browser/pypi.json --query "requests"
+laya-workflow run --spec dsl/browser/docsrs.json --query "serde"
+laya-workflow run --spec dsl/browser/github.json --query trending --state '{"since":"daily","count":5}'
+laya-workflow run --spec dsl/browser/github.json --query "BurntSushi/ripgrep"
+```
+
 See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md),
-[`docs/bing.md`](./docs/bing.md) and [`docs/v2ex.md`](./docs/v2ex.md).
+[`docs/bing.md`](./docs/bing.md), [`docs/v2ex.md`](./docs/v2ex.md),
+[`docs/crates.md`](./docs/crates.md), [`docs/pypi.md`](./docs/pypi.md),
+[`docs/docsrs.md`](./docs/docsrs.md) and [`docs/github.md`](./docs/github.md).
 
 ## License
 

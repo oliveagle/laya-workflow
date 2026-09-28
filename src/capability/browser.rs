@@ -2511,7 +2511,7 @@ fn run_save_article(
 // ── alphaXiv paper downloader (Rhai plugin) ──────────────────────
 
 /// The alphaXiv downloader is **no longer Rust logic**: it lives in the Rhai
-/// plugin `plugins/alphaxiv` (`main.rhai`) and runs on the generic plugin host in
+/// plugin `websites/alphaxiv.org` (`main.rhai`) and runs on the generic plugin host in
 /// [`super::plugin`]. Those 500-odd lines of site-specific discovery/parsing —
 /// the mode inference, the locale URL rewriting, the feed-API paging, the
 /// per-paper retry — are the thing most likely to need a change when alphaXiv

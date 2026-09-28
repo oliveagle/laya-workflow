@@ -1,7 +1,7 @@
 {
   "name": "v2ex_reader",
   "dsl_version": 2,
-  "description": "Read V2EX in a background Chrome tab, driven by the Rhai plugin `plugins/v2ex` (kind: \"plugin\"). --query \"hot\" (or latest/tech/creative/play/apple/jobs/deals/city/qna/all) lists that tab; \"go/rust\" (or node:rust) lists a node; a topic id or a /t/<id> URL reads a topic with its replies. Optional state: mode (auto|tab|node|topic), count/limit (1-100).",
+  "description": "Read V2EX in a background Chrome tab, driven by the Rhai plugin `websites/v2ex.com` (kind: \"plugin\"). --query \"hot\" (or latest/tech/creative/play/apple/jobs/deals/city/qna/all) lists that tab; \"go/rust\" (or node:rust) lists a node; a topic id or a /t/<id> URL reads a topic with its replies. Optional state: mode (auto|tab|node|topic), count/limit (1-100).",
   "start": "read",
   "max_iterations": 2,
   "policy": {

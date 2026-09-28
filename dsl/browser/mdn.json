@@ -1,7 +1,7 @@
 {
   "name": "mdn_reader",
   "dsl_version": 2,
-  "description": "Read MDN Web Docs, driven by the Rhai plugin `plugins/mdn` (kind: \"plugin\"). --query \"fetch api\" searches docs through MDN's public search API (title / summary / link); a doc path or URL (/en-US/docs/Web/API/Fetch_API) reads that page into Markdown under out_dir (default ~/tmp/mdn) via the Chrome tab. Optional state: mode (auto|search|page), lang/locale (default en-US), count/limit (1-30), out_dir.",
+  "description": "Read MDN Web Docs, driven by the Rhai plugin `websites/developer.mozilla.org` (kind: \"plugin\"). --query \"fetch api\" searches docs through MDN's public search API (title / summary / link); a doc path or URL (/en-US/docs/Web/API/Fetch_API) reads that page into Markdown under out_dir (default ~/tmp/mdn) via the Chrome tab. Optional state: mode (auto|search|page), lang/locale (default en-US), count/limit (1-30), out_dir.",
   "start": "read",
   "max_iterations": 2,
   "policy": {
