@@ -64,6 +64,7 @@ Specs in this directory:
 | `capabilities/hf_trending.json` | HuggingFace model monitor via the `websites/huggingface.co` Rhai plugin (network: `huggingface.co`) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
 | `browser/browser_base_probe.json` | generic localhost-page smoke probe via the bundled `plugins/browser_base` plugin (open → wait_htmx → assert → done), no site logic |
+| `browser/browser_orchestrate_probe.json` | end-to-end local orchestration: runs the bundled `scripts/laya-ensure-chrome.sh` + `scripts/laya-ensure-server.py` (idempotent, cold-starts `state.server_cmd` if the port is dead) via `exec`, then probes the ensured URL with `plugins/browser_base` |
 | `browser/alphaxiv_paper.json` | the alphaXiv downloader, driven by the `websites/alphaxiv.org` Rhai plugin |
 
 External capabilities: declare them under `"capabilities"` and call them from a node

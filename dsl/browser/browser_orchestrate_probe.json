@@ -1,0 +1,303 @@
+{
+  "name": "browser_orchestrate_probe",
+  "dsl_version": 2,
+  "description": "End-to-end local browser orchestration demo: consumes the two generic scripts bundled in this repo — `scripts/laya-ensure-chrome.sh` (guarantee a CDP endpoint on LAYA_CDP_PORT, idempotent) and `scripts/laya-ensure-server.py ensure` (guarantee a long-running local HTTP server on --port, cold-starting it from state.server_cmd when nothing healthy answers) — then drives the bundled `plugins/browser_base` plugin against the ensured URL. The browser probe is the ground-truth gate: if the page never reaches a real loaded state the plugin op throws and the whole run fails (rc=1); otherwise the graph routes to the terminal node. Offline heuristic runs report /ok on the ensure nodes (both scripts are idempotent) and let the probe decide. Nothing here is devine-specific — point state.server_cmd / state.url at any local server.",
+  "start": "ensure_chrome",
+  "max_iterations": 8,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 180000,
+    "max_output": 262144,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome_ensure": {
+      "kind": "exec",
+      "argv": [
+        "${state.repo}/scripts/laya-ensure-chrome.sh"
+      ],
+      "env": {
+        "LAYA_CDP_PORT": "${state.cdp_port}"
+      },
+      "timeout_ms": 30000,
+      "max_output": 4096
+    },
+    "server_ensure": {
+      "kind": "exec",
+      "argv": [
+        "${state.repo}/scripts/laya-ensure-server.py",
+        "ensure",
+        "--port",
+        "${state.port}",
+        "--health-path",
+        "/",
+        "--command",
+        "${state.server_cmd}"
+      ],
+      "timeout_ms": 120000,
+      "max_output": 8192
+    },
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 15000,
+      "max_text": 6000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000
+    },
+    "page_open": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "open",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    },
+    "page_htmx": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "wait_htmx",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    },
+    "page_assert": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "assert",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "ensure_chrome",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Run scripts/laya-ensure-chrome.sh (idempotent: does nothing when a CDP endpoint already listens on LAYA_CDP_PORT, otherwise launches a dedicated Chrome)?",
+          "criteria": {
+            "A": "yes, the script exited 0 and the CDP endpoint is (still) up",
+            "B": "no, the script failed or the CDP endpoint is unreachable"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "ensure_server"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome_ensure",
+        "with": {},
+        "project": {
+          "chrome_ok": "/ok",
+          "chrome_exit": "/exit_code",
+          "chrome_msg": "/stdout"
+        }
+      }
+    },
+    {
+      "name": "ensure_server",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Run scripts/laya-ensure-server.py ensure (idempotent: returns immediately when a server already answers on the port, otherwise cold-starts state.server_cmd as a daemon and waits for it)?",
+          "criteria": {
+            "A": "yes, a server is now guaranteed on the port",
+            "B": "no, the script failed to guarantee a server"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "open"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "server_ensure",
+        "with": {},
+        "project": {
+          "server_ok": "/ok",
+          "server_exit": "/exit_code",
+          "server_base": "/stdout"
+        }
+      }
+    },
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open the ensured URL in a real Chrome page and wait until it is actually loaded (URL matches + readyState complete)?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "wait_htmx"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_open",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "page_url": "/url",
+          "page_title": "/title",
+          "page_sample": "/sample"
+        }
+      }
+    },
+    {
+      "name": "wait_htmx",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Wait up to 15s for window.htmx to become defined on the page, then report whether it loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "assert"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_htmx",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "htmx_loaded": "/htmx_loaded",
+          "htmx_url": "/url",
+          "htmx_title": "/title"
+        }
+      }
+    },
+    {
+      "name": "assert",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Run the generic rendered-page assertion (non-empty title and body text) and require it to pass?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "done"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_assert",
+        "with": {
+          "url": "${state.url}",
+          "expression": "({ title_ok: (document.title || \"\").length > 0, text_ok: !!(document.body && document.body.innerText.length > 0), url: location.href, sample: document.body ? document.body.innerText.slice(0, 200) : \"\" })",
+          "checks": {
+            "title_ok": true,
+            "text_ok": true
+          }
+        },
+        "project": {
+          "assert_url": "/url",
+          "assert_sample": "/sample",
+          "assert_pass": "/pass"
+        }
+      }
+    },
+    {
+      "name": "done",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Is the browser orchestration probe complete after both ensure scripts ran and the page loaded, htmx was reported, and the render assertion passed?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "repo",
+          "cdp_port",
+          "port",
+          "server_cmd",
+          "url"
+        ]
+      }
+    }
+  ]
+}

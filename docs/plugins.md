@@ -313,3 +313,10 @@ stays in `devine_int`):
   `python3 -m http.server` counts as up even on a default `/healthz` 404; pass
   `--health-path` when the server has a real health endpoint. State files under
   `/tmp/laya-ensure-server-<port>.{pid,base,log}`.
+
+`dsl/browser/browser_orchestrate_probe.json` is the end-to-end demo that consumes
+*both* helpers plus the `browser_base` plugin in one graph: `ensure_chrome` →
+`ensure_server` (cold-starts `state.server_cmd` as a daemon when the port is
+dead, idempotent otherwise) → open → wait_htmx → assert → done. It is
+repo-agnostic — point `state.server_cmd` / `state.url` at any local server and
+`state.repo` at this checkout.
