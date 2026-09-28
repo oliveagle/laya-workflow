@@ -1,0 +1,9 @@
+{
+  "name": "textdigest",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 2000000,
+  "description": "Tiny local plugin: text -> stats + top keywords. Shows the extension seam without a browser or network."
+}

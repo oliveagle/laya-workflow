@@ -32,11 +32,13 @@ pub mod local;
 pub mod math;
 pub mod net;
 mod parse;
+pub mod plugin;
 pub mod proto;
 pub mod secret;
 pub mod service;
 pub mod store;
 pub mod sys;
+pub mod util;
 pub mod web;
 
 use anyhow::{anyhow, bail, Result};
@@ -113,6 +115,9 @@ pub enum Capability {
     // ── external agent harnesses ──
     /// Run an external agent's goal loop (`cxgo` / `cmdgo`) on a target doc.
     GoalRunner(goal::GoalRunnerCap),
+    // ── extensibility ──
+    /// Run a workflow-authored **script plugin** (Rhai) on the sandboxed host.
+    Plugin(plugin::PluginCap),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -328,6 +333,9 @@ impl Registry {
                 Capability::WebSearch(c) => web::call_web_search(c, with, state, &self.policy),
                 Capability::WebFetch(c) => web::call_web_fetch(c, with, state, &self.policy),
                 Capability::GoalRunner(c) => goal::call_goal_runner(c, with, state, &self.policy),
+                Capability::Plugin(c) => {
+                    plugin::call_plugin(c, with, state, &self.policy, &self.caps)
+                }
             };
             match r {
                 Ok(v) => return Ok(v),
@@ -521,6 +529,11 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
             walk(&Value::String(c.endpoint.clone()), &mut out);
             walk(&Value::Object(c.headers.clone()), &mut out);
             walk(&c.body, &mut out);
+        }
+        Capability::Plugin(c) => {
+            walk(&Value::String(c.plugin.clone()), &mut out);
+            walk(&Value::String(c.dir.clone()), &mut out);
+            walk(&Value::String(c.browser.clone()), &mut out);
         }
         _ => {}
     }

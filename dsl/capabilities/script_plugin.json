@@ -1,0 +1,44 @@
+{
+  "name": "textdigest_plugin",
+  "dsl_version": 2,
+  "description": "Run a workflow-authored Rhai plugin (plugins/textdigest) and route on its structured result. Fully offline: it shows the `kind: \"plugin\"` extension seam without a browser or network. The plugin runs on the sandboxed host, so policy and the operation budget still apply.",
+  "start": "digest",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "max_output": 262144
+  },
+  "capabilities": {
+    "digest": {
+      "kind": "plugin",
+      "plugin": "textdigest",
+      "max_operations": 2000000
+    }
+  },
+  "nodes": [
+    {
+      "name": "digest",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Digest the text with the local plugin?",
+          "criteria": { "A": "yes", "B": "no" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "digest",
+        "with": { "text": "${state.text}" },
+        "project": {
+          "chars": "/chars",
+          "words": "/words",
+          "tokens": "/tokens",
+          "top": "/top"
+        }
+      }
+    }
+  ]
+}

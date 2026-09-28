@@ -60,18 +60,22 @@ Specs in this directory:
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
+| `capabilities/script_plugin.json` | `kind: "plugin"` — a workflow calling a Rhai plugin (offline) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
+| `browser/alphaxiv_paper.json` | the alphaXiv downloader, driven by the `plugins/alphaxiv` Rhai plugin |
 
 External capabilities: declare them under `"capabilities"` and call them from a node
 with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An action may
 also list prerequisite `"chain": [{"capability":…, "as":…}]` whose results become
 `${with.<as>…}` for later steps and the main call.
 
-47 kinds (62 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
+48 kinds (64 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
 `kafka`, `archive`*, `pdf`*, `sql`*, and the earlier 26: `http`, `exec`*, `agent`, `shell`*, `file` (path allow-list), `sqlite`*, `datetime`,
 `text`, `rpc`, `graphql`, `llm`, `mcp`*, `vector`, `webhook`, `sse`, `passthrough`, `json`,
 `csv`, `xml`, `markdown`, `diff`, `validate`, `math`, `hash`, `graph`, `tokenize`, `cron`,
-`keyvalue`, `cache`, `queue`, `metrics`, `notify`  (* = spawns a process or touches the filesystem → gated by
+`keyvalue`, `cache`, `queue`, `metrics`, `notify`, and the extensibility kind
+`plugin` (alias `script`, a Rhai plugin running on the sandboxed host — see
+`docs/plugins.md`)  (* = spawns a process or touches the filesystem → gated by
 `policy.allow_exec` / `policy.allow_paths`).
 
 Secrets: never inline them. Reference as `${secret.NAME}` (legacy `${env.NAME}` also

@@ -7,7 +7,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{
-    browser, data, goal, local, net, proto, service, store, sys, web, AgentCap, Capability,
+    browser, data, goal, local, net, plugin, proto, service, store, sys, web, AgentCap, Capability,
     ExecCap, HttpCap,
 };
 
@@ -324,6 +324,28 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(1_800_000),
             max_output: def.get("max_output").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
             reports_dir: def.get("reports_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        })),
+        // ── workflow-authored script plugins ──
+        "plugin" | "script" => Ok(Capability::Plugin(plugin::PluginCap {
+            plugin: def
+                .get("plugin")
+                .or_else(|| def.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            dir: def.get("dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            entry: def.get("entry").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            op: def.get("op").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            browser: def
+                .get("browser")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            max_operations: def
+                .get("max_operations")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(0),
         })),
         "web_fetch" | "fetch_url" => Ok(Capability::WebFetch(web::WebFetchCap {
             format: def.get("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),

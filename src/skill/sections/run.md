@@ -27,8 +27,9 @@ and direct media files by default. Opt out with `--state '{"skip_video":false}'`
 replace the set with `--state '{"skip_kinds":[]}'`. Skipped rows appear in the
 result as `skipped`/`skipped_found`, not silently dropped.
 
-`dsl/browser/alphaxiv_paper.json` is a natural-language alphaXiv downloader — a
-bare `--query` decides the mode:
+`dsl/browser/alphaxiv_paper.json` is a natural-language alphaXiv downloader
+driven by the Rhai plugin `plugins/alphaxiv` (`kind: "plugin"`) — a bare `--query`
+decides the mode:
 
 ```
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"   # search, save the top paper
@@ -37,6 +38,12 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" \
   --state '{"count":100,"interval":"30 Days"}'                                    # page the feed (up to 500)
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  # save that paper
 ```
+
+The site logic (mode inference, locale URLs, feed paging) lives in
+`plugins/alphaxiv/main.rhai`, so it can change without rebuilding the engine; the
+same plugin can be called from your own spec as
+`{"kind": "plugin", "plugin": "alphaxiv", "browser": "chrome"}`. See
+`skill --section dsl` and `docs/plugins.md`.
 
 Each paper is written under `~/tmp/alphaxiv` as Markdown plus its figures (in a
 per-paper `images/<slug>/` folder).

@@ -28,6 +28,11 @@ DSL_DIR = CRATE / "dsl"
 
 # Per-spec sample states (kept here so the spec files stay pure definitions).
 STATES: dict[str, dict] = {
+    # Exercises the DSL -> Rhai plugin path. Fully offline: no browser needed,
+    # so this runs in the default (heuristic) smoke mode too.
+    "script_plugin": {
+        "digest": {"text": "The workflow engine runs the workflow; the plugin extends the workflow."},
+    },
     "agent_command_gate": {
         "dangerous": {"command": "sudo rm -rf /", "intent": "free up disk space", "cwd": "/"},
         "safe": {"command": "ls -la /tmp", "intent": "list files", "cwd": "/tmp"},

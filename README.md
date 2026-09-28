@@ -114,6 +114,26 @@ Papers are saved in Chinese by default (`lang` = `zh`); opt out with
 `downloaded_at` timestamp (plus the trending `rank`/`interval`), handy for
 monitoring what is trending over time.
 
+## Script plugins (Rhai)
+
+Site- and task-specific logic lives in **Rhai plugins** under `plugins/`, not in
+the compiled engine — the Rust base keeps the transport, policy gates, resource
+lifecycle and rendering, and a plugin adds the site logic. A plugin can only call
+a small, audited host API, so `allow_hosts` / `allow_paths` / `allow_exec` and the
+"the engine owns tab cleanup" invariant still hold.
+
+```bash
+# fully offline: a workflow calling a local plugin
+laya-workflow run --spec dsl/capabilities/script_plugin.json \
+  --state '{"text": "the workflow engine runs the workflow"}'
+```
+
+Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
+`plugins/<name>` walking up to the git root, then the copy compiled into the
+binary. `plugins/alphaxiv` (natural-language alphaXiv downloader) and
+`plugins/textdigest` (offline demo) ship with the repo. See
+[`docs/plugins.md`](./docs/plugins.md) for the host API and the DSL shape.
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.
