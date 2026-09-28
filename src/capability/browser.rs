@@ -1805,6 +1805,83 @@ fn skip_kinds_of(with: &Value) -> Vec<String> {
     }
 }
 
+/// Percent-decode a URL query value (e.g. Google's `q=`), byte-safe.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Read one query parameter from a URL, percent-decoded.
+fn query_param(url: &str, key: &str) -> Option<String> {
+    let query = url.split_once('?')?.1;
+    for pair in query.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == key {
+                return Some(percent_decode(v));
+            }
+        }
+    }
+    None
+}
+
+/// Ask an HTTP endpoint where it redirects to, reading only the `Location`
+/// header (the response body is discarded). Used to peel Google's opaque
+/// result-wrapper so Laya can classify the real destination.
+fn redirect_location(url: &str) -> Option<String> {
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout(Duration::from_secs(5))
+        .build();
+    let response = match agent.get(url).call() {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(_) => return None,
+    };
+    response.header("location").map(str::to_string)
+}
+
+/// Google wraps organic result links in a redirect endpoint (`/url?q=<real>` or
+/// `/goto?url=<opaque>`, sometimes the legacy `/interstitial`). The wrapper host
+/// is `google.*`, so a host-based classifier would otherwise see every row as a
+/// normal page. Decode the `q=` form directly and, for the opaque `url=` form,
+/// ask Google where it points (headers only) so Laya can classify the real
+/// destination **before** opening a tab. Non-Google URLs are returned unchanged.
+fn resolve_destination_url(url: &str) -> String {
+    let host = host_of(url).to_lowercase();
+    let bare = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    if !bare.starts_with("google.") {
+        return url.to_string();
+    }
+    if let Some(q) = query_param(url, "q") {
+        if q.starts_with("http://") || q.starts_with("https://") {
+            return q;
+        }
+    }
+    if url.contains("/url?") || url.contains("/goto?") || url.contains("/interstitial?") {
+        if let Some(location) = redirect_location(url) {
+            if location.starts_with("http://") || location.starts_with("https://") {
+                return location;
+            }
+        }
+    }
+    url.to_string()
+}
+
 /// Count case-insensitive token occurrences. Chinese tokens are short strings,
 /// so counting a substring is intentional here.
 fn research_count(hay: &str, token: &str) -> usize {
@@ -2210,11 +2287,14 @@ fn run_research(
                 ads.push(json!({"title": title, "url": url, "reason": "explicit Google ad label/ad landing path"}));
                 continue;
             }
-            let kind = url_content_kind(&url);
+            let destination = resolve_destination_url(&url);
+            let kind = url_content_kind(&destination);
             if skip_kinds.iter().any(|k| k == kind) {
                 skipped.push(json!({
                     "title": title,
                     "url": url,
+                    "destination": destination,
+                    "host": host_of(&destination),
                     "kind": kind,
                     "reason": "classified before opening; video/media pages are skipped"
                 }));
@@ -2579,11 +2659,14 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
                     anyhow!("browser open_many urls[{index}] must be a string")
                 })?;
                 check_host(url, policy)?;
-                let kind = url_content_kind(url);
+                let destination = resolve_destination_url(url);
+                let kind = url_content_kind(&destination);
                 if skip_kinds.iter().any(|k| k == kind) {
                     skipped.push(json!({
                         "index": index,
                         "url": url,
+                        "destination": destination,
+                        "host": host_of(&destination),
                         "kind": kind,
                         "reason": "classified before opening; video/media pages are skipped"
                     }));
@@ -3261,6 +3344,32 @@ mod tests {
             "page"
         );
         assert_eq!(url_content_kind("https://example.com/watch?v=1"), "page");
+    }
+
+    #[test]
+    fn decodes_query_params_and_google_url_wrapper() {
+        assert_eq!(percent_decode("%E5%BC%A0hello%20world"), "张hello world");
+        assert_eq!(percent_decode("plain"), "plain");
+        assert_eq!(percent_decode("%zz"), "%zz");
+        assert_eq!(
+            query_param(
+                "https://x/?a=1&q=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D1",
+                "q"
+            ),
+            Some("https://www.youtube.com/watch?v=1".to_string())
+        );
+        assert_eq!(query_param("https://x/?a=1", "q"), None);
+        // The decodable `/url?q=` form needs no network and reveals the host.
+        let resolved = resolve_destination_url(
+            "https://www.google.com/url?q=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dabc&sa=U",
+        );
+        assert_eq!(resolved, "https://www.youtube.com/watch?v=abc");
+        assert_eq!(url_content_kind(&resolved), "video");
+        // Non-Google URLs pass through untouched (no network).
+        assert_eq!(
+            resolve_destination_url("https://docs.example.com/guide"),
+            "https://docs.example.com/guide"
+        );
     }
 
     #[test]
