@@ -21,7 +21,8 @@
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -1397,6 +1398,189 @@ const GOOGLE_RESULTS_JS: &str = r#"
 })()
 "#;
 
+/// Dom-to-Markdown extractor for a rendered article page.
+///
+/// Runs in the page after the SPA has settled. It walks the live DOM (so
+/// lazy `getBoundingClientRect` sizes are meaningful), keeps headings,
+/// paragraphs, lists, tables, code, links, emphasis, figures and KaTeX math
+/// (from the `application/x-tex` annotation), and rewrites every content
+/// image to `images/img-N.ext`, returning the matching source URLs so the
+/// Rust side can download them next to the Markdown.
+const ARTICLE_MD_JS: &str = r##"
+(function(){
+  const OPTS = (typeof __LAYA_OPTS__ !== 'undefined') ? __LAYA_OPTS__ : {};
+  const IMG_DIR = OPTS.image_dir || 'images';
+  const images = [];
+  const seen = new Map();
+  const SKIP_TAGS = new Set(['SCRIPT','STYLE','NOSCRIPT','TEMPLATE','SVG','CANVAS','IFRAME','VIDEO','AUDIO','SOURCE','TRACK','BUTTON','INPUT','SELECT','TEXTAREA','NAV','FOOTER','FORM','DETAILS','SUMMARY']);
+  const DROP_SECTIONS = new Set(['AUDIO','SIMILAR PAPERS','DISCUSSION','COMMENTS','CITATION','AI DETECTION','RELATED PAPERS']);
+
+  function absUrl(u){ try { return new URL(u, location.href).href; } catch(e){ return u || ''; } }
+  function extOf(u){ try { const m = new URL(u).pathname.match(/\.([a-z0-9]{2,5})$/i); if (m) return '.'+m[1].toLowerCase(); } catch(e){} return '.png'; }
+  function imageRef(src, alt){
+    const abs = absUrl(src);
+    if (seen.has(abs)) return seen.get(abs).name;
+    const idx = images.length + 1;
+    const name = 'img-' + idx + extOf(abs);
+    seen.set(abs, {name, index: idx});
+    images.push({index: idx, name, url: abs, alt: alt || ''});
+    return name;
+  }
+  function attr(n, k){ const v = n.getAttribute && n.getAttribute(k); return v == null ? '' : v; }
+  function katexTex(n){ const a = n.querySelector('annotation[encoding="application/x-tex"]'); return a ? a.textContent : null; }
+  function headingOf(el){ const h = el.querySelector && el.querySelector('h1,h2,h3'); return ((h && h.innerText) || '').trim().toUpperCase(); }
+  function hasBlockContent(el){ return !!el.querySelector('p,img,.katex,li,pre,table,code,blockquote,h1,h2,h3,h4'); }
+  function isAnchorToSelf(href){
+    try { const u = new URL(href, location.href); return u.pathname === location.pathname && u.hash === location.hash && !u.hash; } catch(e){ return false; }
+  }
+
+  function shouldSkip(el){
+    if (el.nodeType !== 1) return false;
+    const tag = el.tagName;
+    if (el.classList && el.classList.contains('katex')) return false;
+    if (SKIP_TAGS.has(tag)) return true;
+    if (el.getAttribute && el.getAttribute('aria-hidden') === 'true') return true;
+    const href = attr(el, 'href');
+    if (tag === 'A') {
+      if (href && (href.indexOf('/pdf/') >= 0 || href.indexOf('#discussion') >= 0)) return true;
+      if (href && isAnchorToSelf(href)) return true;
+    }
+    if (tag === 'SECTION' || tag === 'DETAILS') {
+      const id = (el.id || '').toUpperCase();
+      const h = headingOf(el);
+      if (DROP_SECTIONS.has(h) || DROP_SECTIONS.has(id)) return true;
+    }
+    if ((tag === 'DIV' || tag === 'SECTION' || tag === 'ASIDE') && !hasBlockContent(el)) return true;
+    return false;
+  }
+
+  function renderChildren(node, ctx){
+    let out = '';
+    for (const c of node.childNodes) out += render(c, ctx);
+    return out;
+  }
+  function renderInline(el){
+    let out = '';
+    for (const c of el.childNodes) out += render(c, {inline:true});
+    return out.replace(/[ \t\r\n]+/g, ' ');
+  }
+  function render(node, ctx){
+    ctx = ctx || {};
+    if (node.nodeType === 3) {
+      const t = node.nodeValue || '';
+      return ctx.inline ? t.replace(/[ \t\r\n]+/g, ' ') : t;
+    }
+    if (node.nodeType !== 1) return '';
+    if (shouldSkip(node)) return '';
+    const tag = node.tagName;
+    if (node.classList && node.classList.contains('katex')) {
+      const tex = katexTex(node);
+      if (tex == null) return '';
+      return node.classList.contains('katex-display') ? '\n\n$$' + tex + '$$\n\n' : '$' + tex + '$';
+    }
+    if (tag === 'BR') return '\n';
+    if (tag === 'IMG') {
+      const src = attr(node, 'src');
+      if (!src) return '';
+      if (node.closest && node.closest('a[rel=author],[class*=avatar],[class*=Avatar],[class*=photo]')) return '';
+      let w = 0;
+      try { w = node.getBoundingClientRect().width; } catch(e) { w = parseFloat(attr(node,'width')) || 0; }
+      if (!w) w = parseFloat(attr(node, 'width')) || 0;
+      if (w && w < 80) return '';
+      const alt = attr(node, 'alt');
+      return '![' + alt.replace(/\s+/g,' ') + '](' + IMG_DIR + '/' + imageRef(src, alt) + ')';
+    }
+    if (tag === 'FIGURE') return '\n\n' + renderChildren(node, ctx).trim() + '\n\n';
+    if (tag === 'FIGCAPTION') return '\n\n*' + renderInline(node).trim() + '*\n\n';
+    if (/^H[1-6]$/.test(tag)) return '\n\n' + '#'.repeat(parseInt(tag.slice(1),10)) + ' ' + renderInline(node).trim() + '\n\n';
+    if (tag === 'P') return '\n\n' + renderInline(node).trim() + '\n\n';
+    if (tag === 'STRONG' || tag === 'B') return '**' + renderInline(node).trim() + '**';
+    if (tag === 'EM' || tag === 'I') return '*' + renderInline(node).trim() + '*';
+    if (tag === 'DEL' || tag === 'S') return '~~' + renderInline(node).trim() + '~~';
+    if (tag === 'CODE') {
+      if (node.closest && node.closest('pre')) return node.textContent || '';
+      return '`' + (node.textContent || '').trim() + '`';
+    }
+    if (tag === 'PRE') {
+      const code = node.querySelector('code');
+      let lang = '';
+      if (code) { const m = (code.className || '').match(/language-([\w+-]+)/); if (m) lang = m[1]; }
+      const body = (code ? code.textContent : node.textContent) || '';
+      return '\n\n```' + lang + '\n' + body.replace(/\s+$/, '') + '\n```\n\n';
+    }
+    if (tag === 'A') {
+      const href = absUrl(attr(node, 'href'));
+      const label = renderInline(node).trim();
+      if (!label) return '';
+      if (!href || href === label) return label;
+      return '[' + label + '](' + href + ')';
+    }
+    if (tag === 'SUP') return renderInline(node).trim();
+    if (tag === 'HR') return '\n\n---\n\n';
+    if (tag === 'BLOCKQUOTE') {
+      const body = renderChildren(node, {inline:false}).trim();
+      return '\n\n' + body.split('\n').map(l => '> ' + l).join('\n') + '\n\n';
+    }
+    if (tag === 'UL' || tag === 'OL') {
+      const ordered = tag === 'OL';
+      let out = '\n\n';
+      let i = 1;
+      for (const li of node.children) {
+        if (li.tagName !== 'LI') continue;
+        let body = renderChildren(li, {inline:false}).trim().replace(/\n{2,}/g, '\n');
+        out += (ordered ? (i + '. ') : '- ') + body + '\n';
+        i++;
+      }
+      return out + '\n';
+    }
+    if (tag === 'TABLE') {
+      const rows = [...node.querySelectorAll('tr')];
+      if (!rows.length) return '';
+      let out = '\n\n';
+      rows.forEach((tr, ri) => {
+        const cells = [...tr.children].map(td => renderInline(td).trim().replace(/\|/g, '\\|'));
+        out += '| ' + cells.join(' | ') + ' |\n';
+        if (ri === 0) out += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+      });
+      return out + '\n';
+    }
+    if (['DIV','SECTION','ARTICLE','HEADER','MAIN','ASIDE'].includes(tag)) {
+      return '\n\n' + renderChildren(node, {inline:false}).trim() + '\n\n';
+    }
+    return renderChildren(node, ctx);
+  }
+
+  // ---- pick content parts ----
+  let parts = [];
+  if (OPTS.selector) {
+    const r = document.querySelector(OPTS.selector);
+    if (r) parts.push(r);
+  }
+  if (!parts.length) {
+    const article = document.querySelector('article');
+    const header = (article && article.querySelector('header')) || document.querySelector('header');
+    if (header) parts.push(header);
+    if (article) {
+      for (const s of article.querySelectorAll(':scope > section')) {
+        const h = s.querySelector('h1,h2,h3');
+        const t = ((h && h.innerText) || '').trim().toUpperCase();
+        if (/ABSTRACT/.test(t)) parts.push(s);
+      }
+    }
+    const overview = document.querySelector('#overview') || document.querySelector('.markdown-content');
+    if (overview) parts.push(overview);
+    if (!parts.length) parts = [document.querySelector('article') || document.querySelector('main') || document.body];
+  }
+
+  let md = '';
+  for (const p of parts) md += '\n\n' + render(p, {inline:false});
+  md = md.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+
+  const title = ((document.querySelector('h1') || {}).innerText || document.title || '').trim();
+  return { title: title, markdown: md, images: images, chars: md.length, imageCount: images.length };
+})()
+"##;
+
 /// Extract readable page text and objective structural signals used by the
 /// Laya relevance/effectiveness scorer.
 const READABLE_PAGE_JS: &str = r#"
@@ -1880,6 +2064,413 @@ fn resolve_destination_url(url: &str) -> String {
         }
     }
     url.to_string()
+}
+
+/// A desktop Chrome user-agent. Some asset CDNs reject requests without one.
+const BROWSER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+/// Canonicalize as much of `path` as exists, keeping the non-existent suffix.
+/// Lets a policy check happen before the output directory is created.
+fn canonicalize_lenient(path: &Path) -> PathBuf {
+    if let Ok(resolved) = std::fs::canonicalize(path) {
+        return resolved;
+    }
+    let mut suffix: Vec<std::ffi::OsString> = Vec::new();
+    let mut current = path.to_path_buf();
+    loop {
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        if parent.as_os_str().is_empty() {
+            break;
+        }
+        if let Some(name) = current.file_name() {
+            suffix.push(name.to_os_string());
+        }
+        if let Ok(resolved) = std::fs::canonicalize(parent) {
+            let mut out = resolved;
+            for part in suffix.iter().rev() {
+                out.push(part);
+            }
+            return out;
+        }
+        current = parent.to_path_buf();
+    }
+    path.to_path_buf()
+}
+
+/// Expand a leading `~/` to `$HOME`, then fail-closed against `policy.allow_paths`.
+fn allowed_out_dir(policy: &Policy, raw: &str) -> Result<PathBuf> {
+    if policy.allow_paths.is_empty() {
+        bail!("save_article out_dir {raw:?} denied: set policy.allow_paths to the allowed root(s)");
+    }
+    let expanded = if let Some(rest) = raw.strip_prefix("~/") {
+        match std::env::var("HOME") {
+            Ok(home) => format!("{home}/{rest}"),
+            Err(_) => raw.to_string(),
+        }
+    } else {
+        raw.to_string()
+    };
+    let candidate = canonicalize_lenient(Path::new(&expanded));
+    let allowed = policy
+        .allow_paths
+        .iter()
+        .any(|root| candidate.starts_with(canonicalize_lenient(Path::new(root))));
+    if !allowed {
+        bail!(
+            "save_article out_dir {:?} is outside policy.allow_paths {:?}",
+            candidate.display().to_string(),
+            policy.allow_paths
+        );
+    }
+    Ok(candidate)
+}
+
+/// Turn a title or URL tail into a short, filesystem-safe slug.
+fn sanitize_slug(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for ch in input.chars() {
+        let keep = if ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' {
+            Some(ch.to_ascii_lowercase())
+        } else if ch.is_alphanumeric() {
+            Some(ch)
+        } else if ch == '-' || ch.is_whitespace() {
+            None
+        } else {
+            None
+        };
+        match keep {
+            Some(c) => {
+                out.push(c);
+                last_dash = false;
+            }
+            None => {
+                if !last_dash && !out.is_empty() {
+                    out.push('-');
+                    last_dash = true;
+                }
+            }
+        }
+    }
+    let trimmed = out.trim_matches(|c| c == '-' || c == '.').to_string();
+    let capped: String = trimmed.chars().take(80).collect();
+    capped
+}
+
+/// Prefer the URL tail (an alphaXiv id like `2609.recurrent-looped-transformer`),
+/// fall back to the page title.
+fn derive_slug(url: &str, title: &str) -> String {
+    let base = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    let tail = base.rsplit('/').next().unwrap_or("");
+    let host = host_of(url).to_lowercase();
+    let looks_like_id = tail.len() >= 6
+        && !tail.chars().any(|c| c.is_whitespace())
+        && !tail.eq_ignore_ascii_case(&host)
+        && (tail.contains('.') || tail.contains('-') || tail.contains('_'));
+    let slug = sanitize_slug(if looks_like_id { tail } else { title });
+    if slug.is_empty() {
+        "article".to_string()
+    } else {
+        slug
+    }
+}
+
+/// Download an image (bytes only) with a bounded size.
+fn download_binary(url: &str, timeout: Duration, policy: &Policy) -> Result<Vec<u8>> {
+    check_host(url, policy)?;
+    let response = ureq::AgentBuilder::new()
+        .timeout(timeout)
+        .build()
+        .get(url)
+        .set("user-agent", BROWSER_UA)
+        .call()
+        .map_err(|e| anyhow!("GET {url} failed: {e}"))?;
+    let mut buf = Vec::new();
+    response
+        .into_reader()
+        .take(32 * 1024 * 1024)
+        .read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
+/// Download every extracted image into `dir`, reporting per-image status.
+fn download_article_images(
+    images: &Value,
+    dir: &Path,
+    timeout: Duration,
+    policy: &Policy,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    let list = images.as_array().cloned().unwrap_or_default();
+    for (i, img) in list.iter().enumerate() {
+        let url = img
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if url.is_empty() {
+            continue;
+        }
+        let name = img
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("img-{}.bin", i + 1));
+        match download_binary(&url, timeout, policy) {
+            Ok(bytes) => {
+                let path = dir.join(&name);
+                match std::fs::write(&path, &bytes) {
+                    Ok(()) => out.push(json!({
+                        "name": name, "url": url, "path": path.display().to_string(),
+                        "bytes": bytes.len(), "ok": true
+                    })),
+                    Err(e) => out.push(json!({
+                        "name": name, "url": url, "ok": false, "error": e.to_string()
+                    })),
+                }
+            }
+            Err(e) => out.push(json!({
+                "name": name, "url": url, "ok": false, "error": e.to_string()
+            })),
+        }
+    }
+    out
+}
+
+/// Poll until the SPA stops growing and its images settle. Never hard-fails:
+/// on timeout it returns what it observed so extraction can still proceed.
+fn wait_for_render(
+    endpoint: &str,
+    target_id: &str,
+    stable: Duration,
+    max_wait: Duration,
+    timeout: Duration,
+) -> Value {
+    let step = timeout.min(Duration::from_secs(3));
+    // A full scroll pass reveals below-the-fold lazy figures before we snapshot.
+    let _ = evaluate(
+        endpoint,
+        target_id,
+        "(()=>{window.scrollTo(0, document.body.scrollHeight); return true;})()",
+        step,
+        false,
+    );
+    std::thread::sleep(Duration::from_millis(350));
+    let _ = evaluate(
+        endpoint,
+        target_id,
+        "(()=>{window.scrollTo(0, 0); return true;})()",
+        step,
+        false,
+    );
+    let probe = "({len:(document.body?document.body.innerText.length:0),readyState:document.readyState,pendingImages:[...document.images].filter(i=>!i.complete).length})";
+    let deadline = Instant::now() + max_wait;
+    let mut last_len: i64 = -1;
+    let mut stable_since = Instant::now();
+    let mut last = json!({});
+    loop {
+        last = evaluate(endpoint, target_id, probe, step, false)
+            .unwrap_or_else(|e| json!({"error": e.to_string()}));
+        let len = last.get("len").and_then(Value::as_i64).unwrap_or(-1);
+        if len != last_len {
+            last_len = len;
+            stable_since = Instant::now();
+        }
+        let ready_state = last.get("readyState").and_then(Value::as_str).unwrap_or("");
+        let pending = last
+            .get("pendingImages")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        // Off-screen lazy images may never load (related-paper thumbnails), and
+        // content images are downloaded from their URLs, not read from the DOM,
+        // so "settled" means: document complete and rendered text stopped growing.
+        if ready_state == "complete" && len > 0 && stable_since.elapsed() >= stable {
+            return json!({"stabilized": true, "text_len": len, "pending_images": pending});
+        }
+        if Instant::now() >= deadline {
+            return json!({
+                "stabilized": false, "text_len": len,
+                "pending_images": pending, "ready_state": ready_state,
+                "reason": "render did not settle within max_wait_ms"
+            });
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Open (or reuse) a tab, wait for it to render, extract Markdown + images, and
+/// optionally write `<slug>.md`, `<slug>_meta.json` and `images/*` to disk.
+fn run_save_article(
+    c: &BrowserCap,
+    endpoint: &str,
+    with: &Value,
+    timeout: Duration,
+    policy: &Policy,
+) -> Result<Value> {
+    let keep_open = with
+        .get("keep_open")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let image_dir = with
+        .get("image_dir")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+        .unwrap_or_else(|| "images".to_string());
+    let stable_ms = with
+        .get("stable_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(1500);
+    let max_wait_ms = with
+        .get("max_wait_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(45_000)
+        .min(policy.max_timeout_ms);
+    let selector = with
+        .get("selector")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null");
+    let url = with
+        .get("url")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null");
+
+    let mut cleanup = TargetCleanupGuard::new(endpoint);
+    let id = if let Some(url) = url.clone() {
+        check_host(&url, policy)?;
+        enforce_owned_target_limit(endpoint, c.max_owned_pages, c.owned_idle_ms, timeout)?;
+        let created = cdp_browser_call(
+            endpoint,
+            "Target.createTarget",
+            json!({"url": "about:blank", "background": true}),
+            timeout,
+        )?;
+        let id = created
+            .get("targetId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("Chrome Target.createTarget returned no targetId"))?
+            .to_string();
+        track_owned_target(endpoint, &id, keep_open);
+        if !keep_open {
+            cleanup.track(id.clone());
+        }
+        cdp_page_call(endpoint, &id, "Page.navigate", json!({"url": url}), timeout)?;
+        id
+    } else {
+        if with
+            .get("target_id")
+            .or_else(|| with.get("targetId"))
+            .is_none()
+        {
+            bail!("browser save_article needs 'url' (or an explicit 'target_id')");
+        }
+        let target = resolve_target(endpoint, with, timeout, policy)?;
+        target_id(&target)?
+    };
+
+    let ready = wait_page_ready(endpoint, &id, timeout, None).unwrap_or(Value::Null);
+    let render = wait_for_render(
+        endpoint,
+        &id,
+        Duration::from_millis(stable_ms),
+        Duration::from_millis(max_wait_ms),
+        timeout,
+    );
+
+    let opts = json!({
+        "image_dir": image_dir,
+        "selector": selector.clone().unwrap_or_default(),
+    });
+    let expression = format!(
+        "var __LAYA_OPTS__ = {};\n{}",
+        serde_json::to_string(&opts)?,
+        ARTICLE_MD_JS
+    );
+    let value = evaluate(endpoint, &id, &expression, timeout, false)?;
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let markdown = value
+        .get("markdown")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let images = value.get("images").cloned().unwrap_or_else(|| json!([]));
+    let page_url = ready
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| url.clone())
+        .unwrap_or_default();
+
+    let mut written = Value::Null;
+    if let Some(out_dir) = with
+        .get("out_dir")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+    {
+        let dir = allowed_out_dir(policy, &out_dir)?;
+        std::fs::create_dir_all(&dir)?;
+        let slug = with
+            .get("slug")
+            .map(stringify)
+            .filter(|s| !s.is_empty() && s != "null")
+            .unwrap_or_else(|| derive_slug(&page_url, &title));
+        let images_dir = dir.join(&image_dir);
+        std::fs::create_dir_all(&images_dir)?;
+        let downloads = download_article_images(&images, &images_dir, timeout, policy);
+        let markdown_path = dir.join(format!("{slug}.md"));
+        std::fs::write(&markdown_path, &markdown)?;
+        let meta = json!({
+            "capability": "chrome_cdp",
+            "op": "save_article",
+            "title": title,
+            "url": page_url,
+            "slug": slug,
+            "selector": selector,
+            "rendered": render,
+            "markdown_file": markdown_path.display().to_string(),
+            "markdown_chars": markdown.chars().count(),
+            "images_dir": images_dir.display().to_string(),
+            "images": downloads,
+        });
+        let meta_path = dir.join(format!("{slug}_meta.json"));
+        std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+        written = json!({
+            "out_dir": dir.display().to_string(),
+            "slug": slug,
+            "markdown_file": markdown_path.display().to_string(),
+            "meta_file": meta_path.display().to_string(),
+            "images_dir": images_dir.display().to_string(),
+            "images": downloads,
+        });
+    }
+
+    let (closed, cleanup_errors) = cleanup.finish(!keep_open, timeout);
+    Ok(json!({
+        "capability": "chrome_cdp",
+        "op": "save_article",
+        "url": page_url,
+        "title": title,
+        "selector": selector,
+        "rendered": render,
+        "markdown_chars": markdown.chars().count(),
+        "markdown": truncate(markdown, policy.max_output),
+        "images": images,
+        "written": written,
+        "keep_open": keep_open,
+        "closed_count": closed,
+        "cleanup_errors": cleanup_errors,
+    }))
 }
 
 /// Count case-insensitive token occurrences. Chinese tokens are short strings,
@@ -2618,6 +3209,9 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
     match op.as_str() {
         "research" => {
             return run_research(c, &endpoint, with, timeout, policy);
+        }
+        "save_article" | "save_markdown" | "fetch_article" | "save_page" => {
+            return run_save_article(c, &endpoint, with, timeout, policy);
         }
         "status" | "targets" => {
             let version = http_json(&endpoint, "GET", "/json/version", timeout)?;
@@ -3411,6 +4005,40 @@ mod tests {
             resolve_destination_url("https://docs.example.com/guide"),
             "https://docs.example.com/guide"
         );
+    }
+
+    #[test]
+    fn derives_filesystem_safe_slugs() {
+        assert_eq!(
+            derive_slug(
+                "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
+                "x"
+            ),
+            "2609.recurrent-looped-transformer"
+        );
+        assert_eq!(
+            derive_slug("https://example.com/", "Recurrent Looped Transformer!"),
+            "recurrent-looped-transformer"
+        );
+        assert_eq!(sanitize_slug("hello / world  // x"), "hello-world-x");
+        assert_eq!(sanitize_slug("!!!"), "");
+    }
+
+    #[test]
+    fn save_article_out_dir_is_policy_gated() {
+        // No allow_paths ⇒ file writes are fail-closed.
+        let strict = Policy::default();
+        assert!(allowed_out_dir(&strict, "/tmp/whatever").is_err());
+
+        let root = std::env::temp_dir().join("laya-save-article-test");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut policy = Policy::default();
+        policy.allow_paths = vec![root.display().to_string()];
+        // Inside the allowed root (even before it exists) is accepted.
+        let ok = allowed_out_dir(&policy, &root.join("paper/out").display().to_string());
+        assert!(ok.is_ok(), "expected inside-root to be allowed: {ok:?}");
+        // A sibling path is rejected.
+        assert!(allowed_out_dir(&policy, "/etc/passwd").is_err());
     }
 
     #[test]

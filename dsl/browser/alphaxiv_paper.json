@@ -1,0 +1,105 @@
+{
+  "name": "alphaxiv_paper_fetch",
+  "dsl_version": 2,
+  "description": "Search alphaXiv for a query, then render a paper's abs page in the singleton browser, wait for the SPA to finish, and save it as Markdown plus its figures. State: query (search text, optional), paper_url (alphaXiv /abs/<id> URL, required to save), out_dir (write target, must be under policy.allow_paths), selector (optional content root).",
+  "start": "search_open",
+  "max_iterations": 8,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": ["${env.HOME}/.laya-workflow", "${env.HOME}/tmp/alphaxiv"],
+    "max_timeout_ms": 120000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "browser": {
+      "kind": "browser",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 30000,
+      "max_text": 8000
+    }
+  },
+  "nodes": [
+    {
+      "name": "search_open",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Open alphaXiv search for the query?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "search_extract"}, "default": "save"},
+      "action": {
+        "kind": "call",
+        "capability": "browser",
+        "with": {
+          "op": "open",
+          "url": "https://www.alphaxiv.org/?query=${state.query}"
+        },
+        "project": {"search_target_id": "/target_id"}
+      }
+    },
+    {
+      "name": "search_extract",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Read the rendered search results?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "save"}, "default": "save"},
+      "action": {
+        "kind": "call",
+        "capability": "browser",
+        "with": {
+          "op": "evaluate",
+          "target_id": "${state.search_target_id}",
+          "await_promise": true,
+          "expression": "(() => new Promise((resolve) => { const deadline = Date.now() + 20000; const collect = () => { const seen = new Set(); const out = []; for (const a of document.querySelectorAll('a[href*=\"/abs/\"]')) { const u = a.href.split('#')[0].split('?')[0]; if (seen.has(u)) continue; seen.add(u); const card = a.closest('article,li,div'); const t = ((card && card.innerText) || a.innerText || '').replace(/\\s+/g,' ').trim().slice(0,160); out.push({url: u, title: t}); if (out.length >= 10) break; } return out; }; const tick = () => { const r = collect(); if (r.length || Date.now() > deadline) resolve({count: r.length, results: r, url: location.href}); else setTimeout(tick, 500); }; tick(); }))()"
+        },
+        "project": {"search_results": "/value/results", "search_count": "/value/count"}
+      }
+    },
+    {
+      "name": "save",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Render and save the paper to disk?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "browser",
+        "with": {
+          "op": "save_article",
+          "url": "${state.paper_url}",
+          "out_dir": "${state.out_dir}",
+          "selector": "${state.selector}",
+          "keep_open": false,
+          "stable_ms": 1500,
+          "max_wait_ms": 45000,
+          "image_dir": "images"
+        },
+        "project": {
+          "title": "/title",
+          "page_url": "/url",
+          "markdown_chars": "/markdown_chars",
+          "rendered": "/rendered",
+          "images": "/images",
+          "written": "/written"
+        }
+      }
+    }
+  ]
+}

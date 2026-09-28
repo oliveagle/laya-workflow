@@ -78,6 +78,7 @@ be required for ordinary resource hygiene.
 | `open` | create a process-scoped scratch target (`url`, optional `keep_open`) |
 | `open_many` | create multiple background targets from a `urls` array; they close by default |
 | `research` | search Google, classify ad/organic rows, open organic pages in background, extract text, and score relevance/effectiveness |
+| `save_article` | render a page, wait for the SPA to settle, convert it to Markdown (headings/lists/tables/code/links/KaTeX math), download its figures, and optionally write them to disk |
 | `navigate` | navigate an existing target |
 | `snapshot` | URL/title/text plus roles, names, values, hrefs, sections, rects, indexes |
 | `highlight` | show/hide numbered extension badges |
@@ -275,6 +276,68 @@ laya-workflow run \
 As an explicit, conservative sweep, `"dedupe_urls": true` keeps one tab for each
 exact URL and closes only later duplicates. It still skips non-page targets and
 protected schemes unless explicitly requested.
+
+## Save a rendered article (Markdown + figures)
+
+`save_article` (aliases `save_markdown`, `fetch_article`, `save_page`) turns a
+JavaScript-rendered page into a local, self-contained artifact. Unlike `web`
+fetch, it drives the singleton Chrome, so it sees the post-render DOM.
+
+```
+with: {
+  "op": "save_article",
+  "url": "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
+  "out_dir": "~/tmp/alphaxiv",
+  "selector": "#overview",          // optional content root
+  "image_dir": "images",            // optional (default "images")
+  "stable_ms": 1500,                // text must stop growing this long
+  "max_wait_ms": 45000,
+  "keep_open": false
+}
+```
+
+Steps and guarantees:
+
+1. Opens a background target (or reuses `target_id`), navigates, and waits for
+   `document.readyState == "complete"`.
+2. Does one full scroll pass and then polls until the rendered text length stops
+   growing for `stable_ms` (`max_wait_ms` caps the wait). Off-screen lazy images
+   are ignored on purpose — figures are downloaded from their URLs, not read
+   back from the DOM.
+3. Runs `ARTICLE_MD_JS` in the page: it walks the live DOM and emits Markdown for
+   headings, paragraphs, lists, tables, fenced code, links, emphasis, figures
+   with `<figcaption>` italics, and KaTeX math (recovered from the
+   `application/x-tex` annotation as `$tex$` / `$$tex$$`). Author avatars and
+   icon-sized images are dropped.
+4. Rewrites every content image to `<image_dir>/img-N.ext` and returns the source
+   URLs. The Rust side downloads them next to the Markdown (bounded size),
+   reporting per-image `ok`/`bytes`.
+5. With `out_dir` set, writes `<out_dir>/<slug>.md`,
+   `<out_dir>/<slug>_meta.json` and `<out_dir>/<image_dir>/*`. `out_dir` must be
+   under `policy.allow_paths` (fail-closed); a leading `~/` is expanded.
+6. With `keep_open: false` (default) the tab it opened is closed again — cleanup
+   stays an invariant.
+
+`slug` defaults to the URL tail (e.g. `2609.recurrent-looped-transformer`), or a
+slugified title for a bare host URL.
+
+### alphaXiv paper workflow
+
+`dsl/browser/alphaxiv_paper.json` uses this to search alphaXiv and save a paper's
+abs page (title, authors, abstract, AI overview, figures):
+
+```bash
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --state '{
+  "query": "recurrent looped transformer",
+  "paper_url": "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
+  "out_dir": "~/tmp/alphaxiv"
+}'
+```
+
+It opens `https://www.alphaxiv.org/?query=<query>`, extracts the result list into
+`search_results`, then renders `paper_url` and writes the Markdown plus figures.
+The spec's `policy.allow_paths` must include both the Chrome profile root
+(`${env.HOME}/.laya-workflow`) and the output root.
 
 ## Jev-style planner step
 

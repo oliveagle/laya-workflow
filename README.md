@@ -89,6 +89,20 @@ MV3 observation extension while guaranteeing one browser/CDP endpoint for all
 workflow threads. See `docs/browser_singleton.md`; a runnable localhost example
 is `dsl/browser/browser_singleton.json`.
 
+Its `save_article` op renders a JavaScript-heavy page (waiting for the SPA to
+settle), converts it to Markdown — headings, lists, tables, code, links and
+KaTeX math — and downloads its figures next to the Markdown. The bundled
+`dsl/browser/alphaxiv_paper.json` uses it to search alphaXiv and save a paper's
+abs page (title, authors, abstract, AI overview, figures):
+
+```bash
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --state '{
+  "query": "recurrent looped transformer",
+  "paper_url": "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
+  "out_dir": "~/tmp/alphaxiv"
+}'
+```
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.
