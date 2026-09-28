@@ -240,7 +240,34 @@ owner.
 | `websites/pypi` | a PyPI reader: package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
 | `websites/docsrs` | a docs.rs reader: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
 | `websites/github` | a GitHub reader: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
-| `websites/goofish` | a 闲鱼 / goofish.com marketplace reader: search the feed (multi-page), browse one listing into a product sheet, collect it as JSON + Markdown + pictures, and watch prices durably in `watch.json` (`dsl/browser/goofish_item.json`) |
+| `websites/goofish` | a 闲鱼 / goofish.com marketplace reader: search the feed (multi-page), browse one listing into a product sheet, collect it as JSON + Markdown + pictures, watch prices durably in `watch.json`, and **learn** a tag vocabulary and a fair price per tag from everything it has seen (`dsl/browser/goofish_item.json`, `dsl/browser/goofish_sqlite.json`) |
+
+The goofish plugin is the one that keeps learning between runs. Every mode (search,
+browse, watch, collect) feeds the pass, and the result gains an `evolve` block:
+
+| key | meaning |
+|-----|---------|
+| `items_indexed` / `new_this_run` | corpus size, and what this run added |
+| `tags` / `vocabulary` | the learned tag vocabulary, and how many tag keys back it |
+| `fair` | per-tag band: median, `low`, `high`, and `n` listings behind it |
+| `deals` / `overpriced` | items outside their tag's band, split by direction |
+| `next_feed_factor` | learned search-card-vs-detail price ratio, `0` while unproven |
+
+It writes three files into `out_dir`: `index.json` (the corpus — every statistic is
+re-derived from it, which is what makes re-running idempotent), `tags.json` (the
+vocabulary: canonical tag, folded spellings, the synonym pairs that justify the folds)
+and `price_model.json` (per-tag median ± σ·1.4826·MAD, per-item price history). Only
+accumulated evidence grows. With `emit_sql: true` it also returns `sql_schema` and
+idempotent `sql_statements`; `dsl/browser/goofish_sqlite.json` applies them to a SQLite
+file and reads back fair prices, price moves and below/above-fair rows.
+
+```sh
+# 闲鱼: learn tags and fair prices, then hand them to SQLite
+laya-workflow run --spec dsl/browser/goofish_item.json \
+  --query "价格进化 索尼 A7M4" --state '{"count":30,"browse":6}'
+laya-workflow run --spec dsl/browser/goofish_sqlite.json \
+  --state '{"query":"索尼 A7M4","browse":6}'
+```
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \

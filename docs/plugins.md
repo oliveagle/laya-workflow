@@ -233,14 +233,14 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 | `websites/pypi` | a PyPI reader over Chrome/CDP: a phrase into package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
 | `websites/docsrs` | a docs.rs reader over Chrome/CDP: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
 | `websites/github` | a GitHub reader over Chrome/CDP: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
-| `websites/goofish` | a 闲鱼 / goofish.com reader over Chrome/CDP: **search** the feed, **browse** one listing into a full product sheet, **collect** it to JSON + Markdown + pictures, and **watch prices** durably in `watch.json` (`dsl/browser/goofish_item.json`) |
+| `websites/goofish` | a 闲鱼 / goofish.com reader over Chrome/CDP: **search** the feed, **browse** one listing into a full product sheet, **collect** it to JSON + Markdown + pictures, **watch prices** durably in `watch.json`, and **learn** a tag vocabulary and a fair price per tag from everything it has seen (`dsl/browser/goofish_item.json`, `dsl/browser/goofish_sqlite.json`) |
 
 `dsl/browser/alphaxiv_paper.json` is the plugin-driven spec:
 `laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" --state '{"count":3}'`.
 
-### 闲鱼 / goofish.com: search, browse, collect, watch
+### 闲鱼 / goofish.com: search, browse, collect, watch, learn
 
-`websites/goofish.com/plugin` covers the four things you do on 闲鱼, and one
+`websites/goofish.com/plugin` covers the five things you do on 闲鱼, and one
 query string picks between them:
 
 ```bash
@@ -257,16 +257,99 @@ laya-workflow run --spec dsl/browser/goofish_item.json \
 laya-workflow run --spec dsl/browser/goofish_item.json --query "添加监控 1085216610239"
 laya-workflow run --spec dsl/browser/goofish_item.json --query "价格监控" \
   --state '{"watch_query":"A7M4","watch_limit":20,"drop_pct":5}'
+
+# self-evolution — collect, learn a vocabulary, price against it
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化 索尼 A7M4" \
+  --state '{"count":30,"browse":6}'
+# no query at all: re-derive the model from index.json, without browsing
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化"
 ```
 
 `plan()` infers the mode: a keyword is a search, an item URL or a bare 12–13
-digit id is one listing, `价格监控` / `watch price` is monitoring, and
-`添加监控 <url>` adds to it. An explicit `state.mode` always wins. Everything
-lands in `out_dir` (default `~/tmp/goofish`): `items/<id>.json` per listing,
+digit id is one listing, `价格监控` / `watch price` is monitoring,
+`添加监控 <url>` adds to it, and `价格进化` / `fair price` / `evolve` is the
+learning mode. An explicit `state.mode` always wins. Everything lands in
+`out_dir` (default `~/tmp/goofish`): `items/<id>.json` per listing,
 `item-<id>.md` + downloaded `images/<id>/` for an opened listing, and
 `watch.json` — one entry per tracked item with every price ever seen, so a
 later `watch` run reports `new` / `up` / `down` / `same` / `gone` rather than
 just the current number.
+
+#### Self-evolution: tags and prices that learn
+
+Every mode feeds the learning pass, not just `evolve` — watching a price or
+browsing a listing is exactly the fresh evidence the model needs, and making
+the caller opt in separately would mean it only ever learns when someone
+remembered to ask. The result gains an `evolve` block:
+
+| key | meaning |
+| --- | --- |
+| `items_indexed` / `new_this_run` | corpus size, and what this run added |
+| `tags` / `vocabulary` | the learned tag vocabulary and how many tag keys back it |
+| `fair` | per-tag band: median (`fair`), `low`, `high`, and `n` listings behind it |
+| `deals` / `overpriced` | items outside their tag's band, split by direction, ranked by distance |
+| `next_feed_factor` | the learned search-card-vs-detail price ratio, `0` when there is not enough evidence |
+| `index_file` / `tags_file` / `model_file` | the three files it wrote |
+
+Three files under `out_dir` carry it:
+
+- **`index.json`** — the corpus: one row per item ever collected, with the tags
+  mined from it. Every statistic is re-derived from this file, which is what
+  makes re-running idempotent instead of cumulative.
+- **`tags.json`** — the vocabulary: canonical tag, the spellings folded into it,
+  the raw forms seen on the page, co-occurrence, and the synonym pairs that
+  justify the folds.
+- **`price_model.json`** — per-tag price distribution (median, MAD, min/max/mean,
+  the band), the per-item price history summary, and the learned correction.
+
+Only *accumulated* state grows: spelling counts, synonym evidence (pair
+sightings), correction ratios, the run counter. Folding runs into statistics is
+how a counter ends up counting the same listing twice and pricing a camera by
+how often it was looked at.
+
+Three decisions worth knowing before changing this code:
+
+- **Synonyms are conservative, and deliberately so.** Two spellings merge on
+  containment, across scripts (`Sony` ↔ `索尼`, the real goofish pattern
+  `品牌: "Sony/索尼"`), or on alphanumeric squeeze (`a7m4` ↔ `a7-m4`) — and only
+  once two independent listings declare them together. Prefix matching is
+  explicitly *not* used: it would merge `全新` into `几乎全新` and `A7M4` into
+  `A7M3`. `detail.seller.tags` is not mined either — those badges describe the
+  *seller* ("来闲鱼5年"), and folding them in would end up pricing a camera by
+  how long its owner has been a member.
+- **The price band is robust, not mean ± sd.** One ¥1 body listing in a
+  thousand should not move the answer, so it is median ± σ·1.4826·MAD, with a
+  10% fallback band when the MAD is zero. `sigma` defaults to 2.0 and a tag
+  needs `min_samples` (3) priced listings before it is allowed to judge a
+  price at all.
+- **The card/detail correction has four gates** — enough independent sightings
+  (`feed_min_hits`, 5), a tight distribution (p75/p25 within `feed_max_spread`,
+  1.10), a plausible magnitude (0.5×–2×), and a real difference from 1 — before
+  it touches a price. It is only ever applied to a card that no detail page
+  confirmed, and the uncorrected price is kept beside it.
+
+#### …and into SQLite
+
+With `emit_sql: true` the plugin also returns `sql_schema` (six `CREATE TABLE IF
+NOT EXISTS` statements) and `sql_statements` (idempotent `INSERT OR REPLACE`
+upserts, capped by `sql_max` / `sql_points`). Nothing is executed by the plugin —
+it has no way to reach a database. `dsl/browser/goofish_sqlite.json` hands both
+arrays to a `kind: "db"` capability and then reads the file back:
+
+```bash
+laya-workflow run --spec dsl/browser/goofish_sqlite.json \
+  --state '{"query":"索尼 A7M4","browse":6}'
+```
+
+The tables are `goofish_items`, `goofish_price_points`, `goofish_tags`,
+`goofish_item_tags`, `goofish_tag_price_stats` and
+`goofish_price_corrections`, all prefixed because the SQLite file is a shared
+resource. The spec's later nodes are plain SQL over them: fair price per tag,
+price moves per item (via `LAG`), tag-level trends, and the below/above-fair
+report. `goofish_items.price` is the price the item's tags were priced *by* —
+the same number the tag statistics came from — while `last_price` is the watch
+history's latest sighting; keeping both is what lets "compare this listing
+against its tag" be answerable in SQL.
 
 Three site facts shape the plugin, all verified against the live site and worth
 knowing before changing the page scripts:

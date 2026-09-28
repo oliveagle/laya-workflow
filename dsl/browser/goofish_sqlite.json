@@ -1,0 +1,292 @@
+{
+  "name": "goofish_price_model",
+  "dsl_version": 2,
+  "description": "闲鱼(goofish.com) 价格/标签自进化 + SQLite 落库。由 Rhai 插件 websites/goofish 采集并学习，再用引擎的 kind:\"db\" 能力把结果写进一个 SQLite 文件（ACID 系统记录），最后用同一文件的 DuckDB 视图跑分析：每个标签的合理价格区间、降价幅度榜、标签行情、以及“低于/高于公平价”的异常报告。插件在 emit_sql:true 时把建表 DDL(sql_schema) 和幂等写入语句(sql_statements) 一并返回，本流程原样交给 db 能力执行——落库的数字和插件自己定价用的数字是同一批。默认 --state '{\"query\":\"索尼 A7M4\"}'；不给 query 就只用已采集的 index.json 重新推导模型。需要 policy.allow_exec（db 能力跑的是真实的 sqlite3 / duckdb 命令），数据库文件默认 ${env.HOME}/tmp/goofish/goofish.sqlite。",
+  "start": "collect",
+  "max_iterations": 8,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/goofish",
+      "${env.HOME}/tmp/goofish-evolve"
+    ],
+    "max_timeout_ms": 600000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "browser": {
+      "kind": "browser",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 120000,
+      "max_text": 20000
+    },
+    "goofish": {
+      "kind": "plugin",
+      "plugin": "websites/goofish",
+      "browser": "browser",
+      "timeout_ms": 540000,
+      "max_operations": 8000000
+    },
+    "gf_db": {
+      "kind": "db",
+      "sqlite": "${env.HOME}/tmp/goofish/goofish.sqlite",
+      "readonly": false
+    }
+  },
+  "nodes": [
+    {
+      "name": "collect",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "采集并学习，然后写入 SQLite？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "schema"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "goofish",
+        "with": {
+          "query": "${state.query}",
+          "mode": "evolve",
+          "count": "${state.count}",
+          "pages": "${state.pages}",
+          "browse": "${state.browse}",
+          "out_dir": "${state.out_dir}",
+          "emit_sql": true,
+          "markdown": false,
+          "track": true
+        },
+        "project": {
+          "mode": "/mode",
+          "found_count": "/found_count",
+          "notes": "/notes",
+          "evolve": "/evolve",
+          "sql_schema": "/sql_schema",
+          "sql_statements": "/sql_statements"
+        }
+      }
+    },
+    {
+      "name": "schema",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "建表？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "ingest"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "exec",
+          "statements": "${state.sql_schema}"
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "ingest",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "写入商品/标签/价格点？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "fair"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "exec",
+          "statements": "${state.sql_statements}"
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "fair",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "按标签看合理价格区间？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "drops"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "query",
+          "sql": "SELECT t.ns, t.name, t.items, p.n AS priced, p.median, p.mad, p.low, p.high, t.spellings FROM goofish_tags t JOIN goofish_tag_price_stats p ON p.tag = t.tag WHERE p.fair IS NOT NULL ORDER BY p.n DESC, t.ns, t.name LIMIT 20"
+        },
+        "project": {
+          "rows": "/rows"
+        }
+      }
+    },
+    {
+      "name": "drops",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "看降价幅度榜？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "trend"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "analytics",
+          "format": "json",
+          "sql": "SELECT item_id, at, price, prev_price, ROUND((price - prev_price) * 100.0 / NULLIF(prev_price, 0), 1) AS move_pct, CASE WHEN price < prev_price THEN 'down' ELSE 'up' END AS direction FROM (SELECT item_id, at, price,              LAG(price) OVER (PARTITION BY item_id ORDER BY at_ms) AS prev_price       FROM goofish_price_points) WHERE prev_price IS NOT NULL AND price <> prev_price ORDER BY ABS(move_pct) DESC LIMIT 15"
+        },
+        "project": {
+          "rows": "/rows",
+          "engine": "/engine"
+        }
+      }
+    },
+    {
+      "name": "trend",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "看某个标签的价格行情？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "anomalies"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "query",
+          "sql": "SELECT t.name AS tag, COUNT(DISTINCT it.item_id) AS items, MIN(pp.price) AS low_seen, MAX(pp.price) AS high_seen, COUNT(pp.price) AS points FROM goofish_item_tags it JOIN goofish_tags t ON t.tag = it.tag LEFT JOIN goofish_price_points pp ON pp.item_id = it.item_id WHERE t.n_priced > 0 GROUP BY t.tag ORDER BY items DESC LIMIT 20"
+        },
+        "project": {
+          "rows": "/rows"
+        }
+      }
+    },
+    {
+      "name": "anomalies",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "看低于/高于公平价的异常报告？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "tables"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "query",
+          "sql": "WITH best AS ( SELECT it.item_id, s.tag, s.fair, s.low, s.high, s.n AS support, ROW_NUMBER() OVER (PARTITION BY it.item_id ORDER BY s.n DESC, s.tag) AS rn FROM goofish_item_tags it JOIN goofish_tag_price_stats s ON s.tag = it.tag WHERE s.fair IS NOT NULL ) SELECT i.id, substr(i.title, 1, 40) AS title, i.price, b.tag, b.fair, b.low, b.high, ROUND((i.price - b.fair) * 100.0 / NULLIF(b.fair, 0), 1) AS pct_vs_fair, b.support, CASE WHEN i.price < b.low THEN 'below_fair' WHEN i.price > b.high THEN 'above_fair' ELSE 'fair' END AS verdict FROM goofish_items i JOIN best b ON b.item_id = i.id AND b.rn = 1 WHERE i.status <> 'gone' AND (i.price < b.low OR i.price > b.high) ORDER BY ABS(pct_vs_fair) DESC LIMIT 20"
+        },
+        "project": {
+          "rows": "/rows"
+        }
+      }
+    },
+    {
+      "name": "tables",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "看看库里有什么？",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "gf_db",
+        "with": {
+          "op": "tables"
+        },
+        "project": {
+          "tables": "/rows"
+        }
+      }
+    }
+  ]
+}

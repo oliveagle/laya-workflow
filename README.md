@@ -320,11 +320,12 @@ See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md),
 [`docs/crates.md`](./docs/crates.md), [`docs/pypi.md`](./docs/pypi.md),
 [`docs/docsrs.md`](./docs/docsrs.md) and [`docs/github.md`](./docs/github.md).
 
-### 闲鱼 / goofish.com: search, browse, collect, watch prices
+### 闲鱼 / goofish.com: search, browse, collect, watch prices, learn prices
 
 `websites/goofish.com` is a marketplace reader — search a feed, open a listing
-into a full product sheet, keep it as JSON + Markdown + pictures, and watch the
-price of anything you saved. One query picks the behaviour:
+into a full product sheet, keep it as JSON + Markdown + pictures, watch the
+price of anything you saved, and learn from everything it has seen. One query
+picks the behaviour:
 
 ```bash
 # search (multi-page; `browse` opens the first N into full detail)
@@ -345,6 +346,48 @@ Results go to `~/tmp/goofish` (policy-gated): `items/<id>.json` per listing,
 `item-<id>.md` + `images/<id>/` for an opened one, and `watch.json` holding every
 price ever seen per tracked item, so a later run reports
 `new`/`up`/`down`/`same`/`gone` instead of just the current number.
+
+**Prices and tags get better with use.** Every run — search, browse or watch —
+also feeds a learning pass, and the result gains an `evolve` block:
+
+```bash
+# learn from the tags sellers actually write, and price an item against them
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化 索尼 A7M4" \
+  --state '{"count":30,"browse":6}'
+
+# or re-derive the model from everything already collected (no browsing at all)
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化"
+```
+
+It mines the listing attributes into a vocabulary (`品牌: sony` and `品牌: 索尼`
+fold into one tag once two listings declare them the same thing), then gives
+every tag a robust price band — median ± σ·1.4826·MAD — and reports what sits
+outside it:
+
+| `evolve` key | what it is |
+| --- | --- |
+| `tags` / `vocabulary` | the learned tag vocabulary, with spellings merged and co-occurrence |
+| `fair` | per-tag price band: `fair` (median), `low`, `high`, and how many listings back it |
+| `deals` / `overpriced` | items below / above their tag's band, ranked by how far out they are |
+| `next_feed_factor` | the learned search-card-vs-detail-page price ratio, or `0` when there is not enough agreeing evidence to correct anything |
+
+Three files carry it, all under `out_dir`: `index.json` (one row per item ever
+collected, plus the tags mined from it), `tags.json` (the vocabulary) and
+`price_model.json` (the price bands). Only *accumulated* evidence grows between
+runs — every statistic is re-derived from `index.json`, so re-running changes
+nothing but the counter and the new evidence.
+
+**…or hand it to SQLite.** With `emit_sql: true` the plugin also returns the DDL
+(`sql_schema`) and idempotent upserts (`sql_statements`) for six `goofish_`
+tables, so what lands in the database is exactly the numbers the plugin priced
+with:
+
+```bash
+laya-workflow run --spec dsl/browser/goofish_sqlite.json --state '{"query":"索尼 A7M4","browse":6}'
+```
+
+That spec writes one SQLite file, then reads it back for fair price per tag,
+price moves per item, tag-level trends, and the below/above-fair report.
 
 Worth knowing before changing the page scripts: `/search` ignores `?page=` and
 `?priceMin=` (paging is clicked, and the price band is applied locally); feed

@@ -344,6 +344,25 @@ fn is_watch_add(text) {
     false
 }
 
+// True when the user is asking the plugin to *learn* rather than to look at a
+// listing: to price an item by the tags it carries, or to fold today's
+// vocabulary into the one it already knows.
+//
+// This sits above the watch intents on purpose. "价格进化" and "监控价格" are
+// both about price, but one wants a model and the other wants a diff, and a
+// request that names the model is asking for the model even if it also mentions
+// monitoring.
+fn is_evolve_intent(text) {
+    let l = strip(text).to_lower();
+    if l == "" { return false; }
+    const WORDS_CN = ["价格进化", "标签进化", "价格模型", "标签库", "合理价格", "估价",
+        "公平价", "学习标签", "沉淀标签", "进化一下", "价格学习"];
+    for w in WORDS_CN { if l.contains(w) { return true; } }
+    const WORDS_EN = ["evolve", "fair price", "price model", "learn tags", "price learning"];
+    for w in WORDS_EN { if l.contains(w) { return true; } }
+    false
+}
+
 fn plan(args) {
     let query = opt_any(args, ["query", "q", "keyword", "keywords", "text"]);
     let raw_item = opt_any(args, ["item_url", "url", "item", "id"]);
@@ -351,7 +370,8 @@ fn plan(args) {
 
     let mode = explicit;
     if mode == "" {
-        if is_watch_add(query) { mode = "watch_add"; }
+        if is_evolve_intent(query) { mode = "evolve"; }
+        else if is_watch_add(query) { mode = "watch_add"; }
         else if opt(args, "watch_file") != "" || opt(args, "watchlist") != "" { mode = "watch"; }
         else if is_watch_intent(query) && raw_item == "" { mode = "watch"; }
         else if raw_item != "" && query == "" { mode = "item"; }
@@ -388,7 +408,12 @@ fn plan(args) {
     }
 
     let count = opt_int(args, "count", 0);
-    if count <= 0 { count = if mode == "search" { 20 } else { 1 }; }
+    // A learning run is only as good as its corpus, so "价格进化 索尼A7M4"
+    // collects a wider sample than a plain search for the same phrase would;
+    // a plain search keeps its own 20, and a listing is always just the one.
+    if count <= 0 {
+        count = if mode == "evolve" { 30 } else if mode == "search" { 20 } else { 1 };
+    }
 
     #{
         mode: mode,
@@ -778,6 +803,1262 @@ fn opt_bool(args, key, dflt) {
     dflt
 }
 
+// ══ self-evolution: prices and tags ═════════════════════════════════════════
+//
+// Everything above treats a listing as a fact to record. This section is the
+// part that gets *better* at reading them: it mines the tags people actually
+// write, folds the spellings that mean one thing into one vocabulary, and turns
+// the price history into a fair price per tag so the next run can say "this is
+// a good deal" instead of only "this one is ¥9800".
+//
+// Three files under `out_dir`, all of them derived from the first:
+//   index.json       one row per item ever collected, with the tags mined from
+//                    it — the corpus. Every statistic below is re-derived from
+//                    it, so running `evolve` twice changes nothing.
+//   tags.json        the vocabulary: canonical tag, spellings merged in, raw
+//                    forms, co-occurrence, and the synonym pairs that justify
+//                    the merges.
+//   price_model.json per-tag price distribution (median ± a robust spread), the
+//                    per-item price history summary, and the learned
+//                    card-vs-detail correction factor.
+//
+// Only *accumulated* state grows across runs — spelling counts, synonym
+// evidence, correction ratios, the run counter. Statistics are recomputed every
+// time, because folding runs into statistics is how a counter ends up counting
+// the same listing twice and pricing a camera by how often it was looked at.
+// ── the evolution layer: a tag vocabulary and a price model that learn ───────
+//
+// "The tags and the prices evolve on their own" is three JSON stores under
+// out_dir, so all of it works with no db capability, no extra process and no
+// network:
+//
+//   index.json       one row per item ever collected, together with the tags
+//                    mined from it. This is the corpus, and every statistic
+//                    below is *derived* from it.
+//   tags.json        the tag vocabulary: canonical tag -> how many items carry
+//                    it, which spellings merge into it, what it co-occurs
+//                    with, and which synonym pairs earlier runs confirmed.
+//   price_model.json a per-tag price distribution (median + MAD, so one 999-yuan
+//                    typo cannot move "the price of a Sony A7M4"), a per-item
+//                    price summary, and the correction factor the plugin has
+//                    learned for its own card-vs-detail price reads.
+//
+// The split between accumulated and derived is the load-bearing part. Only what
+// cannot be re-derived grows: spelling counts, synonym evidence, correction
+// ratios, the run counter. Every statistic is recomputed from index.json on
+// each run. Folding each run's numbers into the statistics instead would
+// double-count every item the second time `evolve` ran — which is the shape of
+// "learning" that inflates a model until it means nothing.
+
+fn tag_seps() {
+    ["/", "|", ",", "，", "、", ";", "；", "+", "＋"]
+}
+
+// Split on any of a set of single characters. The engine registers no regex
+// literal and no splitter taking a character class, and these are the
+// separators goofish itself uses in tags and label values.
+fn split_multi(s, seps) {
+    let out = [];
+    let cur = "";
+    let i = 0;
+    while i < s.len() {
+        let c = s.sub_string(i, 1);
+        if seps.contains(c) { out.push(cur); cur = ""; } else { cur += c; }
+        i += 1;
+    }
+    out.push(cur);
+    out
+}
+
+// Decoration around a tag rather than part of it: the 【】 the shop puts around
+// "【免押】", brackets and quotes a seller types, bullets.
+fn is_mark(c) {
+    if c == "【" || c == "】" || c == "[" || c == "]" { return true; }
+    if c == "(" || c == ")" || c == "（" || c == "）" { return true; }
+    if c == "《" || c == "》" || c == "「" || c == "」" { return true; }
+    if c == "<" || c == ">" || c == "*" || c == "~" || c == "^" || c == "#" { return true; }
+    if c == "\"" || c == "'" || c == "“" || c == "”" || c == "‘" || c == "’" { return true; }
+    false
+}
+
+fn ascii_ch(c) {
+    const A = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_./+:()%|";
+    A.contains(c)
+}
+
+// Latin script only. This is the whole of the script test below, and it is
+// enough: the question it answers is never "which CJK block", only "is this
+// written in the same alphabet as the other half of this pair".
+fn is_latin(s) {
+    let i = 0;
+    while i < s.len() {
+        if !ascii_ch(s.sub_string(i, 1)) { return false; }
+        i += 1;
+    }
+    true
+}
+
+// Letters and digits only, so "iPhone 13" and "iphone-13" compare equal.
+fn squash(s) {
+    let out = "";
+    let i = 0;
+    while i < s.len() {
+        let low = s.sub_string(i, 1).to_lower();
+        if "abcdefghijklmnopqrstuvwxyz0123456789".contains(low) { out += low; }
+        i += 1;
+    }
+    out
+}
+
+// Canonical spelling of one tag: decoration removed, spaces collapsed, case
+// folded, length capped so one pathological label cannot become the vocabulary.
+fn tag_norm(s) {
+    let out = "";
+    let i = 0;
+    while i < s.len() {
+        let c = s.sub_string(i, 1);
+        if is_space(c) || is_mark(c) {
+            if out != "" && !out.ends_with(" ") { out += " "; }
+        } else {
+            out += c;
+        }
+        i += 1;
+    }
+    let t = strip(out).to_lower();
+    if t.len() > 24 { t = t.sub_string(0, 24); }
+    t
+}
+
+// Reject the one shape that carries no meaning: a bare number. ("128GB" and
+// "a7m4" survive, "11" and "97" do not.)
+fn tag_ok(t) {
+    if t == "" || t.len() > 24 { return false; }
+    const NUM = "0123456789 .-+%/";
+    let i = 0;
+    while i < t.len() {
+        if !NUM.contains(t.sub_string(i, 1)) { return true; }
+        i += 1;
+    }
+    false
+}
+
+fn ns_of_key(k) {
+    let p = k.index_of(":");
+    if p <= 0 { "" } else { k.sub_string(0, p) }
+}
+
+fn tag_of_key(k) {
+    let p = k.index_of(":");
+    if p <= 0 { k } else { k.sub_string(p + 1) }
+}
+
+fn tag_key(ns, tag) {
+    if ns == "" { tag } else { ns + ":" + tag }
+}
+
+// Unordered pair, one spelling. String ordering works in this engine build, so
+// this is a real canonical form rather than a guess.
+fn pair_key(a, b) {
+    if a < b { a + "|" + b } else { b + "|" + a }
+}
+
+// Are these two spellings the same thing?
+//
+// This is the only heuristic in the vocabulary, and it is deliberately
+// conservative: a wrong merge destroys information that cannot be recovered,
+// while a missed merge only costs one extra row in the vocabulary.
+//
+//   * one spelling contains the other ("索尼" inside "索尼 a7m4")
+//   * the halves are written in different scripts — the case that matters in
+//     practice, because goofish writes the brand as "Sony/索尼" and without this
+//     rule every brand would live in the vocabulary twice
+//   * same letters once punctuation and spacing are ignored
+//
+// It deliberately does not merge on a shared prefix, which would have merged
+// 全新 with 几乎全新 and A7M4 with A7M3.
+fn syn_ok(a, b) {
+    if a == b { return false; }
+    if b.len() >= 2 && a.contains(b) { return true; }
+    if a.len() >= 2 && b.contains(a) { return true; }
+    if is_latin(a) != is_latin(b) { return true; }
+    let ka = squash(a);
+    ka != "" && ka == squash(b)
+}
+
+// ── deterministic ordering ──────────────────────────────────────────────────
+//
+// A map's key order is an implementation detail, and these files are read by
+// humans and diffed, so every list that comes out of the learning pass is put
+// into a fixed order: by key ascending, then by count descending.
+
+fn has_k(rows, k) {
+    for r in rows { if ("" + r["k"]) == ("" + k) { return true; } }
+    false
+}
+
+fn order_by_key(rows) {
+    let keys = [];
+    for r in rows { keys.push("" + r["k"]); }
+    keys.sort();
+    let out = [];
+    let i = 0;
+    while i < keys.len() {
+        for r in rows {
+            if ("" + r["k"]) == keys[i] { out.push(r); break; }
+        }
+        i += 1;
+    }
+    out
+}
+
+// [{k, n}] -> the same rows, biggest n first, ties by ascending key.
+// A sorted copy, always an array. `Array::sort` sorts in place and returns
+// unit in this engine build, so `xs.sort()` in an expression is a null waiting
+// to happen; this is the form that always yields the sorted array.
+fn sorted_strings(xs) {
+    xs.sort();
+    xs
+}
+
+fn rank_top(rows, limit) {
+    let base = order_by_key(rows);
+    let out = [];
+    while out.len() < limit && out.len() < base.len() {
+        let bi = -1;
+        let i = 0;
+        while i < base.len() {
+            if !has_k(out, base[i]["k"])
+                && (bi < 0 || oint(base[i]["n"], 0) > oint(base[bi]["n"], 0)) { bi = i; }
+            i += 1;
+        }
+        if bi < 0 { break; }
+        out.push(base[bi]);
+    }
+    out
+}
+
+// Docs carry no "k", so they are ordered by one of their own string fields and
+// then pulled back out in the order rank_top chose.
+fn order_docs(docs, field) {
+    let keys = [];
+    for d in docs { keys.push("" + d[field]); }
+    keys.sort();
+    let out = [];
+    let i = 0;
+    while i < keys.len() {
+        for d in docs {
+            if ("" + d[field]) == keys[i] { out.push(d); break; }
+        }
+        i += 1;
+    }
+    out
+}
+
+fn pull_docs(ranked, docs, field) {
+    let out = [];
+    for r in ranked {
+        for d in docs {
+            if ("" + d[field]) == ("" + r["k"]) { out.push(d); break; }
+        }
+    }
+    out
+}
+
+// ── small statistics ────────────────────────────────────────────────────────
+
+fn sorted_copy(xs) {
+    let o = [];
+    for v in xs { o.push(onum(v)); }
+    o.sort();
+    o
+}
+
+fn median_of(xs) {
+    if xs.len() == 0 { return (); }
+    let s = sorted_copy(xs);
+    let n = s.len();
+    if n % 2 == 1 { return s[n / 2]; }
+    (s[n / 2 - 1] + s[n / 2]) / 2.0
+}
+
+fn quantile_of(xs, q) {
+    if xs.len() == 0 { return (); }
+    let s = sorted_copy(xs);
+    let pos = q * (s.len() - 1);
+    let lo = int_of(pos);
+    if lo >= s.len() - 1 { return s[s.len() - 1]; }
+    s[lo] + (s[lo + 1] - s[lo]) * (pos - lo)
+}
+
+// Median absolute deviation: the spread one outlier cannot move, which is the
+// whole reason the price model is not a mean.
+fn mad_of(xs, med) {
+    if xs.len() == 0 { return (); }
+    let dev = [];
+    for v in xs { dev.push((onum(v) - onum(med)).abs()); }
+    median_of(dev)
+}
+
+fn round2(v) {
+    (onum(v) * 100.0).round() / 100.0
+}
+
+// ── the three stores ────────────────────────────────────────────────────────
+
+fn index_path(out_dir) { out_dir + "/index.json" }
+fn tags_path(out_dir) { out_dir + "/tags.json" }
+fn model_path(out_dir) { out_dir + "/price_model.json" }
+
+// A missing file is the normal first-run case, and a corrupt one is downgraded
+// to the default rather than failing the run: a rebuilt vocabulary is better
+// than no collection at all. (Same reasoning as the watch store.)
+fn read_json_or(host, path, dflt) {
+    let read = host.read_file(path);
+    let exists = false;
+    if omap(read) && read.contains("exists") && read["exists"] { exists = true; }
+    if !exists { return dflt; }
+    let text = "";
+    if omap(read) && read.contains("text") && type_of(read["text"]) == "string" { text = read["text"]; }
+    if strip(text) == "" { return dflt; }
+    let parsed = ();
+    try { parsed = host.json_parse(text); }
+    catch (e) { return dflt; }
+    parsed
+}
+
+fn write_json(host, path, doc) {
+    host.write_file(path, host.json_stringify(doc))
+}
+
+fn load_index(host, out_dir) {
+    let doc = read_json_or(host, index_path(out_dir), #{});
+    if omap(doc) && doc.contains("items") && type_of(doc["items"]) == "array" { doc }
+    else { #{ version: 1, items: [] } }
+}
+
+fn index_rows(idx) {
+    if omap(idx) && idx.contains("items") && type_of(idx["items"]) == "array" { idx["items"] }
+    else { [] }
+}
+
+fn empty_learned(now) {
+    #{
+        version: 1,
+        runs: 0,
+        synonyms: [],
+        corrections: #{},
+        last_run_at: "",
+        last_run_at_ms: now["unix_ms"]
+    }
+}
+
+// The only state that accumulates between runs. Vocabulary counts and every
+// price statistic are re-derived; this is the part that cannot be.
+fn load_learned(host, out_dir, now) {
+    let base = empty_learned(now);
+    let tags_doc = read_json_or(host, tags_path(out_dir), #{});
+    if omap(tags_doc) {
+        if tags_doc.contains("synonyms") && type_of(tags_doc["synonyms"]) == "array" {
+            base["synonyms"] = tags_doc["synonyms"];
+        }
+        if tags_doc.contains("runs") { base["runs"] = oint(tags_doc["runs"], 0); }
+        if tags_doc.contains("last_run_at") { base["last_run_at"] = pstr2(tags_doc, "last_run_at", ""); }
+        if tags_doc.contains("last_run_at_ms") { base["last_run_at_ms"] = oint(tags_doc["last_run_at_ms"], 0); }
+    }
+    let mdl = read_json_or(host, model_path(out_dir), #{});
+    if omap(mdl) && mdl.contains("corrections") && omap(mdl["corrections"]) {
+        base["corrections"] = mdl["corrections"];
+    }
+    base
+}
+
+// One corpus row: an item plus the tags mined from it.
+fn index_row(entry, mined, now) {
+    let tags = [];
+    for t in mined["tags"] {
+        tags.push(#{ ns: t["ns"], tag: t["tag"], raw: t["raw"] });
+    }
+    let syns = [];
+    for s in mined["syns"] {
+        syns.push(#{ key: s["key"], a: s["a"], b: s["b"], ns: s["ns"], raw: s["raw"] });
+    }
+    #{
+        id: pstr(entry, "id"),
+        title: pstr(entry, "title"),
+        url: pstr(entry, "url"),
+        status: pstr2(entry, "status", "on_sale"),
+        location: pstr(entry, "location"),
+        price: pick(entry, "price"),
+        want_count: pick(entry, "want_count"),
+        source_mode: pstr(entry, "source_mode"),
+        collected_at: pstr2(entry, "collected_at", now["rfc3339"]),
+        collected_at_ms: oint(pick(entry, "collected_at_ms"), 0),
+        tags: tags,
+        syns: syns
+    }
+}
+
+// Fold this run's rows into the index: newest wins, oldest out once `index_max`
+// is reached. The index is what a later run re-derives from, so it — rather
+// than any accumulated number — is what keeps a second `evolve` honest.
+fn merge_index(idx, fresh, index_max) {
+    let seen = [];
+    let rows = [];
+    for r in fresh {
+        let id = pstr(r, "id");
+        if id == "" || seen.contains(id) { continue; }
+        seen.push(id);
+        rows.push(r);
+    }
+    let kept = [];
+    let old = index_rows(idx);
+    let i = 0;
+    while i < old.len() {
+        let r = old[i];
+        let id = pstr(r, "id");
+        if id != "" && !seen.contains(id) { kept.push(r); }
+        i += 1;
+    }
+    let merged = [];
+    for r in kept { merged.push(r); }
+    for r in rows { merged.push(r); }
+    while merged.len() > index_max { merged.remove(0); }
+    merged
+}
+
+// The tags an item record carries, plus the synonym pairs its own label values
+// declare. A value with several parts ("Sony/索尼" under 品牌) is the seller
+// saying those parts name one thing, so each part becomes a tag and each pair
+// becomes synonym evidence.
+fn mine_tags(entry) {
+    let tags = [];
+    let syns = [];
+    if !omap(entry) { return #{ tags: tags, syns: syns }; }
+    let seps = tag_seps();
+
+    if entry.contains("listing") {
+        let l = entry["listing"];
+        if omap(l) && l.contains("tags") && type_of(l["tags"]) == "array" {
+            for raw in l["tags"] {
+                let s = ostr(raw);
+                if s == "" { continue; }
+                for part in split_multi(s, seps) {
+                    let t = tag_norm(part);
+                    if tag_ok(t) { tags.push(#{ ns: "", tag: t, raw: strip(part) }); }
+                }
+            }
+        }
+    }
+
+    if entry.contains("detail") {
+        let d = entry["detail"];
+        if omap(d) && d.contains("labels") && omap(d["labels"]) {
+            let labels = d["labels"];
+            let keys = labels.keys();
+            keys.sort();
+            for kk in keys {
+                let k = ostr(kk);
+                let ns = tag_norm(k);
+                if ns == "" { continue; }
+                let v = ostr(labels[k]);
+                if v == "" { continue; }
+                let parts = [];
+                for part in split_multi(v, seps) {
+                    let t = tag_norm(part);
+                    if tag_ok(t) { parts.push(#{ ns: ns, tag: t, raw: strip(part) }); }
+                }
+                for p in parts { tags.push(p); }
+                let i = 0;
+                while i < parts.len() {
+                    let j = i + 1;
+                    while j < parts.len() {
+                        if syn_ok(parts[i]["tag"], parts[j]["tag"]) {
+                            syns.push(#{
+                                key: pair_key(parts[i]["tag"], parts[j]["tag"]),
+                                a: parts[i]["tag"],
+                                b: parts[j]["tag"],
+                                ns: ns,
+                                raw: v
+                            });
+                        }
+                        j += 1;
+                    }
+                    i += 1;
+                }
+            }
+        }
+    }
+    // detail.seller.tags is deliberately not mined: those badges describe the
+    // *seller* ("来闲鱼5年", "好评率100%"), so folding them into the item
+    // vocabulary would end up pricing a camera by how long its owner has been
+    // a member.
+    #{ tags: tags, syns: syns }
+}
+
+// ── the correction factor ───────────────────────────────────────────────────
+//
+// The one thing the plugin learns about its own reading. goofish's search card
+// and its detail page disagree on price often enough to matter — an
+// abbreviated "1.38万", a 券后价 that the card shows and the detail does not —
+// and when they disagree *consistently*, the ratio is a measurement error this
+// plugin can correct on the next run instead of carrying forever.
+//
+// Four gates, all of which must pass, because a wrong factor would rewrite
+// every price in the store:
+//   * enough independent sightings (`feed_min_hits`)
+//   * a tight distribution — the 25th and 75th percentile must be within
+//     `feed_max_spread` of each other, so a mix of unrelated reasons to differ
+//     never averages into one factor
+//   * a plausible magnitude (0.5x .. 2x): beyond that it is a different price,
+//     not a wrong unit
+//   * and only ever applied to a card price that was never confirmed by a
+//     detail page.
+fn feed_factor_of(corrections, o) {
+    if !omap(corrections) || !corrections.contains("feed_detail") { return 0.0; }
+    let c = corrections["feed_detail"];
+    if !omap(c) { return 0.0; }
+    if oint(pick(c, "n"), 0) < oint(pick(o, "feed_min_hits"), 5) { return 0.0; }
+    let spread = onum(pick(c, "spread"));
+    if spread <= 0.0 || spread > onum(pick(o, "feed_max_spread")) { return 0.0; }
+    let f = onum(pick(c, "factor"));
+    if f < 0.5 || f > 2.0 { return 0.0; }
+    // A factor within 2% of 1 is noise; applying it would only add a step
+    // between the number on the page and the number in the store.
+    if (f - 1.0).abs() < 0.02 { return 0.0; }
+    f
+}
+
+// The whole learning pass: corpus in, documents out.
+fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
+    let syn_min = oint(pick(o, "syn_min_hits"), 2);
+    let min_samples = oint(pick(o, "min_samples"), 3);
+    let sigma = onum(pick(o, "sigma"));
+    let vocab_max = oint(pick(o, "vocab_max"), 300);
+    let price_cap = oint(pick(o, "model_prices"), 120);
+
+    // ── 1. how often each spelling is seen, and which pairs mean one thing ──
+    let sightings = #{};   // tag key -> items carrying that spelling
+    let raws = #{};        // tag key -> {raw spelling on the page: count}
+    let syn_hits = #{};    // pair key -> {a, b, ns, n, first_seen, last_seen}
+    let item_tags = [];    // per corpus row: the tag keys it carries
+
+    for row in corpus {
+        let keys = [];
+        if omap(row) && row.contains("tags") && type_of(row["tags"]) == "array" {
+            for t in row["tags"] {
+                let tag = pstr(t, "tag");
+                if !tag_ok(tag) { continue; }
+                let k = tag_key(pstr2(t, "ns", ""), tag);
+                if !keys.contains(k) { keys.push(k); }
+                if !sightings.contains(k) { sightings[k] = 0; }
+                sightings[k] = oint(sightings[k], 0) + 1;
+                let rk = ostr(pick(t, "raw"));
+                if rk != "" {
+                    let bucket = if raws.contains(k) { raws[k] } else { #{} };
+                    bucket[rk] = oint(bucket[rk], 0) + 1;
+                    raws[k] = bucket;
+                }
+            }
+        }
+        if omap(row) && row.contains("syns") && type_of(row["syns"]) == "array" {
+            for s in row["syns"] {
+                let key = pstr(s, "key");
+                if key == "" { continue; }
+                let rec = if syn_hits.contains(key) { syn_hits[key] } else {
+                    #{ a: pstr(s, "a"), b: pstr(s, "b"), ns: pstr2(s, "ns", ""), n: 0,
+                       first_seen: now["rfc3339"], last_seen: now["rfc3339"] } };
+                rec["n"] = oint(rec["n"], 0) + 1;
+                rec["last_seen"] = now["rfc3339"];
+                syn_hits[key] = rec;
+            }
+        }
+        item_tags.push(#{ id: pstr(row, "id"), keys: keys });
+    }
+
+    // ── 2. the synonym graph: this corpus's declarations plus every pair an
+    //       earlier run confirmed, unioned into one group per real thing ──
+    let parent = #{};
+    let syn_rows = [];
+    let skeys = syn_hits.keys();
+    skeys.sort();
+    for kk in skeys {
+        let key = ostr(kk);
+        let rec = syn_hits[key];
+        // A pair seen once is a coincidence: "128GB" and "256GB" in the same
+        // listing say nothing. Two independent listings do.
+        if oint(rec["n"], 0) < syn_min { continue; }
+        let ns = pstr2(rec, "ns", "");
+        uf_union(parent, tag_key(ns, pstr(rec, "a")), tag_key(ns, pstr(rec, "b")));
+        syn_rows.push(#{ key: key, a: pstr(rec, "a"), b: pstr(rec, "b"), ns: ns,
+                         n: oint(rec["n"], 0), first_seen: pstr(rec, "first_seen"),
+                         last_seen: pstr(rec, "last_seen") });
+    }
+    syn_rows = order_docs(syn_rows, "key");
+
+    // ── 3. one canonical name per group: the spelling the most items use ──
+    let gns = #{};
+    let gvars = #{};
+    let canon_of = #{};
+    let group_of = #{};
+    let sk = sightings.keys();
+    sk.sort();
+    for kk in sk {
+        let k = ostr(kk);
+        let root = uf_find(parent, k);
+        if !canon_of.contains(root) {
+            let bucket = #{};   // spelling -> items
+            let ns = ns_of_key(k);
+            let tag = tag_of_key(k);
+            bucket[tag] = 0;
+            gvars[root] = bucket;
+            gns[root] = ns;
+        }
+        let bucket = gvars[root];
+        let tag = tag_of_key(k);
+        bucket[tag] = oint(bucket[tag], 0) + oint(sightings[k], 0);
+        gvars[root] = bucket;
+    }
+    for kk in sk {
+        let k = ostr(kk);
+        let root = uf_find(parent, k);
+        if !canon_of.contains(root) {
+            let names = [];
+            let bucket = gvars[root];
+            for nk in bucket.keys() { names.push(#{ k: ostr(nk), n: oint(bucket[nk], 0) }); }
+            let ranked = rank_top(names, 1);
+            let canon = if ranked.len() > 0 { ranked[0]["k"] } else { tag_of_key(k) };
+            canon_of[root] = canon;
+            gns[root] = ns_of_key(k);
+        }
+        group_of[k] = tag_key(pstr2(gns, root, ""), ostr(canon_of[root]));
+    }
+
+    // group -> the spellings that folded into it (co-occurrence and raw forms)
+    let members = #{};
+    for kk in sk {
+        let k = ostr(kk);
+        let g = ostr(group_of[k]);
+        let list = if members.contains(g) { members[g] } else { [] };
+        if !list.contains(k) { list.push(k); }
+        members[g] = list;
+    }
+
+    // The priced vocabulary is bounded: the groups with the most items get
+    // price statistics, the tail is still listed but never used to judge a
+    // price. Everything stays linear in the corpus.
+    let gcount = [];
+    for kk in gns.keys() { gcount.push(#{ k: ostr(kk), n: 0 }); }
+    let gkeys = [];
+    for kk in group_of.keys() {
+        let g = ostr(group_of[ostr(kk)]);
+        let found = false;
+        for e in gkeys { if e["k"] == g { found = true; break; } }
+        if !found { gkeys.push(#{ k: g, n: oint(sightings[ostr(kk)], 0) }); }
+    }
+    let priced_groups = rank_top(gkeys, vocab_max);
+
+    // ── 4. per-group counts, first/last seen, co-occurrence, sample titles ──
+    let rows_by_id = #{};
+    for row in corpus { rows_by_id[pstr(row, "id")] = row; }
+    let item_count = #{};
+    let price_of = #{};
+    let first_seen = #{};
+    let last_seen = #{};
+    let samples = #{};
+    let co = #{};
+    for g in priced_groups {
+        item_count[g["k"]] = 0;
+        price_of[g["k"]] = [];
+        co[g["k"]] = #{};
+    }
+    for ig in item_tags {
+        let id = pstr(ig, "id");
+        let row = if rows_by_id.contains(id) { rows_by_id[id] } else { #{} };
+        let title = pstr(row, "title");
+        let price = pick(row, "price");
+        let at = oint(pick(row, "collected_at_ms"), 0);
+        let keys = ig["keys"];
+        for kk in keys {
+            let g = if group_of.contains(ostr(kk)) { ostr(group_of[ostr(kk)]) } else { ostr(kk) };
+            if !item_count.contains(g) { continue; }   // outside the priced vocabulary
+            item_count[g] = oint(item_count[g], 0) + 1;
+            if at > 0 {
+                if !first_seen.contains(g) || at < oint(first_seen[g], 0) { first_seen[g] = at; }
+                if !last_seen.contains(g) || at > oint(last_seen[g], 0) { last_seen[g] = at; }
+            }
+            if title != "" {
+                let ss = if samples.contains(g) { samples[g] } else { [] };
+                if ss.len() < 3 && !ss.contains(title) { ss.push(title); }
+                samples[g] = ss;
+            }
+            if type_of(price) != "()" {
+                let p = onum(price);
+                if p > 0.0 {
+                    let ps = price_of[g];
+                    ps.push(p);
+                    price_of[g] = ps;
+                }
+            }
+            // Co-occurrence is counted once per item, so a tag repeated inside
+            // one listing cannot inflate the pair.
+            for k2 in keys {
+                let g2 = if group_of.contains(ostr(k2)) { ostr(group_of[ostr(k2)]) } else { ostr(k2) };
+                if g2 == g || !item_count.contains(g2) { continue; }
+                let bucket = co[g];
+                bucket[g2] = oint(bucket[g2], 0) + 1;
+                co[g] = bucket;
+            }
+        }
+    }
+
+    // ── 5. the price model: one robust distribution per group ──
+    let tag_stats = [];
+    let stat_of = #{};
+    for g in priced_groups {
+        let key = g["k"];
+        let ps = price_of[key];
+        let n = ps.len();
+        let stats = #{ n: 0, min: (), max: (), mean: (), median: (), mad: (),
+                       fair: (), low: (), high: (), prices: [] };
+        if n > 0 {
+            let lo = 1e30; let hi = -1e30; let sum = 0.0;
+            for p in ps {
+                if p < lo { lo = p; }
+                if p > hi { hi = p; }
+                sum += p;
+            }
+            let med = median_of(ps);
+            let m = mad_of(ps, med);
+            stats["min"] = round2(lo);
+            stats["max"] = round2(hi);
+            stats["mean"] = round2(sum / n);
+            stats["median"] = round2(med);
+            stats["mad"] = round2(m);
+            stats["n"] = n;
+            if n >= min_samples {
+                // median ± sigma · 1.4826 · MAD, the usual consistency factor
+                // for a median/MAD pair. A MAD of zero (every listing the same
+                // price) falls back to a 10% band so one different listing is
+                // still visible.
+                let spread = if m > 0.0 { sigma * 1.4826 * m } else { med * 0.1 };
+                stats["fair"] = round2(med);
+                stats["low"] = round2(med - spread);
+                stats["high"] = round2(med + spread);
+            }
+            let keep = [];
+            for p in sorted_copy(ps) { keep.push(round2(p)); }
+            while keep.len() > price_cap { keep.remove(0); }
+            stats["prices"] = keep;
+        }
+        stat_of[key] = stats;
+        tag_stats.push(#{
+            tag: key,
+            ns: ns_of_key(key),
+            items: oint(item_count[key], 0),
+            n_priced: n,
+            min: stats["min"], max: stats["max"], mean: stats["mean"],
+            median: stats["median"], mad: stats["mad"],
+            fair: stats["fair"], low: stats["low"], high: stats["high"],
+            prices: stats["prices"]
+        });
+    }
+
+    // ── 6. per-item price history, from the watch store ──
+    let item_stats = [];
+    let istat_of = #{};
+    for w in watch_items(wdata) {
+        let id = pstr(w, "id");
+        let ps = [];
+        let at = 0;
+        let st = "on_sale";
+        if omap(w) && w.contains("history") && type_of(w["history"]) == "array" {
+            for h in w["history"] {
+                let p = pick(h, "price");
+                if type_of(p) != "()" {
+                    let v = onum(p);
+                    if v > 0.0 { ps.push(v); }
+                }
+                let m = oint(pick(h, "at_ms"), 0);
+                if m > at { at = m; }
+                st = pstr2(h, "status", st);
+            }
+        }
+        let n = ps.len();
+        let s = #{ n: n, last: (), low: (), high: (), median: (), mad: (), vs_median_pct: () };
+        if n > 0 {
+            let sorted = sorted_copy(ps);
+            let med = median_of(ps);
+            let last = sorted[sorted.len() - 1];
+            s["last"] = round2(last);
+            s["low"] = round2(sorted[0]);
+            s["high"] = round2(last);
+            s["median"] = round2(med);
+            s["mad"] = round2(mad_of(ps, med));
+            if med > 0.0 && n >= 2 { s["vs_median_pct"] = round2((last - med) / med * 100.0); }
+        }
+        istat_of[id] = s;
+        item_stats.push(#{
+            id: id, title: pstr(w, "title"), status: st,
+            n: s["n"], last: s["last"], low: s["low"], high: s["high"],
+            median: s["median"], mad: s["mad"], vs_median_pct: s["vs_median_pct"],
+            last_seen_ms: at
+        });
+    }
+    item_stats = order_docs(item_stats, "id");
+
+    // ── 7. what this run's card/detail pairs say about our own readings ──
+    let corrections = if omap(learned) && learned.contains("corrections") && omap(learned["corrections"])
+                      { learned["corrections"] } else { #{} };
+    let ckey = "feed_detail";
+    let prev = if corrections.contains(ckey) && omap(corrections[ckey]) { corrections[ckey] } else {
+        #{ key: ckey, n: 0, ratios: [], first_seen: now["rfc3339"], last_seen: now["rfc3339"] } };
+    if !prev.contains("first_seen") || pstr2(prev, "first_seen", "") == "" {
+        prev["first_seen"] = now["rfc3339"];
+    }
+    let ratios = if omap(prev) && prev.contains("ratios") && type_of(prev["ratios"]) == "array"
+                 { prev["ratios"] } else { [] };
+    let learned_now = 0;
+    for fp in feed_pairs {
+        let f = onum(pick(fp, "feed"));
+        let d = onum(pick(fp, "detail"));
+        // Only a magnitude-style discrepancy is learnable. A 券后价 or a
+        // 价格面议 is a *different* price, and averaging the two kinds into one
+        // factor is the exact mistake this is meant to prevent.
+        if f <= 0.0 || d <= 0.0 { continue; }
+        let r = d / f;
+        if r < 0.5 || r > 2.0 { continue; }
+        ratios.push(round2(r * 10000.0) / 10000.0);
+        learned_now += 1;
+    }
+    while ratios.len() > price_cap { ratios.remove(0); }
+    if learned_now > 0 { prev["last_seen"] = now["rfc3339"]; }
+    prev["n"] = oint(prev["n"], 0) + learned_now;
+    prev["ratios"] = ratios;
+    if ratios.len() > 0 {
+        let p25 = quantile_of(ratios, 0.25);
+        let p75 = quantile_of(ratios, 0.75);
+        prev["factor"] = round2(median_of(ratios));
+        prev["p25"] = round2(p25);
+        prev["p75"] = round2(p75);
+        prev["spread"] = if p25 > 0.0 { round2(p75 / p25) } else { 0.0 };
+    } else {
+        prev["factor"] = ();
+        prev["spread"] = 0.0;
+    }
+    corrections[ckey] = prev;
+
+    // ── 8. anomalies: the whole corpus judged against what it now knows ──
+    // The corpus, not this run's rows: `evolve` with no query browses nothing
+    // and still has to answer "which of these is a deal?", which is a question
+    // about everything collected so far rather than about the last fetch.
+    let out_rows = [];
+    let verdict_rows = [];
+    for row in corpus {
+        let price = pick(row, "price");
+        if type_of(price) == "()" { continue; }
+        let p = onum(price);
+        if p <= 0.0 { continue; }
+        // The best-supported group this item belongs to is the one that gets to
+        // call it a bargain or a rip-off.
+        let best = ();
+        if omap(row) && row.contains("tags") && type_of(row["tags"]) == "array" {
+            for t in row["tags"] {
+                let k = tag_key(pstr2(t, "ns", ""), pstr(t, "tag"));
+                if !group_of.contains(k) { continue; }
+                let g = ostr(group_of[k]);
+                if !stat_of.contains(g) { continue; }
+                let st = stat_of[g];
+                if type_of(pick(st, "fair")) == "()" { continue; }
+                if best == () || oint(pick(st, "n"), 0) > oint(pick(best, "n"), 0) {
+                    let copy = #{}; let f = st.keys();
+                    for kk in f { copy[kk] = st[kk]; }
+                    copy["tag"] = g;
+                    best = copy;
+                }
+            }
+        }
+        if best == () { continue; }
+        let fair = onum(pick(best, "fair"));
+        if fair <= 0.0 { continue; }
+        let pct = round2((p - fair) / fair * 100.0);
+        let v = "fair";
+        if p < onum(pick(best, "low")) { v = "below_fair"; }
+        else if p > onum(pick(best, "high")) { v = "above_fair"; }
+        let out_row = #{
+            id: pstr(row, "id"),
+            title: pstr(row, "title"),
+            tag: pstr(best, "tag"),
+            price: round2(p),
+            fair: fair,
+            low: pick(best, "low"),
+            high: pick(best, "high"),
+            n_priced: oint(pick(best, "n"), 0),
+            pct_vs_fair: pct,
+            verdict: v
+        };
+        verdict_rows.push(#{ k: pstr(row, "id"), n: pct.abs(), row: out_row });
+        if v != "fair" { out_rows.push(#{ k: pstr(row, "id"), n: pct.abs(), row: out_row }); }
+    }
+    // Anything outside its tag's fair band — cheap *and* expensive alike. The
+    // two are opposites for the buyer, so the caller splits them by
+    // `row.verdict` rather than being handed one list called "deals" that
+    // quietly contains the over-priced half.
+    let outliers = pull_docs(rank_top(out_rows, 50), out_rows, "k");
+
+    // ── 9. the vocabulary document ──
+    let group_docs = [];
+    for g in priced_groups {
+        let key = g["k"];
+        let spellings = [];
+        let raws_out = [];
+        let mk = if members.contains(key) { members[key] } else { [] };
+        for m in mk {
+            spellings.push(m);
+            if raws.contains(m) {
+                let bucket = raws[m];
+                for rk in bucket.keys() { raws_out.push(#{ k: ostr(rk), n: oint(bucket[rk], 0) }); }
+            }
+        }
+        let co_rows = [];
+        let bucket = co[key];
+        for ck in bucket.keys() { co_rows.push(#{ k: ostr(ck), n: oint(bucket[ck], 0) }); }
+        let st = if stat_of.contains(key) { stat_of[key] } else { #{} };
+        group_docs.push(#{
+            tag: key,
+            ns: ns_of_key(key),
+            name: tag_of_key(key),
+            items: oint(item_count[key], 0),
+            // sort() sorts in place and hands back unit in this engine build,
+            // so the sorted array is passed on in its own statement; reading its
+            // return value used to store a null here.
+            spellings: sorted_strings(spellings),
+            raws: pull_docs(rank_top(raws_out, 8), raws_out, "k"),
+            first_seen_ms: oint(first_seen[key], 0),
+            last_seen_ms: oint(last_seen[key], 0),
+            samples: if samples.contains(key) { samples[key] } else { [] },
+            co: pull_docs(rank_top(co_rows, oint(pick(o, "co_top"), 6)), co_rows, "k"),
+            n_priced: oint(pick(st, "n"), 0),
+            fair: pick(st, "fair")
+        });
+    }
+    let group_ranks = [];
+    for g in group_docs { group_ranks.push(#{ k: g["tag"], n: g["items"] }); }
+    let group_list = pull_docs(rank_top(group_ranks, vocab_max), group_docs, "tag");
+
+    let fair_rows = [];
+    for t in tag_stats {
+        if type_of(pick(t, "fair")) == "()" { continue; }
+        fair_rows.push(#{
+            tag: t["tag"], n: t["n_priced"], items: t["items"],
+            fair: t["fair"], low: t["low"], high: t["high"]
+        });
+    }
+    let fair_ranks = [];
+    for f in fair_rows { fair_ranks.push(#{ k: f["tag"], n: f["n"] }); }
+    let fair_top = pull_docs(rank_top(fair_ranks, 12), fair_rows, "tag");
+
+    // ── 10. what changed since the last run ──
+    let prev_tags = [];
+    if type_of(pick(o, "prev_tags")) == "array" { prev_tags = o["prev_tags"]; }
+    let new_only = [];
+    for g in group_list {
+        if !prev_tags.contains(g["tag"]) {
+            new_only.push(#{ tag: g["tag"], ns: g["ns"], items: g["items"], fair: g["fair"] });
+        }
+    }
+
+    let runs = oint(pick(learned, "runs"), 0) + 1;
+    let tags_doc = #{
+        version: 1,
+        updated_at: now["rfc3339"],
+        updated_at_ms: now["unix_ms"],
+        runs: runs,
+        last_run_at: now["rfc3339"],
+        last_run_at_ms: now["unix_ms"],
+        group_count: group_list.len(),
+        vocab_size: sk.len(),
+        groups: group_list,
+        synonyms: syn_rows
+    };
+    let model_doc = #{
+        version: 1,
+        updated_at: now["rfc3339"],
+        updated_at_ms: now["unix_ms"],
+        runs: runs,
+        min_samples: min_samples,
+        sigma: sigma,
+        tags: tag_stats,
+        items: item_stats,
+        corrections: corrections,
+        next_feed_factor: feed_factor_of(corrections, o),
+        outliers: outliers
+    };
+
+    #{
+        tags_doc: tags_doc,
+        model_doc: model_doc,
+        index_rows: corpus,
+        new_tags: new_only,
+        group_count: group_list.len(),
+        vocab_size: sk.len(),
+        priced_items: priced_groups.len(),
+        fair: fair_top,
+        outliers: outliers,
+        verdicts: verdict_rows,
+        group_of: group_of,
+        corrections: corrections[ckey],
+        next_feed_factor: feed_factor_of(corrections, o),
+        runs: runs
+    }
+}
+
+fn uf_find(parent, k) {
+    let cur = k;
+    let hops = 0;
+    while omap(parent) && parent.contains(cur) && ostr(parent[cur]) != cur && hops < 64 {
+        cur = ostr(parent[cur]);
+        hops += 1;
+    }
+    cur
+}
+
+fn uf_union(parent, a, b) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra == rb { return ra; }
+    // Deterministic shape, not a meaningful order: the group's *name* comes from
+    // the frequency vote in learn(), never from which root happened to win.
+    if ra.len() <= rb.len() { parent[rb] = ra; } else { parent[ra] = rb; }
+    ra
+}
+
+// Every knob of the learning pass, with the defaults that make it safe to leave
+// alone: the model only speaks about a tag once it has seen three priced
+// listings carrying it, and a learned card-price factor needs five agreeing
+// sightings inside a 10% band before it touches a price.
+fn evolve_opts(args) {
+    #{
+        min_samples: opt_int(args, "min_samples", 3),
+        sigma: opt_float(args, "sigma", 2.0),
+        syn_min_hits: opt_int(args, "syn_min_hits", 2),
+        vocab_max: opt_int(args, "vocab_max", 300),
+        model_prices: opt_int(args, "model_prices", 120),
+        index_max: opt_int(args, "index_max", 5000),
+        co_top: opt_int(args, "co_top", 6),
+        feed_min_hits: opt_int(args, "feed_min_hits", 5),
+        feed_max_spread: opt_float(args, "feed_max_spread", 1.1),
+        apply_feed_factor: opt_bool(args, "apply_feed_factor", true),
+        emit_sql: opt_bool(args, "emit_sql", false),
+        sql_max: opt_int(args, "sql_max", 800),
+        sql_points: opt_int(args, "sql_points", 10)
+    }
+}
+// ── SQLite hand-off ─────────────────────────────────────────────────────────
+//
+// The three stores are the plugin's own memory. They are deliberately not a
+// database: a plugin has no way to reach one, and a JSON file rewritten once per
+// run is the right shape for "what did I learn". When the caller does want SQL —
+// SQLite for the rows, DuckDB for the aggregates, via the engine's `kind: "db"`
+// capability — the plugin hands over finished statements instead of asking the
+// engine to build them, so what lands in the database is exactly the numbers
+// the plugin used for its own decisions.
+//
+// Nothing is executed here. `emit_sql: true` puts two arrays in the result,
+// `sql_schema` (DDL) and `sql_statements` (rows), for the workflow to pass to a
+// db capability. Every statement is idempotent, so collecting the same thing
+// twice costs nothing but a re-read.
+//
+// The tables are prefixed `goofish_` because the database file is a shared
+// resource: a user who keeps one SQLite file for prices and tags keeps their
+// other tables in it too.
+
+fn sql_q(s) {
+    let out = "'";
+    let i = 0;
+    while i < s.len() {
+        let c = s.sub_string(i, 1);
+        if c == "'" { out += "''"; } else { out += c; }
+        i += 1;
+    }
+    out + "'"
+}
+
+// A number, or NULL. A NaN or an absurd magnitude becomes NULL rather than a
+// literal that would not parse — JSON has no NaN, but a median of zero in a
+// ratio can still produce one.
+fn sql_n(v) {
+    if type_of(v) == "()" { return "NULL"; }
+    let f = onum(v);
+    if f != f { return "NULL"; }
+    if f > 1e300 || f < -1e300 { return "NULL"; }
+    fmt_num(f)
+}
+
+fn sql_i(v) {
+    "" + oint(v, 0)
+}
+
+fn sql_join(xs) {
+    let out = "";
+    let i = 0;
+    while i < xs.len() {
+        if i > 0 { out += ","; }
+        out += xs[i];
+        i += 1;
+    }
+    out
+}
+
+fn sql_schema() {
+    [
+        "CREATE TABLE IF NOT EXISTS goofish_items(id TEXT PRIMARY KEY, title TEXT, url TEXT, status TEXT, location TEXT, want_count INTEGER, collected_at TEXT, collected_at_ms INTEGER, source_mode TEXT, tags TEXT, price REAL, last_price REAL, low_price REAL, high_price REAL, median_price REAL, vs_median_pct REAL)",
+        "CREATE TABLE IF NOT EXISTS goofish_price_points(item_id TEXT, at_ms INTEGER, at TEXT, price REAL, want_count INTEGER, views INTEGER, status TEXT, PRIMARY KEY (item_id, at_ms))",
+        "CREATE TABLE IF NOT EXISTS goofish_tags(tag TEXT PRIMARY KEY, ns TEXT, name TEXT, items INTEGER, n_priced INTEGER, first_seen_ms INTEGER, last_seen_ms INTEGER, spellings TEXT, co_tags TEXT, fair REAL)",
+        "CREATE TABLE IF NOT EXISTS goofish_item_tags(item_id TEXT, tag TEXT, raw TEXT, PRIMARY KEY (item_id, tag))",
+        "CREATE TABLE IF NOT EXISTS goofish_tag_price_stats(tag TEXT PRIMARY KEY, ns TEXT, n INTEGER, items INTEGER, min REAL, median REAL, mean REAL, max REAL, mad REAL, fair REAL, low REAL, high REAL, prices TEXT)",
+        "CREATE TABLE IF NOT EXISTS goofish_price_corrections(key TEXT PRIMARY KEY, n INTEGER, factor REAL, spread REAL, p25 REAL, p75 REAL, first_seen TEXT, last_seen TEXT)"
+    ]
+}
+
+// `lv` is learn()'s return value, `wdata` the watch store.
+//
+// Small tables first, so a statement budget that runs out loses price points —
+// the bulkiest and most reproducible table — rather than the vocabulary or the
+// correction the rest of the model is keyed on.
+fn sql_statements(lv, wdata, o) {
+    let out = [];
+    let max = oint(pick(o, "sql_max"), 800);
+    let dropped = [0];
+    let points_cap = oint(pick(o, "sql_points"), 10);
+    let model = pick(lv, "model_doc");
+    let tags_doc = pick(lv, "tags_doc");
+    let corpus = pick(lv, "index_rows");
+    let group_of = pick(lv, "group_of");
+
+    // ── the learned correction, one row ──
+    let corr = pick(model, "corrections");
+    if omap(corr) {
+        let ckeys = corr.keys();
+        ckeys.sort();
+        for kk in ckeys {
+            let c = corr[ostr(kk)];
+            out.push("INSERT OR REPLACE INTO goofish_price_corrections(key, n, factor, spread, p25, p75, first_seen, last_seen) VALUES("
+                + sql_q(ostr(kk)) + ", " + sql_i(pick(c, "n")) + ", " + sql_n(pick(c, "factor"))
+                + ", " + sql_n(pick(c, "spread")) + ", " + sql_n(pick(c, "p25")) + ", " + sql_n(pick(c, "p75"))
+                + ", " + sql_q(pstr2(c, "first_seen", "")) + ", " + sql_q(pstr2(c, "last_seen", "")) + ")");
+        }
+    }
+
+    // ── the vocabulary ──
+    if omap(tags_doc) && tags_doc.contains("groups") && type_of(tags_doc["groups"]) == "array" {
+        for g in tags_doc["groups"] {
+            let spell = [];
+            if g.contains("spellings") && type_of(g["spellings"]) == "array" {
+                for s in g["spellings"] { spell.push(ostr(s)); }
+            }
+            let co = [];
+            if g.contains("co") && type_of(g["co"]) == "array" {
+                for c in g["co"] { co.push(ostr(pick(c, "k"))); }
+            }
+            out.push("INSERT OR REPLACE INTO goofish_tags(tag, ns, name, items, n_priced, first_seen_ms, last_seen_ms, spellings, co_tags, fair) VALUES("
+                + sql_q(pstr(g, "tag")) + ", " + sql_q(pstr(g, "ns")) + ", " + sql_q(pstr(g, "name"))
+                + ", " + sql_i(pick(g, "items")) + ", " + sql_i(pick(g, "n_priced"))
+                + ", " + sql_i(pick(g, "first_seen_ms")) + ", " + sql_i(pick(g, "last_seen_ms"))
+                + ", " + sql_q(sql_join(spell)) + ", " + sql_q(sql_join(co)) + ", " + sql_n(pick(g, "fair")) + ")");
+        }
+    }
+
+    // ── per-tag price statistics ──
+    if omap(model) && model.contains("tags") && type_of(model["tags"]) == "array" {
+        for t in model["tags"] {
+            let ps = [];
+            if t.contains("prices") && type_of(t["prices"]) == "array" {
+                for p in t["prices"] { ps.push(fmt_num(onum(p))); }
+            }
+            out.push("INSERT OR REPLACE INTO goofish_tag_price_stats(tag, ns, n, items, min, median, mean, max, mad, fair, low, high, prices) VALUES("
+                + sql_q(pstr(t, "tag")) + ", " + sql_q(pstr(t, "ns")) + ", " + sql_i(pick(t, "n_priced"))
+                + ", " + sql_i(pick(t, "items"))
+                + ", " + sql_n(pick(t, "min")) + ", " + sql_n(pick(t, "median")) + ", " + sql_n(pick(t, "mean"))
+                + ", " + sql_n(pick(t, "max")) + ", " + sql_n(pick(t, "mad")) + ", " + sql_n(pick(t, "fair"))
+                + ", " + sql_n(pick(t, "low")) + ", " + sql_n(pick(t, "high")) + ", " + sql_q(sql_join(ps)) + ")");
+        }
+    }
+
+    // ── per-item price history summary, keyed by the watch store's own ids ──
+    let istat = #{};
+    if omap(model) && model.contains("items") && type_of(model["items"]) == "array" {
+        for it in model["items"] { istat[pstr(it, "id")] = it; }
+    }
+    let corpus_rows = if type_of(corpus) == "array" { corpus } else { [] };
+    for row in corpus_rows {
+        let id = pstr(row, "id");
+        let tags = [];
+        if omap(row) && row.contains("tags") && type_of(row["tags"]) == "array" {
+            let keys = [];
+            for t in row["tags"] {
+                let k = tag_key(pstr2(t, "ns", ""), pstr(t, "tag"));
+                if !keys.contains(k) { keys.push(k); }
+            }
+            keys.sort();
+            for k in keys {
+                tags.push(if group_of.contains(k) { ostr(group_of[k]) } else { k });
+            }
+        }
+        let s = if istat.contains(id) { istat[id] } else { #{} };
+        if out.len() >= max { dropped[0] += 1; continue; }
+        out.push("INSERT OR REPLACE INTO goofish_items(id, title, url, status, location, want_count, collected_at, collected_at_ms, source_mode, tags, price, last_price, low_price, high_price, median_price, vs_median_pct) VALUES("
+            + sql_q(id) + ", " + sql_q(pstr(row, "title")) + ", " + sql_q(pstr(row, "url"))
+            + ", " + sql_q(pstr(row, "status")) + ", " + sql_q(pstr(row, "location"))
+            + ", " + sql_i(pick(row, "want_count")) + ", " + sql_q(pstr(row, "collected_at"))
+            + ", " + sql_i(pick(row, "collected_at_ms")) + ", " + sql_q(pstr(row, "source_mode"))
+            + ", " + sql_q(sql_join(tags))
+            // "price" is the price this row's tags were priced BY - the same
+            // number the tag statistics were built from, which is what makes
+            // "compare this listing against its tag's fair price" answerable in
+            // SQL. "last_price" is the watch history's latest sighting, a
+            // different (and possibly older) question, so both are kept.
+            + ", " + sql_n(pick(row, "price"))
+            + ", " + sql_n(pick(s, "last")) + ", " + sql_n(pick(s, "low")) + ", " + sql_n(pick(s, "high"))
+            + ", " + sql_n(pick(s, "median")) + ", " + sql_n(pick(s, "vs_median_pct")) + ")");
+        // item -> tag, so DuckDB can ask "what does this listing look like
+        // against everything else carrying the same tag".
+        let raw_of = #{};
+        if omap(row) && row.contains("tags") && type_of(row["tags"]) == "array" {
+            for t in row["tags"] { raw_of[tag_key(pstr2(t, "ns", ""), pstr(t, "tag"))] = ostr(pick(t, "raw")); }
+        }
+        let ki = 0;
+        while ki < tags.len() {
+            if out.len() >= max { dropped[0] += 1; ki += 1; continue; }
+            let gk = tags[ki];
+            out.push("INSERT OR REPLACE INTO goofish_item_tags(item_id, tag, raw) VALUES("
+                + sql_q(id) + ", " + sql_q(gk) + ", " + sql_q(if raw_of.contains(gk) { ostr(raw_of[gk]) } else { gk }) + ")");
+            ki += 1;
+        }
+    }
+
+    // ── every price ever observed ──
+    for w in watch_items(wdata) {
+        let id = pstr(w, "id");
+        if !omap(w) || !w.contains("history") || type_of(w["history"]) != "array" { continue; }
+        let hist = [];
+        for h in w["history"] { hist.push(h); }
+        let start = 0;
+        if hist.len() > points_cap { start = hist.len() - points_cap; }
+        let i = start;
+        while i < hist.len() {
+            let h = hist[i];
+            if out.len() >= max { dropped[0] += 1; i += 1; continue; }
+            out.push("INSERT OR REPLACE INTO goofish_price_points(item_id, at_ms, at, price, want_count, views, status) VALUES("
+                + sql_q(id) + ", " + sql_i(pick(h, "at_ms")) + ", " + sql_q(pstr2(h, "at", ""))
+                + ", " + sql_n(pick(h, "price")) + ", " + sql_i(pick(h, "want_count"))
+                + ", " + sql_i(pick(h, "views")) + ", " + sql_q(pstr2(h, "status", "")) + ")");
+            i += 1;
+        }
+    }
+
+    #{ statements: out, dropped: dropped[0], count: out.len() }
+}
+
 // ── entry point ─────────────────────────────────────────────────────────────
 
 fn run(host, ctx) {
@@ -820,7 +2101,10 @@ fn run(host, ctx) {
 
     let started = host.now();
     let source_url = "";
-    if mode == "search" { source_url = search_url(host, query, p["preencoded"]); }
+    // A search and a learning run share the listing path; only the corpus size
+    // and what finish() does afterwards differ.
+    let wide = mode == "search" || mode == "evolve";
+    if wide { source_url = search_url(host, query, p["preencoded"]); }
 
     let results = [];
     let failures = [];
@@ -828,6 +2112,34 @@ fn run(host, ctx) {
     let wdata = load_watch(host, wpath, started);
     let initial_tracked = watch_items(wdata).len();
     let notes = [];
+
+    // What the self-evolution pass gets to learn from this run: every entry
+    // that was actually read, and the pairs where the same item was priced
+    // twice — once on the card, once on the detail page. finish() turns them
+    // into index.json / tags.json / price_model.json.
+    let lr = #{ entries: [], feed_pairs: [], args: args, out_dir: out_dir };
+
+    // A learned correction factor rewrites card prices that were never
+    // confirmed by a detail page, so it has to be in hand *before* the search
+    // loop reads any card. Loading it here costs one small file read and keeps
+    // the correction out of the browsing path.
+    let feed_factor = 0.0;
+    {
+        let mdoc = read_json_or(host, model_path(out_dir), #{});
+        if omap(mdoc) && mdoc.contains("next_feed_factor") {
+            feed_factor = onum(pick(mdoc, "next_feed_factor"));
+        }
+    }
+
+    // "价格进化" with nothing to fetch is a legitimate request: re-derive the
+    // model from everything already in index.json. It costs no browser time and
+    // is the cheapest way to ask "what does the plugin think a Sony A7M4 costs?".
+    if mode == "evolve" && p["item_url"] == "" && query == "" {
+        notes.push("evolve with no query and no item: re-derived the price model from"
+            + " index.json (" + index_rows(load_index(host, out_dir)).len() + " items on record)");
+        return finish(host, started, mode, query, source_url, out_dir, wpath,
+            wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0, lr);
+    }
 
     // ── one product: browse it, record it, and remember its price ───────────
     if mode == "item" || mode == "watch_add" {
@@ -875,11 +2187,11 @@ fn run(host, ctx) {
                 }
                 notes.push("item " + p["item_id"] + " is gone (" + why + ")" + tail);
                 return finish(host, started, mode, query, source_url, out_dir, wpath,
-                    wdata, initial_tracked, results, failures, changes, notes, 0, 1, 0, 0);
+                    wdata, initial_tracked, results, failures, changes, notes, 0, 1, 0, 0, lr);
             }
             failures.push(#{ rank: 1, url: url, status: st, error: why });
             return finish(host, started, mode, query, source_url, out_dir, wpath,
-                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0);
+                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0, lr);
         }
         let now = host.now();
         let rank = 1;
@@ -901,6 +2213,7 @@ fn run(host, ctx) {
             wdata = obs["data"];
             changes.push(obs["change"]);
         }
+        lr["entries"].push(entry);
         results.push(#{
             rank: rank,
             id: entry["id"],
@@ -914,7 +2227,7 @@ fn run(host, ctx) {
             tracked: track
         });
         return finish(host, started, mode, query, source_url, out_dir, wpath,
-            wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0);
+            wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0, lr);
     }
 
     // ── price monitoring: re-read every tracked item, report what moved ─────
@@ -924,7 +2237,7 @@ fn run(host, ctx) {
             notes.push("watch.json is empty — nothing tracked yet. Add an item with"
                 + " `mode: item` (or pass watch_add:<url>) first.");
             return finish(host, started, mode, query, source_url, out_dir, wpath,
-                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0);
+                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0, lr);
         }
 
         let targets = [];
@@ -998,6 +2311,7 @@ fn run(host, ctx) {
             if d == "new" || d == "gone" || d == "unknown" || abs_pct >= drop_pct {
                 changes.push(ch);
             }
+            lr["entries"].push(item_record(rec, j + 1, url, "watch", now));
             results.push(#{
                 rank: j + 1,
                 id: id,
@@ -1013,11 +2327,11 @@ fn run(host, ctx) {
             j += 1;
         }
         return finish(host, started, mode, query, source_url, out_dir, wpath,
-            wdata, initial_tracked, results, failures, changes, notes, checked, gone, 0, 0);
+            wdata, initial_tracked, results, failures, changes, notes, checked, gone, 0, 0, lr);
     }
 
     // ── search: list a page of cards, optionally open the first N in full ───
-    if mode == "search" {
+    if wide {
         if query == "" {
             throw "goofish: a search needs a keyword — pass query/paper-style text, e.g."
                 + " '搜索 索尼 A7M4' or --query 'iphone 13 pro'";
@@ -1030,7 +2344,7 @@ fn run(host, ctx) {
             }
             failures.push(#{ rank: 0, url: source_url, status: "empty", error: why });
             return finish(host, started, mode, query, source_url, out_dir, wpath,
-                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0);
+                wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0, lr);
         }
 
         let rows = [];
@@ -1043,6 +2357,7 @@ fn run(host, ctx) {
         if omap(page) && page.contains("rows") && type_of(page["rows"]) == "array" {
             dropped_by_price = page["rows"].len() - rows.len();
         }
+        let corrected_cards = 0;
         if dropped_by_price > 0 {
             notes.push("price filter dropped " + dropped_by_price + " of "
                 + page["rows"].len() + " cards (goofish ignores ?priceMin=/?priceMax=, so this is"
@@ -1073,6 +2388,25 @@ fn run(host, ctx) {
                 }
             }
 
+            // The one thing this plugin can learn about its own reading: the
+            // card and the detail page price the same item, sometimes
+            // differently. Record the pair when we happen to see both.
+            let card_price = onum(pick(row, "price"));
+            if opened {
+                let detail_price = onum(pick(rec, "price"));
+                if card_price > 0.0 && detail_price > 0.0 {
+                    lr["feed_pairs"].push(#{ id: id, feed: card_price, detail: detail_price });
+                }
+            } else if feed_factor > 0.0 && card_price > 0.0 {
+                // A card that was never opened is exactly the price the learned
+                // factor exists to fix: the original is kept beside the
+                // corrected one so the caller can see what was changed.
+                rec["price"] = round2(card_price * feed_factor);
+                rec["price_corrected"] = true;
+                rec["price_uncorrected"] = card_price;
+                corrected_cards += 1;
+            }
+
             let now = host.now();
             let entry = item_record(rec, rank, source_url, mode, now);
             entry["_selector"] = sel;
@@ -1090,6 +2424,7 @@ fn run(host, ctx) {
                 wdata = obs["data"];
                 changes.push(obs["change"]);
             }
+            lr["entries"].push(entry);
             results.push(#{
                 rank: rank,
                 id: entry["id"],
@@ -1113,6 +2448,10 @@ fn run(host, ctx) {
             notes.push("browse " + browse + " requested but only " + visited.len()
                 + " item pages were opened");
         }
+        if corrected_cards > 0 {
+            notes.push("applied the learned card-price factor to " + corrected_cards
+                + " unopened card(s); the raw price is kept as price_uncorrected");
+        }
         let paged = 0;
         if omap(page) && page.contains("pages") && type_of(page["pages"]) == "array" {
             paged = page["pages"].len();
@@ -1121,7 +2460,7 @@ fn run(host, ctx) {
         // is what a watch run does; a listing just reads, so it reports 0.
         return finish(host, started, mode, query, source_url, out_dir, wpath,
             wdata, initial_tracked, results, failures, changes, notes, 0, 0,
-            paged, dropped_by_price);
+            paged, dropped_by_price, lr);
     }
 
     throw "goofish resolved mode '" + mode + "' is not runnable";
@@ -1359,7 +2698,7 @@ fn save_markdown(host, url, out_dir, id, entry, keep_open) {
 // which branch produced it.
 fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
           initial_tracked, results, failures, changes, notes, checked, gone,
-          pages_visited, price_filtered) {
+          pages_visited, price_filtered, lr) {
     let now = host.now();
     let items = watch_items(wdata);
     let tracked = items.len();
@@ -1373,6 +2712,113 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
             if omap(wr) && wr.contains("path") { saved_watch = "" + wr["path"]; }
         } catch (e) {
             saved_watch = "write failed: " + e;
+        }
+    }
+
+    // ── self-evolution: fold what this run read into the model ───────────────
+    //
+    // Every mode feeds the pass, not just `evolve`: watching a price or
+    // browsing an item is exactly the fresh evidence the model needs, and
+    // making the caller opt in separately would mean the model only ever learns
+    // when someone remembered to ask for it.
+    let evo = ();
+    let sql_schema_out = [];
+    let sql_statements_out = [];
+    let fresh = [];
+    for e in lr["entries"] {
+        let m = mine_tags(e);
+        fresh.push(index_row(e, m, now));
+    }
+    let corpus = merge_index(load_index(host, out_dir), fresh,
+        oint(pick(evolve_opts(lr["args"]), "index_max"), 5000));
+    let o = evolve_opts(lr["args"]);
+    let tags_doc = read_json_or(host, tags_path(out_dir), #{});
+    let prev_tags = [];
+    if omap(tags_doc) && tags_doc.contains("groups") && type_of(tags_doc["groups"]) == "array" {
+        for g in tags_doc["groups"] { prev_tags.push(pstr(g, "tag")); }
+    }
+    o["prev_tags"] = prev_tags;
+    let learned = load_learned(host, out_dir, now);
+    let lv = learn(host, out_dir, corpus, wdata, learned, fresh, lr["feed_pairs"], now, o);
+
+    let evo_error = "";
+    try {
+        // The index is the corpus, so it is written as a document around the
+        // rows: the same shape load_index() reads back, which is what makes a
+        // second `evolve` a re-derivation instead of a second opinion.
+        write_json(host, index_path(out_dir), #{
+            version: 1,
+            updated_at: now["rfc3339"],
+            updated_at_ms: now["unix_ms"],
+            items: lv["index_rows"]
+        });
+        write_json(host, tags_path(out_dir), lv["tags_doc"]);
+        write_json(host, model_path(out_dir), lv["model_doc"]);
+    } catch (err) {
+        // A failed write must not take the run's actual answer down with it: the
+        // prices and tags above are still correct for this run.
+        evo_error = "" + err;
+        notes.push("could not save the price model: " + evo_error);
+    }
+
+    for nt in lv["new_tags"] {
+        notes.push("learned tag " + nt["tag"] + " from " + nt["items"] + " item(s)");
+    }
+    for s in lv["tags_doc"]["synonyms"] {
+        notes.push("tag synonyms " + s["a"] + " = " + s["b"] + " ("
+            + s["n"] + " sightings, ns " + (if s["ns"] == "" { "-" } else { s["ns"] }) + ")");
+    }
+    let nf = lv["model_doc"]["next_feed_factor"];
+    if nf > 0.0 {
+        notes.push("learned card-price factor " + fmt_num(nf)
+            + " — applied to card prices that no detail page confirmed");
+    } else {
+        notes.push("card-price factor not learned yet: not enough agreeing card/detail pairs");
+    }
+    // An outlier below the band is something to buy; one above it is something
+    // to walk away from. They come out of the model in one list, because the
+    // model only knows the band — the split is a question about intent, so it
+    // belongs to the caller that knows.
+    let cheap = [];
+    let dear = [];
+    for o in lv["outliers"] {
+        let row = o["row"];
+        if ostr(row["verdict"]) == "below_fair" { cheap.push(row); } else { dear.push(row); }
+    }
+    if cheap.len() > 0 {
+        notes.push(cheap.len() + " item(s) priced below their tag's fair range"
+            + " (best: " + ostr(cheap[0]["title"]) + " at " + fmt_num(onum(cheap[0]["price"]))
+            + ", fair " + fmt_num(onum(cheap[0]["fair"])) + ")");
+    }
+    if dear.len() > 0 {
+        notes.push(dear.len() + " item(s) priced above their tag's fair range");
+    }
+    evo = #{
+        items_indexed: lv["index_rows"].len(),
+        new_this_run: fresh.len(),
+        tags: lv["tags_doc"]["groups"].len(),
+        vocabulary: lv["tags_doc"]["vocab_size"],
+        priced_items: lv["priced_items"],
+        runs: lv["tags_doc"]["runs"],
+        fair: lv["fair"],
+        deals: cheap,
+        overpriced: dear,
+        verdicts: lv["verdicts"],
+        next_feed_factor: nf,
+        corrections: lv["model_doc"]["corrections"],
+        index_file: index_path(out_dir),
+        tags_file: tags_path(out_dir),
+        model_file: model_path(out_dir),
+        error: evo_error
+    };
+
+    if opt_bool(lr["args"], "emit_sql", false) {
+        let sq = sql_statements(lv, wdata, o);
+        sql_schema_out = sql_schema();
+        sql_statements_out = sq["statements"];
+        if sq["dropped"] > 0 {
+            notes.push("sql: " + sq["count"] + " statements, " + sq["dropped"]
+                + " price points dropped past sql_points");
         }
     }
 
@@ -1390,7 +2836,7 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
         else { unknowns += 1; }
     }
 
-    #{
+    let out = #{
         mode: mode,
         query: query,
         source_url: source_url,
@@ -1418,6 +2864,12 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
         },
         notes: notes,
         results: results,
-        failures: failures
+        failures: failures,
+        evolve: evo
+    };
+    if sql_statements_out.len() > 0 {
+        out["sql_schema"] = sql_schema_out;
+        out["sql_statements"] = sql_statements_out;
     }
+    out
 }

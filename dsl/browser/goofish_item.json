@@ -1,7 +1,7 @@
 {
   "name": "goofish_items",
   "dsl_version": 2,
-  "description": "闲鱼(goofish.com) 商品搜索 / 浏览 / 信息收集 / 价格监控，由 Rhai 插件 websites/goofish 驱动 (kind: \"plugin\"). 用 --query 传搜索词、商品链接或商品 id；插件推断模式：'iphone' 之类是搜索，'https://www.goofish.com/item?id=...' 是单件浏览，'价格监控'/'watch price' 是价格监控。可用 state.mode 显式指定 search|item|watch|watch_add。搜索结果每条都会写成 out_dir/items/<id>.json (默认 ~/tmp/goofish)；加 browse:N 会把前 N 条打开成完整详情(描述/属性/卖家/图片)。单件浏览加 markdown 会额外存 Markdown 与图片。注意 goofish 的 /search 忽略 ?page= 与 ?sort=，翻页由插件点击页面上的页码完成，所以 count 较大时用 pages 控制；price_min/price_max 是取回后在本地过滤(站点不认这两个查询参数)。价格监控读 out_dir/watch.json 里记录的历史，每次 watch 会重新抓取被监控商品并给出 changes(new/down/up/same/gone) 与 summary，drop_pct 可设百分比阈值过滤播报。默认 watch 一次最多检查 watch_limit(20) 件，用 watch_query 过滤标题。",
+  "description": "闲鱼(goofish.com) 商品搜索 / 浏览 / 信息收集 / 价格监控 / 价格与标签自进化，由 Rhai 插件 websites/goofish 驱动 (kind: \"plugin\")。用 --query 传搜索词、商品链接或商品 id；插件推断模式：'iphone' 之类是搜索，'https://www.goofish.com/item?id=...' 是单件浏览，'价格监控'/'watch price' 是价格监控，'价格进化'/'fair price'/'evolve' 是自进化学习。可用 state.mode 显式指定 search|item|watch|watch_add|evolve。搜索结果每条都会写成 out_dir/items/<id>.json (默认 ~/tmp/goofish)；加 browse:N 会把前 N 条打开成完整详情(描述/属性/卖家/图片)。单件浏览加 markdown 会额外存 Markdown 与图片。注意 goofish 的 /search 忽略 ?page= 与 ?sort=，翻页由插件点击页面上的页码完成，所以 count 较大时用 pages 控制；price_min/price_max 是取回后在本地过滤(站点不认这两个查询参数)。价格监控读 out_dir/watch.json 里记录的历史，每次 watch 会重新抓取被监控商品并给出 changes(new/down/up/same/gone) 与 summary，drop_pct 可设百分比阈值过滤播报。默认 watch 一次最多检查 watch_limit(20) 件，用 watch_query 过滤标题。【自进化】任何一次运行(搜索/单件/监控)都会顺手学习，结果里多一个 evolve 块：evolve.tags/evolve.vocabulary 是从商品属性里挖出来的标签词表(同义写法如 sony=索尼 会合并)，evolve.fair 是每个标签的合理价格区间(中位数 ± 稳健离散度)，evolve.deals / evolve.overpriced 是低于/高于该区间的商品(按偏离度排序)，evolve.next_feed_factor 是学到的“搜索卡片价 vs 详情页价”修正系数(证据不足时为 0 表示不修正)。三份学习结果落在 out_dir/index.json(语料)、out_dir/tags.json(标签词表)、out_dir/price_model.json(价格模型)，重复运行幂等：统计量每次从 index.json 重新推导，只有累积证据在增长。mode=evolve 且不给 query 时不抓网页，直接用 index.json 重新推导模型。state.emit_sql=true 会额外返回 sql_schema(建表 DDL) 与 sql_statements(幂等写入语句) 数组，交给引擎的 kind:\"db\" 能力落进 SQLite——见 dsl/browser/goofish_sqlite.json。",
   "start": "collect",
   "max_iterations": 2,
   "policy": {
@@ -72,7 +72,8 @@
           "history_max": "${state.history_max}",
           "page_budget_ms": "${state.page_budget_ms}",
           "keep_open": "${state.keep_open}",
-          "selector": "${state.selector}"
+          "selector": "${state.selector}",
+          "emit_sql": "${state.emit_sql}"
         },
         "project": {
           "mode": "/mode",
@@ -90,7 +91,10 @@
           "notes": "/notes",
           "changes": "/changes",
           "results": "/results",
-          "failures": "/failures"
+          "failures": "/failures",
+          "evolve": "/evolve",
+          "sql_schema": "/sql_schema",
+          "sql_statements": "/sql_statements"
         }
       }
     }
