@@ -25,7 +25,8 @@ Think of it as: `validate` before you run, `run` to execute, `state`/`resume`/
 5. **Extend it** — `plugin install | list | dir`: site logic lives in sandboxed
    **Rhai plugins** (`kind: "plugin"`), not in the binary. See
    `skill --section plugins`.
-6. **Bring up local resources** — `chrome ensure` (a CDP Chrome) and
+6. **Bring up local resources** — `browser ensure --backend chrome` (a CDP
+   Chrome today; the selector is stable if a better backend arrives) and
    `server ensure | start | stop | status` (a local HTTP server), the idempotent
    primitives a browser workflow needs before it drives a page. See
    `skill --section orchestrate`.

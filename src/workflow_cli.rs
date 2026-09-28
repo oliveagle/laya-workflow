@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use laya_workflow::apps;
 use laya_workflow::backend::{HeuristicBackend, LayaBackend};
+use laya_workflow::orchestrate::BrowserBackend;
 use laya_workflow::workflow::{Decide, ResilientWorkflow};
 
 #[derive(Parser)]
@@ -141,12 +142,19 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PluginCmd,
     },
-    /// Ensure a local Chrome with CDP (remote debugging) on 127.0.0.1:<port>.
-    /// Idempotent: does nothing when the endpoint is already up. Pair it with
-    /// `server` and a `chrome_cdp` capability to drive a real local page.
+    /// Ensure a local browser backend is up on 127.0.0.1:<port> (idempotent).
+    /// `--backend chrome` drives a CDP Chrome today; the selector keeps the call
+    /// shape stable if a better backend arrives. Pair it with `server` and a
+    /// `chrome_cdp` capability to drive a real local page.
+    Browser {
+        #[command(subcommand)]
+        cmd: BrowserCmd,
+    },
+    /// Hidden back-compat alias for `browser ensure --backend chrome`.
+    #[command(hide = true)]
     Chrome {
         #[command(subcommand)]
-        cmd: ChromeCmd,
+        cmd: ChromeAliasCmd,
     },
     /// Long-running local HTTP server lifecycle: `ensure` (idempotent) /
     /// `start` (foreground, or `--daemon` to detach) / `stop` / `status`.
@@ -158,16 +166,36 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum ChromeCmd {
-    /// Launch (or confirm) a dedicated Chrome CDP endpoint on a temp profile.
+enum BrowserCmd {
+    /// Launch (or confirm) the backend on an isolated profile.
     Ensure {
-        /// CDP port (default: $LAYA_CDP_PORT, else 9222).
+        /// Browser backend (default: chrome).
+        #[arg(long, value_enum, default_value = "chrome")]
+        backend: BrowserBackend,
+        /// Endpoint port (default: the backend's — chrome reads $LAYA_CDP_PORT,
+        /// else 9222).
         #[arg(long)]
         port: Option<u16>,
-        /// Chrome executable (default: $CHROME_BIN, else the platform path).
+        /// Chrome executable (chrome backend; default $CHROME_BIN, else the
+        /// platform path).
         #[arg(long = "chrome-bin")]
         chrome_bin: Option<String>,
-        /// Isolated profile dir (default: $LAYA_CDP_PROFILE, else /tmp/...).
+        /// Isolated profile dir (chrome backend; default $LAYA_CDP_PROFILE, else
+        /// /tmp/...).
+        #[arg(long)]
+        profile: Option<String>,
+    },
+}
+
+/// The deprecated `chrome ensure` spellings, forwarded to the chrome backend.
+#[derive(Subcommand)]
+enum ChromeAliasCmd {
+    /// Equivalent to `browser ensure --backend chrome`.
+    Ensure {
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long = "chrome-bin")]
+        chrome_bin: Option<String>,
         #[arg(long)]
         profile: Option<String>,
     },
@@ -446,7 +474,8 @@ fn main() -> Result<()> {
             format,
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
-        Cmd::Chrome { cmd } => run_chrome(cmd),
+        Cmd::Browser { cmd } => run_browser(cmd),
+        Cmd::Chrome { cmd } => run_chrome_alias(cmd),
         Cmd::Server { cmd } => run_server(cmd),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
@@ -483,19 +512,47 @@ fn main() -> Result<()> {
     }
 }
 
-/// `chrome ensure`: idempotent CDP Chrome; exits 1 (message already printed)
-/// when it could not bring the endpoint up.
-fn run_chrome(cmd: &ChromeCmd) -> Result<()> {
+/// `browser ensure --backend <b>`: idempotent; exits 1 (message already
+/// printed) when the backend could not be brought up.
+fn run_browser(cmd: &BrowserCmd) -> Result<()> {
     use laya_workflow::orchestrate as orch;
     match cmd {
-        ChromeCmd::Ensure {
+        BrowserCmd::Ensure {
+            backend,
             port,
             chrome_bin,
             profile,
         } => {
-            let req =
-                orch::ChromeEnsureRequest::from_env(*port, chrome_bin.clone(), profile.clone());
-            if !orch::ensure_chrome(&req)? {
+            let req = orch::BrowserEnsureRequest::from_env(
+                *backend,
+                *port,
+                chrome_bin.clone(),
+                profile.clone(),
+            );
+            if !orch::ensure_browser(&req)? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Hidden alias: `chrome ensure` == `browser ensure --backend chrome`.
+fn run_chrome_alias(cmd: &ChromeAliasCmd) -> Result<()> {
+    use laya_workflow::orchestrate as orch;
+    match cmd {
+        ChromeAliasCmd::Ensure {
+            port,
+            chrome_bin,
+            profile,
+        } => {
+            let req = orch::BrowserEnsureRequest::from_env(
+                orch::BrowserBackend::Chrome,
+                *port,
+                chrome_bin.clone(),
+                profile.clone(),
+            );
+            if !orch::ensure_browser(&req)? {
                 std::process::exit(1);
             }
             Ok(())
@@ -691,7 +748,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
-        ("orchestrate", "Bring up the local resources a browser workflow needs first: `chrome ensure` (a CDP Chrome, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
+        ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("safety",    "Safety gates every spec goes through: `policy.allow_exec`, `policy.allow_paths`, `policy.allow_hosts`, `policy.max_timeout_ms`, `policy.max_output`, secret redaction.", "validate"),
     ]
 }
@@ -765,7 +822,7 @@ fn print_overview() {
     println!("  replay -s S -d D -iter N");
     println!("                 re-run a single iter in place from its state_before");
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
-    println!("  chrome ensure  ensure a CDP Chrome on 127.0.0.1:<port> (idempotent)");
+    println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  skill          this help (progressive disclosure)");
     println!();

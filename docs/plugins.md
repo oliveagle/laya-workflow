@@ -303,12 +303,14 @@ Local orchestration is built into the engine as two subcommands (the generic,
 repo-agnostic half of the devine_int workflow; the devine-specific server build
 stays in `devine_int`). Nothing here is devine- or site-specific:
 
-* `laya-workflow chrome ensure [--port N] [--chrome-bin P] [--profile D]` —
-  ensure a CDP Chrome on `127.0.0.1:<port>` (idempotent: exits 0 immediately
-  when the endpoint is already up). Env fallbacks: `LAYA_CDP_PORT` /
-  `CHROME_BIN` / `LAYA_CDP_PROFILE`. Point the spec's `chrome_cdp` endpoint at
-  it and run it via an `exec` capability (`policy.allow_exec: true`) before the
-  browser nodes.
+* `laya-workflow browser ensure [--backend chrome] [--port N] [--chrome-bin P]
+  [--profile D]` — ensure a local browser backend on `127.0.0.1:<port>`
+  (idempotent: exits 0 immediately when it is already up). Only `chrome` (a CDP
+  endpoint) exists today; the `--backend` selector keeps the call shape stable
+  if a better backend arrives. Chrome env fallbacks: `LAYA_CDP_PORT` /
+  `CHROME_BIN` / `LAYA_CDP_PROFILE` (`chrome ensure` is a hidden alias). Point
+  the spec's `chrome_cdp` endpoint at it and run it via an `exec` capability
+  (`policy.allow_exec: true`) before the browser nodes.
 * `laya-workflow server ensure | start [--daemon] | stop | status [--port N]
   [--command C] [--health-path P]` — generic local HTTP server lifecycle for any
   command and port. Liveness = "the port answers HTTP at all" (2xx–5xx), so a
@@ -325,7 +327,7 @@ the subcommands directly; that requires `laya-workflow` on `PATH` (override the
 shim's target with `LAYA_WORKFLOW_BIN`).
 
 `dsl/browser/browser_orchestrate_probe.json` is the end-to-end demo that drives
-*both* subcommands plus the `browser_base` plugin in one graph: `ensure_chrome` →
+*both* subcommands plus the `browser_base` plugin in one graph: `browser ensure` →
 `ensure_server` (cold-starts `state.server_cmd` as a daemon when the port is
 dead, idempotent otherwise) → open → wait_htmx → assert → done. It is
 repo-agnostic — point `state.server_cmd` / `state.url` at any local server.

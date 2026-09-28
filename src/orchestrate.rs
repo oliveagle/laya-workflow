@@ -2,8 +2,9 @@
 //! `scripts/laya-ensure-chrome.sh` / `scripts/laya-ensure-server.py` helpers.
 //!
 //! These are the generic, repo-agnostic primitives a workflow reaches for
-//! *before* it drives a browser: guarantee a Chrome with a CDP endpoint, and
-//! guarantee (or stop) a long-running local HTTP server. Both are **idempotent**
+//! *before* it drives a browser: guarantee a browser backend is up (a CDP
+//! Chrome today, selected with `--backend`), and guarantee (or stop) a
+//! long-running local HTTP server. Both are **idempotent**
 //! — "ensure" does nothing when the resource is already up — so a spec can call
 //! them on every run.
 //!
@@ -33,36 +34,75 @@ pub const DEFAULT_CDP_PROFILE: &str = "/tmp/laya-chrome-cdp-profile";
 /// How long a freshly spawned server gets to start answering.
 const SPAWN_WAIT: Duration = Duration::from_secs(60);
 
-// ───────────────────────────── Chrome / CDP ─────────────────────────────
+// ──────────────────────────── browser backends ────────────────────────────
 
-/// Inputs for [`ensure_chrome`]; `None` fields fall back to the env var the old
-/// shell script read (`LAYA_CDP_PORT` / `CHROME_BIN` / `LAYA_CDP_PROFILE`).
-#[derive(Clone, Debug, Default)]
-pub struct ChromeEnsureRequest {
+/// Which local browser-automation backend `browser ensure` should bring up.
+///
+/// Only [`Chrome`](BrowserBackend::Chrome) — a CDP endpoint over Chrome's
+/// remote debugging — exists today. The selector is the whole point: a *better*
+/// backend can be added later without changing the `browser ensure` call shape a
+/// workflow (or a spec capability) already uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum BrowserBackend {
+    /// Google Chrome / Chromium exposing a CDP endpoint.
+    Chrome,
+}
+
+impl BrowserBackend {
+    /// Stable lowercase name — exactly the `--backend` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BrowserBackend::Chrome => "chrome",
+        }
+    }
+
+    /// The port this backend listens on when none is given.
+    pub fn default_port(self) -> u16 {
+        match self {
+            BrowserBackend::Chrome => DEFAULT_CDP_PORT,
+        }
+    }
+
+    /// The env var this backend reads for a port override, if any.
+    fn port_env(self) -> &'static str {
+        match self {
+            BrowserBackend::Chrome => "LAYA_CDP_PORT",
+        }
+    }
+}
+
+/// Inputs for [`ensure_browser`]: the backend selector plus the per-backend
+/// knobs. `None` fields fall back to the env var the old shell script read
+/// (`LAYA_CDP_PORT` / `CHROME_BIN` / `LAYA_CDP_PROFILE`).
+#[derive(Clone, Debug)]
+pub struct BrowserEnsureRequest {
+    pub backend: BrowserBackend,
     pub port: Option<u16>,
     pub chrome_bin: Option<String>,
     pub profile: Option<String>,
 }
 
-impl ChromeEnsureRequest {
+impl BrowserEnsureRequest {
     /// Resolve the request against the environment exactly like the script did.
     pub fn from_env(
+        backend: BrowserBackend,
         port: Option<u16>,
         chrome_bin: Option<String>,
         profile: Option<String>,
     ) -> Self {
         let port = port
             .or_else(|| {
-                std::env::var("LAYA_CDP_PORT")
+                std::env::var(backend.port_env())
                     .ok()
                     .and_then(|v| v.parse().ok())
             })
-            .or(Some(DEFAULT_CDP_PORT));
+            .or(Some(backend.default_port()));
         let chrome_bin = chrome_bin
             .or_else(|| nonempty(std::env::var("CHROME_BIN").ok()))
             .or_else(|| nonempty(std::env::var("LAYA_CHROME_BINARY").ok()));
         let profile = profile.or_else(|| nonempty(std::env::var("LAYA_CDP_PROFILE").ok()));
         Self {
+            backend,
             port,
             chrome_bin,
             profile,
@@ -70,7 +110,7 @@ impl ChromeEnsureRequest {
     }
 
     fn port(&self) -> u16 {
-        self.port.unwrap_or(DEFAULT_CDP_PORT)
+        self.port.unwrap_or_else(|| self.backend.default_port())
     }
 
     fn profile(&self) -> String {
@@ -92,14 +132,20 @@ fn nonempty(v: Option<String>) -> Option<String> {
     v.filter(|s| !s.is_empty())
 }
 
-/// Ensure a Chrome with CDP (remote debugging) is listening on
+/// Ensure the request's browser backend is up and reachable on
 /// `127.0.0.1:<port>`. Idempotent: prints an `ok … already listening` line and
-/// returns `true` when the endpoint is already up; otherwise launches a
-/// dedicated Chrome with an isolated profile and waits (up to ~15s) for it.
+/// returns `true` when it is already up.
 ///
-/// Returns `Ok(false)` when the endpoint could not be brought up (the failure
-/// message is already on stderr), matching the script's exit code 1.
-pub fn ensure_chrome(req: &ChromeEnsureRequest) -> Result<bool> {
+/// Returns `Ok(false)` when it could not be brought up (the failure message is
+/// already on stderr), matching the old script's exit code 1.
+pub fn ensure_browser(req: &BrowserEnsureRequest) -> Result<bool> {
+    match req.backend {
+        BrowserBackend::Chrome => ensure_chrome(req),
+    }
+}
+
+/// The `chrome` backend: launch (or confirm) a CDP Chrome on an isolated profile.
+fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     let port = req.port();
     if tcp_up(port, Duration::from_millis(300)) {
         println!("ok Chrome CDP already listening on 127.0.0.1:{port}");
@@ -615,14 +661,17 @@ mod tests {
     }
 
     #[test]
-    fn chrome_request_defaults_and_env_override() {
+    fn browser_request_defaults_and_env_override() {
         // Pure defaults, independent of ambient env.
-        let req = ChromeEnsureRequest {
+        let req = BrowserEnsureRequest {
+            backend: BrowserBackend::Chrome,
             port: None,
             chrome_bin: Some("/bin/sh".to_string()),
             profile: Some("/tmp/x".to_string()),
         };
         assert_eq!(req.port(), DEFAULT_CDP_PORT);
+        assert_eq!(req.backend.default_port(), DEFAULT_CDP_PORT);
+        assert_eq!(req.backend.as_str(), "chrome");
         assert_eq!(req.profile(), "/tmp/x");
         assert_eq!(req.chrome_bin(), "/bin/sh");
     }
@@ -639,17 +688,18 @@ mod tests {
     }
 
     #[test]
-    fn ensure_chrome_is_idempotent_when_something_listens() {
-        // Bind an ephemeral port, then ask ensure_chrome to "ensure" it. It must
-        // notice the listener and return true without spawning Chrome.
+    fn browser_ensure_is_idempotent_when_something_listens() {
+        // Bind an ephemeral port, then ask `ensure_browser` to "ensure" it. It
+        // must notice the listener and return true without spawning a browser.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
-        let req = ChromeEnsureRequest {
+        let req = BrowserEnsureRequest {
+            backend: BrowserBackend::Chrome,
             port: Some(port),
             chrome_bin: Some("/nonexistent/chrome".to_string()),
             profile: None,
         };
-        assert!(ensure_chrome(&req).expect("ensure ok"));
+        assert!(ensure_browser(&req).expect("ensure ok"));
     }
 
     #[test]

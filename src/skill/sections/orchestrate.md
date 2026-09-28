@@ -7,21 +7,28 @@ already up — so a workflow can call them on every run without guarding. They a
 the generic, repo-agnostic primitives; site/server specifics stay in the owning
 repo.
 
-## `chrome ensure` — a CDP Chrome on 127.0.0.1:<port>
+## `browser ensure` — a browser backend on 127.0.0.1:<port>
 
 ```sh
-laya-workflow chrome ensure                 # port 9222, default profile
-laya-workflow chrome ensure --port 9223     # another endpoint
+laya-workflow browser ensure                        # default backend: chrome
+laya-workflow browser ensure --backend chrome       # explicit (same thing)
+laya-workflow browser ensure --backend chrome --port 9223
 ```
 
-If something already listens on the port it prints
-`ok Chrome CDP already listening on 127.0.0.1:<port>` and exits 0. Otherwise it
-launches a dedicated Chrome (isolated `--user-data-dir`, `--no-first-run`) and
-waits up to ~15s for the endpoint, printing `ok Chrome CDP up …`. A missing
-Chrome prints `fail Google Chrome not found at …` and exits 1.
+`--backend chrome` (the default, and the only one today) ensures a **CDP
+Chrome** on an isolated profile: if something already listens on the port it
+prints `ok Chrome CDP already listening on 127.0.0.1:<port>` and exits 0.
+Otherwise it launches a dedicated Chrome (isolated `--user-data-dir`,
+`--no-first-run`) and waits up to ~15s for the endpoint, printing
+`ok Chrome CDP up …`. A missing Chrome prints
+`fail Google Chrome not found at …` and exits 1.
 
-Env fallbacks (same names the old script read): `LAYA_CDP_PORT`, `CHROME_BIN`,
-`LAYA_CDP_PROFILE` (default `/tmp/laya-chrome-cdp-profile`). Flags win over env.
+The **backend selector is the point**: a more suitable backend can be added
+later without changing the call shape a workflow already uses. Chrome-specific
+knobs (`--chrome-bin`, `--profile`) and env fallbacks (`CHROME_BIN` /
+`LAYA_CDP_PROFILE`; port via `LAYA_CDP_PORT`) apply to that backend — flags win
+over env. `chrome ensure` remains as a hidden alias for the chrome backend.
+
 Point a spec's `chrome_cdp` capability endpoint at `http://127.0.0.1:<port>` and
 `ensure` it via an `exec` capability — or just set `launch: true` on the
 `chrome_cdp` capability and let the engine launch it.
@@ -60,7 +67,7 @@ laya-workflow run --spec dsl/browser/browser_orchestrate_probe.json \
   --state '{"cdp_port":9222,"port":18766,"server_cmd":"python3 -m http.server 18766","url":"http://127.0.0.1:18766/"}'
 ```
 
-graph: `chrome ensure` → `server ensure` (cold-starts `server_cmd` if the port is
+graph: `browser ensure` → `server ensure` (cold-starts `server_cmd` if the port is
 dead) → open → wait_htmx → assert → done. `laya-workflow` must be on `PATH`
 because the spec calls it through an `exec` capability.
 

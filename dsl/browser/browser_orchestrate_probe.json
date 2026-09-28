@@ -1,7 +1,7 @@
 {
   "name": "browser_orchestrate_probe",
   "dsl_version": 2,
-  "description": "End-to-end local browser orchestration demo. It drives the engine's own Rust orchestration subcommands — `laya-workflow chrome ensure --port` (guarantee a CDP endpoint, idempotent) and `laya-workflow server ensure --port … --command …` (guarantee a long-running local HTTP server, cold-starting state.server_cmd when nothing healthy answers) — then drives the bundled `plugins/browser_base` plugin against the ensured URL. The browser probe is the ground-truth gate: if the page never reaches a real loaded state the plugin op throws and the whole run fails (rc=1); otherwise the graph routes to the terminal node. Offline heuristic runs report /ok on the ensure nodes (both subcommands are idempotent) and let the probe decide. `laya-workflow` must be on PATH. Nothing here is devine-specific — point state.server_cmd / state.url at any local server.",
+  "description": "End-to-end local browser orchestration demo. It drives the engine's own Rust orchestration subcommands — `laya-workflow browser ensure --backend chrome --port` (guarantee a CDP endpoint, idempotent) and `laya-workflow server ensure --port … --command …` (guarantee a long-running local HTTP server, cold-starting state.server_cmd when nothing healthy answers) — then drives the bundled `plugins/browser_base` plugin against the ensured URL. The browser probe is the ground-truth gate: if the page never reaches a real loaded state the plugin op throws and the whole run fails (rc=1); otherwise the graph routes to the terminal node. Offline heuristic runs report /ok on the ensure nodes (both subcommands are idempotent) and let the probe decide. `laya-workflow` must be on PATH. Nothing here is devine-specific — point state.server_cmd / state.url at any local server.",
   "start": "ensure_chrome",
   "max_iterations": 8,
   "convergence_window": 5,
@@ -21,8 +21,10 @@
       "kind": "exec",
       "argv": [
         "laya-workflow",
-        "chrome",
+        "browser",
         "ensure",
+        "--backend",
+        "chrome",
         "--port",
         "${state.cdp_port}"
       ],
@@ -84,7 +86,7 @@
       "questions": {
         "ok": {
           "type": "choice",
-          "instructions": "Run `laya-workflow chrome ensure --port <cdp_port>` (idempotent: does nothing when a CDP endpoint already listens, otherwise launches a dedicated Chrome)?",
+          "instructions": "Run `laya-workflow browser ensure --backend chrome --port <cdp_port>` (idempotent: does nothing when a CDP endpoint already listens, otherwise launches a dedicated Chrome)?",
           "criteria": {
             "A": "yes, the subcommand exited 0 and the CDP endpoint is (still) up",
             "B": "no, the script failed or the CDP endpoint is unreachable"
