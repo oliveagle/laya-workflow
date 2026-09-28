@@ -181,6 +181,33 @@ fn builtin(name: &str) -> Option<Sources> {
                 ("abs.js", include_str!("../../plugins/arxiv/page/abs.js")),
             ],
         ),
+        "wikipedia" => (
+            include_str!("../../plugins/wikipedia/plugin.json"),
+            include_str!("../../plugins/wikipedia/main.rhai"),
+            vec![
+                (
+                    "search.js",
+                    include_str!("../../plugins/wikipedia/page/search.js"),
+                ),
+                (
+                    "clean.js",
+                    include_str!("../../plugins/wikipedia/page/clean.js"),
+                ),
+            ],
+        ),
+        "mdn" => (
+            include_str!("../../plugins/mdn/plugin.json"),
+            include_str!("../../plugins/mdn/main.rhai"),
+            Vec::new(),
+        ),
+        "bing" => (
+            include_str!("../../plugins/bing/plugin.json"),
+            include_str!("../../plugins/bing/main.rhai"),
+            vec![(
+                "search.js",
+                include_str!("../../plugins/bing/page/search.js"),
+            )],
+        ),
         _ => return None,
     };
     Some(Sources {
@@ -203,6 +230,9 @@ pub fn builtin_names() -> &'static [&'static str] {
         "hf-trending",
         "hackernews",
         "arxiv",
+        "wikipedia",
+        "mdn",
+        "bing",
     ]
 }
 
@@ -1802,6 +1832,103 @@ mod tests {
         assert_eq!(out["read"]["text"], json!("hello"));
         assert!(dir.join("out/deep/x.txt").is_file());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bundled_wikipedia_compiles_and_plans() {
+        let src = builtin("wikipedia").expect("bundled wikipedia plugin");
+        let m = Manifest::parse(&src.manifest, "wikipedia").unwrap();
+        assert_eq!(m.name, "wikipedia");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["clean.js", "search.js"]);
+
+        let p = |v: Value| call_of("wikipedia", "plan", vec![v]).unwrap();
+        assert!(call_of("wikipedia", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "transformer neural network" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        assert_eq!(s["lang"], json!("en"));
+        // A URL both picks the page and its language.
+        let a = p(json!({ "query": "https://zh.wikipedia.org/wiki/Transformer_(机器学习)" }));
+        assert_eq!(a["mode"], json!("page"));
+        assert_eq!(a["title"], json!("Transformer_(机器学习)"));
+        assert_eq!(a["lang"], json!("zh"));
+        // A bare title becomes an underscored article path.
+        let a = p(json!({ "title": "Rust (programming language)" }));
+        assert_eq!(a["mode"], json!("page"));
+        assert_eq!(a["title"], json!("Rust_(programming_language)"));
+        // An explicit search mode keeps its bounded row count.
+        let s = p(json!({ "query": "rust", "mode": "search", "count": 3, "lang": "zh" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(3));
+        assert_eq!(s["lang"], json!("zh"));
+        // An unsupported mode fails loudly.
+        assert!(call_of("wikipedia", "plan", vec![json!({ "mode": "nope" })]).is_err());
+    }
+
+    #[test]
+    fn bundled_mdn_compiles_and_plans() {
+        let src = builtin("mdn").expect("bundled mdn plugin");
+        let m = Manifest::parse(&src.manifest, "mdn").unwrap();
+        assert_eq!(m.name, "mdn");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        assert!(src.pages.is_empty());
+
+        let p = |v: Value| call_of("mdn", "plan", vec![v]).unwrap();
+        assert!(call_of("mdn", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "fetch api" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        assert_eq!(s["locale"], json!("en-US"));
+        // A doc path or an MDN URL reads that page.
+        let a = p(json!({ "query": "/en-US/docs/Web/API/Fetch_API" }));
+        assert_eq!(a["mode"], json!("page"));
+        assert_eq!(a["path"], json!("/en-US/docs/Web/API/Fetch_API"));
+        let a = p(json!({ "query": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API" }));
+        assert_eq!(a["mode"], json!("page"));
+        assert_eq!(a["path"], json!("/en-US/docs/Web/API/Fetch_API"));
+        let a = p(
+            json!({ "query": "https://developer.mozilla.org/zh-CN/docs/Web/API/Fetch_API", "lang": "zh-CN" }),
+        );
+        assert_eq!(a["mode"], json!("page"));
+        assert_eq!(a["path"], json!("/zh-CN/docs/Web/API/Fetch_API"));
+        assert_eq!(a["locale"], json!("zh-CN"));
+        // An explicit search mode keeps its bounded row count.
+        let s = p(json!({ "query": "promise", "mode": "search", "count": 3 }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(3));
+        // An unsupported mode fails loudly.
+        assert!(call_of("mdn", "plan", vec![json!({ "mode": "nope" })]).is_err());
+    }
+
+    #[test]
+    fn bundled_bing_compiles_and_plans() {
+        let src = builtin("bing").expect("bundled bing plugin");
+        let m = Manifest::parse(&src.manifest, "bing").unwrap();
+        assert_eq!(m.name, "bing");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["search.js"]);
+
+        let p = |v: Value| call_of("bing", "plan", vec![v]).unwrap();
+        assert!(call_of("bing", "plan", vec![json!({})]).is_err());
+        let s = p(json!({ "query": "typescript ai framework" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        assert_eq!(s["mkt"], json!(""));
+        let s = p(json!({ "query": "x", "count": 3, "mkt": "zh-CN" }));
+        assert_eq!(s["limit"], json!(3));
+        assert_eq!(s["mkt"], json!("zh-CN"));
+        // The limit is capped and the mode is validated.
+        assert_eq!(p(json!({ "query": "x", "count": 999 }))["limit"], json!(30));
+        assert!(call_of(
+            "bing",
+            "plan",
+            vec![json!({ "mode": "nope", "query": "x" })]
+        )
+        .is_err());
     }
 
     /// The arXiv reader's site logic is pure in `plan`, so it is unit-testable

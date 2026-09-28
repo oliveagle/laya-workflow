@@ -178,6 +178,22 @@ laya-workflow run --spec dsl/browser/arxiv.json --query "1706.03762"
 See [`docs/hackernews.md`](./docs/hackernews.md) and
 [`docs/arxiv.md`](./docs/arxiv.md).
 
+Three more keep the same shape: `plugins/wikipedia` searches articles and reads a
+whole article into Markdown (after stripping the site chrome in-page);
+`plugins/mdn` searches MDN through its public API and reads one doc through a
+tab; `plugins/bing` turns a phrase into Bing organic result rows.
+
+```bash
+laya-workflow run --spec dsl/browser/wikipedia.json --query "transformer neural network" --state '{"count":5}'
+laya-workflow run --spec dsl/browser/wikipedia.json --query "Rust (programming language)" --state '{"mode":"page"}'
+laya-workflow run --spec dsl/browser/mdn.json --query "fetch api" --state '{"count":5}'
+laya-workflow run --spec dsl/browser/mdn.json --query "/en-US/docs/Web/API/Fetch_API"
+laya-workflow run --spec dsl/browser/bing.json --query "typescript ai framework"
+```
+
+See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md)
+and [`docs/bing.md`](./docs/bing.md).
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.

@@ -211,6 +211,9 @@ owner.
 | `plugins/hf-trending` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
 | `plugins/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), full-text search, and a discussion + comment tree (`dsl/browser/hackernews.json`) |
 | `plugins/arxiv` | an arXiv reader over Chrome/CDP: search papers, or read one paper into a Markdown digest (`dsl/browser/arxiv.json`) |
+| `plugins/wikipedia` | a Wikipedia reader over Chrome/CDP: article search, and a whole article rendered to Markdown after the site chrome is stripped in-page (`dsl/browser/wikipedia.json`) |
+| `plugins/mdn` | an MDN Web Docs reader: search via the public search API, and one doc rendered to Markdown through a Chrome tab (`dsl/browser/mdn.json`) |
+| `plugins/bing` | a Bing web-search reader over Chrome/CDP: a phrase in, organic result rows out (`dsl/browser/bing.json`) |
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \

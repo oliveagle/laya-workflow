@@ -1,0 +1,82 @@
+{
+  "name": "wikipedia_reader",
+  "dsl_version": 2,
+  "description": "Read Wikipedia in a background Chrome tab, driven by the Rhai plugin `plugins/wikipedia` (kind: \"plugin\"). --query \"transformer neural network\" searches articles (title / snippet / link); a title or a wikipedia.org/wiki/ URL reads that article into Markdown + figures under out_dir (default ~/tmp/wikipedia). Optional state: mode (auto|search|page), lang (default en), count/limit (1-50), out_dir.",
+  "start": "read",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "en.wikipedia.org",
+      "zh.wikipedia.org",
+      "ja.wikipedia.org",
+      "de.wikipedia.org",
+      "fr.wikipedia.org",
+      "es.wikipedia.org",
+      "ru.wikipedia.org",
+      "ko.wikipedia.org"
+    ],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/wikipedia"
+    ],
+    "max_timeout_ms": 60000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 30000,
+      "max_text": 8000
+    },
+    "wikipedia": {
+      "kind": "plugin",
+      "plugin": "wikipedia",
+      "browser": "chrome",
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "read",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Read Wikipedia as requested?",
+          "criteria": { "A": "yes", "B": "no" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "wikipedia",
+        "with": {
+          "query": "${state.query}",
+          "mode": "${state.mode}",
+          "lang": "${state.lang}",
+          "count": "${state.count}",
+          "out_dir": "${state.out_dir}"
+        },
+        "project": {
+          "mode": "/mode",
+          "query": "/query",
+          "title": "/title",
+          "lang": "/lang",
+          "count": "/count",
+          "url": "/url",
+          "results": "/results",
+          "written": "/written",
+          "out_dir": "/out_dir",
+          "page_title": "/page_title",
+          "fetched_at": "/fetched_at"
+        }
+      }
+    }
+  ]
+}

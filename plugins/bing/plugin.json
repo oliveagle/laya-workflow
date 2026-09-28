@@ -1,0 +1,10 @@
+{
+  "name": "bing",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": ["search.js"],
+  "description": "Bing web search (bing.com) in a background Chrome tab: turn a phrase into organic result rows (title / url / display site / snippet). Optional market via mkt (e.g. en-US, zh-CN)."
+}

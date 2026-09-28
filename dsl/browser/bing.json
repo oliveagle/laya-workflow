@@ -1,0 +1,67 @@
+{
+  "name": "bing_search",
+  "dsl_version": 2,
+  "description": "Web search on Bing in a background Chrome tab, driven by the Rhai plugin `plugins/bing` (kind: \"plugin\"). --query \"typescript ai framework\" returns organic result rows (title / url / display site / snippet). Optional state: count/limit (1-30), mkt (e.g. en-US, zh-CN).",
+  "start": "search",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "www.bing.com"
+    ],
+    "allow_paths": [],
+    "max_timeout_ms": 60000,
+    "max_output": 4194304,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 20000,
+      "max_text": 6000
+    },
+    "bing": {
+      "kind": "plugin",
+      "plugin": "bing",
+      "browser": "chrome",
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "search",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Search Bing as requested?",
+          "criteria": { "A": "yes", "B": "no" }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "bing",
+        "with": {
+          "query": "${state.query}",
+          "count": "${state.count}",
+          "mkt": "${state.mkt}"
+        },
+        "project": {
+          "mode": "/mode",
+          "query": "/query",
+          "mkt": "/mkt",
+          "count": "/count",
+          "url": "/url",
+          "results": "/results",
+          "page_title": "/page_title",
+          "fetched_at": "/fetched_at"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "mdn",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": [],
+  "description": "MDN Web Docs (developer.mozilla.org): search docs through the public search API (title / summary / link), or read one doc page into Markdown via the engine's renderer. Any locale via lang (default en-US)."
+}
