@@ -373,7 +373,13 @@ figures pipeline as `save_article`. Each paper is written to
 `<out_dir>/<slug>.md`, `<out_dir>/<slug>_meta.json` and
 `<out_dir>/images/<slug>/img-N.ext`, so papers in one run never overwrite each
 other. `out_dir` defaults to `~/tmp/alphaxiv`. The result carries `results[]`
-(each with `title` and `written`) and `failures[]`. The spec's
+(each with `title`, `downloaded_at` and `written`) and `failures[]`.
+
+Every `<slug>_meta.json` is timestamped (`downloaded_at` as UTC RFC 3339 plus
+`downloaded_at_unix_ms`) and — for an op run — carries its provenance
+(`source`, `source_mode`, `rank`, `query`, and `interval` for trending), so
+successive trending downloads can be diffed and monitored over time. The op
+result also carries run-level `started_at` / `finished_at`. The spec's
 `policy.allow_paths` must include both the Chrome profile root
 (`${env.HOME}/.laya-workflow`) and the output root.
 

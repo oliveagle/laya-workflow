@@ -110,7 +110,9 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" \
 ```
 
 Papers are saved in Chinese by default (`lang` = `zh`); opt out with
-`--state '{"lang":"en"}'`.
+`--state '{"lang":"en"}'`. Each `<slug>_meta.json` records a UTC
+`downloaded_at` timestamp (plus the trending `rank`/`interval`), handy for
+monitoring what is trending over time.
 
 ## License
 
