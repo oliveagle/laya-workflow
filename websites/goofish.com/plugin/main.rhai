@@ -2287,8 +2287,14 @@ fn run(host, ctx) {
             let e = items[i];
             let keep = true;
             if watch_filter != "" {
-                let title = pstr(e, "title");
-                keep = title.contains(watch_filter);
+                // Case-insensitively: sellers type the model in every casing
+                // there is ("索尼a7m4", "索尼A7M4", "Sony A7m4"), so a literal
+                // contains() silently selects nothing unless the caller happens
+                // to match the seller's own capitalisation - and the run then
+                // reports every counter as zero, which reads like "nothing
+                // moved" rather than "nothing matched".
+                let title = pstr(e, "title").to_lower();
+                keep = title.contains(watch_filter.to_lower());
             }
             if keep { targets.push(e); }
             i += 1;

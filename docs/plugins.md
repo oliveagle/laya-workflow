@@ -273,7 +273,9 @@ learning mode. An explicit `state.mode` always wins. Everything lands in
 `item-<id>.md` + downloaded `images/<id>/` for an opened listing, and
 `watch.json` — one entry per tracked item with every price ever seen, so a
 later `watch` run reports `new` / `up` / `down` / `same` / `gone` rather than
-just the current number.
+just the current number. `watch_query` narrows that re-read and is matched
+against the stored title case-insensitively, because sellers type the model in
+both — `a7m4` and `A7M4` select the same items.
 
 #### Self-evolution: tags and prices that learn
 
