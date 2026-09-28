@@ -1,0 +1,69 @@
+{
+  "name": "dingtalk_chat_history",
+  "dsl_version": 2,
+  "description": "Read the DingTalk macOS app directly, with no API: scripts/dingtalk-ax drives the running app through the Accessibility API (list conversations, read the open conversation's messages) and the model judges the result. macOS only; needs Accessibility permission for the process running laya-workflow, and `policy.allow_exec`. Pass the tool path: --state '{\"tool\":\"<abs>/scripts/dingtalk-ax\"}'.",
+  "start": "fetch",
+  "max_iterations": 6,
+  "policy": {
+    "allow_exec": true,
+    "max_timeout_ms": 60000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "sessions": {
+      "kind": "exec",
+      "argv": ["${state.tool}", "sessions", "--json"],
+      "timeout_ms": 30000
+    },
+    "messages": {
+      "kind": "exec",
+      "argv": ["${state.tool}", "chat", "--json"],
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "fetch",
+      "primary_q": "read_ok",
+      "questions": {
+        "read_ok": {
+          "type": "choice",
+          "instructions": "Did reading the DingTalk conversation list return any conversations?",
+          "criteria": {
+            "A": "yes, conversations were returned",
+            "B": "no, the read failed or returned nothing"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "read_chat" },
+      "action": {
+        "kind": "call",
+        "capability": "sessions",
+        "with": {},
+        "project": { "sessions_raw": "/stdout", "exit_code": "/exit_code" }
+      }
+    },
+    {
+      "name": "read_chat",
+      "primary_q": "needs_attention",
+      "questions": {
+        "needs_attention": {
+          "type": "choice",
+          "instructions": "Given the DingTalk conversation list and the open conversation's messages above, does anything need the user's attention right now?",
+          "criteria": {
+            "A": "no, it is all routine",
+            "B": "yes, something is urgent or needs a reply"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "messages",
+        "with": {},
+        "project": { "messages_raw": "/stdout" }
+      }
+    }
+  ]
+}

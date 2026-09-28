@@ -212,15 +212,22 @@ Reading needs `policy.allow_exec: true` (it spawns the CLI) and an authorized
 
 ### DingTalk (`钉钉`)
 
-DingTalk **cannot** be read the way Feishu can: there is no public API to pull a
-conversation's history. A bot only receives messages **@-mentioned to it** (Stream
-/ HTTP callback), the message-menu JSAPI returns **one** message the user
-explicitly acted on, and the data APIs return **aggregate counts only** (and closed
-to new applications). The official DingTalk MCP covers contacts, calendar, todo,
-sheets and *sending* messages — not reading them. The local `DingTalk.app` message
-store (`dingtalk.db`) is SQLCipher-encrypted. Full findings, doc links and the
-manual-export path: [`docs/dingtalk.md`](./docs/dingtalk.md).
+DingTalk has **no** public API to read conversation history (a bot only receives
+messages **@-mentioned to it**; the message-menu JSAPI returns **one** message the
+user acted on; the data APIs return **aggregate counts only**, and the official
+MCP can only *send*). Since the macOS app renders messages as accessibility
+elements, we read the client directly instead — "computer use", no database
+decryption:
 
+```bash
+./scripts/dingtalk-ax sessions        # conversations (name / last message / time)
+./scripts/dingtalk-ax chat            # the open conversation's messages
+laya-workflow run --spec dsl/capabilities/dingtalk_chat_history.json \
+  --state "{\"tool\":\"$PWD/scripts/dingtalk-ax\"}"
+```
+
+Needs Accessibility permission for the caller (macOS only); read-only. Full
+findings, API doc links and caveats: [`docs/dingtalk.md`](./docs/dingtalk.md).
 ## Script plugins (Rhai)
 
 Site- and task-specific logic lives in **Rhai plugins**, not in the compiled

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# dingtalk-ax — compile (once, cached) and run the DingTalk Accessibility reader.
+# macOS only; needs Accessibility permission for the caller.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+src="$here/dingtalk-ax.swift"
+bin="${DT_AX_BIN:-${TMPDIR:-/tmp}/dingtalk-ax.$(id -u)}"
+if [[ ! -x "$bin" || "$src" -nt "$bin" ]]; then
+  xcrun swiftc -O "$src" -o "$bin" >/dev/null
+fi
+exec "$bin" "$@"
