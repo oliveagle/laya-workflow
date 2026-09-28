@@ -7,8 +7,8 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{
-    browser, data, goal, local, net, plugin, proto, service, store, sys, web, AgentCap, Capability,
-    ExecCap, HttpCap,
+    browser, data, db, goal, local, net, plugin, proto, service, store, sys, web, AgentCap,
+    Capability, ExecCap, HttpCap,
 };
 
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
@@ -86,6 +86,15 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             op: def.get("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
             readonly: def.get("readonly").and_then(|v| v.as_bool()).unwrap_or(true),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
+        })),
+        "db" => Ok(Capability::Db(db::DbCap {
+            sqlite: def.get("sqlite").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            duckdb: def.get("duckdb").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            alias: def.get("alias").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            op: def.get("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
+            readonly: def.get("readonly").and_then(|v| v.as_bool()).unwrap_or(true),
+            format: def.get("format").and_then(|v| v.as_str()).unwrap_or("json").to_string(),
+            timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(60_000),
         })),
         "shell" => Ok(Capability::Shell(local::ShellCap {
             command: def

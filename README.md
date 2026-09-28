@@ -82,6 +82,26 @@ video/streaming hosts (YouTube, Bilibili, …) and direct media files by default
 Opt out with `--state '{"skip_video":false}'`, or replace the set with
 `--state '{"skip_kinds":[]}'`.
 
+### SQLite + DuckDB (`db`)
+
+`kind: "db"` pairs two engines over **one file**: **SQLite** is the ACID system
+of record (constraints, `BEGIN IMMEDIATE … COMMIT` batches), **DuckDB** is the
+analytics engine and attaches that same live SQLite file through its `sqlite`
+extension ([duckdb-sqlite](https://github.com/duckdb/duckdb-sqlite)) — no ETL,
+no second copy. DuckDB can also write aggregates back into SQLite (`op: sync`),
+so results land in an ACID table. Read-only by default; writes need
+`readonly: false`.
+
+```bash
+export LAYA_WORK_DIR=/tmp/laya-db-demo   # fail-closed: the spec's allow_paths needs it
+mkdir -p "$LAYA_WORK_DIR"
+laya-workflow run --spec dsl/capabilities/db_analytics.json
+```
+
+It runs the real `sqlite3` / `duckdb` CLIs, so `policy.allow_exec` applies and
+both database files are checked against `policy.allow_paths`. See
+[`docs/db.md`](./docs/db.md).
+
 ### Singleton Chrome CDP
 
 The `chrome_cdp` capability drives a real Chrome profile with the bundled

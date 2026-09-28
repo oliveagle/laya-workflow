@@ -55,6 +55,7 @@ Specs in this directory:
 | `capabilities/exec_preflight_guard.json` | opt-in local command (`policy.allow_exec`) |
 | `capabilities/agent_session_probe.json` | external agent/app-server (http or stdio) |
 | `capabilities/data_pipeline_local.json` | datetime + text + file + shell + chain |
+| `capabilities/db_analytics.json` | `db`: SQLite (ACID writes) + DuckDB (analytics) over one file (needs `sqlite3` + `duckdb`) |
 | `capabilities/integration_hub.json` | rpc + graphql + llm + mcp + vector + webhook + sse |
 | `capabilities/ticket_structuring.json` | csv + validate + hash + tokenize + metrics + chain |
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
@@ -72,8 +73,8 @@ with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An ac
 also list prerequisite `"chain": [{"capability":…, "as":…}]` whose results become
 `${with.<as>…}` for later steps and the main call.
 
-48 kinds (64 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
-`kafka`, `archive`*, `pdf`*, `sql`*, and the earlier 26: `http`, `exec`*, `agent`, `shell`*, `file` (path allow-list), `sqlite`*, `datetime`,
+50 kinds (68 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
+`kafka`, `archive`*, `pdf`*, `sql`*, and the earlier 27: `http`, `exec`*, `agent`, `shell`*, `file` (path allow-list), `sqlite`*, `db`*, `datetime`,
 `text`, `rpc`, `graphql`, `llm`, `mcp`*, `vector`, `webhook`, `sse`, `passthrough`, `json`,
 `csv`, `xml`, `markdown`, `diff`, `validate`, `math`, `hash`, `graph`, `tokenize`, `cron`,
 `keyvalue`, `cache`, `queue`, `metrics`, `notify`, and the extensibility kind
@@ -103,6 +104,16 @@ configurable (`${env.LAYA_WEB_SEARCH_URL}`), so nothing is hard-coded to a publi
 provider. Only http/https URLs are accepted and redirects are **not** followed —
 a `3xx` is reported (`status` + `location`) instead of chasing it to a host that
 `allow_hosts` does not list. Example: `dsl/capabilities/web_research.json`.
+
+Two engines, one file: `kind: "db"` pairs **SQLite** (the ACID system of record,
+`BEGIN IMMEDIATE` batches) with **DuckDB** (the analytics engine) over the *same*
+file — DuckDB attaches the live SQLite database through its `sqlite` extension
+(<https://github.com/duckdb/duckdb-sqlite>), so there is no ETL and no second
+copy, and DuckDB can write aggregates back into SQLite as an ACID table
+(`op: sync`). Read-only by default; writes require `readonly: false`. It runs the
+real `sqlite3` / `duckdb` CLIs, so `policy.allow_exec` applies and both files are
+checked against `policy.allow_paths`. See `docs/db.md` and
+`dsl/capabilities/db_analytics.json`.
 
 Where to edit capabilities in a workflow? See the capability reference in
 `docs/benchmarks/laya_workflow_capabilities_20260926.md`.

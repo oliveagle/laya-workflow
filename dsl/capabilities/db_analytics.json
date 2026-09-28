@@ -1,0 +1,94 @@
+{
+  "name": "db_analytics",
+  "dsl_version": 2,
+  "description": "One `db` capability, two engines, one file. SQLite is the ACID system of record (BEGIN IMMEDIATE batches); DuckDB is the analytics engine and reads/writes that SAME SQLite file in place through its `sqlite` extension (https://github.com/duckdb/duckdb-sqlite) — no ETL, no second copy. Runs the real `sqlite3` / `duckdb` CLIs, so policy.allow_exec applies and both database files are checked against policy.allow_paths. Needs LAYA_WORK_DIR set (e.g. /tmp/laya-db-demo).",
+  "start": "ingest",
+  "max_iterations": 10,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": ["${env.LAYA_WORK_DIR}"],
+    "max_output": 262144
+  },
+  "capabilities": {
+    "store_ro": { "kind": "db", "sqlite": "${env.LAYA_WORK_DIR}/shop.sqlite" },
+    "store_rw": { "kind": "db", "sqlite": "${env.LAYA_WORK_DIR}/shop.sqlite", "readonly": false }
+  },
+  "nodes": [
+    {
+      "name": "ingest",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "instructions": "Write the raw rows into SQLite?", "criteria": { "A": "yes" } } },
+      "edge": { "condition": {}, "default": "report" },
+      "action": {
+        "kind": "call",
+        "capability": "store_rw",
+        "with": {
+          "op": "exec",
+          "statements": [
+            "CREATE TABLE IF NOT EXISTS sales (id INTEGER PRIMARY KEY, region TEXT NOT NULL, amount REAL NOT NULL)",
+            "DELETE FROM sales",
+            "INSERT INTO sales (region, amount) VALUES ('east', 10.5), ('west', 20.0), ('east', 5.25), ('west', 1.5)"
+          ]
+        },
+        "project": { "ok": "/ok", "exit_code": "/exit_code", "stderr": "/stderr" }
+      }
+    },
+    {
+      "name": "report",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "instructions": "Aggregate the sales with DuckDB?", "criteria": { "A": "yes" } } },
+      "edge": { "condition": {}, "default": "persist" },
+      "action": {
+        "kind": "call",
+        "capability": "store_ro",
+        "with": {
+          "op": "analytics",
+          "format": "json",
+          "sql": "SELECT region, SUM(amount) AS total, COUNT(*) AS n FROM sales GROUP BY region ORDER BY region"
+        },
+        "project": { "rows": "/rows", "engine": "/engine" }
+      }
+    },
+    {
+      "name": "persist",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "instructions": "Write the aggregate back to SQLite as an ACID table?", "criteria": { "A": "yes" } } },
+      "edge": { "condition": {}, "default": "verify" },
+      "action": {
+        "kind": "call",
+        "capability": "store_rw",
+        "with": {
+          "op": "sync",
+          "create": true,
+          "into": "region_totals",
+          "sql": "SELECT region, SUM(amount) AS total, COUNT(*) AS n FROM sales GROUP BY region"
+        },
+        "project": { "ok": "/ok", "exit_code": "/exit_code", "stderr": "/stderr" }
+      }
+    },
+    {
+      "name": "verify",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "instructions": "Read the materialised table back?", "criteria": { "A": "yes" } } },
+      "edge": { "condition": {}, "default": "inspect" },
+      "action": {
+        "kind": "call",
+        "capability": "store_ro",
+        "with": { "op": "query", "sql": "SELECT region, total, n FROM region_totals ORDER BY region" },
+        "project": { "rows": "/rows" }
+      }
+    },
+    {
+      "name": "inspect",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "instructions": "List what each engine sees?", "criteria": { "A": "yes" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "store_ro",
+        "with": { "op": "tables" },
+        "project": { "engines": "/rows" }
+      }
+    }
+  ]
+}

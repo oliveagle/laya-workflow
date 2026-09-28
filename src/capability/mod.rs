@@ -27,6 +27,7 @@
 
 pub mod browser;
 pub mod data;
+pub mod db;
 pub mod goal;
 pub mod local;
 pub mod math;
@@ -59,6 +60,9 @@ pub enum Capability {
     Text(local::TextCap),
     File(local::FileCap),
     Sqlite(local::SqliteCap),
+    /// One wrapper over two engines: SQLite (ACID writes) + DuckDB (analytics
+    /// over the same file via its `sqlite` extension).
+    Db(db::DbCap),
     Shell(local::ShellCap),
     // ── network ──
     Rpc(net::RpcCap),
@@ -296,6 +300,7 @@ impl Registry {
                 Capability::Text(c) => local::call_text(c, with, state),
                 Capability::File(c) => local::call_file(c, with, state, &self.policy),
                 Capability::Sqlite(c) => local::call_sqlite(c, with, state, &self.policy),
+                Capability::Db(c) => db::call_db(c, with, state, &self.policy),
                 Capability::Shell(c) => local::call_shell(c, with, state, &self.policy),
                 Capability::Rpc(c) => net::call_rpc(c, with, state, &self.policy),
                 Capability::Graphql(c) => net::call_graphql(c, with, state, &self.policy),
@@ -520,6 +525,11 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
         Capability::Smtp(c) => {
             walk(&Value::String(c.username.clone()), &mut out);
             walk(&Value::String(c.password.clone()), &mut out);
+        }
+        Capability::Db(c) => {
+            walk(&Value::String(c.sqlite.clone()), &mut out);
+            walk(&Value::String(c.duckdb.clone()), &mut out);
+            walk(&Value::String(c.alias.clone()), &mut out);
         }
         Capability::Browser(c) => {
             walk(&Value::String(c.endpoint.clone()), &mut out);
