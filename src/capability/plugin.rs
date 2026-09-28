@@ -118,11 +118,13 @@ impl Manifest {
     }
 }
 
-/// The raw text of a plugin: manifest, entry script, and its page scripts.
+/// The raw text of a plugin: manifest, entry script, its page scripts, and the
+/// entry file's name (after any `entry` override, for messages).
 #[derive(Debug)]
 struct Sources {
     manifest: String,
     entry: String,
+    entry_name: String,
     pages: Vec<(String, String)>,
     dir: Option<PathBuf>,
 }
@@ -159,6 +161,7 @@ fn builtin(name: &str) -> Option<Sources> {
     Some(Sources {
         manifest: manifest.to_string(),
         entry: entry.to_string(),
+        entry_name: String::new(),
         pages: pages
             .into_iter()
             .map(|(n, src)| (n.to_string(), src.to_string()))
@@ -529,19 +532,8 @@ fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     roots
 }
 
-fn read_dir_sources(dir: &std::path::Path, fallback: &str) -> Result<Sources> {
-    let manifest = std::fs::read_to_string(dir.join("plugin.json")).map_err(|e| {
-        anyhow!(
-            "plugin {fallback:?}: cannot read {}: {e}",
-            dir.join("plugin.json").display()
-        )
-    })?;
-    let m = Manifest::parse(&manifest, fallback)?;
-    if m.entry.is_empty() {
-        bail!("plugin {fallback:?}: manifest has an empty 'entry'");
-    }
-    let entry = std::fs::read_to_string(dir.join(&m.entry))
-        .map_err(|e| anyhow!("plugin {fallback:?}: cannot read entry {:?}: {e}", m.entry))?;
+/// Load every page script under `<dir>/page/` (sorted). Missing is fine.
+fn read_pages(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut pages = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir.join("page")) {
         for e in entries.flatten() {
@@ -556,35 +548,109 @@ fn read_dir_sources(dir: &std::path::Path, fallback: &str) -> Result<Sources> {
         }
     }
     pages.sort();
+    pages
+}
+
+fn read_dir_sources(
+    dir: &std::path::Path,
+    fallback: &str,
+    entry_override: &str,
+) -> Result<Sources> {
+    let manifest = std::fs::read_to_string(dir.join("plugin.json")).map_err(|e| {
+        anyhow!(
+            "plugin {fallback:?}: cannot read {}: {e}",
+            dir.join("plugin.json").display()
+        )
+    })?;
+    let m = Manifest::parse(&manifest, fallback)?;
+    let entry_name = if entry_override.trim().is_empty() {
+        m.entry.clone()
+    } else {
+        entry_override.trim().to_string()
+    };
+    if entry_name.is_empty() {
+        bail!("plugin {fallback:?}: manifest has an empty 'entry'");
+    }
+    let entry = std::fs::read_to_string(dir.join(&entry_name))
+        .map_err(|e| anyhow!("plugin {fallback:?}: cannot read entry {entry_name:?}: {e}"))?;
     Ok(Sources {
         manifest,
         entry,
-        pages,
+        entry_name,
+        pages: read_pages(dir),
         dir: Some(dir.to_path_buf()),
     })
 }
 
+/// A single `.rhai` file used as its own plugin — no directory and no
+/// `plugin.json` needed. The `name` is the file stem, `entry_op` defaults to
+/// `run`, and a sibling `page/` directory (if any) is still picked up.
+fn read_file_sources(file: &std::path::Path, fallback: &str) -> Result<Sources> {
+    let file_name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("plugin script {} has no UTF-8 file name", file.display()))?
+        .to_string();
+    let name = file
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .unwrap_or(fallback)
+        .to_string();
+    let entry = std::fs::read_to_string(file)
+        .map_err(|e| anyhow!("plugin script {}: cannot read: {e}", file.display()))?;
+    let manifest = serde_json::json!({
+        "name": name,
+        "entry": file_name,
+        "entry_op": "run",
+        "api": PLUGIN_API,
+    })
+    .to_string();
+    let parent = file.parent();
+    Ok(Sources {
+        manifest,
+        entry,
+        entry_name: file_name,
+        pages: parent.map(read_pages).unwrap_or_default(),
+        dir: parent.map(std::path::Path::to_path_buf),
+    })
+}
+
 fn load_sources(cap: &PluginCap) -> Result<Sources> {
-    if !cap.dir.trim().is_empty() {
+    let dir = cap.dir.trim();
+    let entry = cap.entry.trim();
+    if !dir.is_empty() {
+        let path = std::path::Path::new(dir);
+        // `dir` may name a single `.rhai` file instead of a plugin directory.
+        if path.is_file() {
+            let fallback = std::path::Path::new(dir)
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("plugin");
+            return read_file_sources(path, fallback);
+        }
         // An explicit directory is enough; the name is only used for messages.
-        let dir = std::path::Path::new(&cap.dir);
         let fallback = if cap.plugin.trim().is_empty() {
-            dir.file_name()
+            path.file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("plugin")
                 .to_string()
         } else {
             cap.plugin.clone()
         };
-        return read_dir_sources(dir, &fallback);
+        return read_dir_sources(path, &fallback, entry);
+    }
+    // No `dir`/`plugin`: a bare `entry` naming an existing file runs it directly.
+    if !entry.is_empty() && std::path::Path::new(entry).is_file() {
+        return read_file_sources(std::path::Path::new(entry), "plugin");
     }
     if cap.plugin.trim().is_empty() {
-        bail!("plugin capability needs 'plugin' (a name) or 'dir'");
+        bail!("plugin capability needs 'plugin' (a name), 'dir', or a script 'entry'");
     }
     for (_, root) in plugin_roots() {
-        let dir = root.join(&cap.plugin);
-        if dir.join("plugin.json").is_file() {
-            return read_dir_sources(&dir, &cap.plugin);
+        let d = root.join(&cap.plugin);
+        if d.join("plugin.json").is_file() {
+            return read_dir_sources(&d, &cap.plugin, entry);
         }
     }
     builtin(&cap.plugin).ok_or_else(|| {
@@ -933,7 +999,11 @@ pub fn call_plugin(
     if let Value::Object(map) = &mut value {
         // Identity of the call, not something the script has to remember to add.
         map.insert("capability".to_string(), json!("plugin"));
-        map.insert("plugin".to_string(), json!(cap.plugin));
+        // A `dir`/`entry` plugin carries no name on the capability, so whatever
+        // the script reported as its own name (ctx["plugin"]) stays.
+        if !cap.plugin.trim().is_empty() {
+            map.insert("plugin".to_string(), json!(cap.plugin));
+        }
     }
     Ok(value)
 }
@@ -948,10 +1018,10 @@ fn run(
 ) -> Result<Value> {
     let sources = load_sources(cap)?;
     let manifest = Manifest::parse(&sources.manifest, &cap.plugin)?;
-    let entry = if cap.entry.trim().is_empty() {
+    let entry_name = if sources.entry_name.is_empty() {
         manifest.entry.clone()
     } else {
-        cap.entry.clone()
+        sources.entry_name.clone()
     };
     let limit = if cap.max_operations > 0 {
         cap.max_operations
@@ -1012,9 +1082,12 @@ fn run(
     })));
 
     let engine = build_engine(limit);
-    let ast = engine
-        .compile(&sources.entry)
-        .map_err(|e| anyhow!("plugin {:?} ({entry}) did not compile: {e}", cap.plugin))?;
+    let ast = engine.compile(&sources.entry).map_err(|e| {
+        anyhow!(
+            "plugin {:?} ({entry_name}) did not compile: {e}",
+            cap.plugin
+        )
+    })?;
 
     // Pick the op: an explicit request that exists in the script, else the
     // manifest's entry op.
@@ -1271,6 +1344,80 @@ mod tests {
         assert_eq!(out["echo"], json!("hi"));
         assert_eq!(out["mode"], json!("x"));
         assert!(out["now"].as_str().unwrap().ends_with('Z'));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A bare `.rhai` file is a plugin in its own right: no directory and no
+    /// `plugin.json`. Reachable either by `dir` = the file or by `entry` = the
+    /// file (with no name/dir).
+    #[test]
+    fn runs_a_single_script_file() {
+        let dir = std::env::temp_dir().join(format!("laya-plugin-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("greet.rhai");
+        std::fs::write(
+            &file,
+            r#"fn run(host, ctx) { #{ hi: "there", op: ctx["op"] } }"#,
+        )
+        .unwrap();
+        let path = file.display().to_string();
+
+        for cap in [
+            PluginCap {
+                dir: path.clone(),
+                ..Default::default()
+            },
+            PluginCap {
+                entry: path.clone(),
+                ..Default::default()
+            },
+        ] {
+            let out = run(&cap, &json!({}), &json!({}), &Policy::default(), None, None).unwrap();
+            assert_eq!(out["hi"], json!("there"));
+            assert_eq!(out["op"], json!("run")); // entry_op defaults to `run`
+        }
+
+        let src = load_sources(&PluginCap {
+            dir: path,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(src.entry_name, "greet.rhai");
+        let m = Manifest::parse(&src.manifest, "x").unwrap();
+        assert_eq!(m.name, "greet"); // the file stem becomes the plugin name
+        assert_eq!(m.entry_op, "run");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The capability's `entry` really selects which file a directory plugin
+    /// compiles (the manifest only supplies the default).
+    #[test]
+    fn entry_overrides_the_manifest_entry() {
+        let dir = std::env::temp_dir().join(format!("laya-plugin-entry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            r#"{"name":"m","entry":"main.rhai"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("main.rhai"),
+            r#"fn run(host, ctx) { #{ which: "main" } }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("alt.rhai"),
+            r#"fn run(host, ctx) { #{ which: "alt" } }"#,
+        )
+        .unwrap();
+        let cap = PluginCap {
+            plugin: "m".to_string(),
+            dir: dir.display().to_string(),
+            entry: "alt.rhai".to_string(),
+            ..Default::default()
+        };
+        let out = run(&cap, &json!({}), &json!({}), &Policy::default(), None, None).unwrap();
+        assert_eq!(out["which"], json!("alt"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

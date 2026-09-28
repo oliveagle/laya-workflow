@@ -84,9 +84,9 @@ Highest priority first — a name in a higher layer shadows the same name below:
 | field | meaning |
 |-------|---------|
 | `plugin` | plugin name, resolved from the layers above |
-| `dir` | explicit plugin directory, bypassing the layers (a name is then optional) |
-| `entry` | entry file, overriding the manifest |
-| `op` | entry function, overriding the manifest's `entry_op` |
+| `dir` | explicit plugin **directory**, or a single `.rhai` **file** run on its own (no manifest needed) |
+| `entry` | entry file: overrides the manifest inside `dir`, or — with no `dir`/`plugin` — names a `.rhai` file to run directly |
+| `op` | entry function (default `run`) |
 | `browser` | name of a `chrome_cdp` capability in the same spec the plugin may drive |
 | `max_operations` | Rhai instruction budget (default from the manifest) |
 | `timeout_ms` | timeout for the plugin's browser/CDP work |
@@ -96,6 +96,13 @@ The call returns whatever the entry function returns (a JSON object), so
 A browser capability's `op` may also forward to a named plugin
 (`browser: "chrome"`, `op: "alphaxiv"`), which is how the bundled downloader is
 reachable without a new capability.
+
+One script, no directory: point `dir` (or `entry`) straight at a `.rhai` file and
+it runs on `run` with the file stem as its name — no `plugin.json` needed.
+
+```jsonc
+{ "capabilities": { "greet": { "kind": "plugin", "dir": "scripts/greet.rhai" } } }
+```
 
 ## Writing one
 
