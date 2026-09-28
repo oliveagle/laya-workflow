@@ -208,6 +208,14 @@ fn builtin(name: &str) -> Option<Sources> {
                 include_str!("../../plugins/bing/page/search.js"),
             )],
         ),
+        "v2ex" => (
+            include_str!("../../plugins/v2ex/plugin.json"),
+            include_str!("../../plugins/v2ex/main.rhai"),
+            vec![
+                ("list.js", include_str!("../../plugins/v2ex/page/list.js")),
+                ("topic.js", include_str!("../../plugins/v2ex/page/topic.js")),
+            ],
+        ),
         _ => return None,
     };
     Some(Sources {
@@ -233,6 +241,7 @@ pub fn builtin_names() -> &'static [&'static str] {
         "wikipedia",
         "mdn",
         "bing",
+        "v2ex",
     ]
 }
 
@@ -1832,6 +1841,43 @@ mod tests {
         assert_eq!(out["read"]["text"], json!("hello"));
         assert!(dir.join("out/deep/x.txt").is_file());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bundled_v2ex_compiles_and_plans() {
+        let src = builtin("v2ex").expect("bundled v2ex plugin");
+        let m = Manifest::parse(&src.manifest, "v2ex").unwrap();
+        assert_eq!(m.name, "v2ex");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["list.js", "topic.js"]);
+
+        let p = |v: Value| call_of("v2ex", "plan", vec![v]).unwrap();
+        // No query -> the hot tab.
+        assert_eq!(p(json!({}))["mode"], json!("hot"));
+        for tab in [
+            "latest", "tech", "creative", "play", "apple", "jobs", "deals", "city", "qna", "all",
+        ] {
+            assert_eq!(p(json!({ "query": tab }))["mode"], json!(tab), "{tab}");
+        }
+        assert_eq!(p(json!({ "query": "new" }))["mode"], json!("latest"));
+        // A topic id / URL reads a topic; a node lists that node.
+        let t = p(json!({ "query": "https://www.v2ex.com/t/1245140#reply140" }));
+        assert_eq!(t["mode"], json!("topic"));
+        assert_eq!(t["id"], json!("1245140"));
+        assert_eq!(p(json!({ "query": "1245140" }))["mode"], json!("topic"));
+        let n = p(json!({ "query": "go/rust" }));
+        assert_eq!(n["mode"], json!("node"));
+        assert_eq!(n["node"], json!("rust"));
+        assert_eq!(p(json!({ "node": "python" }))["node"], json!("python"));
+        // A bare unknown word cannot be planned.
+        assert!(call_of("v2ex", "plan", vec![json!({ "query": "hello world" })]).is_err());
+        // The limit is capped.
+        assert_eq!(
+            p(json!({ "query": "hot", "count": 999 }))["limit"],
+            json!(100)
+        );
     }
 
     #[test]

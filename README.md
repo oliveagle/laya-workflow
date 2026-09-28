@@ -189,10 +189,11 @@ laya-workflow run --spec dsl/browser/wikipedia.json --query "Rust (programming l
 laya-workflow run --spec dsl/browser/mdn.json --query "fetch api" --state '{"count":5}'
 laya-workflow run --spec dsl/browser/mdn.json --query "/en-US/docs/Web/API/Fetch_API"
 laya-workflow run --spec dsl/browser/bing.json --query "typescript ai framework"
+laya-workflow run --spec dsl/browser/v2ex.json --query hot --state '{"count":10}'
 ```
 
-See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md)
-and [`docs/bing.md`](./docs/bing.md).
+See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md),
+[`docs/bing.md`](./docs/bing.md) and [`docs/v2ex.md`](./docs/v2ex.md).
 
 ## License
 
