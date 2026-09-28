@@ -129,6 +129,12 @@ pub struct HttpCap {
     pub body: Option<Value>,
     pub timeout_ms: u64,
     pub expect_json: bool,
+    /// When true, a non-2xx response (401/403/404/...) is recorded as a real
+    /// answer (status + body in the result object) instead of aborting the
+    /// run. Default false keeps the historical "http {url} failed" error.
+    /// Auth matrices and negative-path integration tests set this on every
+    /// probe so a deterministic verdict plugin can branch on the status.
+    pub allow_error_status: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -691,11 +697,26 @@ fn call_http(c: &HttpCap, with: &Value, state: &Value, policy: &Policy) -> Resul
             }
         }
     };
-    let resp = resp.map_err(|e| anyhow!("http {url} failed: {e}"))?;
-    let status = resp.status() as i64;
-    let text = resp
-        .into_string()
-        .map_err(|e| anyhow!("http read failed: {e}"))?;
+    let (status, text) = match resp {
+        Ok(r) => {
+            let status = r.status() as i64;
+            let text = r
+                .into_string()
+                .map_err(|e| anyhow!("http read failed: {e}"))?;
+            (status, text)
+        }
+        Err(ureq::Error::Status(code, r)) if c.allow_error_status => {
+            // The spec opted into negative paths: a non-2xx is still a real
+            // answer to assert on (401/403/404 matrices), so record status and
+            // body instead of throwing.
+            let status = code as i64;
+            let text = r
+                .into_string()
+                .map_err(|e| anyhow!("http read failed: {e}"))?;
+            (status, text)
+        }
+        Err(e) => return Err(anyhow!("http {url} failed: {e}")),
+    };
     let text = truncate(text, policy.max_output);
     let body = if c.expect_json {
         serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))

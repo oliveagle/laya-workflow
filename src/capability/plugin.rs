@@ -218,6 +218,20 @@ fn builtin(name: &str) -> Option<Sources> {
                 ),
             ],
         ),
+        "goofish" => (
+            include_str!("../../websites/goofish.com/plugin/plugin.json"),
+            include_str!("../../websites/goofish.com/plugin/main.rhai"),
+            vec![
+                (
+                    "search.js",
+                    include_str!("../../websites/goofish.com/plugin/page/search.js"),
+                ),
+                (
+                    "item.js",
+                    include_str!("../../websites/goofish.com/plugin/page/item.js"),
+                ),
+            ],
+        ),
         "textdigest" => (
             include_str!("../../plugins/textdigest/plugin.json"),
             include_str!("../../plugins/textdigest/main.rhai"),

@@ -28,6 +28,10 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             body: def.get("body").cloned(),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
             expect_json: def.get("expect_json").and_then(|v| v.as_bool()).unwrap_or(true),
+            allow_error_status: def
+                .get("allow_error_status")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         })),
         "exec" => Ok(Capability::Exec(ExecCap {
             argv: def
