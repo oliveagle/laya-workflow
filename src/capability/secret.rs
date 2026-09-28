@@ -214,10 +214,25 @@ pub fn register_for_redaction(value: &str) {
 /// Values below this length are skipped rather than allowed to corrupt text.
 const MIN_REDACT_LEN: usize = 12;
 
+/// The user's home directory, when it is a real path (not `/`).
+fn home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| h.len() > 1 && h != "/")
+}
+
 /// Replace any known secret value found in `s` with `***`.
+///
+/// The home directory is rewritten to `$HOME` first. It is registered as a
+/// redaction value (it arrives through the environment), so paths used to come
+/// out as `***/tmp/alphaxiv`; `$HOME/tmp/alphaxiv` is far more useful and still
+/// does not leak the account name.
 pub fn redact_str(s: &str) -> String {
+    let mut out = match home_dir() {
+        Some(home) if s.contains(&home) => s.replace(&home, "$HOME"),
+        _ => s.to_string(),
+    };
     let set = redaction_set().lock().unwrap();
-    let mut out = s.to_string();
     for v in set.iter() {
         if v.len() < MIN_REDACT_LEN {
             continue;

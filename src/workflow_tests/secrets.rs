@@ -106,6 +106,16 @@ pub fn test_secrets(h: &mut Harness) {
             secret::redact_str("nothing secret"),
             "nothing secret".to_string(),
         );
+        // The home directory renders as `$HOME`, not a bare `***`.
+        if let Ok(home) = std::env::var("HOME") {
+            if home.len() > 1 {
+                h.eq(
+                    "secrets: home dir renders as $HOME",
+                    secret::redact_str(&format!("{home}/tmp/alphaxiv/paper.md")),
+                    "$HOME/tmp/alphaxiv/paper.md".to_string(),
+                );
+            }
+        }
         let red =
             secret::redact(&json!({"a": "override-value-1234", "b": ["x", "override-value-1234"]}));
         h.eq(

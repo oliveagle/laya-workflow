@@ -15,6 +15,8 @@ Plus:
 
 * **Secrets**: `.env` / `*.secrets.json` are gitignored; `validate` prints only
   secret *names* + readiness; errors never leak values (they're redacted).
+  Your home directory is rendered as `$HOME` in output paths (not leaked as a
+  raw username and no longer masked to `***`).
 * **goal_runner**: `runner` must be a known harness (`cxgo`/`cmdgo`); the goal
   doc must be under `allow_paths`; output is capped.
 * **Fail-closed**: unresolvable `${env.X}` or missing secret is an error, not a
