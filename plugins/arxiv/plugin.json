@@ -1,0 +1,13 @@
+{
+  "name": "arxiv",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": [
+    "search.js",
+    "abs.js"
+  ],
+  "description": "arXiv (arxiv.org): search papers by phrase (title / authors / abstract / categories / abs+pdf links), or read one paper's abstract page (bare id or arxiv.org URL) into a Markdown digest plus a meta.json under out_dir."
+}

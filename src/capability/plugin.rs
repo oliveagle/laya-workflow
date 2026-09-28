@@ -156,6 +156,31 @@ fn builtin(name: &str) -> Option<Sources> {
             include_str!("../../plugins/hf-trending/main.rhai"),
             Vec::new(),
         ),
+        "hackernews" => (
+            include_str!("../../plugins/hackernews/plugin.json"),
+            include_str!("../../plugins/hackernews/main.rhai"),
+            vec![
+                (
+                    "front.js",
+                    include_str!("../../plugins/hackernews/page/front.js"),
+                ),
+                (
+                    "story.js",
+                    include_str!("../../plugins/hackernews/page/story.js"),
+                ),
+            ],
+        ),
+        "arxiv" => (
+            include_str!("../../plugins/arxiv/plugin.json"),
+            include_str!("../../plugins/arxiv/main.rhai"),
+            vec![
+                (
+                    "search.js",
+                    include_str!("../../plugins/arxiv/page/search.js"),
+                ),
+                ("abs.js", include_str!("../../plugins/arxiv/page/abs.js")),
+            ],
+        ),
         _ => return None,
     };
     Some(Sources {
@@ -172,7 +197,13 @@ fn builtin(name: &str) -> Option<Sources> {
 
 /// Names of the plugins compiled into this binary.
 pub fn builtin_names() -> &'static [&'static str] {
-    &[ALPHAXIV_PLUGIN, "textdigest", "hf-trending"]
+    &[
+        ALPHAXIV_PLUGIN,
+        "textdigest",
+        "hf-trending",
+        "hackernews",
+        "arxiv",
+    ]
 }
 
 // ── installing plugins from a git repo ──────────────────────────────
@@ -1771,6 +1802,87 @@ mod tests {
         assert_eq!(out["read"]["text"], json!("hello"));
         assert!(dir.join("out/deep/x.txt").is_file());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The arXiv reader's site logic is pure in `plan`, so it is unit-testable
+    /// without a browser; a bad Rhai edit is caught here, not at run time.
+    #[test]
+    fn bundled_arxiv_compiles_and_plans() {
+        let src = builtin("arxiv").expect("bundled arxiv plugin");
+        let m = Manifest::parse(&src.manifest, "arxiv").unwrap();
+        assert_eq!(m.name, "arxiv");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["abs.js", "search.js"]);
+
+        let p = |v: Value| call_of("arxiv", "plan", vec![v]).unwrap();
+        // No query at all cannot be planned.
+        assert!(call_of("arxiv", "plan", vec![json!({})]).is_err());
+        // A phrase searches; a bare id / an arxiv.org URL reads that paper.
+        let s = p(json!({ "query": "rust async" }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(10));
+        let a = p(json!({ "query": "2401.12345" }));
+        assert_eq!(a["mode"], json!("abs"));
+        assert_eq!(a["id"], json!("2401.12345"));
+        let a = p(json!({ "query": "https://arxiv.org/abs/2401.12345v2" }));
+        assert_eq!(a["mode"], json!("abs"));
+        assert_eq!(a["id"], json!("2401.12345v2"));
+        let a = p(json!({ "paper": "2401.12345" }));
+        assert_eq!(a["mode"], json!("abs"));
+        assert_eq!(a["id"], json!("2401.12345"));
+        // An explicit search mode keeps its bounded row count.
+        let s = p(json!({ "query": "graph neural nets", "mode": "search", "count": 3 }));
+        assert_eq!(s["mode"], json!("search"));
+        assert_eq!(s["limit"], json!(3));
+        // An unsupported mode fails loudly.
+        assert!(call_of("arxiv", "plan", vec![json!({ "mode": "nope" })]).is_err());
+    }
+
+    /// The HN reader's site logic is pure in `plan`, so it is unit-testable
+    /// without a browser; a bad Rhai edit is caught here, not at run time.
+    #[test]
+    fn bundled_hackernews_compiles_and_plans() {
+        let src = builtin("hackernews").expect("bundled hackernews plugin");
+        let m = Manifest::parse(&src.manifest, "hackernews").unwrap();
+        assert_eq!(m.name, "hackernews");
+        assert_eq!(m.entry_op, "run");
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["front.js", "story.js"]);
+
+        let p = |v: Value| call_of("hackernews", "plan", vec![v]).unwrap();
+        // No query -> the top feed, default 30 rows.
+        let t = p(json!({}));
+        assert_eq!(t["mode"], json!("top"));
+        assert_eq!(t["limit"], json!(30));
+        // Feeds by name, including aliases.
+        for (q, m) in [
+            ("best", "best"),
+            ("new", "new"),
+            ("newest", "new"),
+            ("ask", "ask"),
+            ("show hn", "show"),
+            ("jobs", "jobs"),
+            ("front", "top"),
+            ("hot", "best"),
+        ] {
+            assert_eq!(p(json!({ "query": q }))["mode"], json!(m), "{q}");
+        }
+        // A plain phrase is a full-text search; an item id / URL is a discussion.
+        assert_eq!(p(json!({ "query": "rust async" }))["mode"], json!("search"));
+        let it = p(json!({ "query": "https://news.ycombinator.com/item?id=42" }));
+        assert_eq!(it["mode"], json!("item"));
+        assert_eq!(it["id"], json!("42"));
+        let it = p(json!({ "id": "123", "count": 5 }));
+        assert_eq!(it["mode"], json!("item"));
+        assert_eq!(it["id"], json!("123"));
+        assert_eq!(it["limit"], json!(5));
+        // An unsupported mode fails loudly.
+        assert!(call_of("hackernews", "plan", vec![json!({ "mode": "nope" })]).is_err());
     }
 
     #[test]

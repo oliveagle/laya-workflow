@@ -1,0 +1,81 @@
+{
+  "name": "arxiv_reader",
+  "dsl_version": 2,
+  "description": "Read arXiv (arxiv.org) in a background Chrome tab, driven by the Rhai plugin `plugins/arxiv` (kind: \"plugin\"). --query \"rust async\" searches papers (title, authors, abstract, categories, abs/pdf links); a bare id like \"2401.12345v2\" or an arxiv.org URL reads that paper's abstract page and writes a Markdown digest (<id>.md) plus a <id>_meta.json under out_dir. Optional state: mode (auto|search|abs), count/limit (1-50), out_dir (default ~/tmp/arxiv).",
+  "start": "read",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "arxiv.org"
+    ],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/arxiv"
+    ],
+    "max_timeout_ms": 60000,
+    "max_output": 4194304,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 20000,
+      "max_text": 6000
+    },
+    "arxiv": {
+      "kind": "plugin",
+      "plugin": "arxiv",
+      "browser": "chrome",
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "read",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Read arXiv as requested?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "arxiv",
+        "with": {
+          "query": "${state.query}",
+          "mode": "${state.mode}",
+          "count": "${state.count}",
+          "out_dir": "${state.out_dir}"
+        },
+        "project": {
+          "mode": "/mode",
+          "query": "/query",
+          "count": "/count",
+          "url": "/url",
+          "arxiv_id": "/arxiv_id",
+          "results": "/results",
+          "saved": "/saved",
+          "markdown_chars": "/markdown_chars",
+          "written": "/written",
+          "out_dir": "/out_dir",
+          "title": "/page_title",
+          "fetched_at": "/fetched_at"
+        }
+      }
+    }
+  ]
+}

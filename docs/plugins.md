@@ -192,6 +192,8 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 | `plugins/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
 | `plugins/hf-trending` | a HuggingFace model monitor (no browser): per-model rank / likes / downloads / card metadata + the model card, written to snapshots, a report, `cards/` and `history.jsonl` (`dsl/capabilities/hf_trending.json`) |
+| `plugins/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), a full-text search (public Algolia index) and one discussion with its comment tree (`dsl/browser/hackernews.json`) |
+| `plugins/arxiv` | an arXiv reader over Chrome/CDP: search papers by phrase, or read one paper's abstract page into a Markdown digest + `meta.json` (`dsl/browser/arxiv.json`) |
 
 `dsl/browser/alphaxiv_paper.json` is the plugin-driven spec:
 `laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" --state '{"count":3}'`.

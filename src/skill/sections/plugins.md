@@ -209,6 +209,8 @@ owner.
 | `plugins/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
 | `plugins/hf-trending` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
+| `plugins/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), full-text search, and a discussion + comment tree (`dsl/browser/hackernews.json`) |
+| `plugins/arxiv` | an arXiv reader over Chrome/CDP: search papers, or read one paper into a Markdown digest (`dsl/browser/arxiv.json`) |
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \

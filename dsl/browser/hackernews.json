@@ -1,0 +1,75 @@
+{
+  "name": "hackernews_reader",
+  "dsl_version": 2,
+  "description": "Read Hacker News in a background Chrome tab, driven by the Rhai plugin `plugins/hackernews` (kind: \"plugin\"). --query \"top\" (or best/new/ask/show/jobs) lists that front page; a plain phrase like \"rust async\" full-text-searches stories (public Algolia index); a story id or an item?id=<id> URL reads that discussion. Optional state: mode (auto|top|best|new|ask|show|jobs|item|search), count/limit (1-100). Every row carries rank, title, url, site, points, comments, user, age and the HN permalink; an item also returns its comment tree.",
+  "start": "read",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "news.ycombinator.com",
+      "hn.algolia.com"
+    ],
+    "allow_paths": [],
+    "max_timeout_ms": 60000,
+    "max_output": 4194304,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 20000,
+      "max_text": 6000
+    },
+    "hn": {
+      "kind": "plugin",
+      "plugin": "hackernews",
+      "browser": "chrome",
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "read",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Read Hacker News as requested?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "hn",
+        "with": {
+          "query": "${state.query}",
+          "mode": "${state.mode}",
+          "count": "${state.count}"
+        },
+        "project": {
+          "feed": "/feed",
+          "query": "/query",
+          "count": "/count",
+          "url": "/url",
+          "stories": "/stories",
+          "comments": "/comments",
+          "comments_total": "/comments_total",
+          "title": "/title",
+          "fetched_at": "/fetched_at"
+        }
+      }
+    }
+  ]
+}

@@ -158,6 +158,26 @@ laya-workflow run --spec dsl/capabilities/hf_trending.json --query "llm memory"
 
 See [`docs/hf_trending.md`](./docs/hf_trending.md).
 
+### Browser reader plugins (Chrome/CDP)
+
+Two more examples drive a real Chrome tab over CDP and keep all site logic in
+Rhai + page JS, so the engine can stay generic:
+
+`plugins/hackernews` reads Hacker News — a front page (`top`/`best`/`new`/`ask`/
+`show`/`jobs`), a full-text search over story titles/URLs, or one discussion with
+its comment tree; `plugins/arxiv` searches arXiv papers or reads a single paper's
+abstract page into a Markdown digest.
+
+```bash
+laya-workflow run --spec dsl/browser/hackernews.json --query top --state '{"count":5}'
+laya-workflow run --spec dsl/browser/hackernews.json --query "rust async" --state '{"count":10}'
+laya-workflow run --spec dsl/browser/arxiv.json --query "rust async" --state '{"count":3}'
+laya-workflow run --spec dsl/browser/arxiv.json --query "1706.03762"
+```
+
+See [`docs/hackernews.md`](./docs/hackernews.md) and
+[`docs/arxiv.md`](./docs/arxiv.md).
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.
