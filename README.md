@@ -386,6 +386,11 @@ laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化 索
 laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化"
 ```
 
+`价格进化` is an instruction to the plugin, not a search term, so it never
+reaches goofish: the site weighs it as heavily as a model number, and
+`--query "价格进化 CMP 170HX"` used to come back as a page of cameras. Only
+`CMP 170HX` is searched.
+
 It mines the listing attributes into a vocabulary (`品牌: sony` and `品牌: 索尼`
 fold into one tag once two listings declare them the same thing), then gives
 every tag a robust price band — median ± σ·1.4826·MAD — and reports what sits
@@ -394,9 +399,27 @@ outside it:
 | `evolve` key | what it is |
 | --- | --- |
 | `tags` / `vocabulary` | the learned tag vocabulary, with spellings merged and co-occurrence |
+| `scope` | the product these bands were drawn from — `"cmp170hx"`, or `""` when the run named none |
+| `scopes` | one band per product in the whole corpus, so a mixed index stays legible |
 | `fair` | per-tag price band: `fair` (median), `low`, `high`, and how many listings back it |
 | `deals` / `overpriced` | items below / above their tag's band, ranked by how far out they are |
 | `next_feed_factor` | the learned search-card-vs-detail-page price ratio, or `0` when there is not enough agreeing evidence to correct anything |
+
+**A price is only a price against the same product.** `index.json` accumulates
+every product ever looked up, and `功能完好无维修` means exactly as much on a
+¥9,200 camera as on a ¥13,400 graphics card — so a band that pooled them
+answered a question nobody asked. Vocabulary stays shared across products (the
+concept is the same concept everywhere), but prices are compared only inside the
+product the run named, and `evolve.scopes` reports every market at once:
+
+```
+cmp170hx    items=30 priced=30 median=13899.5 min=9900 max=62000 fair=13899.5 band=[10935.78, 16863.22]
+(unnamed)   items=52 priced=52 median=8450.0 min=4.9 max=19800 fair=8450.0  band=[4446.98, 12453.02]
+```
+
+A listing collected outside any named search keeps no scope rather than guessing
+one, and a later run that meets the same item without naming a product inherits
+the market it already had.
 
 Three files carry it, all under `out_dir`: `index.json` (one row per item ever
 collected, plus the tags mined from it), `tags.json` (the vocabulary) and
@@ -406,8 +429,8 @@ nothing but the counter and the new evidence.
 
 **…or hand it to SQLite.** With `emit_sql: true` the plugin also returns the DDL
 (`sql_schema`) and idempotent upserts (`sql_statements`) for six `goofish_`
-tables, so what lands in the database is exactly the numbers the plugin priced
-with:
+tables (including `goofish_scopes`, one row per product), so what lands in the
+database is exactly the numbers the plugin priced with:
 
 ```bash
 laya-workflow run --spec dsl/browser/goofish_sqlite.json --state '{"query":"索尼 A7M4","browse":6}'

@@ -363,6 +363,47 @@ fn is_evolve_intent(text) {
     false
 }
 
+// The intent words are instructions to *this* plugin, not words anybody is
+// searching for. Handing them to goofish as part of the term is how "价格进化
+// CMP 170HX" comes back as a page of cameras and hard drives: the site weighs
+// 价格进化 as heavily as the model number, and the model is two tokens out of
+// four. So the verb comes off and the noun stays - which is all that "价格进化
+// CMP 170HX", "fair price sony a7m4" or "价格监控 A7M4" ever meant.
+//
+// Returns "" when the query was nothing but intent ("价格进化" on its own), and
+// the caller keeps the query as it was, which routes to re-deriving from the
+// corpus without browsing.
+fn strip_intent(text) {
+    let out = strip(text);
+    const WORDS_CN = ["价格进化", "标签进化", "价格模型", "标签库", "合理价格", "估价",
+        "公平价", "学习标签", "沉淀标签", "进化一下", "价格学习",
+        "价格监控", "监控价格", "价格变化", "降价", "涨价", "盯一下",
+        "关注价格", "价格走势"];
+    for w in WORDS_CN { out = replace_all(out, w, " "); }
+    // The English words are matched on, and removed from, a lowered copy: search
+    // is case-insensitive, and lowercasing is what lets "Evolve Sony A7M4" drop
+    // the verb at all.
+    const WORDS_EN = ["evolve", "fair price", "price model", "learn tags",
+        "price learning", "price watch", "watch price", "price alert",
+        "price change", "monitor price"];
+    let low = out.to_lower();
+    let hit = false;
+    for w in WORDS_EN {
+        if low.contains(w) { low = replace_all(low, w, " "); hit = true; }
+    }
+    if hit { out = low; }
+    // Joined by hand: like `replace`, `join` is not in this Rhai build's
+    // package set.
+    let out2 = "";
+    for part in split(out, ' ') {
+        let t = strip(part);
+        if t == "" { continue; }
+        if out2 != "" { out2 += " "; }
+        out2 += t;
+    }
+    out2
+}
+
 fn plan(args) {
     let query = opt_any(args, ["query", "q", "keyword", "keywords", "text"]);
     let raw_item = opt_any(args, ["item_url", "url", "item", "id"]);
@@ -377,6 +418,14 @@ fn plan(args) {
         else if raw_item != "" && query == "" { mode = "item"; }
         else if is_item_url(raw_item) { mode = "item"; }
         else { mode = "search"; }
+    }
+
+    // `evolve` is the one mode that reaches a search *and* is entered by putting
+    // a word in the query, so it is the one mode whose query has to lose that
+    // word before the site ever sees it.
+    if mode == "evolve" {
+        let term = strip_intent(query);
+        if term != "" { query = term; }
     }
 
     // A search phrase that is really a URL/id still means "one item".
@@ -886,6 +935,25 @@ fn tag_seps() {
 // Split on any of a set of single characters. The engine registers no regex
 // literal and no splitter taking a character class, and these are the
 // separators goofish itself uses in tags and label values.
+// Substring replacement, written out because this Rhai build registers no
+// `String::replace`. Same contract: every occurrence, not just the first.
+fn replace_all(s, needle, filler) {
+    if needle == "" { return s; }
+    let out = "";
+    let i = 0;
+    while i < s.len() {
+        let hit = i + needle.len() <= s.len() && s.sub_string(i, needle.len()) == needle;
+        if hit {
+            out += filler;
+            i += needle.len();
+        } else {
+            out += s.sub_string(i, 1);
+            i += 1;
+        }
+    }
+    out
+}
+
 fn split_multi(s, seps) {
     let out = [];
     let cur = "";
@@ -936,6 +1004,37 @@ fn squash(s) {
         if "abcdefghijklmnopqrstuvwxyz0123456789".contains(low) { out += low; }
         i += 1;
     }
+    out
+}
+
+// Punctuation and layout that join two words of one product name without being
+// part of it: "CMP 170HX", "CMP-170HX" and "CMP/170HX" are one product.
+fn is_scope_sep(c) {
+    if is_space(c) || is_mark(c) { return true; }
+    const S = "-_/.,;:!?、。；：！？·|()[]{}<>" + "\"" + "'" + "+=~*#@$%^&\\";
+    S.contains(c)
+}
+
+// The market a row belongs to, as a bare key: case folded, layout dropped, CJK
+// kept. "CMP 170HX" and "cmp170hx" collapse to one key, "索尼A7M4" is another.
+//
+// This exists because a price is only meaningful against the same product. A
+// camera and a GPU are both "功能完好无维修" and three times apart, so a tag band
+// that pools them answers a question nobody asked. Vocabulary is shared across
+// markets on purpose — "功能完好无维修" is one concept wherever it appears — but
+// prices are compared only inside one market, and a row that no run ever gave a
+// topic to belongs to the empty market, which is reported separately rather than
+// folded into a neighbour.
+fn scope_of(text) {
+    let s = strip(text).to_lower();
+    let out = "";
+    let i = 0;
+    while i < s.len() {
+        let c = s.sub_string(i, 1);
+        if !is_scope_sep(c) { out += c; }
+        i += 1;
+    }
+    if out.len() > 40 { out = out.sub_string(0, 40); }
     out
 }
 
@@ -1220,6 +1319,10 @@ fn index_row(entry, mined, now) {
         price: pick(entry, "price"),
         want_count: pick(entry, "want_count"),
         source_mode: pstr(entry, "source_mode"),
+        // The product this row was found under. Empty when the run named no
+        // topic — a standalone `--query <id>` browse — which is its own market
+        // rather than a reason to guess one.
+        scope: pstr2(entry, "scope", ""),
         collected_at: pstr2(entry, "collected_at", now["rfc3339"]),
         collected_at_ms: oint(pick(entry, "collected_at_ms"), 0),
         tags: tags,
@@ -1233,14 +1336,27 @@ fn index_row(entry, mined, now) {
 fn merge_index(idx, fresh, index_max) {
     let seen = [];
     let rows = [];
+    let old_rows = index_rows(idx);
+    // What each item's last named market was. A later run can meet the same item
+    // without naming a product — someone browses one listing by id — and letting
+    // that blank overwrite the market would quietly un-scope the item a second
+    // later, so the earlier answer is carried forward instead.
+    let prev_scope = #{};
+    for r in old_rows {
+        let sc = pstr(r, "scope");
+        if sc != "" { prev_scope[pstr(r, "id")] = sc; }
+    }
     for r in fresh {
         let id = pstr(r, "id");
         if id == "" || seen.contains(id) { continue; }
         seen.push(id);
+        if omap(r) && pstr(r, "scope") == "" && prev_scope.contains(id) {
+            r["scope"] = prev_scope[id];
+        }
         rows.push(r);
     }
     let kept = [];
-    let old = index_rows(idx);
+    let old = old_rows;
     let i = 0;
     while i < old.len() {
         let r = old[i];
@@ -1357,8 +1473,51 @@ fn feed_factor_of(corrections, o) {
     f
 }
 
+// The distribution behind one fair-price band: median ± sigma · 1.4826 · MAD,
+// the usual consistency factor for a median/MAD pair. A MAD of zero (every
+// listing the same price) falls back to a 10% band so one different listing is
+// still visible. Below `min_samples` there is no band at all — a fair price
+// nobody can act on is worse than none.
+//
+// This is the whole of the arithmetic, and it is one function because the same
+// question is asked twice: of one tag's prices, and of one product's.
+fn band_of(prices, sigma, min_samples) {
+    let st = #{ n: 0, min: (), max: (), mean: (), median: (), mad: (),
+                fair: (), low: (), high: () };
+    let n = prices.len();
+    if n == 0 { return st; }
+    let lo = 1e30; let hi = -1e30; let sum = 0.0;
+    for p in prices {
+        if p < lo { lo = p; }
+        if p > hi { hi = p; }
+        sum += p;
+    }
+    let med = median_of(prices);
+    let m = mad_of(prices, med);
+    st["min"] = round2(lo);
+    st["max"] = round2(hi);
+    st["mean"] = round2(sum / n);
+    st["median"] = round2(med);
+    st["mad"] = round2(m);
+    st["n"] = n;
+    if n >= min_samples {
+        let spread = if m > 0.0 { sigma * 1.4826 * m } else { med * 0.1 };
+        st["fair"] = round2(med);
+        st["low"] = round2(med - spread);
+        st["high"] = round2(med + spread);
+    }
+    st
+}
+
 // The whole learning pass: corpus in, documents out.
-fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
+//
+// `want_scope` is the product the caller asked about, "" when it named none.
+// Vocabulary — which spellings mean one thing, which tags co-occur — is learned
+// from the whole corpus, because a concept is the same concept in every market.
+// Prices are not: a band is only drawn from the rows of one market, so a camera
+// is never judged against a graphics card. Every mode still feeds the pass; only
+// the price question narrows.
+fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o, want_scope) {
     let syn_min = oint(pick(o, "syn_min_hits"), 2);
     let min_samples = oint(pick(o, "min_samples"), 3);
     let sigma = onum(pick(o, "sigma"));
@@ -1401,7 +1560,7 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
                 syn_hits[key] = rec;
             }
         }
-        item_tags.push(#{ id: pstr(row, "id"), keys: keys });
+        item_tags.push(#{ id: pstr(row, "id"), keys: keys, scope: pstr2(row, "scope", "") });
     }
 
     // ── 2. the synonym graph: this corpus's declarations plus every pair an
@@ -1490,6 +1649,7 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
     let rows_by_id = #{};
     for row in corpus { rows_by_id[pstr(row, "id")] = row; }
     let item_count = #{};
+    let market_count = #{};   // the same count restricted to `want_scope`
     let price_of = #{};
     let first_seen = #{};
     let last_seen = #{};
@@ -1497,6 +1657,7 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
     let co = #{};
     for g in priced_groups {
         item_count[g["k"]] = 0;
+        market_count[g["k"]] = 0;
         price_of[g["k"]] = [];
         co[g["k"]] = #{};
     }
@@ -1507,10 +1668,16 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
         let price = pick(row, "price");
         let at = oint(pick(row, "collected_at_ms"), 0);
         let keys = ig["keys"];
+        // Everything below the vocabulary count is about this product's market:
+        // which prices, which sample titles, whose history. Only the co-occurrence
+        // graph, further down, is deliberately shared across products.
+        let mine = want_scope == "" || pstr2(ig, "scope", "") == want_scope;
         for kk in keys {
             let g = if group_of.contains(ostr(kk)) { ostr(group_of[ostr(kk)]) } else { ostr(kk) };
             if !item_count.contains(g) { continue; }   // outside the priced vocabulary
             item_count[g] = oint(item_count[g], 0) + 1;
+            if !mine { continue; }
+            market_count[g] = oint(market_count[g], 0) + 1;
             if at > 0 {
                 if !first_seen.contains(g) || at < oint(first_seen[g], 0) { first_seen[g] = at; }
                 if !last_seen.contains(g) || at > oint(last_seen[g], 0) { last_seen[g] = at; }
@@ -1546,49 +1713,27 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
     for g in priced_groups {
         let key = g["k"];
         let ps = price_of[key];
-        let n = ps.len();
-        let stats = #{ n: 0, min: (), max: (), mean: (), median: (), mad: (),
-                       fair: (), low: (), high: (), prices: [] };
-        if n > 0 {
-            let lo = 1e30; let hi = -1e30; let sum = 0.0;
-            for p in ps {
-                if p < lo { lo = p; }
-                if p > hi { hi = p; }
-                sum += p;
-            }
-            let med = median_of(ps);
-            let m = mad_of(ps, med);
-            stats["min"] = round2(lo);
-            stats["max"] = round2(hi);
-            stats["mean"] = round2(sum / n);
-            stats["median"] = round2(med);
-            stats["mad"] = round2(m);
-            stats["n"] = n;
-            if n >= min_samples {
-                // median ± sigma · 1.4826 · MAD, the usual consistency factor
-                // for a median/MAD pair. A MAD of zero (every listing the same
-                // price) falls back to a 10% band so one different listing is
-                // still visible.
-                let spread = if m > 0.0 { sigma * 1.4826 * m } else { med * 0.1 };
-                stats["fair"] = round2(med);
-                stats["low"] = round2(med - spread);
-                stats["high"] = round2(med + spread);
-            }
-            let keep = [];
-            for p in sorted_copy(ps) { keep.push(round2(p)); }
-            while keep.len() > price_cap { keep.remove(0); }
-            stats["prices"] = keep;
-        }
+        let stats = band_of(ps, sigma, min_samples);
+        let keep = [];
+        for p in sorted_copy(ps) { keep.push(round2(p)); }
+        while keep.len() > price_cap { keep.remove(0); }
+        stats["prices"] = keep;
         stat_of[key] = stats;
+        // `items` counts inside the market the caller asked about and `items_all`
+        // across the whole corpus, so a tag band is never read as "26 of the 26
+        // items on record are this tag" when only 26 of 81 were in this market.
+        let n_all = oint(item_count[key], 0);
+        let n_market = oint(market_count[key], 0);
         tag_stats.push(#{
             tag: key,
             ns: ns_of_key(key),
-            items: oint(item_count[key], 0),
-            n_priced: n,
-            min: stats["min"], max: stats["max"], mean: stats["mean"],
-            median: stats["median"], mad: stats["mad"],
-            fair: stats["fair"], low: stats["low"], high: stats["high"],
-            prices: stats["prices"]
+            items: if want_scope == "" { n_all } else { n_market },
+            items_all: n_all,
+            n_priced: oint(pick(stats, "n"), 0),
+            min: pick(stats, "min"), max: pick(stats, "max"), mean: pick(stats, "mean"),
+            median: pick(stats, "median"), mad: pick(stats, "mad"),
+            fair: pick(stats, "fair"), low: pick(stats, "low"), high: pick(stats, "high"),
+            prices: keep
         });
     }
 
@@ -1683,13 +1828,16 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
     }
     corrections[ckey] = prev;
 
-    // ── 8. anomalies: the whole corpus judged against what it now knows ──
+    // ── 8. anomalies: the corpus judged against what it now knows ──
     // The corpus, not this run's rows: `evolve` with no query browses nothing
     // and still has to answer "which of these is a deal?", which is a question
-    // about everything collected so far rather than about the last fetch.
+    // about everything collected so far rather than about the last fetch. Named a
+    // product, though, and only that product's rows have a band to be judged
+    // against — the rest would be a camera measured against a graphics card.
     let out_rows = [];
     let verdict_rows = [];
     for row in corpus {
+        if want_scope != "" && pstr2(row, "scope", "") != want_scope { continue; }
         let price = pick(row, "price");
         if type_of(price) == "()" { continue; }
         let p = onum(price);
@@ -1793,6 +1941,60 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
     for f in fair_rows { fair_ranks.push(#{ k: f["tag"], n: f["n"] }); }
     let fair_top = pull_docs(rank_top(fair_ranks, 12), fair_rows, "tag");
 
+    // ── 9b. one band per market ──
+    //
+    // The tag bands answer "what is this kind of thing worth"; this answers
+    // "what is *this product* worth", which is the question actually asked, and
+    // it survives a corpus holding several products at once — which is what the
+    // index becomes the moment someone looks up a second thing.
+    // The accumulator is built, filled and *written back* rather than mutated in
+    // place: pushing a map into an array copies it in this engine, so a bucket
+    // held in a local and pushed once would keep its first count forever. Every
+    // other map in this file is written back for the same reason.
+    let market_rows = [];
+    for row in corpus {
+        let sc = pstr2(row, "scope", "");
+        let at = -1;
+        let j = 0;
+        while j < market_rows.len() {
+            if market_rows[j]["scope"] == sc { at = j; break; }
+            j += 1;
+        }
+        let found = if at >= 0 { market_rows[at] } else { #{ scope: sc, items: 0, priced: 0, prices: [] } };
+        found["items"] = oint(pick(found, "items"), 0) + 1;
+        let price = pick(row, "price");
+        if type_of(price) != "()" {
+            let v = onum(price);
+            if v > 0.0 {
+                let ps = found["prices"];
+                ps.push(v);
+                found["prices"] = ps;
+                found["priced"] = oint(pick(found, "priced"), 0) + 1;
+            }
+        }
+        if at >= 0 { market_rows[at] = found; } else { market_rows.push(found); }
+    }
+    let scope_docs = [];
+    let scope_ranks = [];
+    for m in market_rows {
+        let ps = m["prices"];
+        let band = band_of(ps, sigma, min_samples);
+        let doc = #{
+            scope: m["scope"],
+            items: oint(pick(m, "items"), 0),
+            priced: oint(pick(m, "priced"), 0),
+            n: oint(pick(band, "n"), 0),
+            min: pick(band, "min"), max: pick(band, "max"),
+            median: pick(band, "median"), mad: pick(band, "mad"),
+            fair: pick(band, "fair"), low: pick(band, "low"), high: pick(band, "high")
+        };
+        scope_docs.push(doc);
+        // Ranked by priced samples, not by items: a product whose listings carry
+        // no price at all has no band to lead with, however many rows it has.
+        scope_ranks.push(#{ k: doc["scope"], n: doc["priced"] });
+    }
+    let scope_list = pull_docs(rank_top(scope_ranks, oint(pick(o, "scope_top"), 20)), scope_docs, "scope");
+
     // ── 10. what changed since the last run ──
     let prev_tags = [];
     if type_of(pick(o, "prev_tags")) == "array" { prev_tags = o["prev_tags"]; }
@@ -1827,6 +2029,7 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
         items: item_stats,
         corrections: corrections,
         next_feed_factor: feed_factor_of(corrections, o),
+        scopes: scope_list,
         outliers: outliers
     };
 
@@ -1839,6 +2042,7 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
         vocab_size: sk.len(),
         priced_items: priced_groups.len(),
         fair: fair_top,
+        scopes: scope_list,
         outliers: outliers,
         verdicts: verdict_rows,
         group_of: group_of,
@@ -1947,7 +2151,7 @@ fn sql_join(xs) {
 
 fn sql_schema() {
     [
-        "CREATE TABLE IF NOT EXISTS goofish_items(id TEXT PRIMARY KEY, title TEXT, url TEXT, status TEXT, location TEXT, want_count INTEGER, collected_at TEXT, collected_at_ms INTEGER, source_mode TEXT, tags TEXT, price REAL, last_price REAL, low_price REAL, high_price REAL, median_price REAL, vs_median_pct REAL)",
+        "CREATE TABLE IF NOT EXISTS goofish_items(id TEXT PRIMARY KEY, title TEXT, url TEXT, status TEXT, location TEXT, want_count INTEGER, collected_at TEXT, collected_at_ms INTEGER, source_mode TEXT, scope TEXT, tags TEXT, price REAL, last_price REAL, low_price REAL, high_price REAL, median_price REAL, vs_median_pct REAL)",
         // `implausible_price` carries a reading the monitor refused to believe
         // (see observe()): the sighting is kept with no price of its own, and
         // the number it would have had is kept beside it, so the SQLite copy
@@ -1956,6 +2160,11 @@ fn sql_schema() {
         "CREATE TABLE IF NOT EXISTS goofish_tags(tag TEXT PRIMARY KEY, ns TEXT, name TEXT, items INTEGER, n_priced INTEGER, first_seen_ms INTEGER, last_seen_ms INTEGER, spellings TEXT, co_tags TEXT, fair REAL)",
         "CREATE TABLE IF NOT EXISTS goofish_item_tags(item_id TEXT, tag TEXT, raw TEXT, PRIMARY KEY (item_id, tag))",
         "CREATE TABLE IF NOT EXISTS goofish_tag_price_stats(tag TEXT PRIMARY KEY, ns TEXT, n INTEGER, items INTEGER, min REAL, median REAL, mean REAL, max REAL, mad REAL, fair REAL, low REAL, high REAL, prices TEXT)",
+        // One row per product the corpus holds, with its own band. A price is
+        // only comparable against the same product, so this table is what makes
+        // "what does a CMP 170HX go for" answerable in SQL over a corpus that
+        // also holds cameras.
+        "CREATE TABLE IF NOT EXISTS goofish_scopes(scope TEXT PRIMARY KEY, items INTEGER, priced INTEGER, n INTEGER, min REAL, median REAL, mean REAL, max REAL, mad REAL, fair REAL, low REAL, high REAL)",
         "CREATE TABLE IF NOT EXISTS goofish_price_corrections(key TEXT PRIMARY KEY, n INTEGER, factor REAL, spread REAL, p25 REAL, p75 REAL, first_seen TEXT, last_seen TEXT)"
     ]
 }
@@ -2024,6 +2233,17 @@ fn sql_statements(lv, wdata, o) {
         }
     }
 
+    // ── one band per product ──
+    if omap(model) && model.contains("scopes") && type_of(model["scopes"]) == "array" {
+        for sc in model["scopes"] {
+            out.push("INSERT OR REPLACE INTO goofish_scopes(scope, items, priced, n, min, median, mean, max, mad, fair, low, high) VALUES("
+                + sql_q(pstr(sc, "scope")) + ", " + sql_i(pick(sc, "items")) + ", " + sql_i(pick(sc, "priced"))
+                + ", " + sql_i(pick(sc, "n")) + ", " + sql_n(pick(sc, "min")) + ", " + sql_n(pick(sc, "median"))
+                + ", " + sql_n(pick(sc, "mean")) + ", " + sql_n(pick(sc, "max")) + ", " + sql_n(pick(sc, "mad"))
+                + ", " + sql_n(pick(sc, "fair")) + ", " + sql_n(pick(sc, "low")) + ", " + sql_n(pick(sc, "high")) + ")");
+        }
+    }
+
     // ── per-item price history summary, keyed by the watch store's own ids ──
     let istat = #{};
     if omap(model) && model.contains("items") && type_of(model["items"]) == "array" {
@@ -2046,11 +2266,12 @@ fn sql_statements(lv, wdata, o) {
         }
         let s = if istat.contains(id) { istat[id] } else { #{} };
         if out.len() >= max { dropped[0] += 1; continue; }
-        out.push("INSERT OR REPLACE INTO goofish_items(id, title, url, status, location, want_count, collected_at, collected_at_ms, source_mode, tags, price, last_price, low_price, high_price, median_price, vs_median_pct) VALUES("
+        out.push("INSERT OR REPLACE INTO goofish_items(id, title, url, status, location, want_count, collected_at, collected_at_ms, source_mode, scope, tags, price, last_price, low_price, high_price, median_price, vs_median_pct) VALUES("
             + sql_q(id) + ", " + sql_q(pstr(row, "title")) + ", " + sql_q(pstr(row, "url"))
             + ", " + sql_q(pstr(row, "status")) + ", " + sql_q(pstr(row, "location"))
             + ", " + sql_i(pick(row, "want_count")) + ", " + sql_q(pstr(row, "collected_at"))
             + ", " + sql_i(pick(row, "collected_at_ms")) + ", " + sql_q(pstr(row, "source_mode"))
+            + ", " + sql_q(pstr(row, "scope"))
             + ", " + sql_q(sql_join(tags))
             // "price" is the price this row's tags were priced BY - the same
             // number the tag statistics were built from, which is what makes
@@ -2775,9 +2996,15 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
     let evo = ();
     let sql_schema_out = [];
     let sql_statements_out = [];
+    // What product this run was about. Every row it collects belongs to that
+    // market — including the detail pages browsed out of a listing sweep, which
+    // are the same products as the cards that linked to them. A run that named
+    // no product browses by id and stamps nothing.
+    let run_scope = scope_of(query);
     let fresh = [];
     for e in lr["entries"] {
         let m = mine_tags(e);
+        if run_scope != "" && omap(e) { e["scope"] = run_scope; }
         fresh.push(index_row(e, m, now));
     }
     let corpus = merge_index(load_index(host, out_dir), fresh,
@@ -2790,7 +3017,7 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
     }
     o["prev_tags"] = prev_tags;
     let learned = load_learned(host, out_dir, now);
-    let lv = learn(host, out_dir, corpus, wdata, learned, fresh, lr["feed_pairs"], now, o);
+    let lv = learn(host, out_dir, corpus, wdata, learned, fresh, lr["feed_pairs"], now, o, run_scope);
 
     let evo_error = "";
     try {
@@ -2847,6 +3074,11 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
     evo = #{
         items_indexed: lv["index_rows"].len(),
         new_this_run: fresh.len(),
+        // Which market `fair`, `deals` and `overpriced` below were drawn from.
+        // Empty means the run named no product and the bands span everything
+        // collected so far — worth knowing before reading a number off them.
+        scope: run_scope,
+        scopes: lv["scopes"],
         tags: lv["tags_doc"]["groups"].len(),
         vocabulary: lv["tags_doc"]["vocab_size"],
         priced_items: lv["priced_items"],

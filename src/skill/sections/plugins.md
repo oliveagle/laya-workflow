@@ -249,22 +249,31 @@ browse, watch, collect) feeds the pass, and the result gains an `evolve` block:
 |-----|---------|
 | `items_indexed` / `new_this_run` | corpus size, and what this run added |
 | `tags` / `vocabulary` | the learned tag vocabulary, and how many tag keys back it |
+| `scope` / `scopes` | the product the bands were drawn from, and one band per product in the corpus |
 | `fair` | per-tag band: median, `low`, `high`, and `n` listings behind it |
 | `deals` / `overpriced` | items outside their tag's band, split by direction |
 | `next_feed_factor` | learned search-card-vs-detail price ratio, `0` while unproven |
 
+Prices are compared only inside one product: `index.json` ends up holding every
+product ever looked up, and `功能完好无维修` means the same thing on a ¥9,200 camera
+and a ¥13,400 graphics card. Each row carries the scope of the query that collected
+it, the vocabulary stays shared, and the bands are drawn per market.
+
 It writes three files into `out_dir`: `index.json` (the corpus — every statistic is
 re-derived from it, which is what makes re-running idempotent), `tags.json` (the
 vocabulary: canonical tag, folded spellings, the synonym pairs that justify the folds)
-and `price_model.json` (per-tag median ± σ·1.4826·MAD, per-item price history). Only
+and `price_model.json` (per-tag median ± σ·1.4826·MAD, per-item price history,
+per-product bands). Only
 accumulated evidence grows. With `emit_sql: true` it also returns `sql_schema` and
 idempotent `sql_statements`; `dsl/browser/goofish_sqlite.json` applies them to a SQLite
 file and reads back fair prices, price moves and below/above-fair rows.
 
 ```sh
-# 闲鱼: learn tags and fair prices, then hand them to SQLite
+# 闲鱼: learn tags and fair prices, then hand them to SQLite.
+# 价格进化 is an instruction to the plugin and never reaches the search box,
+# so "价格进化 CMP 170HX" searches CMP 170HX and prices it as its own market.
 laya-workflow run --spec dsl/browser/goofish_item.json \
-  --query "价格进化 索尼 A7M4" --state '{"count":30,"browse":6}'
+  --query "价格进化 CMP 170HX" --state '{"count":30,"browse":6}'
 laya-workflow run --spec dsl/browser/goofish_sqlite.json \
   --state '{"query":"索尼 A7M4","browse":6}'
 ```

@@ -268,7 +268,12 @@ laya-workflow run --spec dsl/browser/goofish_item.json --query "价格进化"
 `plan()` infers the mode: a keyword is a search, an item URL or a bare 12–13
 digit id is one listing, `价格监控` / `watch price` is monitoring,
 `添加监控 <url>` adds to it, and `价格进化` / `fair price` / `evolve` is the
-learning mode. An explicit `state.mode` always wins. Everything lands in
+learning mode. Those intent words are instructions to the plugin, so they are
+stripped before the term is sent — goofish weighs `价格进化` as heavily as a
+model number, and `--query "价格进化 CMP 170HX"` otherwise comes back as a page
+of cameras and hard drives. A query that is *nothing but* intent is left alone,
+which is what makes `--query "价格进化"` the "re-derive, don't browse" run. An
+explicit `state.mode` always wins. Everything lands in
 `out_dir` (default `~/tmp/goofish`): `items/<id>.json` per listing,
 `item-<id>.md` + downloaded `images/<id>/` for an opened listing, and
 `watch.json` — one entry per tracked item with every price ever seen, so a
@@ -288,6 +293,8 @@ remembered to ask. The result gains an `evolve` block:
 | --- | --- |
 | `items_indexed` / `new_this_run` | corpus size, and what this run added |
 | `tags` / `vocabulary` | the learned tag vocabulary and how many tag keys back it |
+| `scope` | the product the price bands below were drawn from; `""` when the run named none |
+| `scopes` | one band per product in the corpus, so a mixed index stays legible |
 | `fair` | per-tag band: median (`fair`), `low`, `high`, and `n` listings behind it |
 | `deals` / `overpriced` | items outside their tag's band, split by direction, ranked by distance |
 | `next_feed_factor` | the learned search-card-vs-detail price ratio, `0` when there is not enough evidence |
@@ -296,13 +303,28 @@ remembered to ask. The result gains an `evolve` block:
 Three files under `out_dir` carry it:
 
 - **`index.json`** — the corpus: one row per item ever collected, with the tags
-  mined from it. Every statistic is re-derived from this file, which is what
-  makes re-running idempotent instead of cumulative.
+  mined from it and the product (`scope`) it was collected under. Every statistic
+  is re-derived from this file, which is what makes re-running idempotent instead
+  of cumulative.
 - **`tags.json`** — the vocabulary: canonical tag, the spellings folded into it,
   the raw forms seen on the page, co-occurrence, and the synonym pairs that
   justify the folds.
 - **`price_model.json`** — per-tag price distribution (median, MAD, min/max/mean,
-  the band), the per-item price history summary, and the learned correction.
+  the band), the per-item price history summary, the learned correction, and the
+  per-product bands.
+
+**A price is only a price against the same product.** One `index.json` ends up
+holding every product ever looked up, and a shared tag like `功能完好无维修`
+means the same thing on a ¥9,200 camera and a ¥13,400 graphics card — so a band
+that pooled the two answers a question nobody asked. `run()` stamps each row
+with the scope of the query that collected it (a browse nested inside a search
+belongs to that search's product); `merge_index` carries the scope forward when
+a later run meets the same item without naming a product, so browsing one
+listing by id cannot quietly un-scope it. `learn()` then compares prices inside
+one scope only — vocabulary, synonyms and co-occurrence stay global, because
+`功能完好无维修` really is one concept — and the anomalies pass judges only the
+rows that have a band to be judged against. `evolve.scopes` reports every market
+in the corpus at once, including the unnamed one.
 
 Only *accumulated* state grows: spelling counts, synonym evidence (pair
 sightings), correction ratios, the run counter. Folding runs into statistics is
