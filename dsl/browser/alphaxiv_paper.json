@@ -1,13 +1,16 @@
 {
   "name": "alphaxiv_papers",
   "dsl_version": 2,
-  "description": "Natural-language alphaXiv downloader. Pass a search query, a paper URL, or a trending keyword via --query (or state.query); the op discovers /abs/<id> papers, renders each one until its SPA settles, and writes Markdown plus figures under out_dir (default ~/tmp/alphaxiv). Paper pages are fetched in Chinese by default (lang defaults to zh; set lang to en/off to disable). Optional state: mode (auto|search|trending|url), count, paper_url, out_dir, selector, lang.",
+  "description": "Natural-language alphaXiv downloader. Pass a search query, a paper URL, or a trending keyword via --query (or state.query); the op discovers /abs/<id> papers, renders each one until its SPA settles, and writes Markdown plus figures under out_dir (default ~/tmp/alphaxiv). Paper pages are fetched in Chinese by default (lang defaults to zh; set lang to en/off to disable). Trending saves 10 by default and pages through alphaXiv's feed API, so count can reach 500 (e.g. --state '{\"count\":100,\"interval\":\"30 Days\"}'). Optional state: mode (auto|search|trending|url), count, interval (3 Days|7 Days|30 Days|90 Days|All time), paper_url, out_dir, selector, lang.",
   "start": "fetch_papers",
   "max_iterations": 2,
   "policy": {
     "allow_exec": true,
     "allow_hosts": [],
-    "allow_paths": ["${env.HOME}/.laya-workflow", "${env.HOME}/tmp/alphaxiv"],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/alphaxiv"
+    ],
     "max_timeout_ms": 180000,
     "max_output": 8388608,
     "retries": 0
@@ -30,10 +33,16 @@
         "done": {
           "type": "choice",
           "instructions": "Discover and save the requested alphaXiv papers?",
-          "criteria": {"A": "yes", "B": "no"}
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
         }
       },
-      "edge": {"condition": {}, "default": "STOP"},
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "action": {
         "kind": "call",
         "capability": "browser",
@@ -45,7 +54,8 @@
           "paper_url": "${state.paper_url}",
           "out_dir": "${state.out_dir}",
           "selector": "${state.selector}",
-          "lang": "${state.lang}"
+          "lang": "${state.lang}",
+          "interval": "${state.interval}"
         },
         "project": {
           "mode": "/mode",

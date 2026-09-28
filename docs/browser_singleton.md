@@ -335,19 +335,29 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
   --query "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer"
 
-# download the trending/explore feed (default 5 papers)
+# download the trending/explore feed (default 10 papers)
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
+
+# page through the feed: 100 trending papers over the last 30 days
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" \
+  --state '{"count":100,"interval":"30 Days"}'
 ```
 
 `mode` defaults to `auto` and is inferred from the inputs: an explicit paper URL
 (or `paper_url`) → `url`; a trending keyword (`trending`, `热门`, `最新`, …) →
 `trending`; anything else → `search`. Force it with
-`--state '{"mode":"trending","count":3}'`.
+`--state '{"mode":"trending","count":3}'`. Search stays bounded by one rendered
+results page (~10 cards); only trending is pageable.
 
 - `search` opens `https://www.alphaxiv.org/?query=<query>`, reads the rendered
   `/abs/<id>` cards, and saves the top `count` (default 1).
-- `trending` reads the homepage explore feed (`https://www.alphaxiv.org/`) and
-  saves the top `count` (default 5).
+- `trending` pages through alphaXiv's public feed API
+  (`GET /papers/v3/feed`, the same call the Explore/Sort UI makes) with
+  `sort=Hot` — what the site labels "Trending" — and saves the top `count`
+  (default 10, up to 500). `interval` selects the window: `3 Days`, `7 Days`
+  (default), `30 Days`, `90 Days`, or `All time`. The API is called from a
+  scratch tab so the browser supplies the first-party origin; if it is
+  unreachable the op falls back to scraping the rendered homepage row (≤10).
 - `url` saves exactly the given `paper_url` / URL query.
 
 Paper pages are saved in **Chinese by default** (`lang` = `zh`). alphaXiv serves

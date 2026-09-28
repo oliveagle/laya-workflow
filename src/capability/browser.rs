@@ -2523,6 +2523,50 @@ const ALPHAXIV_LINKS_JS: &str = r##"(() => new Promise((resolve) => {
   tick();
 }))()"##;
 
+/// Page-side collector for alphaXiv's public feed API — the same endpoint the
+/// Explore/Sort UI calls (`GET /papers/v3/feed`). The site labels `sort=Hot`
+/// "Trending"; `interval` is one of `3 Days`/`7 Days`/`30 Days`/`90 Days`/
+/// `All time`. This is how trending can page through far more papers than the
+/// rendered homepage row shows (the API accepts `pageSize` up to 100).
+const ALPHAXIV_FEED_JS: &str = r##"(async () => {
+  const OPTS = (typeof __LAYA_OPTS__ !== 'undefined') ? __LAYA_OPTS__ : {};
+  const want = Math.max(1, OPTS.count | 0 || 10);
+  const sort = OPTS.sort || 'Hot';
+  const interval = OPTS.interval || '7 Days';
+  const pageSize = Math.min(100, Math.max(1, (OPTS.page_size | 0) || Math.min(100, want)));
+  const maxPages = (OPTS.max_pages | 0) || (Math.ceil(want / pageSize) + 3);
+  const out = [];
+  const seen = new Set();
+  let pages = 0;
+  for (let page = 1; page <= maxPages && out.length < want; page++) {
+    const url = 'https://api.alphaxiv.org/papers/v3/feed'
+      + '?pageNum=' + page
+      + '&pageSize=' + pageSize
+      + '&sort=' + encodeURIComponent(sort)
+      + '&interval=' + encodeURIComponent(interval)
+      + '&linkBlogs=true&topics=%5B%5D';
+    let payload;
+    try {
+      const r = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!r.ok) break;
+      payload = await r.json();
+    } catch (e) { break; }
+    const papers = (payload && payload.papers) || [];
+    if (!papers.length) break;
+    pages++;
+    for (const paper of papers) {
+      const id = paper.universal_paper_id || paper.canonical_id;
+      if (!id) continue;
+      const abs = 'https://www.alphaxiv.org/abs/' + id;
+      if (seen.has(abs)) continue;
+      seen.add(abs);
+      out.push({ url: abs, title: (paper.title || '').slice(0, 200) });
+      if (out.length >= want) break;
+    }
+  }
+  return { count: out.length, links: out, pages: pages, sort: sort, interval: interval };
+})()"##;
+
 /// True when a natural-language query points at a concrete paper page.
 fn looks_like_paper_url(s: &str) -> bool {
     let l = s.trim().to_ascii_lowercase();
@@ -2597,6 +2641,23 @@ fn is_trending_request(s: &str) -> bool {
     l.split_whitespace().any(|token| token == "trending")
 }
 
+/// The alphaXiv feed time window, restricted to the API's allowed values.
+/// Anything unrecognised (or absent) falls back to `7 Days`.
+fn alphaxiv_interval(with: &Value) -> String {
+    const ALLOWED: [&str; 5] = ["3 Days", "7 Days", "30 Days", "90 Days", "All time"];
+    let raw = with.get("interval").map(stringify).unwrap_or_default();
+    let raw = raw.trim();
+    ALLOWED
+        .iter()
+        .find(|a| a.eq_ignore_ascii_case(raw))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "7 Days".to_string())
+}
+
+/// Upper bound on `count`, so a typo cannot kick off an unbounded crawl. Papers
+/// are downloaded one by one, so this is deliberately the only limit.
+const ALPHAXIV_MAX_COUNT: u64 = 500;
+
 /// Resolve a call's intent into `{mode, query, target_url, count}`.
 ///
 /// `mode` may be forced (`url`/`search`/`trending`); the default `auto` infers
@@ -2655,12 +2716,17 @@ fn alphaxiv_plan(with: &Value) -> Result<Value> {
     } else {
         None
     };
-    let default_count = if mode == "trending" { 5 } else { 1 };
+    // Trending defaults to a full page of ten. Its count can reach
+    // ALPHAXIV_MAX_COUNT because the feed is paged through the API; search is
+    // bounded by the single rendered results page (~10 cards).
+    let trending = mode == "trending";
+    let default_count = if trending { 10 } else { 1 };
+    let max_count = if trending { ALPHAXIV_MAX_COUNT } else { 10 };
     let count = with
         .get("count")
         .and_then(Value::as_u64)
         .unwrap_or(default_count)
-        .clamp(1, 10);
+        .clamp(1, max_count);
     Ok(json!({
         "mode": mode,
         "query": query,
@@ -2700,6 +2766,49 @@ fn collect_alphaxiv_links(
             "var __LAYA_OPTS__ = {};\n{}",
             serde_json::to_string(&opts)?,
             ALPHAXIV_LINKS_JS
+        );
+        let value = evaluate(endpoint, &id, &expression, timeout, true)?;
+        Ok(value
+            .get("links")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    })();
+    let _ = guard.finish(true, timeout);
+    outcome
+}
+
+/// Page through alphaXiv's public feed API inside a scratch tab (the browser
+/// supplies the first-party origin the API expects) and return `/abs/<id>`
+/// rows, so trending can exceed the handful of cards the homepage renders.
+fn collect_alphaxiv_feed(
+    c: &BrowserCap,
+    endpoint: &str,
+    count: usize,
+    interval: &str,
+    timeout: Duration,
+    policy: &Policy,
+) -> Result<Vec<Value>> {
+    check_host(ALPHAXIV_HOME, policy)?;
+    enforce_owned_target_limit(endpoint, c.max_owned_pages, c.owned_idle_ms, timeout)?;
+    let mut guard = TargetCleanupGuard::new(endpoint);
+    let id = open_background_target(endpoint, timeout)?;
+    track_owned_target(endpoint, &id, false);
+    guard.track(id.clone());
+    let outcome = (|| -> Result<Vec<Value>> {
+        cdp_page_call(
+            endpoint,
+            &id,
+            "Page.navigate",
+            json!({"url": ALPHAXIV_HOME}),
+            timeout,
+        )?;
+        let _ = wait_page_ready(endpoint, &id, timeout, None);
+        let opts = json!({"count": count, "sort": "Hot", "interval": interval});
+        let expression = format!(
+            "var __LAYA_OPTS__ = {};\n{}",
+            serde_json::to_string(&opts)?,
+            ALPHAXIV_FEED_JS
         );
         let value = evaluate(endpoint, &id, &expression, timeout, true)?;
         Ok(value
@@ -2774,14 +2883,14 @@ fn run_alphaxiv(
     // the requested count, then trim to `count`.
     let collect_limit = count.clamp(5, 10);
 
-    let (source_url, discovered) = match mode {
+    let (source_url, discovered, discovery) = match mode {
         "url" => {
             let raw = plan
                 .get("target_url")
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow!("alphaxiv url mode resolved no URL"))?;
             let url = localize_alphaxiv_url(raw, &lang);
-            (url.clone(), vec![json!({"url": url, "title": ""})])
+            (url.clone(), vec![json!({"url": url, "title": ""})], "url")
         }
         "search" => {
             let url = format!(
@@ -2789,12 +2898,21 @@ fn run_alphaxiv(
                 urlencoding_utf8(query)
             );
             let links = collect_alphaxiv_links(c, endpoint, &url, collect_limit, timeout, policy)?;
-            (url, links)
+            (url, links, "dom")
         }
         "trending" => {
+            // Prefer the public feed API so `count` can exceed a single rendered
+            // page; fall back to scraping the homepage row if it is unreachable.
             let url = ALPHAXIV_HOME.to_string();
-            let links = collect_alphaxiv_links(c, endpoint, &url, collect_limit, timeout, policy)?;
-            (url, links)
+            let interval = alphaxiv_interval(with);
+            match collect_alphaxiv_feed(c, endpoint, count, &interval, timeout, policy) {
+                Ok(found) if !found.is_empty() => (url, found, "feed_api"),
+                _ => {
+                    let links =
+                        collect_alphaxiv_links(c, endpoint, &url, collect_limit, timeout, policy)?;
+                    (url, links, "dom")
+                }
+            }
         }
         other => bail!("alphaxiv resolved mode {other:?} is not runnable"),
     };
@@ -2830,22 +2948,41 @@ fn run_alphaxiv(
         if let Some(selector) = selector.as_ref() {
             leaf["selector"] = json!(selector);
         }
-        match run_save_article(c, endpoint, &leaf, timeout, policy) {
-            Ok(saved) => results.push(json!({
+        // One retry: over a long page-through a single transient CDP error
+        // (e.g. a navigation timeout) should not drop the paper.
+        let mut saved = None;
+        let mut last_error = None;
+        let mut attempts = 0;
+        for _ in 0..2 {
+            attempts += 1;
+            match run_save_article(c, endpoint, &leaf, timeout, policy) {
+                Ok(value) => {
+                    saved = Some(value);
+                    break;
+                }
+                Err(e) => last_error = Some(e),
+            }
+        }
+        match saved {
+            Some(saved) => results.push(json!({
                 "rank": index + 1,
                 "url": url,
                 "title_hint": title_hint,
+                "attempts": attempts,
                 "title": saved.get("title").cloned().unwrap_or(Value::Null),
                 "markdown_chars": saved.get("markdown_chars").cloned().unwrap_or(Value::Null),
                 "rendered": saved.get("rendered").cloned().unwrap_or(Value::Null),
                 "images": saved.get("images").cloned().unwrap_or(Value::Null),
                 "written": saved.get("written").cloned().unwrap_or(Value::Null),
             })),
-            Err(e) => failures.push(json!({
+            None => failures.push(json!({
                 "rank": index + 1,
                 "url": url,
                 "title_hint": title_hint,
-                "error": e.to_string(),
+                "attempts": attempts,
+                "error": last_error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "unknown error".to_string()),
             })),
         }
     }
@@ -2856,6 +2993,7 @@ fn run_alphaxiv(
         "mode": mode,
         "query": query,
         "lang": lang,
+        "discovery": discovery,
         "source_url": source_url,
         "out_dir": out_dir,
         "requested_count": count,
@@ -4486,7 +4624,7 @@ mod tests {
         ] {
             let p = alphaxiv_plan(&json!({"query": q})).unwrap();
             assert_eq!(p["mode"], json!("trending"), "query {q:?}");
-            assert_eq!(p["count"], json!(5), "query {q:?}");
+            assert_eq!(p["count"], json!(10), "query {q:?}");
         }
 
         // A paper URL in the query → direct save, no listing.
@@ -4500,15 +4638,43 @@ mod tests {
         assert_eq!(p["mode"], json!("url"));
         assert_eq!(p["target_url"], json!(url));
 
-        // Explicit mode + count; count is clamped to 1..=10.
+        // Explicit mode + count.
         let p =
             alphaxiv_plan(&json!({"query": "diffusion", "mode": "trending", "count": 3})).unwrap();
         assert_eq!(p["mode"], json!("trending"));
         assert_eq!(p["count"], json!(3));
+
+        // Trending pages through the feed API, so its count can reach hundreds…
+        let p = alphaxiv_plan(&json!({"query": "trending", "count": 100})).unwrap();
+        assert_eq!(p["count"], json!(100));
+        // …but never unbounded.
+        let p = alphaxiv_plan(&json!({"query": "trending", "count": 100_000})).unwrap();
+        assert_eq!(p["count"], json!(500));
+
+        // Search still has only one rendered page of cards.
         let p =
             alphaxiv_plan(&json!({"query": "diffusion", "mode": "search", "count": 99})).unwrap();
         assert_eq!(p["mode"], json!("search"));
         assert_eq!(p["count"], json!(10));
+    }
+
+    #[test]
+    fn alphaxiv_interval_is_restricted() {
+        for (given, want) in [
+            (json!("7 Days"), "7 Days"),
+            (json!("3 days"), "3 Days"),
+            (json!("ALL TIME"), "All time"),
+            (json!("90 Days"), "90 Days"),
+        ] {
+            let with = json!({"interval": given});
+            assert_eq!(alphaxiv_interval(&with), want, "{given:?}");
+        }
+        // Missing or bogus values fall back to the default window.
+        assert_eq!(alphaxiv_interval(&json!({})), "7 Days");
+        assert_eq!(
+            alphaxiv_interval(&json!({"interval": "yesterday"})),
+            "7 Days"
+        );
     }
 
     #[test]

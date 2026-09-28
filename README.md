@@ -103,8 +103,10 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
   --query "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer"
 
-# download the trending/explore feed (default 5 papers)
+# download the trending/explore feed (default 10 papers; page up to 500)
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" \
+  --state '{"count":100,"interval":"30 Days"}'
 ```
 
 Papers are saved in Chinese by default (`lang` = `zh`); opt out with

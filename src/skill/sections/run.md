@@ -32,7 +32,9 @@ bare `--query` decides the mode:
 
 ```
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"   # search, save the top paper
-laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"     # trending feed (5 papers)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"     # trending feed (10 papers)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" \
+  --state '{"count":100,"interval":"30 Days"}'                                    # page the feed (up to 500)
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  # save that paper
 ```
 
