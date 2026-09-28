@@ -13,7 +13,7 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`, `ole_eval/`, `devine/`, `browser/`). `laya-workflow list` walks the tree recursively.
+`pipelines/`, `ole_eval/`, `browser/`). `laya-workflow list` walks the tree recursively.
 
 Spec roots are **layered**. A bare `"workflow": "name"` ref (and `list`) resolves
 against, highest priority first: an explicit pin (`--dsl-dir` / `$LAYA_DSL_DIR`,
@@ -22,9 +22,11 @@ found by walking up to the git root → **user** `~/.config/laya-workflow/dsl`
 (`$LAYA_USER_DSL_DIR` / `$XDG_CONFIG_HOME` override) → **builtin** `<crate>/dsl`.
 This directory is the repo layer for the checkout; commit changes here so the
 topology follows the repo. The first root to define a name wins.
-See `ole_eval/README.md` for the ole-eval scenario mapping, and
-`devine/README.md` for the devine_utils release/test/integration flow, and
+See `ole_eval/README.md` for the ole-eval scenario mapping and
 `docs/browser_singleton.md` for singleton Chrome CDP automation.
+The devine_utils release/test/integration flow (`devine/*.json`) now lives,
+and is tracked, in the **devine_utils** repo at `.laya-workflow/dsl/devine/`
+(repo layer) instead of here.
 
 Nesting: a node may reference another workflow
 
@@ -58,9 +60,7 @@ Specs in this directory:
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
-| `devine/release_gate.json` | http probe merged into state, then ordered `threshold` (BLOCK → ALLOW) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
-| `devine/promote.json` | composite verdict: gate probe → delegated `exec` (`workflow promote`) → post-check probe → ordered `threshold` |
 
 External capabilities: declare them under `"capabilities"` and call them from a node
 with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An action may
