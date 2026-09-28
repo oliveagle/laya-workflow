@@ -102,15 +102,18 @@
     return t.replace(/[_-]\s*闲鱼\s*$/, '').trim() || '';
   };
 
-  const SOLD_HINTS = ['该商品已经下架', '该宝贝已下架', '商品不存在', '宝贝不存在', '页面不存在', '该商品已被删除', '已失效'];
+  // Wording taken from the empty state the site actually renders. Verified live
+  // against a deleted id: the whole body is 591 chars and says
+  // "糟糕！宝贝被删掉了" followed by "看看下面"为你推荐"模块…" — none of which is
+  // in the first list this started with, so a dead id came back as
+  // status "on_sale" with "the item block never rendered".
+  const SOLD_HINTS = [
+    '宝贝被删掉', '宝贝被删除', '该商品已被删除', '该宝贝已下架', '该商品已经下架',
+    '商品不存在', '宝贝不存在', '页面不存在', '商品已下架', '宝贝已下架', '已失效',
+  ];
   const LOGIN_HINTS = ['请登录', '登录后查看', '扫码登录'];
 
   const statusOf = (pageText) => {
-    if (pageText.indexOf('该商品已经下架') >= 0 || pageText.indexOf('该宝贝已下架') >= 0
-        || pageText.indexOf('商品不存在') >= 0 || pageText.indexOf('宝贝不存在') >= 0
-        || pageText.indexOf('页面不存在') >= 0 || pageText.indexOf('该商品已被删除') >= 0) {
-      return 'gone';
-    }
     for (const h of SOLD_HINTS) if (pageText.indexOf(h) >= 0) return 'gone';
     for (const h of LOGIN_HINTS) if (pageText.indexOf(h) >= 0) return 'login_required';
     return 'on_sale';
@@ -206,9 +209,20 @@
     state.url = location.href;
     state.id = itemId();
     state.title = docTitle();
-    // The 万 span, if any, lives next to the price rather than inside it.
+    // The 万 span, if any, lives next to the price rather than inside it. Its
+    // class prefix is not guaranteed, so fall back to the child whose own text
+    // is exactly that character — never to a search over the block's text,
+    // which would pick up the "4万浏览" in the want slot and turn a ¥9,180
+    // camera into 91800000.
     const magnitude = byPrefix(main, 'magnitude');
-    const money = parseMoney(text(number) + text(decimal), magnitude ? text(magnitude) : '');
+    let magText = magnitude ? text(magnitude) : '';
+    if (!magText) {
+      for (const el of main.children) {
+        const t = text(el);
+        if (t === '万' || t === '千') { magText = t; break; }
+      }
+    }
+    const money = parseMoney(text(number) + text(decimal), magText);
     state.price = money.price;
     state.original_price = money.original_price;
     state.price_text = text(priceWrap);

@@ -74,16 +74,66 @@ fn opt_any(args, keys) {
     ""
 }
 
+// Numeric options arrive three ways depending on how the caller passed them: as
+// a JSON integer, as a JSON float, or as a string ("15000") once a spec has
+// interpolated `${state.price_min}`. Both readers take all three.
+//
+// The integer case is the one that bit: opt_float used to accept f64 only, so
+// `--state '{"price_min":15000}'` silently became 0.0 and the price filter
+// dropped nothing at all.
+fn numeric_text(s) {
+    let t = strip("" + s);
+    if t == "" || t == "null" { return false; }
+    let c = t.sub_string(0, 1);
+    if c == "-" || c == "+" { t = t.sub_string(1, t.len() - 1); }
+    if t.len() == 0 { return false; }
+    "0123456789".index_of(t.sub_string(0, 1)) >= 0
+}
+
 fn opt_int(args, key, dflt) {
     if !args.contains(key) { return dflt; }
-    if type_of(args[key]) == "i64" { return args[key]; }
+    let v = args[key];
+    if type_of(v) == "()" { return dflt; }
+    if type_of(v) == "i64" { return v; }
+    if type_of(v) == "f64" { return int_of(v); }
+    if numeric_text(v) { return int_of(onum(v)); }
     dflt
 }
 
 fn opt_float(args, key, dflt) {
     if !args.contains(key) { return dflt; }
-    if type_of(args[key]) == "f64" { return args[key]; }
+    let v = args[key];
+    if type_of(v) == "()" { return dflt; }
+    // Multiplying by a float promotes; Rhai has no cast operator.
+    if type_of(v) == "f64" { return v; }
+    if type_of(v) == "i64" { return v * 1.0; }
+    if numeric_text(v) { return onum(v); }
     dflt
+}
+
+// int_of is a truncating cast. Rhai's own `int()` is not one in this engine
+// build (it returns a float, which is how a price formatter once produced
+// "1.0.98.0"), so the fraction is subtracted instead.
+fn int_of(v) {
+    let neg = v < 0.0;
+    let a = if neg { -v } else { v };
+    let n = int_of_str("" + a);
+    if neg { -n } else { n }
+}
+
+fn int_of_str(s) {
+    // s is the already-rendered magnitude of a non-negative float.
+    let dot = s.index_of(".");
+    let head = if dot < 0 { s } else { s.sub_string(0, dot) };
+    let acc = 0;
+    let i = 0;
+    while i < head.len() {
+        let d = "0123456789".index_of(head.sub_string(i, 1));
+        if d < 0 { break; }
+        acc = acc * 10 + d;
+        i += 1;
+    }
+    acc
 }
 
 fn contains(hay, needle) {
@@ -157,22 +207,27 @@ fn onum(v) {
     }
     let whole = 0.0;
     let frac = 0.0;
-    let digits = 0;
     let seen = false;
+    // Two counters, not one: `digits` was both the "already saw a dot" flag and
+    // the fraction-digit count, and it started at 1 on the dot — so "20500.55"
+    // divided 55 by 10³ and came back as 20500.055. Every two-decimal price in a
+    // hand-edited watch file was read at a tenth of its value.
+    let dot = false;
+    let frac_digits = 0;
     while i < s.len() {
         let d = digit(s.sub_string(i, 1));
         if d >= 0 {
             whole = whole * 10.0 + d;
             seen = true;
             i += 1;
-        } else if s.sub_string(i, 1) == "." && digits == 0 {
-            digits = 1;
+        } else if s.sub_string(i, 1) == "." && !dot {
+            dot = true;
             i += 1;
             while i < s.len() {
                 let f = digit(s.sub_string(i, 1));
                 if f < 0 { break; }
                 frac = frac * 10.0 + f;
-                digits += 1;
+                frac_digits += 1;
                 seen = true;
                 i += 1;
             }
@@ -182,13 +237,8 @@ fn onum(v) {
         }
     }
     if !seen { return 0.0; }
-    let out = whole + frac / pow10(digits);
+    let out = whole + frac / pow10(frac_digits);
     if neg { -out } else { out }
-}
-
-fn money(v) {
-    let r = (v * 100.0).round() / 100.0;
-    "" + r
 }
 
 // ── classification: decide before acting ────────────────────────────────────
@@ -243,14 +293,35 @@ fn item_id_of(text) {
     ""
 }
 
+// The item URL out of whatever the caller passed.
+//
+// The URL usually arrives inside a sentence — "添加监控 https://www.goofish.com/
+// item?id=1071111102831" — so this scans the whitespace-separated words and
+// returns the URL itself. Returning the whole string instead handed
+// browser_open a line of prose, which is why `watch_add` found nothing.
 fn item_url_of(text) {
     let t = strip(text);
-    if t.to_lower().contains("goofish.com/item") || t.to_lower().contains("2.taobao.com") {
-        return t;
+    if t == "" { return ""; }
+    for w in words(t) {
+        let lw = w.to_lower();
+        if lw.contains("goofish.com/item") || lw.contains("2.taobao.com") || lw.contains("item.htm") {
+            return w;
+        }
     }
-    let id = item_id_of(t);
-    if id == "" { return ""; }
-    "https://www.goofish.com/item?id=" + id
+    // A bare 12-13 digit id is an item too, and the id may be sitting in a
+    // sentence as well ("盯这个 1071111102831").
+    for w in words(t) {
+        if w.len() >= 12 && w.len() <= 13 {
+            let all = true;
+            let i = 0;
+            while i < w.len() {
+                if digit(w.sub_string(i, 1)) < 0 { all = false; break; }
+                i += 1;
+            }
+            if all { return "https://www.goofish.com/item?id=" + w; }
+        }
+    }
+    ""
 }
 
 // True when the user is asking to look at tracked prices rather than to search.
@@ -300,9 +371,12 @@ fn plan(args) {
         query = "";
     }
 
-    // `search` on a URL the caller already localized is still a search.
+    // `search` on a URL the caller already localized is still a search, and its
+    // `q=` term is already percent-encoded — do not encode it a second time.
+    let preencoded = false;
     if mode == "search" && query.to_lower().contains("goofish.com/search") {
         query = search_term_from(query);
+        preencoded = query != "";
     }
 
     let count = opt_int(args, "count", 0);
@@ -311,14 +385,22 @@ fn plan(args) {
     #{
         mode: mode,
         query: query,
+        preencoded: preencoded,
         item_url: item,
         item_id: if item == "" { "" } else { item_id_of(item) },
         count: count
     }
 }
 
-// Pull the `q=` term back out of a full /search URL, so a copied search URL
-// can be handed straight to the plugin.
+// Pull the `q=` term back out of a full /search URL, so a copied search URL can
+// be handed straight to the plugin.
+//
+// The term comes back still percent-encoded, and that is deliberate: it goes
+// back into the URL unchanged (`search_url` skips `urlencode` for a term that
+// came from a URL). The engine registers `urlencode` with no decoder beside it,
+// so turning "%E7%B4%A2" back into 索 is not available — and re-encoding the
+// already-encoded form would search for the literal text "%E7%B4%A2", which
+// matches nothing. Passing it through is both shorter and exactly right.
 fn search_term_from(url) {
     let parts = split(strip(url), '?');
     let q = if parts.len() > 1 { parts[1] } else { "" };
@@ -329,7 +411,12 @@ fn search_term_from(url) {
     ""
 }
 
-fn search_url(host, query) {
+// `preencoded` is set when the term came out of a pasted /search URL and is
+// already percent-encoded — see search_term_from.
+fn search_url(host, query, preencoded) {
+    if preencoded {
+        return "https://www.goofish.com/search?q=" + query;
+    }
     "https://www.goofish.com/search?q=" + host.urlencode(query)
 }
 
@@ -457,11 +544,15 @@ fn observe(host, wdata, rec, now, hist_max) {
         };
         items.push(entry);
         wdata["items"] = items;
+        // First sighting of something already delisted is "gone", not "new":
+        // a monitor that reports "new" here keeps alerting about a dead id.
+        let dir = "new";
+        if status == "gone" { dir = "gone"; }
         return #{ data: wdata, change: #{
             id: id,
             url: url,
             title: title,
-            direction: "new",
+            direction: dir,
             old_price: (),
             new_price: if has_price { price } else { () },
             delta: (),
@@ -496,12 +587,17 @@ fn observe(host, wdata, rec, now, hist_max) {
     entry["seen_count"] = oint(entry["seen_count"], 0) + 1;
     entry["history"] = history;
     if has_price { entry["price"] = price; }
-    wdata["items"] = items;
 
     let direction = "unknown";
     let delta = ();
     let delta_pct = ();
-    if has_price && type_of(old_price) != "()" {
+    // Gone beats any price comparison: a delisted page carries no price, so the
+    // old-number-vs-new-number branch below would say "unknown" for the single
+    // most important change there is.
+    if status == "gone" {
+        direction = "gone";
+        entry["price"] = ();
+    } else if has_price && type_of(old_price) != "()" {
         let d = price - onum(old_price);
         delta = d;
         if onum(old_price) != 0.0 { delta_pct = (d / onum(old_price) * 10000.0).round() / 100.0; }
@@ -509,6 +605,17 @@ fn observe(host, wdata, rec, now, hist_max) {
         else if d < 0.0 { direction = "down"; }
         else { direction = "same"; }
     }
+
+    // `items[idx]` hands out a *copy* of the map, so every edit above landed on
+    // a local and the store came back untouched. Without this line the watch
+    // file kept reporting the first price it ever saw, `seen_count` stayed at 1
+    // and the history never grew — while the change this function reported was
+    // computed from that stale copy and still looked plausible. Verified against
+    // a real watch.json: an item bought at 800 and re-read at 690 kept
+    // `price: 800, seen_count: 1`. It is written back last, after the `gone`
+    // branch above has had its say about the price.
+    items[idx] = entry;
+    wdata["items"] = items;
 
     #{ data: wdata, change: #{
         id: id,
@@ -705,7 +812,7 @@ fn run(host, ctx) {
 
     let started = host.now();
     let source_url = "";
-    if mode == "search" { source_url = search_url(host, query); }
+    if mode == "search" { source_url = search_url(host, query, p["preencoded"]); }
 
     let results = [];
     let failures = [];
@@ -727,6 +834,41 @@ fn run(host, ctx) {
             if omap(rec) && rec.contains("error") { why = rec["error"]; }
             let st = "unknown";
             if omap(rec) && rec.contains("status") { st = rec["status"]; }
+            // A sold or deleted item is an answer, not a failure: the caller
+            // asked about one thing and the answer is "it is gone". Reporting it
+            // as a failure buried the only interesting thing about the run, and
+            // it also let a monitor keep quoting a price for something that no
+            // longer exists.
+            if st == "gone" {
+                let now = host.now();
+                let title = "";
+                if omap(rec) && rec.contains("title") { title = ostr(rec["title"]); }
+                let gone_rec = #{ id: p["item_id"], url: url, title: title, status: "gone" };
+                if track {
+                    let obs = observe(host, wdata, gone_rec, now, hist_max);
+                    wdata = obs["data"];
+                    changes.push(obs["change"]);
+                }
+                results.push(#{
+                    rank: 1,
+                    id: p["item_id"],
+                    url: url,
+                    title: title,
+                    price: (),
+                    price_text: "",
+                    status: "gone",
+                    json: "",
+                    markdown: (),
+                    tracked: track
+                });
+                let tail = "";
+                if track {
+                    tail = " — watch.json updated so the monitor stops quoting a price";
+                }
+                notes.push("item " + p["item_id"] + " is gone (" + why + ")" + tail);
+                return finish(host, started, mode, query, source_url, out_dir, wpath,
+                    wdata, initial_tracked, results, failures, changes, notes, 0, 1, 0, 0);
+            }
             failures.push(#{ rank: 1, url: url, status: st, error: why });
             return finish(host, started, mode, query, source_url, out_dir, wpath,
                 wdata, initial_tracked, results, failures, changes, notes, 0, 0, 0, 0);
@@ -991,11 +1133,16 @@ fn run(host, ctx) {
 // list maps each CDN url to the local file name, which is what lets the sheet
 // reference the downloaded copies and fall back to the CDN only for the ones
 // that failed.
+// Two decimals, but without the ".0" that float formatting appends to a whole
+// number: a ¥20500 camera must read "¥20500", not "¥20500.0".
+//
+// Built by trimming the rendered float rather than by splitting it into integer
+// and fraction parts, because Rhai's `int()` is not a truncating cast in this
+// engine build (it hands back a float, so the split produced "1.0.98.0").
 fn fmt_num(v) {
     let r = (v * 100.0).round() / 100.0;
-    let whole = r.round();
-    if r == whole { return "" + whole; }
-    "" + r
+    let s = "" + r;
+    if s.ends_with(".0") { s.sub_string(0, s.len() - 2) } else { s }
 }
 
 // The alicdn object key of an image url: everything between the last "/" and

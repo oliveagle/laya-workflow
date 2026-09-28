@@ -270,6 +270,39 @@ See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md),
 [`docs/crates.md`](./docs/crates.md), [`docs/pypi.md`](./docs/pypi.md),
 [`docs/docsrs.md`](./docs/docsrs.md) and [`docs/github.md`](./docs/github.md).
 
+### 闲鱼 / goofish.com: search, browse, collect, watch prices
+
+`websites/goofish.com` is a marketplace reader — search a feed, open a listing
+into a full product sheet, keep it as JSON + Markdown + pictures, and watch the
+price of anything you saved. One query picks the behaviour:
+
+```bash
+# search (multi-page; `browse` opens the first N into full detail)
+laya-workflow run --spec dsl/browser/goofish_item.json --query "索尼 A7M4" \
+  --state '{"count":30,"pages":2,"browse":3,"price_min":15000,"price_max":22000}'
+
+# browse one listing → item-<id>.md, items/<id>.json and the downloaded pictures
+laya-workflow run --spec dsl/browser/goofish_item.json \
+  --query "https://www.goofish.com/item?id=1085216610239"
+
+# price monitoring: add to the watch list, then ask what moved
+laya-workflow run --spec dsl/browser/goofish_item.json --query "添加监控 1085216610239"
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格监控" \
+  --state '{"watch_query":"A7M4","watch_limit":20,"drop_pct":5}'
+```
+
+Results go to `~/tmp/goofish` (policy-gated): `items/<id>.json` per listing,
+`item-<id>.md` + `images/<id>/` for an opened one, and `watch.json` holding every
+price ever seen per tracked item, so a later run reports
+`new`/`up`/`down`/`same`/`gone` instead of just the current number.
+
+Worth knowing before changing the page scripts: `/search` ignores `?page=` and
+`?priceMin=` (paging is clicked, and the price band is applied locally); feed
+prices are abbreviated (`¥1.98万`, and the 万 lives outside the price block);
+and a sold listing renders no item block at all, so `status` is explicit.
+[`docs/plugins.md`](./docs/plugins.md#闲鱼--goofishcom-search-browse-collect-watch)
+has the details.
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.

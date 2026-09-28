@@ -240,6 +240,7 @@ owner.
 | `websites/pypi` | a PyPI reader: package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
 | `websites/docsrs` | a docs.rs reader: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
 | `websites/github` | a GitHub reader: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
+| `websites/goofish` | a 闲鱼 / goofish.com marketplace reader: search the feed (multi-page), browse one listing into a product sheet, collect it as JSON + Markdown + pictures, and watch prices durably in `watch.json` (`dsl/browser/goofish_item.json`) |
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \

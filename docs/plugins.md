@@ -233,9 +233,68 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 | `websites/pypi` | a PyPI reader over Chrome/CDP: a phrase into package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
 | `websites/docsrs` | a docs.rs reader over Chrome/CDP: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
 | `websites/github` | a GitHub reader over Chrome/CDP: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
+| `websites/goofish` | a 闲鱼 / goofish.com reader over Chrome/CDP: **search** the feed, **browse** one listing into a full product sheet, **collect** it to JSON + Markdown + pictures, and **watch prices** durably in `watch.json` (`dsl/browser/goofish_item.json`) |
 
 `dsl/browser/alphaxiv_paper.json` is the plugin-driven spec:
 `laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" --state '{"count":3}'`.
+
+### 闲鱼 / goofish.com: search, browse, collect, watch
+
+`websites/goofish.com/plugin` covers the four things you do on 闲鱼, and one
+query string picks between them:
+
+```bash
+# search — a keyword, a count, optional full-detail opens
+laya-workflow run --spec dsl/browser/goofish_item.json --query "索尼 A7M4" \
+  --state '{"count":30,"pages":2,"browse":3,"price_min":15000,"price_max":22000}'
+
+# browse + collect — one listing as a product sheet (Markdown, JSON, pictures)
+laya-workflow run --spec dsl/browser/goofish_item.json \
+  --query "https://www.goofish.com/item?id=1085216610239"
+# a pasted /search URL works too, percent-encoding and all
+
+# price monitoring — add, then check what moved
+laya-workflow run --spec dsl/browser/goofish_item.json --query "添加监控 1085216610239"
+laya-workflow run --spec dsl/browser/goofish_item.json --query "价格监控" \
+  --state '{"watch_query":"A7M4","watch_limit":20,"drop_pct":5}'
+```
+
+`plan()` infers the mode: a keyword is a search, an item URL or a bare 12–13
+digit id is one listing, `价格监控` / `watch price` is monitoring, and
+`添加监控 <url>` adds to it. An explicit `state.mode` always wins. Everything
+lands in `out_dir` (default `~/tmp/goofish`): `items/<id>.json` per listing,
+`item-<id>.md` + downloaded `images/<id>/` for an opened listing, and
+`watch.json` — one entry per tracked item with every price ever seen, so a
+later `watch` run reports `new` / `up` / `down` / `same` / `gone` rather than
+just the current number.
+
+Three site facts shape the plugin, all verified against the live site and worth
+knowing before changing the page scripts:
+
+- **`/search` ignores `?page=`, `?sort=`, `?priceMin=` and `?priceMax=`.** Every
+  value returns the same 30 ids; paging is in-page React state, so
+  `page/search.js` clicks the site's own page boxes. The price band is therefore
+  applied to what came back (and says so in `notes`) — it is a shorter list, not
+  a different one.
+- **Feed prices are abbreviated.** A ¥19,800 camera renders as `¥1.98万`, with
+  the 万 in a *sibling* of the price block. Missing that character reads 1.98,
+  which a price monitor then reports as a 99.99% drop. It is matched by element,
+  never by searching the row's text: `4万浏览` in the want slot is not a
+  magnitude.
+- **A sold listing renders no item block at all** — no "sold" page, just the
+  footer and "看看下面为你推荐". `status` is therefore explicit
+  (`on_sale` / `gone` / `login_required`), and a `watch` run that finds `gone`
+  records the change and drops the stale price rather than reporting it again.
+
+The detail page is a `<span>`-soup SPA that the generic article renderer cannot
+use — a live capture with the item container as the selector produced 432 bytes
+of Markdown: ten pictures, the "为你推荐" heading, and not one character of
+title, price, description or attributes (it drops any div without block-level
+children). So the plugin writes its own product sheet from the structured
+record, while still calling `host.save_article` first, because that is the call
+that downloads the pictures. Matching a downloaded file back to its listing URL
+goes through the alicdn *object key*, not the whole URL: the carousel and the
+downloader spell the same picture differently.
 
 ### Generating a missing AI Overview
 

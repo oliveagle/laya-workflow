@@ -73,6 +73,18 @@
     };
   };
 
+  // "万" / "千" when some child of `scope` is exactly that character, else "".
+  // Scoped to the price row, which holds the price block, the magnitude and the
+  // desc — never the want/views block, which is where "4万浏览" lives.
+  const magnitudeText = (scope) => {
+    if (!scope) return '';
+    for (const el of scope.children) {
+      const t = text(el);
+      if (t === '万' || t === '千') return t;
+    }
+    return '';
+  };
+
   const absolutize = (src) => {
     if (!src) return '';
     let u = src.trim();
@@ -154,6 +166,17 @@
     const desc = row3 ? row3.querySelector('[title]') : null;
     // A sibling of price-wrap, not a descendant of it.
     const magnitude = row3 ? byPrefix(row3, 'magnitude') : null;
+    // Fallback for a magnitude whose class prefix has been renamed: the 万/千
+    // element is the one whose *own* text is exactly that character. One real
+    // card (id 1088864372697, a ¥12000 body) came back as 1.2 because its
+    // magnitude span was not in the DOM when the card was read, and a missed
+    // magnitude is a 10000x price error.
+    //
+    // The match is exact on purpose. Reading 万 out of the row's whole text
+    // instead catches "1万人想要" and "4万浏览" in the price-desc slot, and
+    // multiplying a ¥9,180 camera by 10000 is how a coupon listing turned into
+    // 91800000.
+    const magText = magnitude ? text(magnitude) : magnitudeText(row3);
     const seller = byPrefix(card, 'row4-wrap-seller');
     const sellerText = seller ? byPrefix(seller, 'seller-text') : null;
     // Scoped to the credit box: the seller wrapper itself carries title="广东",
@@ -170,7 +193,10 @@
     // ellipsised, so prefer the attribute and fall back to the span.
     const title = (row1 && (row1.getAttribute('title') || '').trim())
       || text(byPrefix(card, 'main-title'));
-    const priceText = text(priceWrap);
+    // price-wrap stops before the 万 span, so put the character back: a card
+    // that renders "¥1.04万" must not report price_text "¥1.04" next to a price
+    // of 10400.
+    const priceText = text(priceWrap) + magText;
     const desc2 = parsePriceDesc(desc ? (desc.getAttribute('title') || '') : '');
 
     return {
@@ -178,9 +204,7 @@
       url: absolutize(href),
       title: title,
       // number carries the integer part and decimal the fraction ("12" + ".90").
-      price: priceWrap
-        ? applyMagnitude(parsePrice(text(number) + text(decimal)), magnitude ? text(magnitude) : '')
-        : null,
+      price: priceWrap ? applyMagnitude(parsePrice(text(number) + text(decimal)), magText) : null,
       price_text: priceText,
       want_count: desc2.want_count,
       original_price: desc2.original_price,
@@ -218,6 +242,9 @@
   const collect = (out, seen) => {
     let added = 0;
     for (const card of document.querySelectorAll(CARD_SEL)) {
+      // Checked before the push, not after: the limit is reached by adding one
+      // row too many otherwise, and `count: 40` came back as 41 results.
+      if (out.length >= LIMIT) break;
       const id = cardId(card.getAttribute('href') || '');
       if (!id || seen.has(id)) continue;
       const row = readCard(card);
@@ -225,7 +252,6 @@
       seen.add(id);
       out.push(row);
       added += 1;
-      if (out.length >= LIMIT) break;
     }
     return added;
   };

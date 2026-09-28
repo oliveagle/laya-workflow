@@ -52,6 +52,9 @@ use super::{
 /// Name of the bundled alphaXiv downloader plugin.
 pub const ALPHAXIV_PLUGIN: &str = "alphaxiv";
 
+/// Name of the bundled 闲鱼 / goofish.com plugin (search, browse, watch).
+pub const GOOFISH_PLUGIN: &str = "goofish";
+
 /// A `kind: "plugin"` capability: which plugin to load and how to bound it.
 #[derive(Clone, Debug, Default)]
 pub struct PluginCap {
@@ -1563,6 +1566,29 @@ mod tests {
                 name,
                 (dyns[0].clone(), dyns[1].clone(), dyns[2].clone()),
             ),
+            4 => engine.call_fn(
+                &mut scope,
+                &ast,
+                name,
+                (
+                    dyns[0].clone(),
+                    dyns[1].clone(),
+                    dyns[2].clone(),
+                    dyns[3].clone(),
+                ),
+            ),
+            5 => engine.call_fn(
+                &mut scope,
+                &ast,
+                name,
+                (
+                    dyns[0].clone(),
+                    dyns[1].clone(),
+                    dyns[2].clone(),
+                    dyns[3].clone(),
+                    dyns[4].clone(),
+                ),
+            ),
             _ => bail!("unsupported arity"),
         }
         .map_err(|e| anyhow!("{name}(): {e}"))?;
@@ -1599,8 +1625,46 @@ mod tests {
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
 
+    /// Call a function whose first parameter is the host handle, with 4 more
+    /// args (`observe(host, wdata, rec, now, hist_max)` and friends).
+    fn call_host4(
+        plugin: &str,
+        name: &str,
+        a: Value,
+        b: Value,
+        c: Value,
+        d: Value,
+    ) -> Result<Value> {
+        let (engine, ast, host) = harness(plugin);
+        let mut scope = Scope::new();
+        let out: Dynamic = engine
+            .call_fn(
+                &mut scope,
+                &ast,
+                name,
+                (
+                    Dynamic::from(host),
+                    to_dyn(a).map_err(|e| anyhow!("{e}"))?,
+                    to_dyn(b).map_err(|e| anyhow!("{e}"))?,
+                    to_dyn(c).map_err(|e| anyhow!("{e}"))?,
+                    to_dyn(d).map_err(|e| anyhow!("{e}"))?,
+                ),
+            )
+            .map_err(|e| anyhow!("{name}(): {e}"))?;
+        from_dyn(out).map_err(|e| anyhow!("{e}"))
+    }
+
     fn call(name: &str, args: Vec<Value>) -> Result<Value> {
         call_of(ALPHAXIV_PLUGIN, name, args)
+    }
+
+    /// Call a bundled goofish function with JSON args and no host interaction.
+    fn gs(name: &str, args: Vec<Value>) -> Result<Value> {
+        call_of(GOOFISH_PLUGIN, name, args)
+    }
+
+    fn gs_plan(with: Value) -> Result<Value> {
+        gs("plan", vec![with])
     }
 
     fn plan(with: Value) -> Result<Value> {
@@ -2385,7 +2449,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn bundled_browser_base_compiles_and_guards() {
         let src = builtin("browser_base").expect("bundled browser_base plugin");
         let m = Manifest::parse(&src.manifest, "browser_base").unwrap();
@@ -2868,5 +2931,370 @@ mod tests {
             .unwrap(),
             json!("2026-09-24 11:39")
         );
+    }
+
+    // ── goofish / 闲鱼 ──────────────────────────────────────────────────────
+
+    /// The goofish plugin resolves from the compiled-in copy and carries the two
+    /// page scripts its op depends on.
+    #[test]
+    fn goofish_plugin_loads_with_both_page_scripts() {
+        let src = builtin(GOOFISH_PLUGIN).expect("bundled goofish plugin");
+        let m = Manifest::parse(&src.manifest, GOOFISH_PLUGIN).unwrap();
+        assert_eq!(m.name, "goofish");
+        assert_eq!(m.entry, "main.rhai");
+        assert_eq!(m.entry_op, "run");
+        assert_eq!(m.id(), "websites/goofish");
+        assert!(src.entry.contains("fn run"));
+        let pages: Vec<&str> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(pages.contains(&"search.js"), "{pages:?}");
+        assert!(pages.contains(&"item.js"), "{pages:?}");
+        // Both page scripts are the promise-wrapped IIFE the op evaluates, and
+        // both read their options out of the injected `__LAYA_OPTS__`.
+        for name in ["search.js", "item.js"] {
+            let (_, js) = src.pages.iter().find(|(n, _)| n == name).expect(name);
+            assert!(js.contains("__LAYA_OPTS__"), "{name} reads no opts");
+            // Both are promise-wrapped IIFEs that resolve a plain object, which
+            // is the shape browser_evaluate gets back.
+            assert!(js.contains("new Promise"), "{name} is not promise-wrapped");
+            assert!(js.contains("resolve(state)"), "{name} resolves nothing");
+        }
+    }
+
+    /// One query string decides which of the four behaviours runs, so the
+    /// classification is pinned here rather than only in a live run.
+    #[test]
+    fn goofish_plan_infers_the_mode_from_the_query() {
+        let mode = |with: Value| gs_plan(with).unwrap()["mode"].as_str().unwrap().to_string();
+
+        // A keyword is a search, and it stays the search phrase.
+        let p = gs_plan(json!({"query": "索尼 A7M4"})).unwrap();
+        assert_eq!(p["mode"], json!("search"));
+        assert_eq!(p["query"], json!("索尼 A7M4"));
+
+        // A full /search URL is unwrapped back to its `q=` term, still
+        // percent-encoded: the engine has `urlencode` but no decoder, so the
+        // term goes back into the URL verbatim rather than being decoded and
+        // then encoded a second time (which would search for "%E7%B4%A2").
+        let p =
+            gs_plan(json!({"query": "https://www.goofish.com/search?q=%E7%B4%A2%E5%B0%BC%20A7M4"}))
+                .unwrap();
+        assert_eq!(p["mode"], json!("search"));
+        assert_eq!(p["query"], json!("%E7%B4%A2%E5%B0%BC%20A7M4"));
+        assert_eq!(p["preencoded"], json!(true));
+        assert_eq!(
+            gs_plan(json!({"query": "索尼 A7M4"})).unwrap()["preencoded"],
+            json!(false),
+            "a typed keyword still goes through urlencode"
+        );
+
+        // An item URL browses that one product…
+        let p = gs_plan(json!({"query": "https://www.goofish.com/item?id=1085216610239"})).unwrap();
+        assert_eq!(p["mode"], json!("item"));
+        assert_eq!(p["item_id"], json!("1085216610239"));
+        assert_eq!(
+            p["item_url"],
+            json!("https://www.goofish.com/item?id=1085216610239")
+        );
+
+        // …and so does a bare 12-13 digit id, normalized to the item URL.
+        let p = gs_plan(json!({"query": "1085216610239"})).unwrap();
+        assert_eq!(p["mode"], json!("item"));
+        assert_eq!(
+            p["item_url"],
+            json!("https://www.goofish.com/item?id=1085216610239")
+        );
+        assert_eq!(p["query"], json!(""), "the id is not a search phrase");
+
+        // A URL asked for as a search is still one item, unless `count` says
+        // otherwise — the caller explicitly wants a listing then.
+        let p = gs_plan(
+            json!({"query": "https://www.goofish.com/item?id=1085216610239",
+                               "count": 10}),
+        )
+        .unwrap();
+        assert_eq!(p["mode"], json!("search"));
+
+        // Price monitoring, and adding to it, are their own modes.
+        for q in ["价格监控", "监控价格", "watch price", "降价提醒"] {
+            assert_eq!(mode(json!({ "query": q })), "watch", "{q}");
+        }
+        let p = gs_plan(json!({"query": "添加监控 https://www.goofish.com/item?id=1071111102831"}))
+            .unwrap();
+        assert_eq!(p["mode"], json!("watch_add"));
+        assert_eq!(
+            p["item_url"],
+            json!("https://www.goofish.com/item?id=1071111102831"),
+            "the sentence around the URL must not leak into item_url"
+        );
+
+        // An explicit mode always wins over the inference.
+        assert_eq!(
+            mode(json!({"query": "价格监控", "mode": "search"})),
+            "search"
+        );
+        assert_eq!(
+            mode(json!({"query": "索尼", "mode": "Item"})),
+            "item",
+            "the mode is case-normalized"
+        );
+
+        // `item_url` / `id` are accepted as their own args, as the spec passes
+        // them; a keyword still defaults to 20 rows and an item to 1.
+        let p = gs_plan(json!({"item_url": "1071111102831"})).unwrap();
+        assert_eq!(p["mode"], json!("item"));
+        assert_eq!(p["count"], json!(1));
+        assert_eq!(gs_plan(json!({"query": "x"})).unwrap()["count"], json!(20));
+        assert_eq!(
+            gs_plan(json!({"query": "x", "count": "45"})).unwrap()["count"],
+            json!(45),
+            "an interpolated count arrives as a string"
+        );
+    }
+
+    /// Prices cross the boundary in three shapes: as JSON integers, as JSON
+    /// floats, and as strings out of the hand-editable watch file. `onum`
+    /// normalizes all three — and the integer case is the one that used to
+    /// silently read as "no price at all".
+    #[test]
+    fn goofish_reads_prices_in_every_shape_they_arrive() {
+        let n = |v: Value| gs("onum", vec![v]).unwrap();
+        assert_eq!(n(json!(20500)), json!(20500.0), "an integer price");
+        assert_eq!(n(json!(20500.0)), json!(20500.0));
+        assert_eq!(n(json!("20500")), json!(20500.0), "watch.json string");
+        assert_eq!(n(json!("20500.55")), json!(20500.55));
+        assert_eq!(n(json!("948.90")), json!(948.9));
+        assert_eq!(n(json!("  690  ")), json!(690.0), "padded by hand");
+        assert_eq!(n(json!("-12.5")), json!(-12.5));
+        // No number at all is "no price", never a guess.
+        assert_eq!(n(json!(null)), json!(0.0));
+        assert_eq!(n(json!("价格面议")), json!(0.0));
+        assert_eq!(n(json!("")), json!(0.0));
+        assert_eq!(n(json!("abc")), json!(0.0));
+
+        // The option readers agree, which is what makes `--state '{"price_min":
+        // 15000}'` filter instead of silently defaulting to 0.
+        let f =
+            |with: Value, key: &str| gs("opt_float", vec![with, json!(key), json!(0.0)]).unwrap();
+        assert_eq!(f(json!({"price_min": 15000}), "price_min"), json!(15000.0));
+        assert_eq!(
+            f(json!({"price_min": 15000.5}), "price_min"),
+            json!(15000.5)
+        );
+        assert_eq!(
+            f(json!({"price_min": "15000"}), "price_min"),
+            json!(15000.0)
+        );
+        assert_eq!(f(json!({}), "price_min"), json!(0.0));
+        assert_eq!(f(json!({"price_min": null}), "price_min"), json!(0.0));
+        assert_eq!(f(json!({"price_min": ""}), "price_min"), json!(0.0));
+        assert_eq!(f(json!({"price_min": "面议"}), "price_min"), json!(0.0));
+        let i = |with: Value, key: &str| gs("opt_int", vec![with, json!(key), json!(7)]).unwrap();
+        assert_eq!(i(json!({"pages": 2}), "pages"), json!(2));
+        assert_eq!(i(json!({"pages": "2"}), "pages"), json!(2));
+        assert_eq!(i(json!({}), "pages"), json!(7));
+        assert_eq!(i(json!({"pages": null}), "pages"), json!(7));
+
+        // The price band itself: goofish ignores ?priceMin=/?priceMax= on
+        // /search, so the band is applied to what came back.
+        let ok = |row: Value, lo: f64, hi: f64| {
+            gs("price_ok", vec![row, json!(lo), json!(hi)])
+                .unwrap()
+                .as_bool()
+                .unwrap()
+        };
+        assert!(ok(json!({"price": 20500}), 15000.0, 22000.0));
+        assert!(!ok(json!({"price": 9200}), 15000.0, 22000.0));
+        assert!(!ok(json!({"price": 99999}), 15000.0, 22000.0));
+        assert!(
+            ok(json!({"price": 20500}), 0.0, 0.0),
+            "no band keeps everything"
+        );
+        assert!(ok(json!({}), 15000.0, 22000.0), "a priceless card is kept");
+        assert!(ok(json!({"price": 0}), 15000.0, 22000.0));
+        assert!(ok(json!({"price": "¥13800"}), 15000.0, 0.0));
+    }
+
+    /// A whole-number price must print without float noise (`¥20500`, not
+    /// `¥20500.0`) and a fraction must keep its two decimals.
+    #[test]
+    fn goofish_formats_prices_without_float_noise() {
+        let f = |v: f64| {
+            gs("fmt_num", vec![json!(v)])
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(f(20500.0), "20500");
+        assert_eq!(f(0.0), "0");
+        assert_eq!(f(1.98), "1.98");
+        assert_eq!(f(97.0), "97");
+        assert_eq!(f(-12.5), "-12.5");
+        // 1.38 * 10000 is 13799.999999999998 in binary floating point.
+        assert_eq!(f(13799.999999999998), "13800");
+    }
+
+    /// The same picture is spelled two ways on the two paths that meet: the
+    /// carousel carries the site's rendition, save_article records the thumbnail
+    /// it downloaded. Matching on the whole url left six of seven images
+    /// pointing at the network instead of the copy on disk.
+    #[test]
+    fn goofish_matches_a_downloaded_image_across_both_url_spellings() {
+        let key = |u: &str| {
+            gs("alicdn_key", vec![json!(u)])
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let on_page = "https://img.alicdn.com/bao/uploaded/i2/2222253586975/O1CN01midsWE2HTiD2YcGq_790x10000Q90.jpg_.webp";
+        let downloaded = "https://img.alicdn.com/bao/uploaded/i2/2222253586975/O1CN01midsWE2HTiD2YcGq_!!4611686018427386399-0-xy_item.jpg_Q90.jpg_.webp";
+        assert_eq!(key(on_page), key(downloaded));
+        assert_ne!(on_page, downloaded, "the two spellings really do differ");
+        assert_eq!(key(on_page), "O1CN01midsWE2HTiD2YcGq");
+        // A different photo on the same account is a different key.
+        assert_ne!(
+            key(downloaded),
+            key("https://img.alicdn.com/bao/uploaded/i2/2222253586975/O1CN01ZLUTCv2LLqI2Yc4y_!!1-xy_item.jpg_.webp")
+        );
+
+        let capture = json!({"images": [
+            {"name": "img-1.webp", "url": downloaded, "ok": true},
+            {"name": "img-2.webp", "url": "https://img.alicdn.com/other.png", "ok": true}
+        ]});
+        let local = |u: &str| {
+            gs("local_image", vec![capture.clone(), json!(u)])
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(local(on_page), "img-1.webp");
+        assert_eq!(local(downloaded), "img-1.webp");
+        // Not downloaded ⇒ no local name, and the sheet falls back to the CDN.
+        assert_eq!(
+            local("https://img.alicdn.com/bao/uploaded/i9/1/O1CN01missing_790x.jpg_.webp"),
+            ""
+        );
+        assert_eq!(local("https://example.com/x.png"), "");
+        // A capture without an image list must not throw.
+        assert_eq!(
+            gs("local_image", vec![json!({}), json!(on_page)]).unwrap(),
+            json!("")
+        );
+    }
+
+    /// `observe` has to hand the store back with the call. Rhai maps are value
+    /// types: writing `wdata["items"]` inside the function updates a local copy
+    /// that is dropped on return, and a price monitor that quietly forgets every
+    /// sighting is worse than no monitor at all.
+    #[test]
+    fn goofish_observe_returns_the_store_it_just_updated() {
+        let now = json!({"rfc3339": "2026-09-28T00:00:00.000Z", "unix_ms": 1790000000000i64});
+        let later = json!({"rfc3339": "2026-09-28T01:00:00.000Z", "unix_ms": 1790003600000i64});
+        let empty = json!({"version": 1, "items": []});
+        let url = "https://www.goofish.com/item?id=1085216610239";
+        let rec = |price: Value| {
+            json!({"id": "1085216610239", "url": url, "title": "索尼A7M4",
+                   "price": price, "status": "on_sale"})
+        };
+        let observe = |wdata: Value, rec: Value, at: Value| {
+            call_host4(GOOFISH_PLUGIN, "observe", wdata, rec, at, json!(200))
+                .unwrap_or_else(|e| panic!("observe(): {e}"))
+        };
+        let price_of = |wdata: &Value, id: &str| -> Value {
+            wdata["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["id"] == json!(id))
+                .unwrap()["price"]
+                .clone()
+        };
+
+        // First sighting: "new", and the item really is in the returned store.
+        let first = observe(empty.clone(), rec(json!(20500)), now.clone());
+        assert_eq!(first["change"]["direction"], json!("new"));
+        assert_eq!(first["change"]["new_price"], json!(20500.0));
+        assert_eq!(first["change"]["old_price"], json!(null));
+        assert_eq!(price_of(&first["data"], "1085216610239"), json!(20500.0));
+        assert_eq!(first["data"]["items"].as_array().unwrap().len(), 1);
+
+        // A drop is the headline case: same price type, new number.
+        let dropped = observe(first["data"].clone(), rec(json!(19800)), later.clone());
+        let ch = &dropped["change"];
+        assert_eq!(ch["direction"], json!("down"));
+        assert_eq!(ch["old_price"], json!(20500.0));
+        assert_eq!(ch["new_price"], json!(19800.0));
+        assert_eq!(ch["delta"], json!(-700.0));
+        assert_eq!(ch["delta_pct"], json!(-3.41));
+        assert_eq!(price_of(&dropped["data"], "1085216610239"), json!(19800.0));
+
+        // Unchanged, and the sighting still lands in the history.
+        let same = observe(dropped["data"].clone(), rec(json!(19800)), later.clone());
+        assert_eq!(same["change"]["direction"], json!("same"));
+        assert_eq!(same["change"]["delta"], json!(0.0));
+        let entry = &same["data"]["items"][0];
+        assert_eq!(entry["seen_count"], json!(3));
+        assert_eq!(entry["history"].as_array().unwrap().len(), 3);
+        assert_eq!(entry["last_seen"], later["rfc3339"]);
+
+        // A first sighting without a number is "unknown", not a zero price.
+        let priceless = observe(
+            empty.clone(),
+            json!({"id": "1", "url": "https://www.goofish.com/item?id=1",
+                   "title": "面议", "status": "on_sale"}),
+            now.clone(),
+        );
+        assert_eq!(priceless["change"]["direction"], json!("new"));
+        assert_eq!(priceless["data"]["items"][0]["price"], json!(null));
+
+        // Gone beats any price comparison, and the stale price is dropped: a
+        // delisted page has none, and a monitor that keeps quoting one is
+        // reporting fiction.
+        let gone = observe(
+            same["data"].clone(),
+            json!({"id": "1085216610239", "url": url, "title": "索尼A7M4", "status": "gone"}),
+            later.clone(),
+        );
+        assert_eq!(gone["change"]["direction"], json!("gone"));
+        assert_eq!(gone["data"]["items"][0]["price"], json!(null));
+        assert_eq!(gone["data"]["items"][0]["status"], json!("gone"));
+
+        // A dead id seen for the first time is "gone", not "new".
+        let never = observe(
+            empty.clone(),
+            json!({"id": "1000000000000",
+                   "url": "https://www.goofish.com/item?id=1000000000000",
+                   "status": "gone"}),
+            now.clone(),
+        );
+        assert_eq!(never["change"]["direction"], json!("gone"));
+
+        // history_max bounds the file: it keeps the newest points, drops the
+        // oldest, and still counts every sighting.
+        let mut store = first["data"].clone();
+        for i in 2..=8 {
+            let at = json!({"rfc3339": "2026-09-28T02:00:00.000Z",
+                            "unix_ms": 1790007200000i64 + i});
+            store = call_host4(
+                GOOFISH_PLUGIN,
+                "observe",
+                store,
+                rec(json!(20000 + i)),
+                at,
+                json!(3),
+            )
+            .unwrap()["data"]
+                .clone();
+        }
+        assert_eq!(store["items"][0]["history"].as_array().unwrap().len(), 3);
+        assert_eq!(store["items"][0]["seen_count"], json!(8));
+        // The kept tail is the newest one: the last price is in it, the first
+        // sighting is not.
+        let tail = store["items"][0]["history"].as_array().unwrap();
+        assert_eq!(tail[2]["price"], json!(20008.0));
+        assert_eq!(tail[0]["price"], json!(20006.0));
     }
 }
