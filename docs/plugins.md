@@ -59,6 +59,11 @@ directory plugin and for `plugin install`.
 { "capabilities": { "greet": { "kind": "plugin", "dir": "scripts/greet.rhai" } } }
 ```
 
+A runnable copy ships in the repo: `dsl/capabilities/single_file_plugin.json`
+points `dir` at the bare `dsl/capabilities/hello.rhai`. Run it from the repo root
+(`laya-workflow run --spec dsl/capabilities/single_file_plugin.json --state
+'{"who":"laya"}'`) — no directory, no `plugin.json`, no browser, no network.
+
 ## Installing a plugin
 
 `plugin install` fetches **only the one directory** you name — never the whole

@@ -30,6 +30,10 @@ DSL_DIR = CRATE / "dsl"
 STATES: dict[str, dict] = {
     # Exercises the DSL -> Rhai plugin path. Fully offline: no browser needed,
     # so this runs in the default (heuristic) smoke mode too.
+    # A single .rhai file run directly as a plugin (no dir, no manifest).
+    "single_file_plugin": {
+        "greet": {"who": "laya"},
+    },
     "script_plugin": {
         "digest": {"text": "The workflow engine runs the workflow; the plugin extends the workflow."},
     },

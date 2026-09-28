@@ -1,0 +1,50 @@
+{
+  "name": "single_file_plugin",
+  "dsl_version": 2,
+  "description": "Run a single .rhai file as a plugin (kind: \"plugin\", dir = the file): no plugin directory, no plugin.json, no browser, no network. The smallest possible extension seam \u2014 one script file. Run it from the repo root so the relative `dir` resolves.",
+  "start": "greet",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "max_output": 65536
+  },
+  "capabilities": {
+    "greet": {
+      "kind": "plugin",
+      "dir": "dsl/capabilities/hello.rhai"
+    }
+  },
+  "nodes": [
+    {
+      "name": "greet",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Run the single-file plugin?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "greet",
+        "with": {
+          "who": "${state.who}"
+        },
+        "project": {
+          "hi": "/hi",
+          "plugin": "/plugin",
+          "op": "/op"
+        }
+      }
+    }
+  ]
+}

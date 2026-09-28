@@ -15,11 +15,16 @@ change **without rebuilding the binary**.
 ## Try it in 60 seconds
 
 ```sh
-# 1. the tiny, fully offline plugin (no browser, no network)
+# 1. the smallest possible extension: one .rhai file, no directory, no manifest,
+#    no browser, no network. Run from the repo root so the relative `dir` resolves.
+laya-workflow run --spec dsl/capabilities/single_file_plugin.json \
+  --state '{"who":"laya"}'
+
+# 2. a tiny, fully offline named plugin (no browser, no network)
 laya-workflow run --spec dsl/capabilities/script_plugin.json \
   --state '{"text":"the quick brown fox the fox"}'
 
-# 2. install your own copy of a plugin from any git repo (sparse: only that dir)
+# 3. install your own copy of a plugin from any git repo (sparse: only that dir)
 laya-workflow plugin install oliveagle/laya-workflow \
   --path plugins/textdigest
 
