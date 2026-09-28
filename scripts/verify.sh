@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# The gate before you push, in about a second.
+#
+#   scripts/verify.sh              build + plugin gate + fast test suite   ~1s warm
+#   scripts/verify.sh --full       ... and the timeout section too         +169s
+#   scripts/verify.sh --no-build   tests only (you already built)
+#   scripts/verify.sh spec engine  only these sections
+#
+# Why the split: `laya-workflow-tests` has 22 sections and 21 of them finish in
+# 0.16s. The other one, `capability-timeouts`, takes 168.9s on its own - it is
+# almost the entire runtime of a "full" run, and almost none of it is needed to
+# answer "did I break something". Running the whole thing by reflex is how a
+# 3-second question turns into a 3-minute one.
+#
+# There is deliberately no baseline of "known failures" here. A baseline is a
+# fixture that rots: this repo shipped a test asserting a spec named
+# `status_snapshot`, that spec moved to another repo, and the assertion read as
+# a resolver bug for eight consecutive pushes - main stayed red the whole time
+# because a failure nobody was willing to call "expected" was already known.
+# Red here means red; fix it.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="$ROOT/target/release/laya-workflow-tests"
+SLOW="capability-timeouts"
+BUILD=1
+FULL=0
+SECTIONS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --full)     FULL=1; shift ;;
+    --no-build) BUILD=0; shift ;;
+    -h|--help)  sed -n '2,20p' "$0"; exit 0 ;;
+    *)          SECTIONS+=("$1"); shift ;;
+  esac
+done
+
+stage() { printf '\n== %s\n' "$1"; }
+rc=0
+
+# ── 1. does it build? ────────────────────────────────────────────────────────
+# Incremental when src/** is unchanged (~1s), a full rebuild when it is. Either
+# way it is the honest precondition: the test binary is what we are about to
+# trust, and it has to be the current one.
+if [ "$BUILD" = 1 ]; then
+  stage "cargo build --release --locked"
+  T0=$SECONDS
+  BUILD_OUT="$(cargo build --release --locked --bins -p laya-workflow \
+                 --manifest-path "$ROOT/Cargo.toml" 2>&1)"
+  BRC=$?
+  # Cargo's progress lines are noise once it is warm; its warnings are not.
+  printf '%s\n' "$BUILD_OUT" | grep -Ev '^ *(Compiling|Finished|Downloaded|Updating|Locking|Adding)' | grep -v '^$' || true
+  [ "$BRC" = 0 ] || { echo "   build FAILED" >&2; exit 1; }
+  printf '   [%ss]\n' "$((SECONDS-T0))"
+fi
+
+[ -x "$BIN" ] || { echo "no $BIN - run without --no-build first" >&2; exit 1; }
+
+# ── 2. do the plugins still compile and still route? ─────────────────────────
+# 0.32s, and it is the only stage that can catch a plugin edit: the Rust suite
+# never executes Rhai.
+PLUGINS="$(find "$ROOT/websites" -name '*.rhai' 2>/dev/null | head -1)"
+if [ -n "$PLUGINS" ]; then
+  stage "plugin gate"
+  T0=$SECONDS
+  "$ROOT/scripts/rhai/check.sh" 2>&1 | grep -E '^(ok:|   ok|   corpus|all green|error)' || rc=1
+  printf '   [%ss]\n' "$((SECONDS-T0))"
+fi
+
+# ── 3. the tests ─────────────────────────────────────────────────────────────
+# One section per line: read it as lines, not as one multi-line word.
+ALL=()
+while IFS= read -r line; do
+  [ -n "$line" ] && ALL+=("$line")
+done < <("$BIN" --list)
+RUN=()
+if [ ${#SECTIONS[@]} -gt 0 ]; then
+  RUN=("${SECTIONS[@]}")
+elif [ "$FULL" = 1 ]; then
+  RUN=("${ALL[@]}")
+  printf '\n== full suite (%d sections, ~170s - %s sleeps on real timeouts)\n' "${#ALL[@]}" "$SLOW"
+else
+  for s in "${ALL[@]}"; do [ "$s" = "$SLOW" ] || RUN+=("$s"); done
+  printf '\n== fast suite (%d of %d sections; skipping %s - rerun with --full)\n' \
+    "${#RUN[@]}" "${#ALL[@]}" "$SLOW"
+fi
+
+T0=$SECONDS
+OUT="$("$BIN" "${RUN[@]}" 2>&1)"
+TRC=$?
+printf '%s\n' "$OUT" | grep -E '^  FAIL|passed,'
+printf '   [%ss]\n' "$((SECONDS-T0))"
+[ "$TRC" = 0 ] || rc=1
+
+[ "$rc" = 0 ] && printf '\nall green\n' || printf '\nRED\n'
+exit $rc

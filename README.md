@@ -49,6 +49,30 @@ MODEL_DIR="$HOME/models/convaiinnovations--laya" \
   ./target/release/laya-tch --model-dir "$MODEL_DIR" --port 8400
 ```
 
+## Verify before you push
+
+```bash
+scripts/verify.sh            # build + plugin gate + fast suite   ~1s warm
+scripts/verify.sh --full     # ... and the timeout section        +170s
+```
+
+`laya-workflow-tests` has 22 sections. Twenty-one of them finish in **0.16s**;
+`capability-timeouts` alone takes **168.9s**, because it waits on real timeouts.
+Running the whole binary by reflex turns a sub-second question into a
+three-minute one, which is long enough that you stop doing it before every
+change. `verify.sh` runs the fast twenty-one by default, always runs the plugin
+gate (`scripts/rhai/check.sh` — the Rust suite never executes Rhai), and prints
+what it skipped so the cost is visible rather than surprising.
+
+There is no baseline of known-failing tests, on purpose: a baseline is a fixture
+that rots. This repo shipped a test asserting a spec named `status_snapshot`;
+that spec moved to another repo, and the assertion then read as a resolver bug
+for eight consecutive pushes. Red means red.
+
+Editing a plugin (`websites/*/plugin/main.rhai`)? Start at
+[`scripts/rhai/README.md`](./scripts/rhai/README.md) — the parse/route/probe
+loop there costs 0.33s.
+
 ## DSL
 
 Specs live under `dsl/`, organised by domain. See `bench/dsl_smoke.py` for

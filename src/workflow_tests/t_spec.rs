@@ -551,9 +551,31 @@ pub fn test_spec_version(h: &mut Harness) {
 
 // ── layered spec roots: builtin -> user -> repo, explicit pins ──────
 //
+/// File stem of one spec the engine ships under `<crate>/dsl`, in a stable
+/// order — the fixture a "no repo root, no user root" lookup has to find.
+fn first_shipped_spec(dir: &std::path::Path) -> Option<String> {
+    let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    paths.sort();
+    for p in paths {
+        if p.is_dir() {
+            if let Some(n) = first_shipped_spec(&p) {
+                return Some(n);
+            }
+        } else if p.extension().map(|x| x == "json").unwrap_or(false) {
+            return p.file_stem().map(|s| s.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 // Every layer is a plain spec directory; the engine picks the highest-priority
 // root that defines a name. cwd + HOME + the pin flag are process-wide, so this
 // section snapshots and restores them to keep later sections clean.
+
 pub fn test_spec_layers(h: &mut Harness) {
     let saved_cwd = std::env::current_dir().unwrap();
     let saved_home = std::env::var_os("HOME");
@@ -718,14 +740,35 @@ pub fn test_spec_layers(h: &mut Harness) {
 
     // Builtin fallback: a repo-less cwd with an empty user root still finds the
     // engine-shipped specs under <crate>/dsl.
+    //
+    // Two things this assertion has to earn its keep, both of which used to go
+    // wrong:
+    //
+    //   * the spec is read off the builtin tree instead of being named. It was
+    //     hardcoded as "status_snapshot", and when that spec moved to the
+    //     devine_utils repo the check began failing - not because the resolver
+    //     broke, but because the fixture no longer existed. It read as a
+    //     resolver bug and kept main red across eight pushes.
+    //   * the secrets store is initialised first. A shipped spec carries a real
+    //     policy ("${env.HOME}/…"), and the store is only populated by the CLI
+    //     entry point, so in this process the reference resolved all the way
+    //     into policy expansion and then died on a missing HOME - again
+    //     indistinguishable from a resolver bug. Every earlier assertion here
+    //     passes because its fixtures have no policy.
     let empty = base.join("emptyrepo");
     std::fs::create_dir_all(empty.join(".git")).unwrap();
     std::env::set_var("HOME", base.join("emptyhome"));
     std::env::set_current_dir(&empty).unwrap();
+    let _ = capability::secret::init(None);
+    let shipped = first_shipped_spec(&spec::builtin_spec_dir());
     h.check(
         "layers: builtin fallback resolves",
-        matches!(resolved("status_snapshot"), Ok(s) if s.starts_with("go::")),
+        shipped
+            .as_deref()
+            .map(|n| matches!(resolved(n), Ok(ref s) if s.starts_with("go::")))
+            .unwrap_or(false),
     );
+    let _ = capability::secret::set_secrets(capability::secret::Secrets::default());
 
     // Restore the process-wide globals.
     std::env::set_current_dir(&saved_cwd).unwrap();

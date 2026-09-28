@@ -584,23 +584,33 @@ pub fn test_capabilities_batch2(h: &mut Harness) {
     );
 
     // metrics (read-only, no gating)
+    //
+    // Every number here is read out of /proc, so the counters are real on Linux
+    // and simply absent elsewhere — the capability still answers, it just has
+    // nothing to read. CI runs Linux and keeps the strong assertions; on macOS
+    // the same call must not turn four lines red, because "red means broken"
+    // is the only thing that makes a red gate worth reading.
     let r = reg.call("m", &json!({}), &json!({})).unwrap();
-    h.check(
-        "metrics cpu_count > 0",
-        r["cpu_count"].as_u64().unwrap_or(0) > 0,
-    );
-    h.check(
-        "metrics mem total > 0",
-        r["mem"]["total_kb"].as_u64().unwrap_or(0) > 0,
-    );
-    h.check(
-        "metrics uptime present",
-        r["uptime_secs"].as_f64().is_some(),
-    );
-    h.check(
-        "metrics loadavg present",
-        r["loadavg"]["1m"].as_f64().is_some(),
-    );
+    if std::path::Path::new("/proc/cpuinfo").exists() {
+        h.check(
+            "metrics cpu_count > 0",
+            r["cpu_count"].as_u64().unwrap_or(0) > 0,
+        );
+        h.check(
+            "metrics mem total > 0",
+            r["mem"]["total_kb"].as_u64().unwrap_or(0) > 0,
+        );
+        h.check(
+            "metrics uptime present",
+            r["uptime_secs"].as_f64().is_some(),
+        );
+        h.check(
+            "metrics loadavg present",
+            r["loadavg"]["1m"].as_f64().is_some(),
+        );
+    } else {
+        h.check("metrics answers without /proc", r.is_object());
+    }
     let _ = std::fs::remove_dir_all(&sroot);
 
     // ── batch 3: raw sockets, plaintext protocols, services ─────────
