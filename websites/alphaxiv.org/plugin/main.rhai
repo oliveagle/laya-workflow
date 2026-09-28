@@ -257,6 +257,167 @@ fn collect_feed(host, count, interval) {
     links
 }
 
+// ── alphaXiv "AI Overview": ask the site for it when it is not there yet ────
+
+// Booleans reach a plugin as a real bool, as a JSON string, or not at all.
+fn opt_bool(args, key, dflt) {
+    if !args.contains(key) { return dflt; }
+    if type_of(args[key]) == "bool" { return args[key]; }
+    if type_of(args[key]) == "()" { return dflt; }
+    let s = opt(args, key).to_lower();
+    if s == "" { return dflt; }
+    s == "true" || s == "1" || s == "yes" || s == "on" || s == "y"
+}
+
+// One field of a `browser_evaluate` result, as text; "" when it is not there.
+fn ov_str(m, key) {
+    if type_of(m) == "map" && m.contains(key) && type_of(m[key]) != "()" {
+        return "" + m[key];
+    }
+    ""
+}
+
+// Same, as an integer; `dflt` when absent or not a number.
+fn ov_int(m, key, dflt) {
+    if type_of(m) == "map" && m.contains(key) {
+        if type_of(m[key]) == "i64" { return m[key]; }
+        if type_of(m[key]) == "f64" { return m[key]; }
+    }
+    dflt
+}
+
+// Run `page/overview.js` against `target` and hand back whatever it resolved
+// with. The script only ever resolves, so the sole failure mode here is the CDP
+// call itself — a navigation destroying the execution context mid-poll.
+fn overview_probe(host, target, action, budget_ms) {
+    let opts = #{ action: action, timeout_ms: budget_ms, poll_ms: 2000 };
+    let js = "var __LAYA_OPTS__ = " + host.json_stringify(opts) + ";\n" + host.js("overview.js");
+    host.browser_evaluate(target, js, true)
+}
+
+// Make sure `url`'s AI Overview really exists, so the capture below cannot save
+// the placeholder copy ("No overview yet. Generate one to research the paper…")
+// and call the paper's Markdown complete.
+//
+// alphaXiv renders `#overview` as a skeleton first, then either the finished
+// article or a "Generate overview" button — and the site says generation takes
+// about five minutes, server-side, pushed back over its own live channel. So
+// when the placeholder is up we click the site's own button and wait for the
+// result, instead of polling an API the plugin has no business reproducing.
+//
+// Everything here is bounded, because it costs minutes per paper: one poll round
+// per `step_ms` (kept under the per-call CDP budget), an overall `wait_cap_ms`
+// deadline, and a couple of re-navigations for the sign-in round trip a click can
+// trigger. It never throws — a generation problem downgrades to "saved without
+// an overview" rather than losing the paper.
+//
+// Returns the outcome plus the `target_id` of the tab it waited on, so the caller
+// can capture that very page instead of navigating to it a second time.
+fn ensure_overview(host, url, wait_cap_ms, step_ms) {
+    // A CDP call is capped by the capability timeout, so a poll round has to
+    // finish inside it or the page script is killed while it waits.
+    const MAX_STEP = 20000;
+    const MIN_STEP = 4000;
+    const RETRY_CLICK_MS = 30000;
+    const MAX_CLICKS = 2;
+    const MAX_RENAVIGATIONS = 3;
+
+    let step = step_ms;
+    if step > MAX_STEP { step = MAX_STEP; }
+    if step < MIN_STEP { step = MIN_STEP; }
+
+    let out = #{
+        attempted: true,
+        clicked: false,
+        ready: false,
+        state: "unknown",
+        initial_state: "unknown",
+        waited_ms: 0,
+        polls: 0,
+        clicks: 0,
+        renavigations: 0,
+        url: url
+    };
+
+    let target = "";
+    try {
+        target = host.browser_open(url);
+        host.browser_wait_ready(target);
+    } catch (e) {
+        out["error"] = "open: " + e;
+        if target != "" { host.browser_release(target); }
+        return out;
+    }
+    out["target_id"] = target;
+
+    let budget = wait_cap_ms;
+    let waited = 0;
+    let last_click = -999999;
+    loop {
+        // Every pass re-probes: the click and the sign-in detour both come back
+        // through here, and only the live DOM says where the tab actually is.
+        let seen = #{};
+        let probe_ok = true;
+        try { seen = overview_probe(host, target, "probe", 4000); }
+        catch (e) { probe_ok = false; out["last_error"] = "probe: " + e; }
+        let state = "unknown";
+        if probe_ok { state = ov_str(seen, "state"); }
+        if state == "" { state = "unknown"; }
+        if ov_str(out, "initial_state") == "unknown" { out["initial_state"] = state; }
+        out["state"] = state;
+
+        if state == "ready" { out["ready"] = true; break; }
+
+        // Click once the placeholder is up. The site also offers "Try again"
+        // after a run that died, so one well-spaced retry is allowed.
+        if state == "placeholder" && ov_int(out, "clicks", 0) < MAX_CLICKS
+            && waited - last_click > RETRY_CLICK_MS {
+            let hit = #{};
+            let clicked = false;
+            try {
+                hit = overview_probe(host, target, "click", 4000);
+                clicked = ov_str(hit, "clicked") == "true";
+            } catch (e) { out["last_error"] = "click: " + e; }
+            if clicked {
+                out["clicks"] = ov_int(out, "clicks", 0) + 1;
+                out["clicked"] = true;
+                last_click = waited;
+                host.log("alphaxiv: asked alphaXiv to generate the overview for " + url);
+                continue;
+            }
+        }
+
+        if waited >= budget { break; }
+
+        // One poll round inside the remaining budget.
+        let slice = budget - waited;
+        if slice > step { slice = step; }
+        if slice < MIN_STEP { break; }
+        let chunk = #{};
+        let ok = true;
+        try { chunk = overview_probe(host, target, "wait", slice); }
+        catch (e) { ok = false; out["last_error"] = "wait: " + e; }
+        waited += slice;
+        out["polls"] = ov_int(out, "polls", 0) + 1;
+        out["waited_ms"] = waited;
+
+        // Clicking can bounce the tab through alphaXiv's sign-in flow; come back
+        // to the paper and keep waiting, but only a few times.
+        if !ok || ov_str(chunk, "state") == "absent" {
+            let navs = ov_int(out, "renavigations", 0);
+            if navs < MAX_RENAVIGATIONS {
+                try {
+                    host.browser_navigate(target, url);
+                    host.browser_wait_ready(target);
+                    out["renavigations"] = navs + 1;
+                } catch (e) { out["last_error"] = "renavigate: " + e; }
+            }
+        }
+    }
+
+    out
+}
+
 // ── entry point ─────────────────────────────────────────────────────────────
 
 fn run(host, ctx) {
@@ -285,6 +446,19 @@ fn run(host, ctx) {
     if collect_limit < 5 { collect_limit = 5; }
     if collect_limit > 10 { collect_limit = 10; }
     let feed_interval = interval_of(args);
+
+    // A missing AI Overview is worth generating: alphaXiv answers the request in
+    // about five minutes, server-side. It is opt-out, and default-on only where
+    // the user named one paper — a listing run would otherwise turn into hours
+    // of generation, so there it stays off unless asked for, and then only for
+    // the first `overview_max_papers`.
+    let want_overview = opt_bool(args, "generate_overview", mode == "url");
+    let overview_wait_ms = opt_int(args, "overview_wait_ms", 420000);
+    let overview_step_ms = opt_int(args, "overview_step_ms", 20000);
+    let overview_max_papers = opt_int(args, "overview_max_papers",
+        if mode == "url" { 1 } else { 3 });
+    if overview_max_papers < 0 { overview_max_papers = 0; }
+
     let started = host.now();
 
     let source_url = "";
@@ -347,10 +521,42 @@ fn run(host, ctx) {
             keep_open: keep_open
         };
         if selector != "" { leaf["selector"] = selector; }
-        // Provenance for each `<slug>_meta.json`, so a trending run is
-        // self-describing (and timestamped) for later monitoring.
+        // An ungenerated overview makes the capture worthless: the section reads
+        // "No overview yet…", so the Markdown looks finished while carrying no
+        // overview at all. Ask for it first, then save the very tab we waited on
+        // instead of navigating to the paper a second time.
+        let ov = #{
+            attempted: false,
+            clicked: false,
+            ready: false,
+            state: "skipped",
+            initial_state: "skipped",
+            waited_ms: 0,
+            polls: 0,
+            clicks: 0,
+            renavigations: 0,
+            url: url
+        };
+        let target = "";
+        if want_overview && index < overview_max_papers {
+            ov = ensure_overview(host, url, overview_wait_ms, overview_step_ms);
+            target = ov_str(ov, "target_id");
+        } else if want_overview {
+            ov["state"] = "budget_exhausted";
+        }
+        if target != "" { leaf.remove("url"); leaf["target_id"] = target; }
+
+        // Provenance for each `<slug>_meta.json`, so a run is self-describing
+        // (and timestamped) for later monitoring — including whether the AI
+        // Overview was already there, was generated here, or could not be.
         let meta = #{ source: source_url, source_mode: mode, rank: index + 1, query: query };
         if mode == "trending" { meta["interval"] = feed_interval; }
+        meta["overview_attempted"] = ov["attempted"];
+        meta["overview_state"] = ov["state"];
+        meta["overview_ready"] = ov["ready"];
+        meta["overview_clicked"] = ov["clicked"];
+        meta["overview_waited_ms"] = ov["waited_ms"];
+        if ov.contains("error") { meta["overview_error"] = ov["error"]; }
         leaf["meta_extra"] = meta;
 
         // One retry: over a long page-through a single transient CDP error
@@ -365,9 +571,16 @@ fn run(host, ctx) {
                 break;
             } catch (e) {
                 last_error = "" + e;
+                // A tab that died mid-generation cannot be captured; spend the
+                // last try on a fresh navigation to the paper.
+                if target != "" && attempts < 2 {
+                    leaf.remove("target_id");
+                    leaf["url"] = url;
+                }
                 if attempts >= 2 { break; }
             }
         }
+        if target != "" { host.browser_release(target); }
 
         if type_of(saved) == "()" {
             failures.push(#{
@@ -375,6 +588,7 @@ fn run(host, ctx) {
                 url: url,
                 title_hint: title_hint,
                 attempts: attempts,
+                overview_state: ov["state"],
                 error: last_error
             });
         } else {
@@ -389,6 +603,10 @@ fn run(host, ctx) {
                 url: url,
                 title_hint: title_hint,
                 attempts: attempts,
+                overview_state: ov["state"],
+                overview_ready: ov["ready"],
+                overview_clicked: ov["clicked"],
+                overview_waited_ms: ov["waited_ms"],
                 title: saved["title"],
                 markdown_chars: saved["markdown_chars"],
                 rendered: saved["rendered"],
@@ -400,9 +618,22 @@ fn run(host, ctx) {
         index += 1;
     }
 
+    let generated = 0;
+    let overview_waited = 0;
+    for r in results {
+        if ov_str(r, "overview_ready") == "true" { generated += 1; }
+        overview_waited += ov_int(r, "overview_waited_ms", 0);
+    }
+
     let finished = host.now();
     #{
         mode: mode,
+        overview: #{
+            generate: want_overview,
+            max_papers: overview_max_papers,
+            ready_count: generated,
+            waited_ms: overview_waited
+        },
         query: query,
         lang: lang,
         discovery: discovery,

@@ -76,31 +76,36 @@ laya-workflow plugin list     # every plugin the engine can see, and its layer
 laya-workflow plugin dir      # the install root + the search path
 ```
 
-`--path` is the plugin directory *inside* the repo (e.g. `websites/alphaxiv.org`);
-the installed name defaults to its last segment. `--root` overrides the install
-root (default: `$LAYA_PLUGIN_DIR`, else `~/.config/laya-workflow/plugins`).
-Install is refused unless the directory has a parseable `plugin.json` (and no
-`--force` is needed only when the name is not already present); credentials in a
-URL are stripped before anything is printed.
+`--path` is the plugin directory *inside* the repo (e.g.
+`websites/alphaxiv.org/plugin`); naming the site folder instead
+(`websites/alphaxiv.org`) installs its `plugin/` subdir too. The installed name
+defaults to the source `plugin.json` `name` (falling back to the last path
+segment), and `--name` overrides it. `--root` overrides the install root
+(default: `$LAYA_PLUGIN_DIR`, else `~/.config/laya-workflow/plugins`). Install
+is refused unless the directory (or a `plugin/` subdir of it) has a parseable
+`plugin.json` (and no `--force` is needed only when the name is not already
+present); credentials in a URL are stripped before anything is printed.
 
 ## Layout and resolution layers
 
-Two directories hold plugins: **site** plugins live under `websites/<domain>/`
-(e.g. `websites/news.ycombinator.com/`), while general-purpose / tool plugins
-live under `plugins/<name>/`. Both are ordinary plugin directories — the folder
-is just the author's filing choice; a site folder is matched by the `name` its
-`plugin.json` declares, so `websites/news.ycombinator.com/` answers to
+Two directories hold plugins: a **site** gets a folder `websites/<domain>/`
+that keeps its plugin under `websites/<domain>/plugin/` (e.g.
+`websites/news.ycombinator.com/plugin/`; the site folder itself is free for
+docs, fixtures, notes). General-purpose / tool plugins live flat under
+`plugins/<name>/`. Both are ordinary plugin directories — the folder is the
+author's filing choice, and a site folder is matched by the `name` its
+`plugin/plugin.json` declares, so `websites/news.ycombinator.com/` answers to
 `hackernews`.
 
 Highest priority first — a name in a higher layer shadows the same name below:
 
 1. an explicit `dir`;
 2. `$LAYA_PLUGIN_DIR/<name>/`;
-3. `plugins/<name>/` and `websites/*/`, found by walking up from the cwd and
-   stopping at the git root (this is the layer a repository commits — a site
-   folder is matched by its manifest `name`);
+3. `plugins/<name>/` and `websites/*/plugin/`, found by walking up from the
+   cwd and stopping at the git root (this is the layer a repository commits —
+   a site folder is matched by its manifest `name`);
 4. `~/.config/laya-workflow/plugins/<name>/` and
-   `~/.config/laya-workflow/websites/*/` — the `plugin install` default
+   `~/.config/laya-workflow/websites/*/plugin/` — the `plugin install` default
    (`$LAYA_USER_PLUGIN_DIR` / `$XDG_CONFIG_HOME` override it);
 5. the copy compiled into the binary (`include_str!`), so a plugin shipped with a
    release still works after `sudo install`-ing a single binary.
@@ -108,7 +113,7 @@ Highest priority first — a name in a higher layer shadows the same name below:
 ## Writing one
 
 ```
-websites/<domain>/     (site plugins)     plugins/<name>/   (tools)
+websites/<domain>/plugin/     (site plugins)     plugins/<name>/   (tools)
 ├── plugin.json   # name, entry, entry_op, max_operations, pages
 ├── main.rhai     # the logic
 └── page/*.js     # optional page-side collectors, injected via host.js(name)

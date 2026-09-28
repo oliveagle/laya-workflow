@@ -2,7 +2,7 @@
 
 Read GitHub's trending page, or one repository's stars / forks / description and
 its README, in a background Chrome tab over CDP. Site logic lives in
-`websites/github.com/main.rhai`; `websites/github.com/page/trending.js` and
+`websites/github.com/plugin/main.rhai`; `websites/github.com/plugin/page/trending.js` and
 `page/repo.js` scrape the DOM (both wait for GitHub's late React paint).
 
 ## Use it

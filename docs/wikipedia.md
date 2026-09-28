@@ -1,8 +1,8 @@
 # Wikipedia reader (`websites/wikipedia.org` + `dsl/browser/wikipedia.json`)
 
 Read Wikipedia in a background Chrome tab over CDP. Site logic lives in
-`websites/wikipedia.org/main.rhai` with the page scrapers in
-`websites/wikipedia.org/page/*.js`.
+`websites/wikipedia.org/plugin/main.rhai` with the page scrapers in
+`websites/wikipedia.org/plugin/page/*.js`.
 
 ## Use it
 

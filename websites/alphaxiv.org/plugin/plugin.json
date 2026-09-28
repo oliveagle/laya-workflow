@@ -1,10 +1,10 @@
 {
   "name": "alphaxiv",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 4000000,
-  "pages": ["links.js", "feed.js"],
+  "pages": ["links.js", "feed.js", "overview.js"],
   "description": "Natural-language alphaXiv downloader: turn a search phrase, a paper URL or a trending keyword into saved Markdown + figures."
 }

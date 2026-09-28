@@ -1,8 +1,8 @@
 # Bing web search (`websites/bing.com` + `dsl/browser/bing.json`)
 
 Web search on Bing in a background Chrome tab over CDP: a phrase in, organic
-result rows out. The page scraper is `websites/bing.com/page/search.js`; the intent
-logic is `websites/bing.com/main.rhai`.
+result rows out. The page scraper is `websites/bing.com/plugin/page/search.js`; the intent
+logic is `websites/bing.com/plugin/main.rhai`.
 
 ## Use it
 

@@ -40,7 +40,7 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  
 ```
 
 The site logic (mode inference, locale URLs, feed paging) lives in
-`websites/alphaxiv.org/main.rhai`, so it can change without rebuilding the engine; the
+`websites/alphaxiv.org/plugin/main.rhai`, so it can change without rebuilding the engine; the
 same plugin can be called from your own spec as
 `{"kind": "plugin", "plugin": "alphaxiv", "browser": "chrome"}`. See
 `skill --section plugins` (write/install your own), `skill --section dsl`, and

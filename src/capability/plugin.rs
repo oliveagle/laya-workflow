@@ -4,7 +4,8 @@
 //! lifecycle, secret redaction, page-to-Markdown rendering. Anything that is
 //! *site-* or *task*-specific (which selector to read, which endpoint to page,
 //! how a natural-language query maps to a mode) belongs in a **plugin** written
-//! in Rhai — a site under `websites/<domain>/`, a tool under `plugins/<name>/`.
+//! in Rhai — a site under `websites/<domain>/plugin/`, a tool under
+//! `plugins/<name>/`.
 //!
 //! A plugin can do exactly what the host registers for it — nothing more:
 //!
@@ -17,13 +18,14 @@
 //! * the language itself has no file, network, `eval`, `print` or `import`
 //!   access, and is bounded by an operation budget.
 //!
-//! Layout: **site** plugins live under `websites/<domain>/` (one folder per
-//! site, the plugin's short id comes from its `plugin.json`), while
-//! non-site/tool plugins live under `plugins/<name>/`. Both are just
-//! directories of the same shape; the resolver finds either by plugin name.
+//! Layout: a **site** gets a folder `websites/<domain>/` that holds its plugin
+//! under `websites/<domain>/plugin/` (the site may also keep docs, fixtures or
+//! several plugins there later); the plugin's short id comes from its
+//! `plugin.json`. Non-site/tool plugins live under `plugins/<name>/`. Both are
+//! directories of the same shape, found either way by plugin name.
 //!
 //! Plugins are resolved in layers, highest priority first: an explicit `dir` →
-//! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` / `websites/*/` walking up to
+//! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` / `websites/*/plugin/` walking up to
 //! the git root → `~/.config/laya-workflow/{plugins,websites}` (the
 //! `plugin install` default) → the copy compiled into this binary. That last
 //! layer is why the bundled alphaXiv downloader still works after
@@ -49,7 +51,7 @@ pub const ALPHAXIV_PLUGIN: &str = "alphaxiv";
 #[derive(Clone, Debug, Default)]
 pub struct PluginCap {
     /// Plugin id: matched against the folder name under `plugins/` and against
-    /// the `name` in a `websites/<domain>/plugin.json`. A path is used instead
+    /// the `name` in a `websites/<domain>/plugin/plugin.json`. A path is used instead
     /// when `dir` is set.
     pub plugin: String,
     /// Optional explicit plugin directory, bypassing the search layers.
@@ -140,16 +142,20 @@ struct Sources {
 fn builtin(name: &str) -> Option<Sources> {
     let (manifest, entry, pages): (&str, &str, Vec<(&str, &str)>) = match name {
         ALPHAXIV_PLUGIN => (
-            include_str!("../../websites/alphaxiv.org/plugin.json"),
-            include_str!("../../websites/alphaxiv.org/main.rhai"),
+            include_str!("../../websites/alphaxiv.org/plugin/plugin.json"),
+            include_str!("../../websites/alphaxiv.org/plugin/main.rhai"),
             vec![
                 (
                     "links.js",
-                    include_str!("../../websites/alphaxiv.org/page/links.js"),
+                    include_str!("../../websites/alphaxiv.org/plugin/page/links.js"),
                 ),
                 (
                     "feed.js",
-                    include_str!("../../websites/alphaxiv.org/page/feed.js"),
+                    include_str!("../../websites/alphaxiv.org/plugin/page/feed.js"),
+                ),
+                (
+                    "overview.js",
+                    include_str!("../../websites/alphaxiv.org/plugin/page/overview.js"),
                 ),
             ],
         ),
@@ -159,120 +165,120 @@ fn builtin(name: &str) -> Option<Sources> {
             Vec::new(),
         ),
         "hf-trending" => (
-            include_str!("../../websites/huggingface.co/plugin.json"),
-            include_str!("../../websites/huggingface.co/main.rhai"),
+            include_str!("../../websites/huggingface.co/plugin/plugin.json"),
+            include_str!("../../websites/huggingface.co/plugin/main.rhai"),
             Vec::new(),
         ),
         "hackernews" => (
-            include_str!("../../websites/news.ycombinator.com/plugin.json"),
-            include_str!("../../websites/news.ycombinator.com/main.rhai"),
+            include_str!("../../websites/news.ycombinator.com/plugin/plugin.json"),
+            include_str!("../../websites/news.ycombinator.com/plugin/main.rhai"),
             vec![
                 (
                     "front.js",
-                    include_str!("../../websites/news.ycombinator.com/page/front.js"),
+                    include_str!("../../websites/news.ycombinator.com/plugin/page/front.js"),
                 ),
                 (
                     "story.js",
-                    include_str!("../../websites/news.ycombinator.com/page/story.js"),
+                    include_str!("../../websites/news.ycombinator.com/plugin/page/story.js"),
                 ),
             ],
         ),
         "arxiv" => (
-            include_str!("../../websites/arxiv.org/plugin.json"),
-            include_str!("../../websites/arxiv.org/main.rhai"),
+            include_str!("../../websites/arxiv.org/plugin/plugin.json"),
+            include_str!("../../websites/arxiv.org/plugin/main.rhai"),
             vec![
                 (
                     "search.js",
-                    include_str!("../../websites/arxiv.org/page/search.js"),
+                    include_str!("../../websites/arxiv.org/plugin/page/search.js"),
                 ),
                 (
                     "abs.js",
-                    include_str!("../../websites/arxiv.org/page/abs.js"),
+                    include_str!("../../websites/arxiv.org/plugin/page/abs.js"),
                 ),
             ],
         ),
         "wikipedia" => (
-            include_str!("../../websites/wikipedia.org/plugin.json"),
-            include_str!("../../websites/wikipedia.org/main.rhai"),
+            include_str!("../../websites/wikipedia.org/plugin/plugin.json"),
+            include_str!("../../websites/wikipedia.org/plugin/main.rhai"),
             vec![
                 (
                     "search.js",
-                    include_str!("../../websites/wikipedia.org/page/search.js"),
+                    include_str!("../../websites/wikipedia.org/plugin/page/search.js"),
                 ),
                 (
                     "clean.js",
-                    include_str!("../../websites/wikipedia.org/page/clean.js"),
+                    include_str!("../../websites/wikipedia.org/plugin/page/clean.js"),
                 ),
             ],
         ),
         "mdn" => (
-            include_str!("../../websites/developer.mozilla.org/plugin.json"),
-            include_str!("../../websites/developer.mozilla.org/main.rhai"),
+            include_str!("../../websites/developer.mozilla.org/plugin/plugin.json"),
+            include_str!("../../websites/developer.mozilla.org/plugin/main.rhai"),
             Vec::new(),
         ),
         "bing" => (
-            include_str!("../../websites/bing.com/plugin.json"),
-            include_str!("../../websites/bing.com/main.rhai"),
+            include_str!("../../websites/bing.com/plugin/plugin.json"),
+            include_str!("../../websites/bing.com/plugin/main.rhai"),
             vec![(
                 "search.js",
-                include_str!("../../websites/bing.com/page/search.js"),
+                include_str!("../../websites/bing.com/plugin/page/search.js"),
             )],
         ),
         "v2ex" => (
-            include_str!("../../websites/v2ex.com/plugin.json"),
-            include_str!("../../websites/v2ex.com/main.rhai"),
+            include_str!("../../websites/v2ex.com/plugin/plugin.json"),
+            include_str!("../../websites/v2ex.com/plugin/main.rhai"),
             vec![
                 (
                     "list.js",
-                    include_str!("../../websites/v2ex.com/page/list.js"),
+                    include_str!("../../websites/v2ex.com/plugin/page/list.js"),
                 ),
                 (
                     "topic.js",
-                    include_str!("../../websites/v2ex.com/page/topic.js"),
+                    include_str!("../../websites/v2ex.com/plugin/page/topic.js"),
                 ),
             ],
         ),
         "crates" => (
-            include_str!("../../websites/crates.io/plugin.json"),
-            include_str!("../../websites/crates.io/main.rhai"),
+            include_str!("../../websites/crates.io/plugin/plugin.json"),
+            include_str!("../../websites/crates.io/plugin/main.rhai"),
             vec![(
                 "search.js",
-                include_str!("../../websites/crates.io/page/search.js"),
+                include_str!("../../websites/crates.io/plugin/page/search.js"),
             )],
         ),
         "pypi" => (
-            include_str!("../../websites/pypi.org/plugin.json"),
-            include_str!("../../websites/pypi.org/main.rhai"),
+            include_str!("../../websites/pypi.org/plugin/plugin.json"),
+            include_str!("../../websites/pypi.org/plugin/main.rhai"),
             vec![
                 (
                     "search.js",
-                    include_str!("../../websites/pypi.org/page/search.js"),
+                    include_str!("../../websites/pypi.org/plugin/page/search.js"),
                 ),
                 (
                     "project.js",
-                    include_str!("../../websites/pypi.org/page/project.js"),
+                    include_str!("../../websites/pypi.org/plugin/page/project.js"),
                 ),
             ],
         ),
         "docsrs" => (
-            include_str!("../../websites/docs.rs/plugin.json"),
-            include_str!("../../websites/docs.rs/main.rhai"),
+            include_str!("../../websites/docs.rs/plugin/plugin.json"),
+            include_str!("../../websites/docs.rs/plugin/main.rhai"),
             vec![(
                 "search.js",
-                include_str!("../../websites/docs.rs/page/search.js"),
+                include_str!("../../websites/docs.rs/plugin/page/search.js"),
             )],
         ),
         "github" => (
-            include_str!("../../websites/github.com/plugin.json"),
-            include_str!("../../websites/github.com/main.rhai"),
+            include_str!("../../websites/github.com/plugin/plugin.json"),
+            include_str!("../../websites/github.com/plugin/main.rhai"),
             vec![
                 (
                     "trending.js",
-                    include_str!("../../websites/github.com/page/trending.js"),
+                    include_str!("../../websites/github.com/plugin/page/trending.js"),
                 ),
                 (
                     "repo.js",
-                    include_str!("../../websites/github.com/page/repo.js"),
+                    include_str!("../../websites/github.com/plugin/page/repo.js"),
                 ),
             ],
         ),
@@ -512,16 +518,20 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
-        // A child directory is a plugin; its *name* is what `plugin.json`
-        // declares (so `websites/<domain>/` maps to a short plugin id).
+        // A child directory is a plugin root (the plugin may sit in it directly
+        // or in its `plugin/` subdir); its *name* is what `plugin.json` declares
+        // (so `websites/<domain>/` maps to a short plugin id).
         let mut dirs: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.join("plugin.json").is_file())
+            .filter(|p| p.is_dir())
             .collect();
         dirs.sort();
-        for dir in dirs {
-            let folder = dir
+        for child in dirs {
+            let Some(dir) = plugin_dir_of(&child) else {
+                continue;
+            };
+            let folder = child
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
@@ -566,6 +576,27 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
     out
 }
 
+/// Default plugin name for an install: a bare `plugin/` subdir takes its parent
+/// folder's name (`websites/alphaxiv.org/plugin` → `alphaxiv.org`), otherwise
+/// the last segment of the checkout path. The manifest `name` normally wins.
+fn plugin_name_fallback(plugin_dir: &std::path::Path, sub: &str) -> String {
+    if plugin_dir.file_name().and_then(|n| n.to_str()) == Some("plugin") {
+        if let Some(parent) = plugin_dir
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.is_empty())
+        {
+            return parent.to_string();
+        }
+    }
+    sub.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .to_string()
+}
+
 /// Clone **only** `subdir` from `repo` (a sparse, blob-filtered checkout) into a
 /// temp dir, then install it as plugin `name`. Nothing outside `subdir` is
 /// materialised on disk.
@@ -579,7 +610,9 @@ pub fn install_from_git(
 ) -> Result<InstalledPlugin> {
     let url = repo_clone_url(repo)?;
     let sub = normalize_subdir(subdir)?;
-    validate_plugin_name(name)?;
+    if !name.trim().is_empty() {
+        validate_plugin_name(name)?;
+    }
     let tmp = std::env::temp_dir().join(format!(
         "laya-plugin-install-{}-{}",
         std::process::id(),
@@ -621,7 +654,22 @@ pub fn install_from_git(
                 redact_url(&url)
             );
         }
-        install_from_dir(&src, root, name, force)
+        // The plugin may be the checked-out dir itself (`plugins/<name>/`,
+        // `websites/<domain>/plugin/`) or a site folder's `plugin/` subdir
+        // (`websites/<domain>/`).
+        let plugin_dir = plugin_dir_of(&src).unwrap_or_else(|| src.clone());
+        let name = if name.trim().is_empty() {
+            let fallback = plugin_name_fallback(&plugin_dir, &sub);
+            std::fs::read_to_string(plugin_dir.join("plugin.json"))
+                .ok()
+                .and_then(|m| Manifest::parse(&m, &fallback).ok())
+                .map(|m| m.name)
+                .filter(|n| !n.trim().is_empty() && validate_plugin_name(n).is_ok())
+                .unwrap_or(fallback)
+        } else {
+            name.trim().to_string()
+        };
+        install_from_dir(&plugin_dir, root, &name, force)
     })();
     std::fs::remove_dir_all(&tmp).ok();
     result
@@ -634,8 +682,8 @@ pub enum PluginLayer {
     Dir,
     /// `$LAYA_PLUGIN_DIR/<name>`.
     Env,
-    /// `plugins/<name>` or `websites/<domain>/` walking up from the cwd to the
-    /// git root.
+    /// `plugins/<name>` or `websites/<domain>/plugin/` walking up from the cwd
+    /// to the git root.
     Repo,
     /// `~/.config/laya-workflow/plugins/<name>` (where `plugin install` lands)
     /// or its `websites/` sibling.
@@ -662,8 +710,8 @@ impl PluginLayer {
 ///
 /// A root is a directory whose children are plugin directories. Under `plugins/`
 /// the child is named after the plugin; under `websites/<domain>/` the child is
-/// named after the site and the plugin name comes from its `plugin.json`. Both
-/// are found by [`plugin_dir_in`].
+/// named after the site and its plugin lives in a `plugin/` subdir (the plugin
+/// name comes from `plugin/plugin.json`). Both are found by [`plugin_dir_in`].
 fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     let mut roots = Vec::new();
     if let Ok(dir) = std::env::var("LAYA_PLUGIN_DIR") {
@@ -689,26 +737,46 @@ fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     roots
 }
 
-/// The plugin directory under `root` that provides `name`: the same-named child
-/// (`plugins/<name>/`), or a child whose `plugin.json` declares that name
-/// (`websites/<domain>/`). `None` when the root has no such plugin.
+/// The directory a plugin root child actually stores the plugin in: the child
+/// itself (`plugins/<name>/`), or its `plugin/` subdirectory — the layout of a
+/// site folder (`websites/<domain>/plugin/`). `None` when the child holds no
+/// `plugin.json` either way.
+fn plugin_dir_of(child: &std::path::Path) -> Option<PathBuf> {
+    if child.join("plugin.json").is_file() {
+        return Some(child.to_path_buf());
+    }
+    let nested = child.join("plugin");
+    if nested.join("plugin.json").is_file() {
+        return Some(nested);
+    }
+    None
+}
+
+/// The plugin directory under `root` that provides `name`: a child named after
+/// the plugin (`plugins/<name>/`), or a site folder whose plugin sits in a
+/// `plugin/` subdir and whose `plugin.json` declares that name
+/// (`websites/<domain>/plugin/`). `None` when the root has no such plugin.
 fn plugin_dir_in(root: &std::path::Path, name: &str) -> Option<PathBuf> {
-    let direct = root.join(name);
-    if direct.join("plugin.json").is_file() {
-        return Some(direct);
+    if let Some(dir) = plugin_dir_of(&root.join(name)) {
+        return Some(dir);
     }
     let mut children: Vec<PathBuf> = std::fs::read_dir(root)
         .ok()?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.join("plugin.json").is_file())
+        .filter(|p| p.is_dir())
         .collect();
     children.sort();
-    for dir in children {
-        if dir.file_name().and_then(|n| n.to_str()) == Some(name) {
+    for child in children {
+        let Some(dir) = plugin_dir_of(&child) else {
+            continue;
+        };
+        if child.file_name().and_then(|n| n.to_str()) == Some(name) {
             return Some(dir);
         }
-        let folder = dir
+        // The site folder name is only a fallback: the plugin name comes from
+        // its `plugin.json`, so `websites/<domain>/` maps to a short id.
+        let folder = child
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(name)
@@ -1468,12 +1536,14 @@ mod tests {
             .any(|(_, s)| s.contains("api.alphaxiv.org")));
     }
 
-    /// A `websites/<domain>/` folder is found by the plugin *name* its
-    /// `plugin.json` declares, not by the folder name.
+    /// A `websites/<domain>/plugin/` folder is found by the plugin *name* its
+    /// `plugin.json` declares, not by the domain folder name.
     #[test]
     fn resolves_a_website_folder_by_manifest_name() {
         let root = std::env::temp_dir().join(format!("laya-web-root-{}", std::process::id()));
-        let dir = root.join("example.com");
+        // A site folder keeps its plugin in a `plugin/` subdirectory.
+        let site = root.join("example.com");
+        let dir = site.join("plugin");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("plugin.json"),
@@ -1482,24 +1552,71 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("main.rhai"), "fn run(host, ctx) { #{ ok: true } }").unwrap();
 
+        // Found by the manifest name (`websites/<domain>/plugin/` → `example`).
         assert_eq!(
             plugin_dir_in(&root, "example").as_deref(),
             Some(dir.as_path())
         );
-        // The folder name still matches too, so both conventions work.
+        // ...and by the domain folder name too, so both conventions work.
         assert_eq!(
             plugin_dir_in(&root, "example.com").as_deref(),
             Some(dir.as_path())
         );
         assert!(plugin_dir_in(&root, "nope").is_none());
+
+        // A tool plugin stays flat (`plugins/<name>/`) and still resolves.
+        let tool = root.join("mini");
+        std::fs::create_dir_all(&tool).unwrap();
+        std::fs::write(tool.join("plugin.json"), r#"{"name":"mini"}"#).unwrap();
+        assert_eq!(
+            plugin_dir_in(&root, "mini").as_deref(),
+            Some(tool.as_path())
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// From the crate root, a bundled site plugin resolves off `websites/…` on
-    /// disk (not from the compiled-in copy) under its short id.
+    /// A plugin root child resolves to itself (`plugins/<name>/`) or to its
+    /// `plugin/` subdir (`websites/<domain>/plugin/`); nothing else counts.
+    #[test]
+    fn plugin_dir_of_finds_flat_and_nested_layouts() {
+        let root = std::env::temp_dir().join(format!("laya-pdo-{}", std::process::id()));
+        let flat = root.join("mini");
+        std::fs::create_dir_all(&flat).unwrap();
+        std::fs::write(flat.join("plugin.json"), "{}").unwrap();
+        assert_eq!(plugin_dir_of(&flat).as_deref(), Some(flat.as_path()));
+
+        let site = root.join("example.com");
+        let nested = site.join("plugin");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("plugin.json"), "{}").unwrap();
+        assert_eq!(plugin_dir_of(&site).as_deref(), Some(nested.as_path()));
+        assert_eq!(plugin_dir_of(&nested).as_deref(), Some(nested.as_path()));
+
+        let bare = root.join("nothing");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(plugin_dir_of(&bare).is_none());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The install name falls back to the site folder for a bare `plugin/`
+    /// subdir, and to the path's last segment otherwise.
+    #[test]
+    fn install_name_falls_back_to_the_site_folder() {
+        let site_plugin = std::path::Path::new("websites/alphaxiv.org/plugin");
+        assert_eq!(
+            plugin_name_fallback(site_plugin, "websites/alphaxiv.org/plugin"),
+            "alphaxiv.org"
+        );
+        let plain = std::path::Path::new("/tmp/clone/plugins/v2ex");
+        assert_eq!(plugin_name_fallback(plain, "plugins/v2ex"), "v2ex");
+    }
+
+    /// From the crate root, a bundled site plugin resolves off
+    /// `websites/<domain>/plugin/` on disk (not from the compiled-in copy)
+    /// under its short id.
     #[test]
     fn finds_a_repo_plugin_under_websites_by_name() {
-        let probe = std::path::Path::new("websites/news.ycombinator.com/plugin.json");
+        let probe = std::path::Path::new("websites/news.ycombinator.com/plugin/plugin.json");
         if !probe.exists() {
             return; // not run from the repo root
         }
@@ -1510,7 +1627,7 @@ mod tests {
         .unwrap();
         let dir = src.dir.expect("resolved from disk, not builtin");
         assert!(
-            dir.ends_with("websites/news.ycombinator.com"),
+            dir.ends_with("websites/news.ycombinator.com/plugin"),
             "{}",
             dir.display()
         );

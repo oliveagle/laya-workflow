@@ -1,8 +1,8 @@
 # crates.io reader (`websites/crates.io` + `dsl/browser/crates.json`)
 
 Search the crates.io registry, or read one crate page into Markdown, in a
-background Chrome tab over CDP. Site logic lives in `websites/crates.io/main.rhai`;
-the search rows are scraped by `websites/crates.io/page/search.js`.
+background Chrome tab over CDP. Site logic lives in `websites/crates.io/plugin/main.rhai`;
+the search rows are scraped by `websites/crates.io/plugin/page/search.js`.
 
 ## Use it
 

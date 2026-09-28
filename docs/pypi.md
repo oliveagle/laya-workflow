@@ -1,9 +1,9 @@
 # PyPI reader (`websites/pypi.org` + `dsl/browser/pypi.json`)
 
 Search the Python Package Index, or read one project page into Markdown, in a
-background Chrome tab over CDP. Site logic lives in `websites/pypi.org/main.rhai`;
-`websites/pypi.org/page/search.js` scrapes the search rows and
-`websites/pypi.org/page/project.js` reads the project header.
+background Chrome tab over CDP. Site logic lives in `websites/pypi.org/plugin/main.rhai`;
+`websites/pypi.org/plugin/page/search.js` scrapes the search rows and
+`websites/pypi.org/plugin/page/project.js` reads the project header.
 
 ## Use it
 

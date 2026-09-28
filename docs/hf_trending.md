@@ -15,7 +15,7 @@ over plain HTTP, so the only host it touches is `huggingface.co`.
 
 The Rust engine stays the base (transport, policy, path gate); the *site* logic —
 how a phrase maps to a mode, which fields matter, how the ranking is written out —
-lives entirely in `websites/huggingface.co/main.rhai`.
+lives entirely in `websites/huggingface.co/plugin/main.rhai`.
 
 ## Run it
 

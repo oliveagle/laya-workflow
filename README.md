@@ -120,10 +120,11 @@ Site- and task-specific logic lives in **Rhai plugins**, not in the compiled
 engine — the Rust base keeps the transport, policy gates, resource lifecycle and
 rendering, and a plugin adds the site logic. A plugin can only call a small,
 audited host API, so `allow_hosts` / `allow_paths` / `allow_exec` and the
-"the engine owns tab cleanup" invariant still hold. Site plugins live under
-`websites/<domain>/` (e.g. `websites/news.ycombinator.com/`); tool plugins live
-under `plugins/<name>/`. A site folder is matched by the `name` its
-`plugin.json` declares.
+"the engine owns tab cleanup" invariant still hold. A **site** gets a folder
+`websites/<domain>/` and keeps its plugin under `websites/<domain>/plugin/`
+(e.g. `websites/news.ycombinator.com/plugin/`); **tool** plugins stay flat under
+`plugins/<name>/`. A site folder is matched by the `name` its `plugin.json`
+declares.
 
 ```bash
 # fully offline: a workflow calling a local plugin
@@ -132,14 +133,15 @@ laya-workflow run --spec dsl/capabilities/script_plugin.json \
 ```
 
 Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
-`plugins/<name>` / `websites/*` walking up to the git root, then
+`plugins/<name>` / `websites/*/plugin` walking up to the git root, then
 `~/.config/laya-workflow/plugins` / `~/.config/laya-workflow/websites` (the
-install default), then the copy compiled into the binary. `websites/alphaxiv.org` (natural-language alphaXiv downloader) and
+install default), then the copy compiled into the binary.
+`websites/alphaxiv.org/plugin` (natural-language alphaXiv downloader) and
 `plugins/textdigest` (offline demo) ship with the repo. Install a single plugin
 out of any git repo (sparse clone — not the whole repo):
 
 ```bash
-laya-workflow plugin install <owner/repo> --path websites/alphaxiv.org
+laya-workflow plugin install <owner/repo> --path websites/alphaxiv.org/plugin
 laya-workflow plugin list       # what the engine can see, and from where
 ```
 

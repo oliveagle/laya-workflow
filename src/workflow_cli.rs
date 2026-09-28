@@ -428,21 +428,15 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
                 Some(r) => std::path::PathBuf::from(r),
                 None => plg::install_root()?,
             };
-            let default_name = path
-                .trim()
-                .trim_end_matches('/')
-                .rsplit('/')
-                .next()
-                .unwrap_or("")
-                .to_string();
-            let name = name.clone().unwrap_or(default_name);
-            plg::validate_plugin_name(&name)?;
+            // The plugin name is resolved at install time: `--name` wins, else
+            // the source `plugin.json` `name`, else the checkout path's segment.
+            let name = name.clone().unwrap_or_default();
             let url = plg::repo_clone_url(repo)?;
             println!("repo:   {}", plg::redact_url(&url));
             println!("path:   {}", plg::normalize_subdir(path)?);
-            println!("name:   {name}");
             println!("root:   {}", root.display());
             let out = plg::install_from_git(repo, path, &name, &root, git_ref.as_deref(), *force)?;
+            println!("name:   {}", out.name);
             println!(
                 "installed {} v{} ({} file(s)) -> {}",
                 out.name,

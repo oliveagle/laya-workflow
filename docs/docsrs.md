@@ -2,7 +2,7 @@
 
 Search crate releases on docs.rs, or read one crate's rendered API docs into
 Markdown, in a background Chrome tab over CDP. Site logic lives in
-`websites/docs.rs/main.rhai`; `websites/docs.rs/page/search.js` scrapes the
+`websites/docs.rs/plugin/main.rhai`; `websites/docs.rs/plugin/page/search.js` scrapes the
 release rows.
 
 ## Use it
