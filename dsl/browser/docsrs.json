@@ -29,7 +29,7 @@
     },
     "docsrs": {
       "kind": "plugin",
-      "plugin": "docsrs",
+      "plugin": "websites/docsrs",
       "browser": "chrome",
       "timeout_ms": 30000
     }

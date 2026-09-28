@@ -1,10 +1,14 @@
 {
   "name": "v2ex",
+  "group": "websites",
   "version": "0.1.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 4000000,
-  "pages": ["list.js", "topic.js"],
+  "pages": [
+    "list.js",
+    "topic.js"
+  ],
   "description": "V2EX (v2ex.com) reader: the latest / hot / tech / ... topic list, a node's topics (/go/<name>), or one topic with its replies (/t/<id>)."
 }

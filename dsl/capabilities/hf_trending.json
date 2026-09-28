@@ -19,7 +19,7 @@
   "capabilities": {
     "hf": {
       "kind": "plugin",
-      "plugin": "hf-trending",
+      "plugin": "websites/hf-trending",
       "timeout_ms": 30000
     }
   },

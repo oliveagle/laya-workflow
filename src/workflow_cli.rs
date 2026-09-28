@@ -453,7 +453,7 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
                 println!("# no plugins found");
             }
             println!(
-                "{:<16} {:<8} {:<8} {}",
+                "{:<22} {:<8} {:<8} {}",
                 "NAME", "LAYER", "VERSION", "LOCATION"
             );
             for e in &entries {
@@ -468,7 +468,7 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
                     format!("  — {}", e.description)
                 };
                 println!(
-                    "{:<16} {:<8} {:<8} {}{}",
+                    "{:<22} {:<8} {:<8} {}{}",
                     e.name,
                     e.layer.as_str(),
                     e.version,

@@ -1,5 +1,6 @@
 {
   "name": "textdigest",
+  "group": "plugins",
   "version": "0.1.0",
   "api": 1,
   "entry": "main.rhai",

@@ -33,7 +33,7 @@
     },
     "crates": {
       "kind": "plugin",
-      "plugin": "crates",
+      "plugin": "websites/crates",
       "browser": "chrome",
       "timeout_ms": 30000
     }

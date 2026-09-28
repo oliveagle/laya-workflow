@@ -1,10 +1,14 @@
 {
   "name": "hackernews",
+  "group": "websites",
   "version": "0.1.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 4000000,
-  "pages": ["front.js", "story.js"],
+  "pages": [
+    "front.js",
+    "story.js"
+  ],
   "description": "Hacker News reader (news.ycombinator.com): read the top / best / new / ask / show / jobs front page or one story's discussion as structured rows, and full-text search stories through the public Algolia index."
 }

@@ -27,7 +27,7 @@
     },
     "hn": {
       "kind": "plugin",
-      "plugin": "hackernews",
+      "plugin": "websites/hackernews",
       "browser": "chrome",
       "timeout_ms": 30000
     }

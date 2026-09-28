@@ -29,7 +29,7 @@
     },
     "arxiv": {
       "kind": "plugin",
-      "plugin": "arxiv",
+      "plugin": "websites/arxiv",
       "browser": "chrome",
       "timeout_ms": 30000
     }

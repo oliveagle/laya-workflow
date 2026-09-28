@@ -26,7 +26,7 @@
     },
     "v2ex": {
       "kind": "plugin",
-      "plugin": "v2ex",
+      "plugin": "websites/v2ex",
       "browser": "chrome",
       "timeout_ms": 30000
     }

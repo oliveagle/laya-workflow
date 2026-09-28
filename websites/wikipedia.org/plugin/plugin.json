@@ -1,10 +1,14 @@
 {
   "name": "wikipedia",
+  "group": "websites",
   "version": "0.1.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 4000000,
-  "pages": ["search.js", "clean.js"],
+  "pages": [
+    "search.js",
+    "clean.js"
+  ],
   "description": "Wikipedia (wikipedia.org): search articles (title / snippet / link) or read one article into Markdown via the engine's renderer, in any language (lang, default en)."
 }

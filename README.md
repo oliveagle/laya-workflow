@@ -126,6 +126,12 @@ audited host API, so `allow_hosts` / `allow_paths` / `allow_exec` and the
 `plugins/<name>/`. A site folder is matched by the `name` its `plugin.json`
 declares.
 
+Every plugin has a **`group/name` id** — `websites/hackernews`,
+`websites/github`, `plugins/textdigest` — with the group coming from the
+manifest `"group"` (falling back to the root it lives under). `plugin list`
+prints the id, a capability takes it in its `plugin` field, and a bare name
+still resolves as an alias.
+
 ```bash
 # fully offline: a workflow calling a local plugin
 laya-workflow run --spec dsl/capabilities/script_plugin.json \
@@ -136,7 +142,7 @@ Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
 `plugins/<name>` / `websites/*/plugin` walking up to the git root, then
 `~/.config/laya-workflow/plugins` / `~/.config/laya-workflow/websites` (the
 install default), then the copy compiled into the binary.
-`websites/alphaxiv.org/plugin` (natural-language alphaXiv downloader) and
+`websites/alphaxiv` (natural-language alphaXiv downloader) and
 `plugins/textdigest` (offline demo) ship with the repo. Install a single plugin
 out of any git repo (sparse clone — not the whole repo):
 

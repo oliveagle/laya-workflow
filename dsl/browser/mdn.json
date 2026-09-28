@@ -29,7 +29,7 @@
     },
     "mdn": {
       "kind": "plugin",
-      "plugin": "mdn",
+      "plugin": "websites/mdn",
       "browser": "chrome",
       "timeout_ms": 30000
     }

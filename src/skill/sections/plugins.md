@@ -67,6 +67,14 @@ author's filing choice, and a site folder is matched by the `name` its
 `plugin/plugin.json` declares, so `websites/news.ycombinator.com/` answers to
 `hackernews`.
 
+Plugin ids are `group/name`: a **group** then a **name**, e.g.
+`websites/hackernews`, `plugins/textdigest`. The group comes from the
+`plugin.json` `"group"` field, falling back to the root it was found under
+(`websites` for site plugins, `plugins` for tools); `plugin list` prints it, the
+`plugin` capability field takes it, and `ctx["plugin"]` reports it. A bare name
+still resolves as an alias, but a grouped id only matches its own group, so two
+plugins may share a name across groups.
+
 Highest priority first — a name in a higher layer shadows the same name below:
 
 1. an explicit `dir` on the capability;
@@ -86,7 +94,7 @@ Highest priority first — a name in a higher layer shadows the same name below:
 {
   "capabilities": {
     "chrome":   { "kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222", "launch": true },
-    "alphaxiv": { "kind": "plugin", "plugin": "alphaxiv", "browser": "chrome" }
+    "alphaxiv": { "kind": "plugin", "plugin": "websites/alphaxiv", "browser": "chrome" }
   },
   "nodes": [
     { "name": "fetch_papers",
@@ -101,7 +109,7 @@ Highest priority first — a name in a higher layer shadows the same name below:
 
 | field | meaning |
 |-------|---------|
-| `plugin` | plugin name, resolved from the layers above |
+| `plugin` | plugin id, `group/name` (or a bare name), resolved from the layers above |
 | `dir` | explicit plugin **directory**, or a single `.rhai` **file** run on its own (no manifest needed) |
 | `entry` | entry file: overrides the manifest inside `dir`, or — with no `dir`/`plugin` — names a `.rhai` file to run directly |
 | `op` | entry function (default `run`) |
@@ -132,7 +140,7 @@ websites/<domain>/plugin/   (site plugins)   plugins/<name>/   (tools)
 ```
 
 ```json
-{ "name": "textdigest", "version": "0.1.0", "api": 1,
+{ "name": "textdigest", "group": "plugins", "version": "0.1.0", "api": 1,
   "entry": "main.rhai", "entry_op": "run", "max_operations": 2000000 }
 ```
 
@@ -219,19 +227,19 @@ owner.
 
 | plugin | what it shows |
 |--------|---------------|
-| `websites/alphaxiv.org` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
+| `websites/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
-| `websites/huggingface.co` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
-| `websites/news.ycombinator.com` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), full-text search, and a discussion + comment tree (`dsl/browser/hackernews.json`) |
-| `websites/arxiv.org` | an arXiv reader over Chrome/CDP: search papers, or read one paper into a Markdown digest (`dsl/browser/arxiv.json`) |
-| `websites/wikipedia.org` | a Wikipedia reader over Chrome/CDP: article search, and a whole article rendered to Markdown after the site chrome is stripped in-page (`dsl/browser/wikipedia.json`) |
-| `websites/developer.mozilla.org` | an MDN Web Docs reader: search via the public search API, and one doc rendered to Markdown through a Chrome tab (`dsl/browser/mdn.json`) |
-| `websites/bing.com` | a Bing web-search reader over Chrome/CDP: a phrase in, organic result rows out (`dsl/browser/bing.json`) |
-| `websites/v2ex.com` | a V2EX reader over Chrome/CDP: a tab's topic list (latest/hot/tech/...), a node's topics, or one topic with its replies (`dsl/browser/v2ex.json`) |
-| `websites/crates.io` | a crates.io reader: crate search rows (name / version / description / downloads / docs.rs), or one crate page into Markdown (`dsl/browser/crates.json`) |
-| `websites/pypi.org` | a PyPI reader: package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
-| `websites/docs.rs` | a docs.rs reader: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
-| `websites/github.com` | a GitHub reader: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
+| `websites/hf-trending` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
+| `websites/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), full-text search, and a discussion + comment tree (`dsl/browser/hackernews.json`) |
+| `websites/arxiv` | an arXiv reader over Chrome/CDP: search papers, or read one paper into a Markdown digest (`dsl/browser/arxiv.json`) |
+| `websites/wikipedia` | a Wikipedia reader over Chrome/CDP: article search, and a whole article rendered to Markdown after the site chrome is stripped in-page (`dsl/browser/wikipedia.json`) |
+| `websites/mdn` | an MDN Web Docs reader: search via the public search API, and one doc rendered to Markdown through a Chrome tab (`dsl/browser/mdn.json`) |
+| `websites/bing` | a Bing web-search reader over Chrome/CDP: a phrase in, organic result rows out (`dsl/browser/bing.json`) |
+| `websites/v2ex` | a V2EX reader over Chrome/CDP: a tab's topic list (latest/hot/tech/...), a node's topics, or one topic with its replies (`dsl/browser/v2ex.json`) |
+| `websites/crates` | a crates.io reader: crate search rows (name / version / description / downloads / docs.rs), or one crate page into Markdown (`dsl/browser/crates.json`) |
+| `websites/pypi` | a PyPI reader: package search rows, or one project page into Markdown (`dsl/browser/pypi.json`) |
+| `websites/docsrs` | a docs.rs reader: crate-release search rows, or one crate's rendered API docs into Markdown (`dsl/browser/docsrs.json`) |
+| `websites/github` | a GitHub reader: the trending page (day/week/month, optional language), or one repository — stars / forks / description + README as Markdown (`dsl/browser/github.json`) |
 
 ```sh
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json \

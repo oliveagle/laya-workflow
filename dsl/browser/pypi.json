@@ -33,7 +33,7 @@
     },
     "pypi": {
       "kind": "plugin",
-      "plugin": "pypi",
+      "plugin": "websites/pypi",
       "browser": "chrome",
       "timeout_ms": 30000
     }

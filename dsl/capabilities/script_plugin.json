@@ -12,7 +12,7 @@
   "capabilities": {
     "digest": {
       "kind": "plugin",
-      "plugin": "textdigest",
+      "plugin": "plugins/textdigest",
       "max_operations": 2000000
     }
   },

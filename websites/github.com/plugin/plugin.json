@@ -1,10 +1,14 @@
 {
   "name": "github",
+  "group": "websites",
   "version": "0.1.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 4000000,
-  "pages": ["trending.js", "repo.js"],
+  "pages": [
+    "trending.js",
+    "repo.js"
+  ],
   "description": "GitHub (github.com): the trending page by day/week/month (optionally for one language), or one repository — its stars/forks/description plus its README rendered to Markdown."
 }

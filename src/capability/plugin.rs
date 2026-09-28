@@ -20,9 +20,14 @@
 //!
 //! Layout: a **site** gets a folder `websites/<domain>/` that holds its plugin
 //! under `websites/<domain>/plugin/` (the site may also keep docs, fixtures or
-//! several plugins there later); the plugin's short id comes from its
-//! `plugin.json`. Non-site/tool plugins live under `plugins/<name>/`. Both are
-//! directories of the same shape, found either way by plugin name.
+//! several plugins there later); non-site/tool plugins live under
+//! `plugins/<name>/`. Both are directories of the same shape.
+//!
+//! Every plugin has a `group/name` id (e.g. `websites/hackernews`,
+//! `plugins/textdigest`): `name` is the plugin's `plugin.json` name and `group`
+//! is its `"group"` field, defaulting to the root it was found under
+//! (`websites` / `plugins`). A bare name still resolves as an alias, but a
+//! grouped id only matches its own group.
 //!
 //! Plugins are resolved in layers, highest priority first: an explicit `dir` →
 //! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` / `websites/*/plugin/` walking up to
@@ -50,9 +55,9 @@ pub const ALPHAXIV_PLUGIN: &str = "alphaxiv";
 /// A `kind: "plugin"` capability: which plugin to load and how to bound it.
 #[derive(Clone, Debug, Default)]
 pub struct PluginCap {
-    /// Plugin id: matched against the folder name under `plugins/` and against
-    /// the `name` in a `websites/<domain>/plugin/plugin.json`. A path is used instead
-    /// when `dir` is set.
+    /// Plugin id, `group/name` (a bare `name` is also accepted): matched against
+    /// the manifest `name` + `group` (or the root class) under `plugins/` and
+    /// `websites/*/plugin/`. A path is used instead when `dir` is set.
     pub plugin: String,
     /// Optional explicit plugin directory, bypassing the search layers.
     pub dir: String,
@@ -78,6 +83,8 @@ pub const PLUGIN_API: u64 = 1;
 #[derive(Clone, Debug)]
 struct Manifest {
     name: String,
+    /// Optional namespace segment: the plugin id is `group/name` when set.
+    group: String,
     version: String,
     description: String,
     entry: String,
@@ -86,6 +93,16 @@ struct Manifest {
 }
 
 impl Manifest {
+    /// The plugin's canonical id: `group/name` when it declares a group, else
+    /// the bare `name`.
+    fn id(&self) -> String {
+        if self.group.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}/{}", self.group, self.name)
+        }
+    }
+
     fn parse(src: &str, fallback: &str) -> Result<Manifest> {
         let v: Value = serde_json::from_str(src)
             .map_err(|e| anyhow!("plugin {fallback:?} has an invalid plugin.json: {e}"))?;
@@ -101,6 +118,12 @@ impl Manifest {
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or(fallback)
+                .to_string(),
+            group: v
+                .get("group")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
                 .to_string(),
             version: v
                 .get("version")
@@ -139,6 +162,42 @@ struct Sources {
 }
 
 /// Plugins compiled into this binary (one layer of the resolution order).
+/// Split a plugin id into `(group, name)`; a bare name has an empty group.
+fn split_id(id: &str) -> (&str, &str) {
+    match id.trim().rfind('/') {
+        Some(i) => (&id.trim()[..i], &id.trim()[i + 1..]),
+        None => ("", id.trim()),
+    }
+}
+
+/// The plugin name inside an id (`websites/hackernews` → `hackernews`).
+fn bare_name(id: &str) -> &str {
+    split_id(id).1
+}
+
+/// The group a plugin root stands for: `websites` or `plugins` roots map to that
+/// class, any other root name yields no default group.
+fn root_class(root: &std::path::Path) -> Option<&str> {
+    match root.file_name().and_then(|n| n.to_str()) {
+        Some("websites") => Some("websites"),
+        Some("plugins") => Some("plugins"),
+        _ => None,
+    }
+}
+
+/// Resolve a child's canonical id from its manifest, defaulting the group to the
+/// root's class when the manifest omits one (e.g. `websites/<domain>/plugin/`
+/// with no `"group"` still reads as `websites/<name>`).
+fn child_id(manifest: &Manifest, root: &std::path::Path) -> String {
+    if !manifest.group.is_empty() {
+        return format!("{}/{}", manifest.group, manifest.name);
+    }
+    match root_class(root) {
+        Some(class) => format!("{class}/{}", manifest.name),
+        None => manifest.name.clone(),
+    }
+}
+
 fn builtin(name: &str) -> Option<Sources> {
     let (manifest, entry, pages): (&str, &str, Vec<(&str, &str)>) = match name {
         ALPHAXIV_PLUGIN => (
@@ -296,7 +355,8 @@ fn builtin(name: &str) -> Option<Sources> {
     })
 }
 
-/// Names of the plugins compiled into this binary.
+/// Bare names of the plugins compiled into this binary (their grouped ids come
+/// from each bundled `plugin.json` and are reported by [`discover_plugins`]).
 pub fn builtin_names() -> &'static [&'static str] {
     &[
         ALPHAXIV_PLUGIN,
@@ -541,7 +601,7 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
                 .and_then(|s| Manifest::parse(&s, &folder).ok());
             let name = manifest
                 .as_ref()
-                .map(|m| m.name.clone())
+                .map(|m| child_id(m, &root))
                 .unwrap_or_else(|| folder.clone());
             let (version, description) = manifest
                 .map(|m| (m.version, m.description))
@@ -559,13 +619,13 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
         }
     }
     for n in builtin_names().iter().copied() {
-        if seen.insert(n.to_string()) {
-            let (version, description) = builtin(n)
-                .and_then(|s| Manifest::parse(&s.manifest, n).ok())
-                .map(|m| (m.version, m.description))
-                .unwrap_or_else(|| ("0.0.0".to_string(), String::new()));
+        let (name, version, description) = builtin(n)
+            .and_then(|s| Manifest::parse(&s.manifest, n).ok())
+            .map(|m| (m.id(), m.version, m.description))
+            .unwrap_or_else(|| (n.to_string(), "0.0.0".to_string(), String::new()));
+        if seen.insert(name.clone()) {
             out.push(PluginEntry {
-                name: n.to_string(),
+                name,
                 layer: PluginLayer::Builtin,
                 version,
                 description,
@@ -756,9 +816,16 @@ fn plugin_dir_of(child: &std::path::Path) -> Option<PathBuf> {
 /// the plugin (`plugins/<name>/`), or a site folder whose plugin sits in a
 /// `plugin/` subdir and whose `plugin.json` declares that name
 /// (`websites/<domain>/plugin/`). `None` when the root has no such plugin.
-fn plugin_dir_in(root: &std::path::Path, name: &str) -> Option<PathBuf> {
-    if let Some(dir) = plugin_dir_of(&root.join(name)) {
-        return Some(dir);
+fn plugin_dir_in(root: &std::path::Path, id: &str) -> Option<PathBuf> {
+    let (want_group, want_name) = split_id(id);
+    if want_name.is_empty() {
+        return None;
+    }
+    // Fast path: a bare id is a child directory named after the plugin.
+    if want_group.is_empty() {
+        if let Some(dir) = plugin_dir_of(&root.join(want_name)) {
+            return Some(dir);
+        }
     }
     let mut children: Vec<PathBuf> = std::fs::read_dir(root)
         .ok()?
@@ -771,23 +838,27 @@ fn plugin_dir_in(root: &std::path::Path, name: &str) -> Option<PathBuf> {
         let Some(dir) = plugin_dir_of(&child) else {
             continue;
         };
-        if child.file_name().and_then(|n| n.to_str()) == Some(name) {
-            return Some(dir);
-        }
-        // The site folder name is only a fallback: the plugin name comes from
-        // its `plugin.json`, so `websites/<domain>/` maps to a short id.
         let folder = child
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(name)
+            .unwrap_or(want_name)
             .to_string();
-        if let Ok(src) = std::fs::read_to_string(dir.join("plugin.json")) {
-            if Manifest::parse(&src, &folder)
-                .map(|m| m.name == name)
-                .unwrap_or(false)
-            {
-                return Some(dir);
-            }
+        if want_group.is_empty() && folder == want_name {
+            return Some(dir);
+        }
+        // The folder name is only a fallback: a bare id resolves by the
+        // manifest name, a grouped id by the manifest group (or the root class).
+        let Ok(src) = std::fs::read_to_string(dir.join("plugin.json")) else {
+            continue;
+        };
+        let Ok(m) = Manifest::parse(&src, &folder) else {
+            continue;
+        };
+        if m.name != want_name {
+            continue;
+        }
+        if want_group.is_empty() || m.group == want_group || root_class(root) == Some(want_group) {
+            return Some(dir);
         }
     }
     None
@@ -913,7 +984,7 @@ fn load_sources(cap: &PluginCap) -> Result<Sources> {
             return read_dir_sources(&d, &cap.plugin, entry);
         }
     }
-    builtin(&cap.plugin).ok_or_else(|| {
+    builtin(bare_name(&cap.plugin)).ok_or_else(|| {
         anyhow!(
             "plugin {:?} not found (looked in $LAYA_PLUGIN_DIR, plugins/ and websites/ above the cwd, and the built-ins)",
             cap.plugin
@@ -1369,7 +1440,7 @@ fn run(
         .ok_or_else(|| anyhow!("plugin {:?} defines no {op:?} function", cap.plugin))?;
 
     let ctx = json!({
-        "plugin": manifest.name,
+        "plugin": manifest.id(),
         "op": op,
         "with": with,
         "state": state,
@@ -1609,6 +1680,57 @@ mod tests {
         );
         let plain = std::path::Path::new("/tmp/clone/plugins/v2ex");
         assert_eq!(plugin_name_fallback(plain, "plugins/v2ex"), "v2ex");
+    }
+
+    /// A plugin id is `group/name`; resolution accepts the grouped id, and the
+    /// group may come from the manifest or from the root class (`websites`).
+    #[test]
+    fn resolves_grouped_plugin_ids() {
+        let base = std::env::temp_dir().join(format!("laya-group-{}", std::process::id()));
+        // A `websites/` root: its children are site folders, the plugin sits in
+        // each `<domain>/plugin/`, and the group defaults to `websites`.
+        let websites = base.join("websites");
+        let site = websites.join("example.com").join("plugin");
+        std::fs::create_dir_all(&site).unwrap();
+        std::fs::write(
+            site.join("plugin.json"),
+            r#"{"name":"example","group":"websites","entry":"main.rhai"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            site.join("main.rhai"),
+            "fn run(host, ctx) { #{ ok: true } }",
+        )
+        .unwrap();
+
+        assert_eq!(
+            plugin_dir_in(&websites, "websites/example").as_deref(),
+            Some(site.as_path())
+        );
+        assert_eq!(
+            plugin_dir_in(&websites, "example").as_deref(),
+            Some(site.as_path())
+        );
+        assert!(plugin_dir_in(&websites, "plugins/example").is_none());
+        assert!(plugin_dir_in(&websites, "websites/nope").is_none());
+
+        // No manifest group: the root class still names the group.
+        let site2 = websites.join("other.org").join("plugin");
+        std::fs::create_dir_all(&site2).unwrap();
+        std::fs::write(site2.join("plugin.json"), r#"{"name":"other"}"#).unwrap();
+        assert_eq!(
+            plugin_dir_in(&websites, "websites/other").as_deref(),
+            Some(site2.as_path())
+        );
+
+        // `child_id` / `Manifest::id` agree with what resolution accepts.
+        let m = Manifest::parse(r#"{"name":"example","group":"websites"}"#, "example").unwrap();
+        assert_eq!(m.id(), "websites/example");
+        assert_eq!(child_id(&m, &websites), "websites/example");
+        let bare = Manifest::parse(r#"{"name":"other"}"#, "other").unwrap();
+        assert_eq!(bare.id(), "other");
+        assert_eq!(child_id(&bare, &websites), "websites/other");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     /// From the crate root, a bundled site plugin resolves off
@@ -2057,15 +2179,19 @@ mod tests {
     fn discovery_lists_bundled_plugins_once() {
         let found = discover_plugins();
         let names: Vec<String> = found.iter().map(|e| e.name.clone()).collect();
-        assert!(names.iter().any(|n| n == "alphaxiv"), "{names:?}");
-        assert!(names.iter().any(|n| n == "textdigest"), "{names:?}");
+        // Names are grouped: `group/plugin`.
+        assert!(names.iter().any(|n| n == "websites/alphaxiv"), "{names:?}");
+        assert!(names.iter().any(|n| n == "plugins/textdigest"), "{names:?}");
         // A name is never listed twice (higher layers shadow lower ones).
         let mut sorted = names.clone();
         sorted.sort();
         sorted.dedup();
         assert_eq!(sorted.len(), names.len(), "{names:?}");
         // The description/version parsed out of plugin.json survive to the listing.
-        let ax = found.iter().find(|e| e.name == "alphaxiv").unwrap();
+        let ax = found
+            .iter()
+            .find(|e| e.name == "websites/alphaxiv")
+            .unwrap();
         assert!(!ax.version.is_empty());
         assert!(!ax.description.is_empty());
     }

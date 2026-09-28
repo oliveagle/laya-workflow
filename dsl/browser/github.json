@@ -34,7 +34,7 @@
     },
     "github": {
       "kind": "plugin",
-      "plugin": "github",
+      "plugin": "websites/github",
       "browser": "chrome",
       "timeout_ms": 30000
     }
