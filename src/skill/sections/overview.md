@@ -12,7 +12,7 @@ either:
 Think of it as: `validate` before you run, `run` to execute, `state`/`resume`/
 `replay` to inspect and control a run, `skill` to learn any part on demand.
 
-## The six things it can do
+## The seven things it can do
 
 1. **Built-in apps** — `apps`, `describe`, `demo`: the four canned workflows
    (agent gate, email triage, content moderation, draft scoring) plus a
@@ -25,7 +25,11 @@ Think of it as: `validate` before you run, `run` to execute, `state`/`resume`/
 5. **Extend it** — `plugin install | list | dir`: site logic lives in sandboxed
    **Rhai plugins** (`kind: "plugin"`), not in the binary. See
    `skill --section plugins`.
-6. **Learn it** — `skill` (this command).
+6. **Bring up local resources** — `chrome ensure` (a CDP Chrome) and
+   `server ensure | start | stop | status` (a local HTTP server), the idempotent
+   primitives a browser workflow needs before it drives a page. See
+   `skill --section orchestrate`.
+7. **Learn it** — `skill` (this command).
 
 ## Which subcommand do I want?
 

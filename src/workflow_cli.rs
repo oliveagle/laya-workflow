@@ -141,6 +141,76 @@ enum Cmd {
         #[command(subcommand)]
         cmd: PluginCmd,
     },
+    /// Ensure a local Chrome with CDP (remote debugging) on 127.0.0.1:<port>.
+    /// Idempotent: does nothing when the endpoint is already up. Pair it with
+    /// `server` and a `chrome_cdp` capability to drive a real local page.
+    Chrome {
+        #[command(subcommand)]
+        cmd: ChromeCmd,
+    },
+    /// Long-running local HTTP server lifecycle: `ensure` (idempotent) /
+    /// `start` (foreground, or `--daemon` to detach) / `stop` / `status`.
+    /// `ensure` and `start` print `BASE=<url>` so a workflow can capture it.
+    Server {
+        #[command(subcommand)]
+        cmd: ServerCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum ChromeCmd {
+    /// Launch (or confirm) a dedicated Chrome CDP endpoint on a temp profile.
+    Ensure {
+        /// CDP port (default: $LAYA_CDP_PORT, else 9222).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Chrome executable (default: $CHROME_BIN, else the platform path).
+        #[arg(long = "chrome-bin")]
+        chrome_bin: Option<String>,
+        /// Isolated profile dir (default: $LAYA_CDP_PROFILE, else /tmp/...).
+        #[arg(long)]
+        profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerCmd {
+    /// Start the server if nothing healthy answers on the port, then print BASE.
+    Ensure {
+        #[arg(long, default_value_t = 18766)]
+        port: u16,
+        /// Shell command that starts the server (required when nothing is up).
+        #[arg(long)]
+        command: Option<String>,
+        /// Liveness path; any HTTP response counts (default /healthz).
+        #[arg(long = "health-path", default_value = "/healthz")]
+        health_path: String,
+    },
+    /// Start the server and keep this process alive (Ctrl-C / SIGTERM stops).
+    Start {
+        #[arg(long, default_value_t = 18766)]
+        port: u16,
+        /// Shell command that starts the server.
+        #[arg(long)]
+        command: String,
+        #[arg(long = "health-path", default_value = "/healthz")]
+        health_path: String,
+        /// Detach (own session, log redirected) instead of running in the foreground.
+        #[arg(long, default_value_t = false)]
+        daemon: bool,
+    },
+    /// Stop a daemon-started server (SIGTERM + clean the pid/base files).
+    Stop {
+        #[arg(long, default_value_t = 18766)]
+        port: u16,
+    },
+    /// Report RUNNING/STOPPED for the port; exits non-zero when stopped.
+    Status {
+        #[arg(long, default_value_t = 18766)]
+        port: u16,
+        #[arg(long = "health-path", default_value = "/healthz")]
+        health_path: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -376,6 +446,8 @@ fn main() -> Result<()> {
             format,
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
+        Cmd::Chrome { cmd } => run_chrome(cmd),
+        Cmd::Server { cmd } => run_server(cmd),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
@@ -405,6 +477,69 @@ fn main() -> Result<()> {
                     ));
                 }
                 println!("{line}");
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `chrome ensure`: idempotent CDP Chrome; exits 1 (message already printed)
+/// when it could not bring the endpoint up.
+fn run_chrome(cmd: &ChromeCmd) -> Result<()> {
+    use laya_workflow::orchestrate as orch;
+    match cmd {
+        ChromeCmd::Ensure {
+            port,
+            chrome_bin,
+            profile,
+        } => {
+            let req =
+                orch::ChromeEnsureRequest::from_env(*port, chrome_bin.clone(), profile.clone());
+            if !orch::ensure_chrome(&req)? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `server ensure | start | stop | status`: local HTTP server lifecycle.
+fn run_server(cmd: &ServerCmd) -> Result<()> {
+    use laya_workflow::orchestrate as orch;
+    match cmd {
+        ServerCmd::Status { port, health_path } => {
+            if !orch::server_status(*port, health_path) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        ServerCmd::Stop { port } => {
+            orch::server_stop(*port)?;
+            Ok(())
+        }
+        ServerCmd::Ensure {
+            port,
+            command,
+            health_path,
+        } => {
+            if !orch::server_ensure(*port, command.as_deref(), health_path)? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        ServerCmd::Start {
+            port,
+            command,
+            health_path,
+            daemon,
+        } => {
+            let ok = if *daemon {
+                orch::server_start_daemon(*port, command, health_path)?
+            } else {
+                orch::server_start_foreground(*port, command, health_path)?
+            };
+            if !ok {
+                std::process::exit(1);
             }
             Ok(())
         }
@@ -556,6 +691,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
+        ("orchestrate", "Bring up the local resources a browser workflow needs first: `chrome ensure` (a CDP Chrome, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("safety",    "Safety gates every spec goes through: `policy.allow_exec`, `policy.allow_paths`, `policy.allow_hosts`, `policy.max_timeout_ms`, `policy.max_output`, secret redaction.", "validate"),
     ]
 }
@@ -629,6 +765,8 @@ fn print_overview() {
     println!("  replay -s S -d D -iter N");
     println!("                 re-run a single iter in place from its state_before");
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
+    println!("  chrome ensure  ensure a CDP Chrome on 127.0.0.1:<port> (idempotent)");
+    println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  skill          this help (progressive disclosure)");
     println!();
     println!("Pick the entry point that matches your intent:");
@@ -675,6 +813,7 @@ fn print_section(name: &str) -> Result<()> {
         "tests" => SKILL_TESTS,
         "safety" => SKILL_SAFETY,
         "plugins" => SKILL_PLUGINS,
+        "orchestrate" => SKILL_ORCHESTRATE,
         other => {
             eprintln!("# no such section: {other}");
             eprintln!("run `laya-workflow skill --list` to see the names.");
@@ -722,6 +861,7 @@ static SKILL_DSL: &str = include_str!("skill/sections/dsl.md");
 static SKILL_TESTS: &str = include_str!("skill/sections/tests.md");
 static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
 static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
+static SKILL_ORCHESTRATE: &str = include_str!("skill/sections/orchestrate.md");
 
 static RECIPE_FIRST_RUN: &str = include_str!("skill/recipes/first_run.md");
 static RECIPE_LIVE_SERVER: &str = include_str!("skill/recipes/live_server.md");

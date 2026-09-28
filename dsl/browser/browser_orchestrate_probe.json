@@ -1,7 +1,7 @@
 {
   "name": "browser_orchestrate_probe",
   "dsl_version": 2,
-  "description": "End-to-end local browser orchestration demo: consumes the two generic scripts bundled in this repo — `scripts/laya-ensure-chrome.sh` (guarantee a CDP endpoint on LAYA_CDP_PORT, idempotent) and `scripts/laya-ensure-server.py ensure` (guarantee a long-running local HTTP server on --port, cold-starting it from state.server_cmd when nothing healthy answers) — then drives the bundled `plugins/browser_base` plugin against the ensured URL. The browser probe is the ground-truth gate: if the page never reaches a real loaded state the plugin op throws and the whole run fails (rc=1); otherwise the graph routes to the terminal node. Offline heuristic runs report /ok on the ensure nodes (both scripts are idempotent) and let the probe decide. Nothing here is devine-specific — point state.server_cmd / state.url at any local server.",
+  "description": "End-to-end local browser orchestration demo. It drives the engine's own Rust orchestration subcommands — `laya-workflow chrome ensure --port` (guarantee a CDP endpoint, idempotent) and `laya-workflow server ensure --port … --command …` (guarantee a long-running local HTTP server, cold-starting state.server_cmd when nothing healthy answers) — then drives the bundled `plugins/browser_base` plugin against the ensured URL. The browser probe is the ground-truth gate: if the page never reaches a real loaded state the plugin op throws and the whole run fails (rc=1); otherwise the graph routes to the terminal node. Offline heuristic runs report /ok on the ensure nodes (both subcommands are idempotent) and let the probe decide. `laya-workflow` must be on PATH. Nothing here is devine-specific — point state.server_cmd / state.url at any local server.",
   "start": "ensure_chrome",
   "max_iterations": 8,
   "convergence_window": 5,
@@ -20,18 +20,20 @@
     "chrome_ensure": {
       "kind": "exec",
       "argv": [
-        "${state.repo}/scripts/laya-ensure-chrome.sh"
+        "laya-workflow",
+        "chrome",
+        "ensure",
+        "--port",
+        "${state.cdp_port}"
       ],
-      "env": {
-        "LAYA_CDP_PORT": "${state.cdp_port}"
-      },
       "timeout_ms": 30000,
       "max_output": 4096
     },
     "server_ensure": {
       "kind": "exec",
       "argv": [
-        "${state.repo}/scripts/laya-ensure-server.py",
+        "laya-workflow",
+        "server",
         "ensure",
         "--port",
         "${state.port}",
@@ -82,9 +84,9 @@
       "questions": {
         "ok": {
           "type": "choice",
-          "instructions": "Run scripts/laya-ensure-chrome.sh (idempotent: does nothing when a CDP endpoint already listens on LAYA_CDP_PORT, otherwise launches a dedicated Chrome)?",
+          "instructions": "Run `laya-workflow chrome ensure --port <cdp_port>` (idempotent: does nothing when a CDP endpoint already listens, otherwise launches a dedicated Chrome)?",
           "criteria": {
-            "A": "yes, the script exited 0 and the CDP endpoint is (still) up",
+            "A": "yes, the subcommand exited 0 and the CDP endpoint is (still) up",
             "B": "no, the script failed or the CDP endpoint is unreachable"
           }
         }
@@ -119,7 +121,7 @@
       "questions": {
         "ok": {
           "type": "choice",
-          "instructions": "Run scripts/laya-ensure-server.py ensure (idempotent: returns immediately when a server already answers on the port, otherwise cold-starts state.server_cmd as a daemon and waits for it)?",
+          "instructions": "Run `laya-workflow server ensure` (idempotent: returns immediately when a server already answers on the port, otherwise cold-starts state.server_cmd as a daemon and waits for it)?",
           "criteria": {
             "A": "yes, a server is now guaranteed on the port",
             "B": "no, the script failed to guarantee a server"
@@ -278,7 +280,7 @@
       "questions": {
         "done": {
           "type": "choice",
-          "instructions": "Is the browser orchestration probe complete after both ensure scripts ran and the page loaded, htmx was reported, and the render assertion passed?",
+          "instructions": "Is the browser orchestration probe complete after both ensure steps ran and the page loaded, htmx was reported, and the render assertion passed?",
           "criteria": {
             "A": "yes",
             "B": "no"

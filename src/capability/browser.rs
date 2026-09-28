@@ -337,7 +337,7 @@ fn repo_extension_path() -> String {
     concat!(env!("CARGO_MANIFEST_DIR"), "/extensions/laya-browser").to_string()
 }
 
-fn default_chrome_binary() -> String {
+pub(crate) fn default_chrome_binary() -> String {
     if let Ok(path) = std::env::var("LAYA_CHROME_BINARY") {
         if !path.is_empty() {
             return path;

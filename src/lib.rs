@@ -10,6 +10,7 @@ pub mod apps;
 pub mod backend;
 pub mod capability;
 pub mod optimizer;
+pub mod orchestrate;
 pub mod persist;
 pub mod spec;
 pub mod workflow;
