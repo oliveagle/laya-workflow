@@ -73,24 +73,19 @@ pub fn civil_from_epoch_pub(epoch: i64) -> (i64, u32, u32, u32, u32, u32) {
 }
 
 fn civil_from_epoch(epoch: i64) -> (i64, u32, u32, u32, u32, u32) {
+    // The civil-date algorithm lives once, in `util`, so the plugin host, this
+    // capability and the RFC 3339 formatters can never drift apart.
     let days = epoch.div_euclid(86_400);
     let secs = epoch.rem_euclid(86_400);
-    let (hh, mm, ss) = (
+    let (y, m, d) = super::util::civil_from_days(days);
+    (
+        y,
+        m,
+        d,
         (secs / 3600) as u32,
         ((secs % 3600) / 60) as u32,
         (secs % 60) as u32,
-    );
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d, hh, mm, ss)
+    )
 }
 
 fn render_time(fmt: &str, y: i64, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> String {

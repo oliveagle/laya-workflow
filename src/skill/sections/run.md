@@ -49,8 +49,10 @@ same plugin can be called from your own spec as
 Each paper is written under `~/tmp/alphaxiv` as Markdown plus its figures (in a
 per-paper `images/<slug>/` folder).
 Papers are fetched in Chinese by default; opt out with `--state '{"lang":"en"}'`.
-Each `<slug>_meta.json` carries a UTC `downloaded_at` (plus trending
-`rank`/`interval`), so runs can be monitored over time.
+Each `<slug>_meta.json` carries a UTC `downloaded_at`, the same instant as
+`downloaded_at_local` (rendered in the runner's zone, e.g. `+08:00`) and as
+`downloaded_at_unix_ms`, plus trending `rank`/`interval`, so runs can be
+monitored over time.
 
 ## When to use run vs resume
 

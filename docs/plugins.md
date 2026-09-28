@@ -120,7 +120,9 @@ capability code, so policy still applies and the tab lifecycle still has one own
 | call | effect |
 |------|--------|
 | `host.log(msg)` | stderr, secret-redacted |
-| `host.now()` | `#{ unix_ms, rfc3339 }` |
+| `host.now()` | `#{ unix_ms, rfc3339, rfc3339_local, utc_offset_secs, tz, tz_abbrev }` |
+| `host.parse_time(s)` | RFC 3339 (or a bare epoch) → Unix ms; `()` when unparseable |
+| `host.time_format(ms, offset_secs)` | render ms at an explicit offset (`…+08:00`; `Z` for 0) |
 | `host.timeout_ms()` | the effective timeout for this plugin run |
 | `host.urlencode(s)` | percent-encode a query value |
 | `host.slug(url, title)` | the filesystem-safe slug the engine would derive |

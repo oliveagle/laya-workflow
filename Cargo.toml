@@ -17,6 +17,10 @@ ureq = { version = "2", features = ["json"] }
 regex-lite = "0.1"
 tungstenite = "0.24"
 rhai = { version = "1.26.1", features = ["serde"] }
+# Already in our build graph (tungstenite/ring/getrandom) and used by the
+# `laya-tch` member; promoted to a direct dep only for `localtime_r`, so the
+# engine can render timestamps in the *user's* timezone without a date crate.
+libc = "0.2"
 
 [[bin]]
 name = "laya-workflow"

@@ -137,6 +137,13 @@ fn plan(args) {
     let fetch_cards = true;
     let fc = map_get(args, "fetch_cards", ());
     if type_of(fc) == "bool" { fetch_cards = fc; }
+    // Optional timezone override: by default the *runner's* zone is used; pin a
+    // fixed offset (minutes) / label so a shared or CI run is reproducible.
+    let tz_offset_minutes = ();
+    let tzm = map_get(args, "tz_offset_minutes", ());
+    if type_of(tzm) == "i64" || type_of(tzm) == "f64" || type_of(tzm) == "string" {
+        tz_offset_minutes = to_int(tzm, 0);
+    }
     #{
         query: query,
         mode: mode,
@@ -148,8 +155,25 @@ fn plan(args) {
         author: trim_str(s_of(map_get(args, "author", ""))),
         pipeline_tag: trim_str(s_of(map_get(args, "pipeline_tag", ""))),
         out_dir: trim_str(s_of(map_get(args, "out_dir", ""))),
-        fetch_cards: fetch_cards
+        fetch_cards: fetch_cards,
+        tz_offset_minutes: tz_offset_minutes,
+        tz: trim_str(s_of(map_get(args, "tz", "")))
     }
+}
+
+// Upstream timestamps are UTC (`…Z`); render the same instant in the caller's
+// zone. Returns "" when the value cannot be parsed (the raw field is kept).
+fn local_iso(host, iso, off) {
+    if iso == "" { return ""; }
+    let ms = host.parse_time(iso);
+    if type_of(ms) != "i64" { return ""; }
+    host.time_format(ms, off)
+}
+
+// "2026-09-24T11:39:57+08:00" -> "2026-09-24 11:39" (for the report table).
+fn short_local(iso) {
+    if iso.len() < 16 { return iso; }
+    iso.sub_string(0, 10) + " " + iso.sub_string(11, 5)
 }
 
 fn api_url(host, p) {
@@ -180,6 +204,17 @@ fn run(host, ctx) {
     let out_dir = p["out_dir"];
     if out_dir == "" { out_dir = "~/tmp/hf-trending"; }
     let key = if p["mode"] == "search" { "search_" + safe(p["query"]) } else { "trending" };
+
+    // Time fields are UTC (canonical) *and* local. The local zone is the
+    // runner's own (resolved by the engine), unless the call pins an offset.
+    let now = host.now();
+    let tz_name = "" + now["tz"];
+    let tz_abbrev = "" + now["tz_abbrev"];
+    let off = now["utc_offset_secs"];
+    if type_of(p["tz_offset_minutes"]) == "i64" {
+        off = p["tz_offset_minutes"] * 60;
+    }
+    if p["tz"] != "" { tz_name = p["tz"]; }
 
     let url = api_url(host, p);
     let resp = ();
@@ -264,7 +299,9 @@ fn run(host, ctx) {
                     license: tag_value(tags, "license:"),
                     tags: tags,
                     created_at: s_of(map_get(m, "createdAt", "")),
+                    created_at_local: local_iso(host, s_of(map_get(m, "createdAt", "")), off),
                     last_modified: s_of(map_get(m, "lastModified", "")),
+                    last_modified_local: local_iso(host, s_of(map_get(m, "lastModified", "")), off),
                     gated: map_get(m, "gated", false),
                     "private": map_get(m, "private", false),
                     files: if type_of(map_get(m, "siblings", [])) == "array" {
@@ -287,7 +324,6 @@ fn run(host, ctx) {
         throw "hf-trending: the HF API returned no models for " + url;
     }
 
-    let now = host.now();
     let stamp = "" + now["unix_ms"];
     let snapshot_path = out_dir + "/snapshot_" + key + "_" + stamp + ".json";
     let snapshot = #{
@@ -299,7 +335,11 @@ fn run(host, ctx) {
         limit: p["limit"],
         source_url: url,
         fetched_at: now["rfc3339"],
+        fetched_at_local: host.time_format(now["unix_ms"], off),
         fetched_at_unix_ms: now["unix_ms"],
+        tz: tz_name,
+        tz_abbrev: tz_abbrev,
+        utc_offset_secs: off,
         count: records.len(),
         out_dir: out_dir,
         models: records
@@ -308,7 +348,10 @@ fn run(host, ctx) {
 
     host.write_file(latest_path, host.json_stringify(#{
         fetched_at: now["rfc3339"],
+        fetched_at_local: host.time_format(now["unix_ms"], off),
         fetched_at_unix_ms: now["unix_ms"],
+        tz: tz_name,
+        utc_offset_secs: off,
         mode: p["mode"],
         query: p["query"],
         limit: p["limit"],
@@ -322,10 +365,11 @@ fn run(host, ctx) {
     lines.push("# HuggingFace " + p["mode"]
         + (if p["query"] != "" { " — " + p["query"] } else { "" }));
     lines.push("");
-    lines.push("_fetched " + now["rfc3339"] + " · " + url + "_");
+    lines.push("_fetched " + host.time_format(now["unix_ms"], off)
+        + " (" + tz_name + ") · " + url + "_");
     lines.push("");
-    lines.push("| # | model | likes | downloads | trending | Δrank | pipeline | license |");
-    lines.push("|---|-------|-------|-----------|----------|-------|----------|---------|");
+    lines.push("| # | model | likes | downloads | trending | Δrank | updated (local) | pipeline | license |");
+    lines.push("|---|-------|-------|-----------|----------|-------|-----------------|----------|---------|");
     let r = 0;
     while r < records.len() {
         let row = records[r];
@@ -335,7 +379,8 @@ fn run(host, ctx) {
         else if row["rank_delta"] < 0 { delta = "" + row["rank_delta"]; }
         lines.push("| " + row["rank"] + " | [" + row["id"] + "](" + row["url"] + ") | "
             + row["likes"] + " | " + row["downloads"] + " | " + row["trending_score"]
-            + " | " + delta + " | " + row["pipeline_tag"] + " | " + row["license"] + " |");
+            + " | " + delta + " | " + short_local(row["last_modified_local"])
+            + " | " + row["pipeline_tag"] + " | " + row["license"] + " |");
         r += 1;
     }
     lines.push("");
@@ -349,6 +394,7 @@ fn run(host, ctx) {
     if acc != "" && acc.sub_string(acc.len() - 1, 1) != "\n" { acc += "\n"; }
     let line = host.json_stringify(#{
         fetched_at: now["rfc3339"],
+        fetched_at_local: host.time_format(now["unix_ms"], off),
         fetched_at_unix_ms: now["unix_ms"],
         mode: p["mode"],
         query: p["query"],
@@ -376,6 +422,10 @@ fn run(host, ctx) {
         cards_saved: cards_saved,
         cards_failed: cards_failed,
         fetched_at: now["rfc3339"],
+        fetched_at_local: host.time_format(now["unix_ms"], off),
+        tz: tz_name,
+        tz_abbrev: tz_abbrev,
+        utc_offset_secs: off,
         models: records
     }
 }

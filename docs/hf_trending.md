@@ -34,7 +34,16 @@ laya-workflow run --spec dsl/capabilities/hf_trending.json --state '{
 State knobs (all optional): `query`, `mode` (`auto`|`trending`|`search`),
 `limit` (1–100, default 10), `sort` (default `trendingScore`), `direction`
 (default `-1`), `filter`, `author`, `pipeline_tag`, `out_dir`
-(default `~/tmp/hf-trending`), `fetch_cards` (default `true`).
+(default `~/tmp/hf-trending`), `fetch_cards` (default `true`), and the
+timezone override `tz` (a label) / `tz_offset_minutes` (a fixed offset).
+By default every timestamp is rendered in the **local zone of whoever runs
+the engine**.
+
+Timestamps are recorded twice: the canonical UTC instant (`created_at`,
+`last_modified`, `fetched_at`, `…Z`) and the same instant in the local zone
+(`created_at_local`, `last_modified_local`, `fetched_at_local`, `…+08:00`),
+with `tz` / `tz_abbrev` / `utc_offset_secs` alongside, so a local value is
+never ambiguous. Pass `tz_offset_minutes: 0` for reproducible UTC `…Z`.
 
 `mode: auto` (the default) treats an empty / trending-word query as the trending
 feed and anything else as a search.
@@ -65,6 +74,8 @@ path is checked against the spec's `policy.allow_paths` before a byte is written
   "pipeline_tag": "text-classification", "library_name": "transformers",
   "license": "apache-2.0", "tags": ["transformers", "...", "license:apache-2.0"],
   "created_at": "2026-09-18T05:05:55.000Z", "last_modified": "2026-09-24T05:39:22.000Z",
+  "created_at_local": "2026-09-18T13:05:55+08:00",
+  "last_modified_local": "2026-09-24T13:39:22+08:00",
   "gated": false, "private": false, "files": 38,
   "url": "https://huggingface.co/convaiinnovations/laya",
   "card_url": "https://huggingface.co/convaiinnovations/laya/raw/main/README.md",
@@ -83,7 +94,9 @@ the run.
 Each run appends one line to `history.jsonl`:
 
 ```jsonc
-{"fetched_at":"2026-09-28T08:16:57.609Z","mode":"trending","query":"trending",
+{"fetched_at":"2026-09-28T08:16:57.609Z",
+ "fetched_at_local":"2026-09-28T16:16:57+08:00","tz":"Asia/Shanghai",
+ "mode":"trending","query":"trending",
  "limit":5,"count":5,"ranks":{"convaiinnovations/laya":1,"Qwen/Qwen-Image-2.1":3}}
 ```
 

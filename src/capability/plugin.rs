@@ -687,11 +687,25 @@ fn build_engine(max_operations: u64) -> Engine {
     engine.register_fn(
         "now",
         |_h: &mut Host| -> Result<Dynamic, Box<EvalAltResult>> {
-            let ms = util::now_unix_ms();
-            to_dyn(json!({
-                "unix_ms": ms as u64,
-                "rfc3339": util::rfc3339_utc_from_unix_ms(ms),
-            }))
+            // UTC *and* local, with the offset + zone so the local field is
+            // unambiguous (see `util::now_fields`).
+            to_dyn(util::now_fields())
+        },
+    );
+    // Turn an upstream timestamp (`2026-09-24T03:39:57.000Z`, `…+08:00`, a
+    // bare epoch) into milliseconds; `()` when it cannot be parsed, so a plugin
+    // can keep the raw string instead of inventing an instant.
+    engine.register_fn("parse_time", |_h: &mut Host, s: &str| -> Dynamic {
+        match util::parse_time_to_unix_ms(s) {
+            Some(ms) => Dynamic::from(ms),
+            None => Dynamic::from(()),
+        }
+    });
+    // Render milliseconds at an explicit offset: `…+08:00` (or `Z` for 0).
+    engine.register_fn(
+        "time_format",
+        |_h: &mut Host, ms: i64, offset_secs: i64| -> String {
+            util::rfc3339_from_unix_ms_offset(ms, offset_secs)
         },
     );
     engine.register_fn("urlencode", |_h: &mut Host, s: &str| -> String {
@@ -1132,6 +1146,25 @@ mod tests {
         let dyn_arg = to_dyn(arg).map_err(|e| anyhow!("{e}"))?;
         let out: Dynamic = engine
             .call_fn(&mut scope, &ast, name, (host, dyn_arg))
+            .map_err(|e| anyhow!("{name}(): {e}"))?;
+        from_dyn(out).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Call a function whose first parameter is the host handle, with 2 more args.
+    fn call_host2(plugin: &str, name: &str, a: Value, b: Value) -> Result<Value> {
+        let (engine, ast, host) = harness(plugin);
+        let mut scope = Scope::new();
+        let out: Dynamic = engine
+            .call_fn(
+                &mut scope,
+                &ast,
+                name,
+                (
+                    Dynamic::from(host),
+                    to_dyn(a).map_err(|e| anyhow!("{e}"))?,
+                    to_dyn(b).map_err(|e| anyhow!("{e}"))?,
+                ),
+            )
             .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
@@ -1654,5 +1687,48 @@ mod tests {
         // A search phrase is url-encoded, not appended raw.
         let s = url(json!({ "query": "llm memory" }));
         assert!(s.contains("search=llm%20memory"), "{s}");
+    }
+
+    #[test]
+    fn hf_trending_renders_timestamps_in_the_users_zone() {
+        // A pinned offset makes the rendering deterministic (no machine zone).
+        let p = call_of(
+            "hf-trending",
+            "plan",
+            vec![json!({ "tz_offset_minutes": 480, "tz": "Asia/Shanghai" })],
+        )
+        .unwrap();
+        assert_eq!(p["tz_offset_minutes"], json!(480));
+        assert_eq!(p["tz"], json!("Asia/Shanghai"));
+        // No override ⇒ unset, so the plugin falls back to the runner's zone.
+        let d = call_of("hf-trending", "plan", vec![json!({})]).unwrap();
+        assert_eq!(d["tz_offset_minutes"], json!(null));
+        assert_eq!(d["tz"], json!(""));
+
+        // Upstream UTC → the same instant in the caller's zone (offset-exact).
+        let at =
+            |iso: Value, off: i64| call_host2("hf-trending", "local_iso", iso, json!(off)).unwrap();
+        assert_eq!(
+            at(json!("2026-09-24T03:39:57.000Z"), 8 * 3600),
+            json!("2026-09-24T11:39:57.000+08:00")
+        );
+        assert_eq!(
+            at(json!("2026-09-24T03:39:57.000Z"), 0),
+            json!("2026-09-24T03:39:57.000Z")
+        );
+        // Unparseable / empty input yields "" so the raw field stays authoritative.
+        assert_eq!(at(json!(""), 0), json!(""));
+        assert_eq!(at(json!("not-a-date"), 0), json!(""));
+
+        // The report's short form drops the zone and the seconds.
+        assert_eq!(
+            call_of(
+                "hf-trending",
+                "short_local",
+                vec![json!("2026-09-24T11:39:57+08:00")]
+            )
+            .unwrap(),
+            json!("2026-09-24 11:39")
+        );
     }
 }
