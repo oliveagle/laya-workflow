@@ -7,7 +7,8 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{
-    data, goal, local, net, proto, service, store, sys, web, AgentCap, Capability, ExecCap, HttpCap,
+    browser, data, goal, local, net, proto, service, store, sys, web, AgentCap, Capability,
+    ExecCap, HttpCap,
 };
 
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
@@ -279,7 +280,27 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             dsn: def.get("dsn").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
         })),
-        // ── web research ──
+        // ── singleton Chrome / CDP ──
+        "browser" | "chrome_cdp" => Ok(Capability::Browser(browser::BrowserCap {
+            endpoint: def.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            chrome_binary: def.get("chrome_binary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            profile_dir: def.get("profile_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            extension_path: def.get("extension_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            launch: def.get("launch").and_then(|v| v.as_bool()).unwrap_or(false),
+            startup_timeout_ms: def.get("startup_timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
+            timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000),
+            max_text: def.get("max_text").and_then(|v| v.as_u64()).unwrap_or(6_000) as usize,
+            max_owned_pages: def
+                .get("max_owned_pages")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(32)
+                .clamp(1, 500) as usize,
+            owned_idle_ms: def
+                .get("owned_idle_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(5 * 60_000)
+                .clamp(1_000, 24 * 60 * 60_000),
+        })),
         "web_search" | "search" => Ok(Capability::WebSearch(web::WebSearchCap {
             endpoint: def.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             method: def.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase(),

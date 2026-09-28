@@ -25,6 +25,7 @@
 //! an explicit opt-in, hosts must pass the allow-list, and every call is bounded
 //! by a timeout and an output-size cap.
 
+pub mod browser;
 pub mod data;
 pub mod goal;
 pub mod local;
@@ -101,6 +102,9 @@ pub enum Capability {
     Kafka(service::KafkaCap),
     Pdf(service::PdfCap),
     Sql(service::SqlCap),
+    // ── singleton browser automation ──
+    /// Drive one real Chrome instance through CDP, with one extension loaded.
+    Browser(browser::BrowserCap),
     // ── web research ──
     /// Query a search endpoint and return structured results.
     WebSearch(web::WebSearchCap),
@@ -320,6 +324,7 @@ impl Registry {
                 Capability::Kafka(c) => service::call_kafka(c, with, state, &self.policy),
                 Capability::Pdf(c) => service::call_pdf(c, with, state, &self.policy),
                 Capability::Sql(c) => service::call_sql(c, with, state, &self.policy),
+                Capability::Browser(c) => browser::call_browser(c, with, state, &self.policy),
                 Capability::WebSearch(c) => web::call_web_search(c, with, state, &self.policy),
                 Capability::WebFetch(c) => web::call_web_fetch(c, with, state, &self.policy),
                 Capability::GoalRunner(c) => goal::call_goal_runner(c, with, state, &self.policy),
@@ -501,6 +506,12 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
         Capability::Smtp(c) => {
             walk(&Value::String(c.username.clone()), &mut out);
             walk(&Value::String(c.password.clone()), &mut out);
+        }
+        Capability::Browser(c) => {
+            walk(&Value::String(c.endpoint.clone()), &mut out);
+            walk(&Value::String(c.chrome_binary.clone()), &mut out);
+            walk(&Value::String(c.profile_dir.clone()), &mut out);
+            walk(&Value::String(c.extension_path.clone()), &mut out);
         }
         Capability::WebSearch(c) => {
             walk(&Value::String(c.endpoint.clone()), &mut out);

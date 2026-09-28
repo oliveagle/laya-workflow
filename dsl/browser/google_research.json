@@ -50,6 +50,8 @@
           "result_count": "${state.result_count}",
           "max_open": "${state.max_open}",
           "tab_concurrency": "${state.tab_concurrency}",
+          "skip_video": "${state.skip_video}",
+          "skip_kinds": "${state.skip_kinds}",
           "min_score": 0.5,
           "max_text": "${state.max_text}"
         },
@@ -58,6 +60,8 @@
           "search_candidates": "/search_candidates",
           "ads_found": "/ads_found",
           "ads": "/ads",
+          "skipped_found": "/skipped_found",
+          "skipped": "/skipped",
           "scored_pages": "/scored_pages",
           "accepted_pages": "/accepted_pages",
           "collected_count": "/collected_count",

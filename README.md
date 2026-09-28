@@ -57,12 +57,6 @@ end-to-end smoke tests (`python3 bench/dsl_smoke.py`).
 A bare `"workflow": "<name>"` reference — and `laya-workflow list` — resolves
 through a **layered** set of spec roots (highest priority first):
 
-For query-driven specs, `--query` is a concise alternative to JSON state:
-
-```bash
-laya-workflow run --spec dsl/browser/google_research.json --query "typesafe ai"
-```
-
 1. **explicit** — `--dsl-dir <path>` / `$LAYA_DSL_DIR` *pins* the root and
    replaces the layers below (legacy single-root behaviour).
 2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, found by walking up
@@ -75,6 +69,18 @@ laya-workflow run --spec dsl/browser/google_research.json --query "typesafe ai"
 The first root that defines a name wins; a same-named spec in a lower-priority
 root is reported by `list` as `(shadowed by …)`. `laya-workflow list` prints the
 search path (low → high) it actually used.
+
+For query-driven specs, `--query` is a concise alternative to JSON state
+(`--query` overrides `state.query` when both are given):
+
+```bash
+laya-workflow run --spec dsl/browser/google_research.json --query "typesafe ai"
+```
+
+Browser research classifies each result URL **before** opening it and skips
+video/streaming hosts (YouTube, Bilibili, …) and direct media files by default.
+Opt out with `--state '{"skip_video":false}'`, or replace the set with
+`--state '{"skip_kinds":[]}'`.
 
 ### Singleton Chrome CDP
 

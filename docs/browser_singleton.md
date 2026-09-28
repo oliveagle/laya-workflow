@@ -199,6 +199,37 @@ the research cleanup guard or, for `keep_open_pages`, as a pinned owned target.
 When the research operation returns, its guard closes the Google tab and all
 non-pinned research tabs, even if some page extraction fails.
 
+## Classify URLs before opening
+
+Google often returns video and audio destinations (YouTube, Bilibili, Douyin,
+…). Opening them spends a background tab, downloads no usable research text, and
+polls the singleton browser with tabs the user did not ask for. Laya therefore
+classifies each candidate URL **before** creating a target:
+
+- `url_content_kind` maps a URL to `"video"` (known video/streaming hosts and
+  their subdomains), `"media"` (direct media-file extensions such as `.mp4`,
+  `.mp3`, `.webm`, …), or `"page"` (everything else).
+- `research` and `open_many` drop `video`/`media` rows from the work list instead
+  of opening them. This is a deterministic, offline decision — no extra network
+  request and no planner round trip.
+
+The default skip set is `["video", "media"]`. Tune it in the call `with` object:
+
+- `"skip_video": false` — disable the default skip and open video pages again.
+- `"skip_kinds": ["video"]` — replace the whole skip set explicitly (`[]` opens
+  everything).
+
+`dsl/browser/google_research.json` and `dsl/browser/google_search_top10.json`
+thread `skip_video`/`skip_kinds` from state, so a query can opt out with
+`--state '{"skip_video":false}'`.
+
+Skipped rows are reported, never silently dropped:
+
+- `research` returns `skipped_found`, `skipped[]` (each with `title`, `url`,
+  `kind`, `reason`) and the effective `skip_kinds`.
+- `open_many` returns `skipped_count`, `skipped[]` (each with `index`, `url`,
+  `kind`, `reason`) and the effective `skip_kinds`.
+
 For explicit cleanup of earlier disposable tabs, use a policy-gated cleanup call.
 It only selects CDP targets whose `type` is `page`, always preserves protected
 `chrome://`/extension/DevTools targets unless they are explicitly requested, and

@@ -1730,6 +1730,81 @@ fn tab_concurrency_of(with: &Value) -> usize {
         .clamp(1, 10) as usize
 }
 
+/// Hosts that serve primarily video/audio. Opening them burns a background tab
+/// and yields almost no readable research text, so Laya classifies and skips
+/// them before spending a target.
+const VIDEO_HOSTS: &[&str] = &[
+    "youtube.com",
+    "youtu.be",
+    "music.youtube.com",
+    "bilibili.com",
+    "b23.tv",
+    "vimeo.com",
+    "dailymotion.com",
+    "twitch.tv",
+    "tiktok.com",
+    "douyin.com",
+    "youku.com",
+    "iqiyi.com",
+    "v.qq.com",
+    "netflix.com",
+    "hulu.com",
+    "nicovideo.jp",
+    "rumble.com",
+    "odysee.com",
+    "kick.com",
+    "ixigua.com",
+    "kuaishou.com",
+    "xiaohongshu.com",
+];
+
+/// Direct media-file extensions that never contain a readable article.
+const MEDIA_EXTENSIONS: &[&str] = &[
+    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".flv", ".wmv", ".mpeg", ".mpg", ".mp3",
+    ".m4a", ".wav", ".ogg", ".flac", ".aac", ".opus",
+];
+
+/// Coarse, deterministic Laya URL classification performed *before* opening a
+/// page. Returns `"video"` for known video hosts, `"media"` for direct
+/// media-file URLs, otherwise `"page"`.
+fn url_content_kind(url: &str) -> &'static str {
+    let lower = url.to_lowercase();
+    let path = lower.split(['?', '#']).next().unwrap_or(&lower);
+    if MEDIA_EXTENSIONS.iter().any(|ext| path.ends_with(ext)) {
+        return "media";
+    }
+    let host = host_of(url).to_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    if VIDEO_HOSTS
+        .iter()
+        .any(|h| host == *h || host.ends_with(&format!(".{h}")))
+    {
+        return "video";
+    }
+    "page"
+}
+
+/// Content kinds a workflow refuses to open. Video and direct media are skipped
+/// by default; `skip_video: false` disables that, and `skip_kinds` overrides the
+/// whole set. This is the Laya-side "classify before opening" policy.
+fn skip_kinds_of(with: &Value) -> Vec<String> {
+    if let Some(list) = with.get("skip_kinds").and_then(Value::as_array) {
+        return list
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+    }
+    let skip_video = with
+        .get("skip_video")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    if skip_video {
+        vec!["video".to_string(), "media".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Count case-insensitive token occurrences. Chinese tokens are short strings,
 /// so counting a substring is intentional here.
 fn research_count(hay: &str, token: &str) -> usize {
@@ -2081,6 +2156,8 @@ fn run_research(
 
     let mut search_target: Option<String> = None;
     let mut ads = Vec::new();
+    let skip_kinds = skip_kinds_of(with);
+    let mut skipped = Vec::new();
     let mut candidates = Vec::new();
     let mut seen_titles = HashSet::new();
     let mut seen_urls = HashSet::new();
@@ -2131,6 +2208,16 @@ fn run_research(
             }
             if row.get("is_ad").and_then(Value::as_bool).unwrap_or(false) {
                 ads.push(json!({"title": title, "url": url, "reason": "explicit Google ad label/ad landing path"}));
+                continue;
+            }
+            let kind = url_content_kind(&url);
+            if skip_kinds.iter().any(|k| k == kind) {
+                skipped.push(json!({
+                    "title": title,
+                    "url": url,
+                    "kind": kind,
+                    "reason": "classified before opening; video/media pages are skipped"
+                }));
                 continue;
             }
             if seen_titles.insert(title.clone()) && seen_urls.insert(url.clone()) {
@@ -2367,6 +2454,9 @@ fn run_research(
         "search_candidates": candidates.len(),
         "ads_found": ads.len(),
         "ads": ads,
+        "skipped_found": skipped.len(),
+        "skipped": skipped,
+        "skip_kinds": skip_kinds,
         "pages_opened_successfully": pages.len(),
         "pages_failed": failed.len(),
         "failures": failed,
@@ -2479,14 +2569,26 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             let tab_concurrency = tab_concurrency_of(with);
+            let skip_kinds = skip_kinds_of(with);
             // Validate every URL first so a policy denial fails the batch without
             // leaving a partial set of tabs behind.
             let mut parsed = Vec::with_capacity(urls.len());
+            let mut skipped = Vec::new();
             for (index, value) in urls.iter().enumerate() {
                 let url = value.as_str().ok_or_else(|| {
                     anyhow!("browser open_many urls[{index}] must be a string")
                 })?;
                 check_host(url, policy)?;
+                let kind = url_content_kind(url);
+                if skip_kinds.iter().any(|k| k == kind) {
+                    skipped.push(json!({
+                        "index": index,
+                        "url": url,
+                        "kind": kind,
+                        "reason": "classified before opening; video/media pages are skipped"
+                    }));
+                    continue;
+                }
                 parsed.push((index, url.to_string()));
             }
             let cleanup = Arc::new(Mutex::new(TargetCleanupGuard::new(&endpoint)));
@@ -2575,6 +2677,9 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             out["opened_count"] = json!(opened_count);
             out["keep_open"] = json!(keep_open);
             out["tab_concurrency"] = json!(tab_concurrency);
+            out["skip_kinds"] = json!(skip_kinds);
+            out["skipped_count"] = json!(skipped.len());
+            out["skipped"] = Value::Array(skipped);
             out["closed_count"] = json!(closed_count);
             out["cleanup_errors"] = Value::Array(cleanup_errors);
         }
@@ -3116,6 +3221,78 @@ mod tests {
         assert_eq!(tab_concurrency_of(&json!({"concurrency": 3})), 3);
     }
 
+    #[test]
+    fn classifies_urls_before_opening_tabs() {
+        // Known video hosts (with and without subdomains / scheme).
+        assert_eq!(
+            url_content_kind("https://www.youtube.com/watch?v=abc123"),
+            "video"
+        );
+        assert_eq!(
+            url_content_kind("https://m.youtube.com/watch?v=abc"),
+            "video"
+        );
+        assert_eq!(url_content_kind("https://youtu.be/abc123"), "video");
+        assert_eq!(
+            url_content_kind("https://www.bilibili.com/video/BV1xx411c7mD"),
+            "video"
+        );
+        assert_eq!(
+            url_content_kind("https://www.douyin.com/user/self?modal_id=1"),
+            "video"
+        );
+        // Direct media files, including query strings.
+        assert_eq!(
+            url_content_kind("https://cdn.example.com/clip.mp4"),
+            "media"
+        );
+        assert_eq!(
+            url_content_kind("https://cdn.example.com/clip.MP4?token=xyz"),
+            "media"
+        );
+        assert_eq!(
+            url_content_kind("https://example.com/audio.opus#t=3"),
+            "media"
+        );
+        // Ordinary pages (a video-like path on a non-video host is still a page).
+        assert_eq!(url_content_kind("https://docs.example.com/guide"), "page");
+        assert_eq!(
+            url_content_kind("https://developer.mozilla.org/en-US/docs/Web/API"),
+            "page"
+        );
+        assert_eq!(url_content_kind("https://example.com/watch?v=1"), "page");
+    }
+
+    #[test]
+    fn skip_kinds_default_and_overrides() {
+        // Default: drop video and direct media before opening a target.
+        assert_eq!(
+            skip_kinds_of(&json!({})),
+            vec!["video".to_string(), "media".to_string()]
+        );
+        assert_eq!(
+            skip_kinds_of(&json!({"skip_video": true})),
+            vec!["video".to_string(), "media".to_string()]
+        );
+        // Explicit opt-out opens everything again.
+        assert_eq!(
+            skip_kinds_of(&json!({"skip_video": false})),
+            Vec::<String>::new()
+        );
+        // An explicit list replaces the derived default.
+        assert_eq!(
+            skip_kinds_of(&json!({"skip_kinds": ["media"]})),
+            vec!["media".to_string()]
+        );
+        assert_eq!(
+            skip_kinds_of(&json!({"skip_video": false, "skip_kinds": ["video"]})),
+            vec!["video".to_string()]
+        );
+        assert_eq!(
+            skip_kinds_of(&json!({"skip_kinds": []})),
+            Vec::<String>::new()
+        );
+    }
     #[test]
     fn parses_model_decision_json_and_code_fence() {
         let object = decision_object(&json!({"operation": "CLICK", "element": 3})).unwrap();

@@ -21,6 +21,12 @@ laya-workflow run --spec /tmp/persist_demo2.json --state '{"x":"A"}'
 laya-workflow run --spec dsl/browser/google_research.json --query "jev ai"
 ```
 
+Browser research (`dsl/browser/google_research.json`) classifies every candidate
+URL **before** opening it and skips video/streaming hosts (YouTube, Bilibili, …)
+and direct media files by default. Opt out with `--state '{"skip_video":false}'`, or
+replace the set with `--state '{"skip_kinds":[]}'`. Skipped rows appear in the
+result as `skipped`/`skipped_found`, not silently dropped.
+
 ## When to use run vs resume
 
 * Fresh start → `run`.
