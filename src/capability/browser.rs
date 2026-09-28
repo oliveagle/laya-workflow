@@ -2269,7 +2269,50 @@ fn run_research(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        for row in rows {
+        // Resolve Google's redirect wrapper for the whole page up front: every
+        // lookup is an independent header-only request, so a page's rows resolve
+        // concurrently instead of one network round trip after another.
+        let destinations: Vec<String> = {
+            let tasks: Vec<(String, bool)> = rows
+                .iter()
+                .map(|row| {
+                    (
+                        row.get("url")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        row.get("is_ad").and_then(Value::as_bool).unwrap_or(false),
+                    )
+                })
+                .collect();
+            let mut resolved = vec![String::new(); tasks.len()];
+            let workers = 8usize;
+            for chunk in (0..tasks.len()).collect::<Vec<_>>().chunks(workers) {
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = chunk
+                        .iter()
+                        .map(|&i| {
+                            let (url, is_ad) = tasks[i].clone();
+                            scope.spawn(move || {
+                                let destination = if is_ad {
+                                    url
+                                } else {
+                                    resolve_destination_url(&url)
+                                };
+                                (i, destination)
+                            })
+                        })
+                        .collect();
+                    for handle in handles {
+                        if let Ok((i, destination)) = handle.join() {
+                            resolved[i] = destination;
+                        }
+                    }
+                });
+            }
+            resolved
+        };
+        for (mut row, destination) in rows.into_iter().zip(destinations) {
             let title = row
                 .get("title")
                 .and_then(Value::as_str)
@@ -2287,7 +2330,6 @@ fn run_research(
                 ads.push(json!({"title": title, "url": url, "reason": "explicit Google ad label/ad landing path"}));
                 continue;
             }
-            let destination = resolve_destination_url(&url);
             let kind = url_content_kind(&destination);
             if skip_kinds.iter().any(|k| k == kind) {
                 skipped.push(json!({
@@ -2301,7 +2343,6 @@ fn run_research(
                 continue;
             }
             if seen_titles.insert(title.clone()) && seen_urls.insert(url.clone()) {
-                let mut row = row.clone();
                 row["start"] = json!(start);
                 candidates.push(row);
             }

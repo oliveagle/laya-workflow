@@ -210,8 +210,16 @@ classifies each candidate URL **before** creating a target:
   their subdomains), `"media"` (direct media-file extensions such as `.mp4`,
   `.mp3`, `.webm`, …), or `"page"` (everything else).
 - `research` and `open_many` drop `video`/`media` rows from the work list instead
-  of opening them. This is a deterministic, offline decision — no extra network
-  request and no planner round trip.
+  of opening them.
+
+Google usually does not return the destination URL directly: organic results are
+wrapped in a `google.*/url?q=…` or `google.*/goto?url=…` redirect, so a plain
+host check would see `google.*` for every row. Laya therefore resolves the real
+destination first — it decodes the `q=` form in-process and, for the opaque
+`url=` form, reads only the redirect `Location` header (no page body). Rows on a
+page resolve concurrently, so classification adds one cheap round trip per row
+rather than opening a tab. This keeps the decision deterministic and in Laya,
+before any target is created.
 
 The default skip set is `["video", "media"]`. Tune it in the call `with` object:
 
