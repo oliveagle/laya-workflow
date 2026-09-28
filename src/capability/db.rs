@@ -30,7 +30,9 @@
 //! this needs `policy.allow_exec`; the two database files are validated against
 //! `policy.allow_paths` before anything runs. No Rust driver dependency.
 
-use anyhow::{bail, Result};
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::store::resolve_store_path;
@@ -51,10 +53,99 @@ pub struct DbCap {
     pub readonly: bool,
     /// Analytics output format: json | csv | md (default json).
     pub format: String,
+    /// `embed` (default) runs the local `sqlite3`/`duckdb` CLIs against the files
+    /// above; `server` posts each op to a running [`crate::db`] daemon instead,
+    /// so many workflows can share one writer without re-opening the files.
+    pub mode: String,
+    /// Daemon base URL for `mode: "server"`, e.g. `http://127.0.0.1:18767`.
+    pub endpoint: String,
     pub timeout_ms: u64,
 }
 
+/// Entry point for the `db` capability. Dispatches on `mode`:
+///
+///   * `embed`  (default) — drive the local `sqlite3` / `duckdb` CLIs against the
+///     configured files (see [`call_db_embed`]).
+///   * `server` — send the op to a running [`crate::db`] daemon over HTTP, so
+///     several workflows share one HTAP instance (and one writer).
 pub fn call_db(c: &DbCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+    match field(&c.mode, with, state).as_str() {
+        "" | "embed" => call_db_embed(c, with, state, policy),
+        "server" => call_db_server(c, with, state),
+        other => bail!("db mode {other:?} unsupported (embed | server)"),
+    }
+}
+
+/// `mode: "server"` — POST the (expanded) op to `{endpoint}/db` and return the
+/// daemon's JSON result. No process is spawned here, so server mode does not
+/// need `policy.allow_exec`; only the daemon does.
+fn call_db_server(c: &DbCap, with: &Value, state: &Value) -> Result<Value> {
+    let endpoint = field(&c.endpoint, with, state);
+    if endpoint.is_empty() {
+        bail!("db mode=server needs 'endpoint' (e.g. http://127.0.0.1:18767)");
+    }
+    let endpoint = endpoint.trim_end_matches('/').to_string();
+    let op = with
+        .get("op")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if c.op.is_empty() {
+                "query".to_string()
+            } else {
+                c.op.clone()
+            }
+        });
+    // The read-only guard mirrors embed mode: the caller's intent still gates
+    // writes even though the daemon could perform them.
+    if c.readonly && matches!(op.as_str(), "exec" | "sync") {
+        bail!("db {op} writes to SQLite; set capability readonly=false to enable writes");
+    }
+    let mut req = expand(with, state, with);
+    if let Some(obj) = req.as_object_mut() {
+        obj.insert("op".to_string(), json!(op));
+        obj.entry("format".to_string()).or_insert_with(|| {
+            json!(if c.format.is_empty() {
+                "json"
+            } else {
+                &c.format
+            })
+        });
+    }
+    let url = format!("{endpoint}/db");
+    let timeout = if c.timeout_ms == 0 {
+        60_000
+    } else {
+        c.timeout_ms
+    };
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_millis(timeout))
+        .build();
+    let (status, text) = match agent
+        .post(&url)
+        .set("content-type", "application/json")
+        .send_json(req)
+    {
+        Ok(r) => (
+            r.status() as i64,
+            r.into_string()
+                .map_err(|e| anyhow!("db server read failed: {e}"))?,
+        ),
+        Err(ureq::Error::Status(code, r)) => (code as i64, r.into_string().unwrap_or_default()),
+        Err(e) => bail!("db server {url} failed: {e}"),
+    };
+    let mut body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("mode".to_string(), json!("server"));
+        obj.insert("endpoint".to_string(), json!(endpoint));
+        obj.insert("http_status".to_string(), json!(status));
+    }
+    Ok(body)
+}
+
+/// `mode: "embed"` (default) — the original in-process path: run the local
+/// `sqlite3` / `duckdb` CLIs against the configured files.
+fn call_db_embed(c: &DbCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
     let op = with
         .get("op")
         .and_then(|v| v.as_str())

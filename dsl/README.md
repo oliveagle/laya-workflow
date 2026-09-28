@@ -56,6 +56,7 @@ Specs in this directory:
 | `capabilities/agent_session_probe.json` | external agent/app-server (http or stdio) |
 | `capabilities/data_pipeline_local.json` | datetime + text + file + shell + chain |
 | `capabilities/db_analytics.json` | `db`: SQLite (ACID writes) + DuckDB (analytics) over one file (needs `sqlite3` + `duckdb`) |
+| `capabilities/db_server_analytics.json` | `db` in **server** mode: the same HTAP ops POSTed to a `laya-workflow db serve` daemon (no `allow_exec`/`allow_paths` needed) |
 | `capabilities/integration_hub.json` | rpc + graphql + llm + mcp + vector + webhook + sse |
 | `capabilities/ticket_structuring.json` | csv + validate + hash + tokenize + metrics + chain |
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
@@ -110,10 +111,12 @@ Two engines, one file: `kind: "db"` pairs **SQLite** (the ACID system of record,
 file — DuckDB attaches the live SQLite database through its `sqlite` extension
 (<https://github.com/duckdb/duckdb-sqlite>), so there is no ETL and no second
 copy, and DuckDB can write aggregates back into SQLite as an ACID table
-(`op: sync`). Read-only by default; writes require `readonly: false`. It runs the
-real `sqlite3` / `duckdb` CLIs, so `policy.allow_exec` applies and both files are
-checked against `policy.allow_paths`. See `docs/db.md` and
-`dsl/capabilities/db_analytics.json`.
+(`op: sync`). Read-only by default; writes require `readonly: false`. Two modes:
+`embed` (default) runs the real `sqlite3` / `duckdb` CLIs, so `policy.allow_exec`
+applies and both files are checked against `policy.allow_paths`; `server` POSTs
+each op to a `laya-workflow db serve` daemon (one shared writer, no client-side
+exec/paths). See `docs/db.md`, `dsl/capabilities/db_analytics.json` (embed) and
+`dsl/capabilities/db_server_analytics.json` (server).
 
 Where to edit capabilities in a workflow? See the capability reference in
 `docs/benchmarks/laya_workflow_capabilities_20260926.md`.

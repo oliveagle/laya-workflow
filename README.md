@@ -84,23 +84,31 @@ Opt out with `--state '{"skip_video":false}'`, or replace the set with
 
 ### SQLite + DuckDB (`db`)
 
-`kind: "db"` pairs two engines over **one file**: **SQLite** is the ACID system
-of record (constraints, `BEGIN IMMEDIATE … COMMIT` batches), **DuckDB** is the
-analytics engine and attaches that same live SQLite file through its `sqlite`
-extension ([duckdb-sqlite](https://github.com/duckdb/duckdb-sqlite)) — no ETL,
-no second copy. DuckDB can also write aggregates back into SQLite (`op: sync`),
-so results land in an ACID table. Read-only by default; writes need
-`readonly: false`.
+`kind: "db"` is a small **HTAP wrapper** over **one file**: **SQLite** is the
+ACID system of record (constraints, `BEGIN IMMEDIATE … COMMIT` batches),
+**DuckDB** is the analytics engine and attaches that same live SQLite file
+through its `sqlite` extension
+([duckdb-sqlite](https://github.com/duckdb/duckdb-sqlite)) — no ETL, no second
+copy. DuckDB can also write aggregates back into SQLite (`op: sync`), so results
+land in an ACID table. Read-only by default; writes need `readonly: false`.
+
+Both **modes** are supported:
 
 ```bash
-export LAYA_WORK_DIR=/tmp/laya-db-demo   # fail-closed: the spec's allow_paths needs it
+export LAYA_WORK_DIR=/tmp/laya-db-demo
 mkdir -p "$LAYA_WORK_DIR"
+
+# embed (default): the workflow drives the local sqlite3/duckdb CLIs per call
 laya-workflow run --spec dsl/capabilities/db_analytics.json
+
+# server: one daemon owns the file; workflows POST ops to it (shared writer)
+laya-workflow db serve --sqlite "$LAYA_WORK_DIR/shop.sqlite" --port 18767 --daemon
+laya-workflow run --spec dsl/capabilities/db_server_analytics.json
 ```
 
-It runs the real `sqlite3` / `duckdb` CLIs, so `policy.allow_exec` applies and
-both database files are checked against `policy.allow_paths`. See
-[`docs/db.md`](./docs/db.md).
+`embed` spawns the CLIs, so it needs `policy.allow_exec` and both files must sit
+under `policy.allow_paths`; `server` spawns nothing client-side and needs neither
+— only the daemon does. See [`docs/db.md`](./docs/db.md).
 
 ### Singleton Chrome CDP
 

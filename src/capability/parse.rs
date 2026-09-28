@@ -94,6 +94,8 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             op: def.get("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
             readonly: def.get("readonly").and_then(|v| v.as_bool()).unwrap_or(true),
             format: def.get("format").and_then(|v| v.as_str()).unwrap_or("json").to_string(),
+            mode: def.get("mode").and_then(|v| v.as_str()).unwrap_or("embed").to_string(),
+            endpoint: def.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(60_000),
         })),
         "shell" => Ok(Capability::Shell(local::ShellCap {

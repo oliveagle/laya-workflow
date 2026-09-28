@@ -163,6 +163,63 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ServerCmd,
     },
+    /// HTAP database lifecycle: `serve` a local SQLite + DuckDB daemon (the
+    /// *server* mode of the `db` capability), plus `ensure`/`stop`/`status`.
+    /// Without it, `kind: "db"` runs *embedded* — the same ops, local CLIs,
+    /// per call.
+    Db {
+        #[command(subcommand)]
+        cmd: DbCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCmd {
+    /// Run the HTAP daemon: one process owns a SQLite file (+ optional DuckDB
+    /// warehouse) and answers `db` ops over HTTP on 127.0.0.1:<port>.
+    Serve {
+        /// SQLite database file — the ACID system of record.
+        #[arg(long)]
+        sqlite: String,
+        /// Optional DuckDB warehouse file (default: analytics run in memory).
+        #[arg(long)]
+        duckdb: Option<String>,
+        /// Schema alias the SQLite file gets inside DuckDB.
+        #[arg(long, default_value = "sqlite")]
+        alias: String,
+        /// Bind host (localhost only by default).
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        /// Bind port (default $LAYA_DB_PORT, else 18767).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Detach (own session, log redirected) instead of running in the foreground.
+        #[arg(long, default_value_t = false)]
+        daemon: bool,
+    },
+    /// Start the daemon if nothing healthy answers on the port, then print BASE.
+    Ensure {
+        #[arg(long)]
+        sqlite: String,
+        #[arg(long)]
+        duckdb: Option<String>,
+        #[arg(long, default_value = "sqlite")]
+        alias: String,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Stop a daemon-started HTAP server (SIGTERM + clean the pid/base files).
+    Stop {
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Report RUNNING/STOPPED for the port; exits non-zero when stopped.
+    Status {
+        #[arg(long)]
+        port: Option<u16>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -477,6 +534,7 @@ fn main() -> Result<()> {
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
         Cmd::Server { cmd } => run_server(cmd),
+        Cmd::Db { cmd } => run_db(cmd),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
@@ -601,6 +659,134 @@ fn run_server(cmd: &ServerCmd) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// `db serve | ensure | stop | status`: the *server* mode of the HTAP `db`
+/// capability. `serve` is a dependency-free HTTP daemon (see `laya_workflow::db`);
+/// the other three reuse the generic local-server lifecycle so pid/base/log live
+/// in the same `/tmp/laya-ensure-server-<port>.*` files as `server ensure`.
+fn run_db(cmd: &DbCmd) -> Result<()> {
+    use laya_workflow::db::{self, DbServerConfig, DEFAULT_DB_HEALTH_PATH};
+    use laya_workflow::orchestrate as orch;
+
+    match cmd {
+        DbCmd::Serve {
+            sqlite,
+            duckdb,
+            alias,
+            host,
+            port,
+            daemon,
+        } => {
+            let cfg = DbServerConfig {
+                sqlite: sqlite.clone(),
+                duckdb: duckdb.clone().unwrap_or_default(),
+                alias: alias.clone(),
+                host: host.clone(),
+                port: port.unwrap_or_else(db_port),
+            };
+            if *daemon {
+                let command = db_serve_command(&cfg);
+                if !orch::server_start_daemon(cfg.port, &command, DEFAULT_DB_HEALTH_PATH)? {
+                    std::process::exit(1);
+                }
+                Ok(())
+            } else {
+                db::serve(&cfg)
+            }
+        }
+        DbCmd::Ensure {
+            sqlite,
+            duckdb,
+            alias,
+            host,
+            port,
+        } => {
+            let cfg = DbServerConfig {
+                sqlite: sqlite.clone(),
+                duckdb: duckdb.clone().unwrap_or_default(),
+                alias: alias.clone(),
+                host: host.clone(),
+                port: port.unwrap_or_else(db_port),
+            };
+            // Refuse to attach to a *different* database that already owns the
+            // port — "ensure" must mean "this db is up", not "something is up".
+            if let Some(h) = db::health(&cfg.base()) {
+                let served = h.get("sqlite").and_then(|v| v.as_str()).unwrap_or("");
+                if !served.is_empty() && served != cfg.sqlite {
+                    bail!(
+                        "port {} already serves sqlite={served:?}, not {sqlite:?}; \
+                         stop it or pick another --port",
+                        cfg.port
+                    );
+                }
+            }
+            let command = db_serve_command(&cfg);
+            if !orch::server_ensure(cfg.port, Some(&command), DEFAULT_DB_HEALTH_PATH)? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        DbCmd::Stop { port } => {
+            orch::server_stop(port.unwrap_or_else(db_port))?;
+            Ok(())
+        }
+        DbCmd::Status { port } => {
+            if !orch::server_status(port.unwrap_or_else(db_port), DEFAULT_DB_HEALTH_PATH) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The default HTAP daemon port: `$LAYA_DB_PORT`, else 18767.
+fn db_port() -> u16 {
+    std::env::var("LAYA_DB_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(laya_workflow::db::DEFAULT_DB_PORT)
+}
+
+/// The shell command `db ensure` / `db serve --daemon` uses to (re)spawn itself
+/// as a foreground daemon. Single-quoted so paths with spaces survive `sh -c`.
+fn db_serve_command(cfg: &laya_workflow::db::DbServerConfig) -> String {
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "laya-workflow".to_string());
+    let mut parts = vec![
+        shell_quote(&exe),
+        "db".to_string(),
+        "serve".to_string(),
+        "--sqlite".to_string(),
+        shell_quote(&cfg.sqlite),
+        "--alias".to_string(),
+        shell_quote(&cfg.alias),
+        "--host".to_string(),
+        shell_quote(&cfg.host),
+        "--port".to_string(),
+        cfg.port.to_string(),
+    ];
+    if !cfg.duckdb.is_empty() {
+        parts.push("--duckdb".to_string());
+        parts.push(shell_quote(&cfg.duckdb));
+    }
+    parts.join(" ")
+}
+
+/// POSIX single-quote a string for `sh -c` (embedded `'` → `'\''`).
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
 }
 
 /// `plugin install | list | dir`. Kept tiny: the real work (validation, sparse
@@ -749,6 +935,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
+        ("db",        "HTAP store in two modes: `kind: \"db\"` pairs SQLite (ACID) with DuckDB (analytics) over one file — `embed` (local CLIs) or `server` (`db serve` daemon, shared writer).", "orchestrate"),
         ("safety",    "Safety gates every spec goes through: `policy.allow_exec`, `policy.allow_paths`, `policy.allow_hosts`, `policy.max_timeout_ms`, `policy.max_output`, secret redaction.", "validate"),
     ]
 }
@@ -824,6 +1011,7 @@ fn print_overview() {
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
     println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
+    println!("  db s|e|st|p    serve/ensure/status/stop the HTAP SQLite+DuckDB daemon");
     println!("  skill          this help (progressive disclosure)");
     println!();
     println!("Pick the entry point that matches your intent:");
@@ -871,6 +1059,7 @@ fn print_section(name: &str) -> Result<()> {
         "safety" => SKILL_SAFETY,
         "plugins" => SKILL_PLUGINS,
         "orchestrate" => SKILL_ORCHESTRATE,
+        "db" => SKILL_DB,
         other => {
             eprintln!("# no such section: {other}");
             eprintln!("run `laya-workflow skill --list` to see the names.");
@@ -919,6 +1108,7 @@ static SKILL_TESTS: &str = include_str!("skill/sections/tests.md");
 static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
 static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
 static SKILL_ORCHESTRATE: &str = include_str!("skill/sections/orchestrate.md");
+static SKILL_DB: &str = include_str!("skill/sections/db.md");
 
 static RECIPE_FIRST_RUN: &str = include_str!("skill/recipes/first_run.md");
 static RECIPE_LIVE_SERVER: &str = include_str!("skill/recipes/live_server.md");

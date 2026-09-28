@@ -1,6 +1,8 @@
-# `db` — SQLite (ACID) + DuckDB (analytics) over one file
+# `db` — an HTAP wrapper: SQLite (ACID) + DuckDB (analytics) over one file
 
-`kind: "db"` is one wrapper over two engines that play to their strengths:
+`kind: "db"` is one wrapper over two engines that play to their strengths —
+a **H**ybrid **T**ransactional/**A**nalytical store where SQLite does the OLTP
+and DuckDB does the OLAP, over a single file:
 
 * **SQLite** — the *system of record*. Row-level writes, constraints, explicit
   `BEGIN IMMEDIATE … COMMIT` batches, one portable file.
@@ -27,16 +29,35 @@ analytics results get an ACID landing zone for free.
               (write back)                     │
 ```
 
-Both engines are driven through their **real CLIs** (`sqlite3`, `duckdb`), so
-this capability needs `policy.allow_exec = true`, and both database files are
-validated against `policy.allow_paths` before anything runs. No Rust driver
-dependency.
+## Two modes: `embed` and `server`
+
+The wrapper ships in two shapes; both run the *same* ops against the *same* file.
+
+| mode | how | when |
+|------|-----|------|
+| `embed` (default) | the workflow drives the local `sqlite3` / `duckdb` CLIs itself, per call | a single workflow; simple, no daemon |
+| `server` | the workflow POSTs each op to a long-lived `laya-workflow db serve` daemon that owns the file | many workflows / tools share one instance and one writer; DuckDB, which cannot be opened by two processes, is served from one place |
+
+```jsonc
+// embed (default) — the capability holds the files
+{ "kind": "db", "sqlite": "${env.LAYA_WORK_DIR}/shop.sqlite" }
+
+// server — the capability points at a daemon; it holds no files
+{ "kind": "db", "mode": "server", "endpoint": "http://127.0.0.1:18767" }
+```
+
+**Embed** spawns the CLIs, so it needs `policy.allow_exec = true` and both files
+must sit under `policy.allow_paths`. **Server** spawns nothing on the client side
+(it speaks HTTP), so a server-mode capability needs *neither* `allow_exec` nor
+`allow_paths` — only the daemon does. No Rust driver dependency either way.
 
 ## Fields
 
 | field | default | meaning |
 |-------|---------|---------|
-| `sqlite` | — (required) | SQLite file — the ACID system of record |
+| `mode` | `embed` | `embed` (local CLIs) or `server` (POST to a daemon) |
+| `endpoint` | — | daemon base URL for `mode: "server"`, e.g. `http://127.0.0.1:18767` |
+| `sqlite` | — (required in `embed`) | SQLite file — the ACID system of record; the *daemon* owns it in `server` mode |
 | `duckdb` | `""` (in-memory) | optional DuckDB warehouse file; empty ⇒ analytics run in memory and only the attached SQLite file survives |
 | `alias` | `sqlite` | schema alias the SQLite file gets inside DuckDB |
 | `op` | `query` | default op (a node's `with.op` overrides it) |
@@ -62,6 +83,49 @@ Every result carries `{capability:"db", op, engine, sqlite, duckdb, alias,
 readonly, ok, exit_code, rows, raw, stderr, sql}` — `rows` is the parsed JSON
 array (so a workflow can route or assert on data), and `raw` is the untouched
 CLI output (which is the CSV/Markdown text when `format` is `csv`/`md`).
+
+## Running the server (`db serve`)
+
+The daemon is a dependency-free HTTP/1.1 server on `std::net`; it reuses the
+**exact** embedded engine, so the ops and results are byte-for-byte the same.
+
+```bash
+export LAYA_WORK_DIR=/tmp/laya-db-demo      # dir of the file the daemon owns
+mkdir -p "$LAYA_WORK_DIR"
+
+# start / ensure / status / stop  (idempotent; state in /tmp/laya-ensure-server-<port>.*)
+laya-workflow db serve  --sqlite "$LAYA_WORK_DIR/shop.sqlite" --port 18767 --daemon
+laya-workflow db ensure --sqlite "$LAYA_WORK_DIR/shop.sqlite" --port 18767
+laya-workflow db status --port 18767
+laya-workflow db stop   --port 18767
+```
+
+`db ensure` refuses to attach to a daemon that already owns the port for a
+*different* file, so "ensure" really means "*this* db is up". The daemon binds
+localhost only and prints `BASE=<url>` so a workflow can capture it.
+
+Then run the server-mode demo (it points at `http://127.0.0.1:18767`):
+
+```bash
+laya-workflow run --spec dsl/capabilities/db_server_analytics.json
+```
+
+The wire API is plain JSON, so non-workflow tools can use it too:
+
+```bash
+curl -s http://127.0.0.1:18767/health
+curl -s -X POST http://127.0.0.1:18767/db -H 'content-type: application/json' \
+  -d '{"op":"analytics","sql":"SELECT region, SUM(amount) total FROM sales GROUP BY region"}'
+```
+
+| method | path | body | response |
+|--------|------|------|----------|
+| `GET`  | `/health`, `/healthz`, `/` | — | `{ok, service:"laya-db", sqlite, duckdb, alias, uptime_ms}` |
+| `POST` | `/db` | the `with` object of any op | the `call_db` result JSON (same shape as embed) |
+
+Requests are served **sequentially** — the store is the shared resource, so
+serialising keeps SQLite's single-writer model and never lets two CLI processes
+race on one file.
 
 ## Read-only by default
 
@@ -118,7 +182,8 @@ The equivalent `db` capability call:
 ## What this is *not*
 
 * Not a new query language — it is plain SQLite SQL and plain DuckDB SQL.
-* Not a connection pool — each call is a short-lived CLI process, so batch your
-  writes with `statements` (one transaction) rather than many tiny `exec` calls.
+* Not a connection pool — in `embed` mode each call is a short-lived CLI process,
+  so batch your writes with `statements` (one transaction) rather than many tiny
+  `exec` calls. Use `mode: "server"` when you want one persistent process instead.
 * Not a replacement for the `sqlite` capability: `kind: "sqlite"` is a bare
   one-engine file store; `kind: "db"` is the *two-engine* pairing.

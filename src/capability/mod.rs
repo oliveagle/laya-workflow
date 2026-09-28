@@ -530,6 +530,7 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
             walk(&Value::String(c.sqlite.clone()), &mut out);
             walk(&Value::String(c.duckdb.clone()), &mut out);
             walk(&Value::String(c.alias.clone()), &mut out);
+            walk(&Value::String(c.endpoint.clone()), &mut out);
         }
         Capability::Browser(c) => {
             walk(&Value::String(c.endpoint.clone()), &mut out);

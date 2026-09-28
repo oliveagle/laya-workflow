@@ -9,6 +9,7 @@ pub mod accuracy;
 pub mod apps;
 pub mod backend;
 pub mod capability;
+pub mod db;
 pub mod optimizer;
 pub mod orchestrate;
 pub mod persist;
