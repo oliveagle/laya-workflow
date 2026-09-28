@@ -2396,7 +2396,17 @@ fn run(host, ctx) {
     // "价格进化" with nothing to fetch is a legitimate request: re-derive the
     // model from everything already in index.json. It costs no browser time and
     // is the cheapest way to ask "what does the plugin think a Sony A7M4 costs?".
-    if mode == "evolve" && p["item_url"] == "" && query == "" {
+    //
+    // `query` here is the caller's text, which for `--query "价格进化"` is still
+    // the intent word itself: plan() only replaces the query when there is a
+    // noun left after strip_intent(), so an intent-only query arrives unchanged
+    // and would otherwise be sent to goofish as the search term. It is not a
+    // harmless no-op - the site answers "价格进化" with a page of games and
+    // ebooks, and learn() files all 30 of them in the corpus under the scope
+    // "价格进化", which then feeds the vocabulary. Nothing to fetch means the
+    // stripped term is empty, not that the query text is empty.
+    let no_term = strip_intent(query);
+    if mode == "evolve" && p["item_url"] == "" && (query == "" || no_term == "") {
         notes.push("evolve with no query and no item: re-derived the price model from"
             + " index.json (" + index_rows(load_index(host, out_dir)).len() + " items on record)");
         return finish(host, started, mode, query, source_url, out_dir, wpath,
@@ -3000,7 +3010,14 @@ fn finish(host, started, mode, query, source_url, out_dir, wpath, wdata,
     // market — including the detail pages browsed out of a listing sweep, which
     // are the same products as the cards that linked to them. A run that named
     // no product browses by id and stamps nothing.
-    let run_scope = scope_of(query);
+    // An intent word is not a product. `--query "价格进化"` leaves the query
+    // text as-is (plan() only rewrites it when a noun survives the strip), so
+    // scoping on the raw text would mint a "价格进化" market out of a request
+    // that named no product at all - and the model would then carry a median
+    // for it. Scope on the query, minus a query that was *only* intent.
+    let stripped_term = strip_intent(query);
+    let scope_src = if stripped_term == "" && query != "" { "" } else { query };
+    let run_scope = scope_of(scope_src);
     let fresh = [];
     for e in lr["entries"] {
         let m = mine_tags(e);
