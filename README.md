@@ -363,9 +363,10 @@ laya-workflow run --spec dsl/browser/goofish_item.json --query "价格监控" \
 Results go to `~/tmp/goofish` (policy-gated): `items/<id>.json` per listing,
 `item-<id>.md` + `images/<id>/` for an opened one, and `watch.json` holding every
 price ever seen per tracked item, so a later run reports
-`new`/`up`/`down`/`same`/`gone` instead of just the current number;
-`watch_query` narrows that re-read and is matched case-insensitively, so `a7m4`
-and `A7M4` select the same items. The monitor also guards its own store: once an item has three priced sightings behind it, a
+`new`/`up`/`down`/`same`/`gone` instead of just the current number.
+`watch_query` narrows that re-read — it matches the title *or* the item id,
+case-insensitively, so `a7m4` and `A7M4` both find the item. The monitor also
+guards its own store: once an item has three priced sightings behind it, a
 reading more than 5× its own median is kept as a sighting *without* a price
 (and the refused number is kept beside it). goofish abbreviates prices with a
 万/千 character sitting beside the number, and one of those picked up by mistake
