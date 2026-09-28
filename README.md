@@ -210,6 +210,17 @@ laya-workflow run --spec dsl/capabilities/feishu_chat_history.json \
 Reading needs `policy.allow_exec: true` (it spawns the CLI) and an authorized
 `lark-cli auth login`. See [`docs/feishu.md`](./docs/feishu.md).
 
+### DingTalk (`钉钉`)
+
+DingTalk **cannot** be read the way Feishu can: there is no public API to pull a
+conversation's history. A bot only receives messages **@-mentioned to it** (Stream
+/ HTTP callback), the message-menu JSAPI returns **one** message the user
+explicitly acted on, and the data APIs return **aggregate counts only** (and closed
+to new applications). The official DingTalk MCP covers contacts, calendar, todo,
+sheets and *sending* messages — not reading them. The local `DingTalk.app` message
+store (`dingtalk.db`) is SQLCipher-encrypted. Full findings, doc links and the
+manual-export path: [`docs/dingtalk.md`](./docs/dingtalk.md).
+
 ## Script plugins (Rhai)
 
 Site- and task-specific logic lives in **Rhai plugins**, not in the compiled
