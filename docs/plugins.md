@@ -349,7 +349,14 @@ price moves per item (via `LAG`), tag-level trends, and the below/above-fair
 report. `goofish_items.price` is the price the item's tags were priced *by* —
 the same number the tag statistics came from — while `last_price` is the watch
 history's latest sighting; keeping both is what lets "compare this listing
-against its tag" be answerable in SQL.
+against its tag" be answerable in SQL. `goofish_price_points.implausible_price`
+is the reading the monitor refused (see the abbreviated-prices note below), so a
+hole in the series is legible as a hole rather than as a million-percent jump.
+
+One DuckDB detail the spec pays for: `at` is a keyword, so the price-moves node
+quotes it and aliases the result to `price_at`. Unquoted it parses fine in
+SQLite and fails in DuckDB — which is exactly the half of the system a
+`kind: "db"` analytics op runs on.
 
 Three site facts shape the plugin, all verified against the live site and worth
 knowing before changing the page scripts:
@@ -363,7 +370,15 @@ knowing before changing the page scripts:
   the 万 in a *sibling* of the price block. Missing that character reads 1.98,
   which a price monitor then reports as a 99.99% drop. It is matched by element,
   never by searching the row's text: `4万浏览` in the want slot is not a
-  magnitude.
+  magnitude. One stray character in the other direction — a 万 picked up by a
+  ¥9,180 body — reads ¥91,800,000, and that number poisons the median, the high
+  and every trend built on them *permanently*, because a price history is
+  append-only. So `observe()` also guards the store: once an item has three
+  priced sightings behind it, a reading more than 5× its own median (up or down)
+  is recorded as a sighting with no price plus `implausible_price`, and the item
+  keeps its last believed price. Real moves are unaffected — a 9180 → 6900 drop
+  is accepted and reported as `down` — and so is an item with too little history
+  to have a baseline, which is never second-guessed.
 - **A sold listing renders no item block at all** — no "sold" page, just the
   footer and "看看下面为你推荐". `status` is therefore explicit
   (`on_sale` / `gone` / `login_required`), and a `watch` run that finds `gone`

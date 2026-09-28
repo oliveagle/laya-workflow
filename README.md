@@ -363,7 +363,14 @@ laya-workflow run --spec dsl/browser/goofish_item.json --query "价格监控" \
 Results go to `~/tmp/goofish` (policy-gated): `items/<id>.json` per listing,
 `item-<id>.md` + `images/<id>/` for an opened one, and `watch.json` holding every
 price ever seen per tracked item, so a later run reports
-`new`/`up`/`down`/`same`/`gone` instead of just the current number.
+`new`/`up`/`down`/`same`/`gone` instead of just the current number. The monitor
+also guards its own store: once an item has three priced sightings behind it, a
+reading more than 5× its own median is kept as a sighting *without* a price
+(and the refused number is kept beside it). goofish abbreviates prices with a
+万/千 character sitting beside the number, and one of those picked up by mistake
+turns a ¥9,180 body into ¥91,800,000 — which would then sit in the history
+forever, poisoning the median and every trend drawn from it. Real moves pass
+through untouched.
 
 **Prices and tags get better with use.** Every run — search, browse or watch —
 also feeds a learning pass, and the result gains an `evolve` block:

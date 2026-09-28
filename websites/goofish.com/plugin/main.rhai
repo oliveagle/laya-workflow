@@ -607,6 +607,34 @@ fn observe(host, wdata, rec, now, hist_max) {
     if entry.contains("history") && type_of(entry["history"]) == "array" {
         for p in entry["history"] { history.push(p); }
     }
+    // The last line of defence against a misread page. goofish abbreviates a
+    // price with a 万/千 sitting beside it, and one stray character turns ¥9,180
+    // into ¥91,800,000 - which then poisons the median, the high, the
+    // vs_median_pct and every trend built on them, for good: a monitor is only
+    // as trustworthy as the worst reading it ever accepted.
+    // Once an item has a few real readings behind it, a price nowhere near its
+    // own history is a parsing accident rather than a resale, so the sighting
+    // is still recorded - without the number - and the change says why.
+    let implausible = ();
+    if has_price {
+        let prior = [];
+        for ph in history {
+            let v = pick(ph, "price");
+            if type_of(v) != "()" {
+                let x = onum(v);
+                if x > 0.0 { prior.push(x); }
+            }
+        }
+        if prior.len() >= 3 {
+            let med = median_of(prior);
+            if med > 0.0 && (price > med * 5.0 || price < med / 5.0) { implausible = price; }
+        }
+    }
+    let credible = has_price && implausible == ();
+    if implausible != () {
+        point["price"] = ();
+        point["implausible_price"] = implausible;
+    }
     history.push(point);
     // The store is a monitoring file, not an archive: keep the tail, and drop
     // the oldest points so a long-lived watch cannot grow without bound.
@@ -619,7 +647,7 @@ fn observe(host, wdata, rec, now, hist_max) {
     entry["last_seen_ms"] = now["unix_ms"];
     entry["seen_count"] = oint(entry["seen_count"], 0) + 1;
     entry["history"] = history;
-    if has_price { entry["price"] = price; }
+    if credible { entry["price"] = price; }
 
     let direction = "unknown";
     let delta = ();
@@ -630,7 +658,7 @@ fn observe(host, wdata, rec, now, hist_max) {
     if status == "gone" {
         direction = "gone";
         entry["price"] = ();
-    } else if has_price && type_of(old_price) != "()" {
+    } else if credible && type_of(old_price) != "()" {
         let d = price - onum(old_price);
         delta = d;
         if onum(old_price) != 0.0 { delta_pct = (d / onum(old_price) * 10000.0).round() / 100.0; }
@@ -656,9 +684,10 @@ fn observe(host, wdata, rec, now, hist_max) {
         title: title,
         direction: direction,
         old_price: old_price,
-        new_price: if has_price { price } else { () },
+        new_price: if credible { price } else { () },
         delta: delta,
         delta_pct: delta_pct,
+        implausible_price: implausible,
         at: now["rfc3339"]
     } }
 }
@@ -1570,16 +1599,24 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
         let id = pstr(w, "id");
         let ps = [];
         let at = 0;
+        let seen_at = -1;
+        let seen_p = 0.0;
         let st = "on_sale";
         if omap(w) && w.contains("history") && type_of(w["history"]) == "array" {
             for h in w["history"] {
+                let v = 0.0;
                 let p = pick(h, "price");
-                if type_of(p) != "()" {
-                    let v = onum(p);
-                    if v > 0.0 { ps.push(v); }
-                }
+                if type_of(p) != "()" { v = onum(p); }
+                if v > 0.0 { ps.push(v); }
                 let m = oint(pick(h, "at_ms"), 0);
                 if m > at { at = m; }
+                // The latest *sighting*, not the highest price. These were both
+                // `sorted.last`, which only looked right while every price in
+                // the history was identical: the moment one reading differed,
+                // `last` became the peak of the whole series and `high` a copy
+                // of it, so a monitor reported an item that had come down as
+                // still trading at its high.
+                if v > 0.0 && m >= seen_at { seen_at = m; seen_p = v; }
                 st = pstr2(h, "status", st);
             }
         }
@@ -1588,13 +1625,12 @@ fn learn(host, out_dir, corpus, wdata, learned, fresh, feed_pairs, now, o) {
         if n > 0 {
             let sorted = sorted_copy(ps);
             let med = median_of(ps);
-            let last = sorted[sorted.len() - 1];
-            s["last"] = round2(last);
+            s["last"] = round2(seen_p);
             s["low"] = round2(sorted[0]);
-            s["high"] = round2(last);
+            s["high"] = round2(sorted[sorted.len() - 1]);
             s["median"] = round2(med);
             s["mad"] = round2(mad_of(ps, med));
-            if med > 0.0 && n >= 2 { s["vs_median_pct"] = round2((last - med) / med * 100.0); }
+            if med > 0.0 && n >= 2 { s["vs_median_pct"] = round2((seen_p - med) / med * 100.0); }
         }
         istat_of[id] = s;
         item_stats.push(#{
@@ -1912,7 +1948,11 @@ fn sql_join(xs) {
 fn sql_schema() {
     [
         "CREATE TABLE IF NOT EXISTS goofish_items(id TEXT PRIMARY KEY, title TEXT, url TEXT, status TEXT, location TEXT, want_count INTEGER, collected_at TEXT, collected_at_ms INTEGER, source_mode TEXT, tags TEXT, price REAL, last_price REAL, low_price REAL, high_price REAL, median_price REAL, vs_median_pct REAL)",
-        "CREATE TABLE IF NOT EXISTS goofish_price_points(item_id TEXT, at_ms INTEGER, at TEXT, price REAL, want_count INTEGER, views INTEGER, status TEXT, PRIMARY KEY (item_id, at_ms))",
+        // `implausible_price` carries a reading the monitor refused to believe
+        // (see observe()): the sighting is kept with no price of its own, and
+        // the number it would have had is kept beside it, so the SQLite copy
+        // shows why the series has a hole in it instead of a 1000000% jump.
+        "CREATE TABLE IF NOT EXISTS goofish_price_points(item_id TEXT, at_ms INTEGER, at TEXT, price REAL, want_count INTEGER, views INTEGER, status TEXT, implausible_price REAL, PRIMARY KEY (item_id, at_ms))",
         "CREATE TABLE IF NOT EXISTS goofish_tags(tag TEXT PRIMARY KEY, ns TEXT, name TEXT, items INTEGER, n_priced INTEGER, first_seen_ms INTEGER, last_seen_ms INTEGER, spellings TEXT, co_tags TEXT, fair REAL)",
         "CREATE TABLE IF NOT EXISTS goofish_item_tags(item_id TEXT, tag TEXT, raw TEXT, PRIMARY KEY (item_id, tag))",
         "CREATE TABLE IF NOT EXISTS goofish_tag_price_stats(tag TEXT PRIMARY KEY, ns TEXT, n INTEGER, items INTEGER, min REAL, median REAL, mean REAL, max REAL, mad REAL, fair REAL, low REAL, high REAL, prices TEXT)",
@@ -2048,10 +2088,11 @@ fn sql_statements(lv, wdata, o) {
         while i < hist.len() {
             let h = hist[i];
             if out.len() >= max { dropped[0] += 1; i += 1; continue; }
-            out.push("INSERT OR REPLACE INTO goofish_price_points(item_id, at_ms, at, price, want_count, views, status) VALUES("
+            out.push("INSERT OR REPLACE INTO goofish_price_points(item_id, at_ms, at, price, want_count, views, status, implausible_price) VALUES("
                 + sql_q(id) + ", " + sql_i(pick(h, "at_ms")) + ", " + sql_q(pstr2(h, "at", ""))
                 + ", " + sql_n(pick(h, "price")) + ", " + sql_i(pick(h, "want_count"))
-                + ", " + sql_i(pick(h, "views")) + ", " + sql_q(pstr2(h, "status", "")) + ")");
+                + ", " + sql_i(pick(h, "views")) + ", " + sql_q(pstr2(h, "status", ""))
+                + ", " + sql_n(pick(h, "implausible_price")) + ")");
             i += 1;
         }
     }

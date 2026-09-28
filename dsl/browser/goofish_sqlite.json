@@ -194,7 +194,7 @@
         "with": {
           "op": "analytics",
           "format": "json",
-          "sql": "SELECT item_id, at, price, prev_price, ROUND((price - prev_price) * 100.0 / NULLIF(prev_price, 0), 1) AS move_pct, CASE WHEN price < prev_price THEN 'down' ELSE 'up' END AS direction FROM (SELECT item_id, at, price,              LAG(price) OVER (PARTITION BY item_id ORDER BY at_ms) AS prev_price       FROM goofish_price_points) WHERE prev_price IS NOT NULL AND price <> prev_price ORDER BY ABS(move_pct) DESC LIMIT 15"
+          "sql": "SELECT item_id, price_at, price, prev_price, ROUND((price - prev_price) * 100.0 / NULLIF(prev_price, 0), 1) AS move_pct, CASE WHEN price < prev_price THEN 'down' ELSE 'up' END AS direction FROM (SELECT item_id, \"at\" AS price_at, price, LAG(price) OVER (PARTITION BY item_id ORDER BY at_ms) AS prev_price FROM goofish_price_points) WHERE prev_price IS NOT NULL AND price <> prev_price ORDER BY ABS(move_pct) DESC LIMIT 15"
         },
         "project": {
           "rows": "/rows",
