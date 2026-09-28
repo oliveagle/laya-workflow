@@ -363,7 +363,15 @@ fn plan(args) {
     let item = "";
     if mode == "item" || mode == "watch_add" {
         item = item_url_of(raw_item);
-        if item == "" && query != "" && is_item_url(query) { item = item_url_of(query); }
+        if item == "" && query != "" {
+            // The mode is already "one item", so take the URL or the id out of
+            // the query wherever it sits: "添加监控 https://…" and "添加监控
+            // 1087828137579" are the same request. is_item_url() is deliberately
+            // not the gate here — it only matches a query that is *nothing but*
+            // a URL or an id, and that strictness belongs to the inference
+            // below, not to a mode the caller already chose.
+            item = item_url_of(query);
+        }
     } else if is_item_url(query) && opt(args, "count").is_empty() {
         // "https://…/item?id=…" asked for with no explicit mode: browse it.
         mode = "item";

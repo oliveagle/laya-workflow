@@ -3027,6 +3027,18 @@ mod tests {
             json!("https://www.goofish.com/item?id=1071111102831"),
             "the sentence around the URL must not leak into item_url"
         );
+        // The same sentence with a bare id instead of a URL.
+        let p = gs_plan(json!({"query": "添加监控 1087828137579"})).unwrap();
+        assert_eq!(p["mode"], json!("watch_add"));
+        assert_eq!(
+            p["item_url"],
+            json!("https://www.goofish.com/item?id=1087828137579")
+        );
+        // An explicit item mode reaches into the query the same way.
+        let p = gs_plan(json!({"query": "帮我看看 1087828137579", "mode": "item"})).unwrap();
+        assert_eq!(p["item_url"], json!("https://www.goofish.com/item?id=1087828137579"));
+        // But a search that merely mentions a long number is still a search.
+        assert_eq!(gs_plan(json!({"query": "1087828137579 的东西"})).unwrap()["mode"], json!("search"));
 
         // An explicit mode always wins over the inference.
         assert_eq!(
