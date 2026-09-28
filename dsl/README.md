@@ -58,6 +58,7 @@ Specs in this directory:
 | `capabilities/db_analytics.json` | `db`: SQLite (ACID writes) + DuckDB (analytics) over one file (needs `sqlite3` + `duckdb`) |
 | `capabilities/db_server_analytics.json` | `db` in **server** mode: the same HTAP ops POSTed to a `laya-workflow db serve` daemon (no `allow_exec`/`allow_paths` needed) |
 | `capabilities/notify_macos.json` | `notify`: a real macOS Notification Center banner (`osascript`, channel `auto` → banner on macOS, log file elsewhere) |
+| `capabilities/feishu_chat_history.json` | Feishu/Lark: read a conversation's history via `lark-cli` (`exec`, needs `policy.allow_exec` + auth) then judge it (validate-only in the smoke run) |
 | `capabilities/integration_hub.json` | rpc + graphql + llm + mcp + vector + webhook + sse |
 | `capabilities/ticket_structuring.json` | csv + validate + hash + tokenize + metrics + chain |
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |

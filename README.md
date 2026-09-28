@@ -192,6 +192,24 @@ laya-workflow notify --message "build finished" --title Laya --sound Glass
 A `macos`-only spec fails closed on Linux/CI — prefer `auto`, which degrades to
 the log file. See [`docs/notify.md`](./docs/notify.md).
 
+### Feishu / Lark (`飞书`)
+
+Feishu automation is not compiled in — it is driven through the `lark-cli`
+command (the `lark-im` skill, `~/.agents/skills/lark-im/`) via the `exec`
+capability. With an authorized user identity you can list chats, **read a
+conversation's message history**, search across chats, read threads, download
+attachments, and send/reply. `dsl/capabilities/feishu_chat_history.json` reads a
+chat's recent history and runs a model decision over it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+laya-workflow run --spec dsl/capabilities/feishu_chat_history.json \
+  --state '{"chat_id":"oc_xxx"}'
+```
+
+Reading needs `policy.allow_exec: true` (it spawns the CLI) and an authorized
+`lark-cli auth login`. See [`docs/feishu.md`](./docs/feishu.md).
+
 ## Script plugins (Rhai)
 
 Site- and task-specific logic lives in **Rhai plugins**, not in the compiled

@@ -1,0 +1,61 @@
+{
+  "name": "feishu_chat_history",
+  "dsl_version": 2,
+  "description": "Read a Feishu (Lark) conversation's history with the bundled `lark-cli`, then let the model judge it. Needs `lark-cli` on PATH plus `lark-cli auth login`; exec spawns it, so policy.allow_exec is required. Pass the target chat with --state '{\"chat_id\":\"oc_...\"}'.",
+  "start": "fetch",
+  "max_iterations": 6,
+  "policy": {
+    "allow_exec": true,
+    "max_timeout_ms": 60000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "history": {
+      "kind": "exec",
+      "argv": ["lark-cli", "im", "+chat-messages-list",
+               "--chat-id", "${state.chat_id}",
+               "--page-size", "20", "--order", "desc",
+               "--no-reactions", "--format", "json"],
+      "timeout_ms": 30000
+    }
+  },
+  "nodes": [
+    {
+      "name": "fetch",
+      "primary_q": "read_ok",
+      "questions": {
+        "read_ok": {
+          "type": "choice",
+          "instructions": "Did the Feishu history fetch return any messages?",
+          "criteria": {
+            "A": "yes, messages were returned",
+            "B": "no, the read failed or returned nothing"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "triage" },
+      "action": {
+        "kind": "call",
+        "capability": "history",
+        "with": {},
+        "project": { "messages_raw": "/stdout", "exit_code": "/exit_code" }
+      }
+    },
+    {
+      "name": "triage",
+      "primary_q": "needs_attention",
+      "questions": {
+        "needs_attention": {
+          "type": "choice",
+          "instructions": "Given the recent Feishu chat history above, does anything need the user's attention right now?",
+          "criteria": {
+            "A": "no, it is all routine",
+            "B": "yes, something is urgent or needs a reply"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" }
+    }
+  ]
+}
