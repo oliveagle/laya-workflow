@@ -1,0 +1,48 @@
+{
+  "name": "notify_macos",
+  "dsl_version": 2,
+  "description": "Post a real desktop notification. channel 'auto' is a macOS Notification Center banner (via osascript) with a log-file fallback on other hosts; 'macos' | 'log' | 'both' force exactly one. The banner runs through exec, so policy.allow_exec is required.",
+  "start": "announce",
+  "max_iterations": 4,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": ["${env.LAYA_WORK_DIR}"],
+    "max_timeout_ms": 10000,
+    "max_output": 8192,
+    "retries": 0
+  },
+  "capabilities": {
+    "banner": {
+      "kind": "notify",
+      "channel": "auto",
+      "title": "laya-workflow",
+      "subtitle": "${state.topic}",
+      "sound": "Glass",
+      "path": "${env.LAYA_WORK_DIR}/notify.log",
+      "timestamp": true
+    }
+  },
+  "nodes": [
+    {
+      "name": "announce",
+      "primary_q": "urgency",
+      "questions": {
+        "urgency": {
+          "type": "choice",
+          "instructions": "How urgent is this notification?",
+          "criteria": {
+            "A": "informational, no action needed",
+            "B": "action needed soon"
+          }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "action": {
+        "kind": "call",
+        "capability": "banner",
+        "with": { "event": "notify", "message": "${state.text}" },
+        "project": { "channel": "/channel", "message": "/message" }
+      }
+    }
+  ]
+}

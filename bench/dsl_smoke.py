@@ -70,6 +70,9 @@ STATES: dict[str, dict] = {
     "agent_session_probe": {
         "investigate": {"text": "please investigate this incident"},
     },
+    "notify_macos": {
+        "note": {"text": "laya-workflow notify demo", "topic": "capability demo"},
+    },
     "data_pipeline_local": {
         "note": {"text": "short note about the deploy"},
         "incident": {"text": "incident: production database is down"},

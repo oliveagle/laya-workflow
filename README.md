@@ -168,6 +168,30 @@ Search and trending runs do **not** generate overviews unless you pass
 per paper as `overview_state`/`overview_ready`/`overview_waited_ms` in the run
 result and in each `<slug>_meta.json`.
 
+### Desktop notifications (`notify`)
+
+`kind: "notify"` (alias `notify_local`) turns a workflow step into a **real
+desktop notification**. On macOS it posts a Notification Center banner through
+`osascript`'s `display notification`; on any host it can also append a line to a
+log file. No extra crate — the banner is an `osascript` call run through the
+`exec` capability, so it is governed by the same policy gates.
+
+`channel` picks the target: `log` (default; path-allow-listed file), `macos`
+(Notification Center banner), `both`, or `auto` (**macOS on a Mac, log
+elsewhere**). `title` / `subtitle` / `sound` (e.g. `Glass`) shape the banner, and
+each is overridable per call via `with`. Posting a banner needs
+`policy.allow_exec`; the log channel needs its file under `policy.allow_paths`.
+
+```bash
+export LAYA_WORK_DIR=/tmp/laya-notify-demo && mkdir -p "$LAYA_WORK_DIR"
+laya-workflow run --spec dsl/capabilities/notify_macos.json \
+  --state '{"text":"build finished","topic":"ci"}'
+laya-workflow notify --message "build finished" --title Laya --sound Glass
+```
+
+A `macos`-only spec fails closed on Linux/CI — prefer `auto`, which degrades to
+the log file. See [`docs/notify.md`](./docs/notify.md).
+
 ## Script plugins (Rhai)
 
 Site- and task-specific logic lives in **Rhai plugins**, not in the compiled

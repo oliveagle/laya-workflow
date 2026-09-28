@@ -171,6 +171,31 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DbCmd,
     },
+    /// Send a local notification. On macOS this posts a real Notification Center
+    /// banner (via `osascript`); it can also append to a log file and/or bell.
+    Notify {
+        /// Notification body text.
+        #[arg(long)]
+        message: String,
+        /// Banner title (macOS).
+        #[arg(long, default_value = "laya-workflow")]
+        title: String,
+        /// Banner subtitle (macOS).
+        #[arg(long, default_value = "")]
+        subtitle: String,
+        /// Channel: auto | macos | log | both (default auto -> macos on macOS).
+        #[arg(long, default_value = "auto")]
+        channel: String,
+        /// macOS banner sound name (e.g. Glass); empty = silent.
+        #[arg(long, default_value = "")]
+        sound: String,
+        /// Log file for the log/both channels.
+        #[arg(long)]
+        path: Option<String>,
+        /// Also emit a terminal bell.
+        #[arg(long, default_value_t = false)]
+        bell: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -535,6 +560,23 @@ fn main() -> Result<()> {
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
         Cmd::Server { cmd } => run_server(cmd),
         Cmd::Db { cmd } => run_db(cmd),
+        Cmd::Notify {
+            message,
+            title,
+            subtitle,
+            channel,
+            sound,
+            path,
+            bell,
+        } => run_notify(
+            message,
+            title,
+            subtitle,
+            channel,
+            sound,
+            path.as_deref(),
+            *bell,
+        ),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
@@ -789,6 +831,55 @@ fn shell_quote(s: &str) -> String {
     out
 }
 
+/// `notify` — deliver a local notification with no spec in the way. On macOS this
+/// is a real Notification Center banner (osascript); it can also log/bell. The
+/// CLI is the user's own action, so it enables `allow_exec` for the banner and
+/// allow-lists only the log file's directory.
+fn run_notify(
+    message: &str,
+    title: &str,
+    subtitle: &str,
+    channel: &str,
+    sound: &str,
+    path: Option<&str>,
+    bell: bool,
+) -> Result<()> {
+    use laya_workflow::capability::sys::{call_notify_local, NotifyLocalCap};
+    use laya_workflow::capability::Policy;
+
+    let mut allow_paths = Vec::new();
+    if let Some(p) = path {
+        if let Some(dir) = std::path::Path::new(p).parent() {
+            allow_paths.push(dir.to_string_lossy().into_owned());
+        }
+    }
+    let cap = NotifyLocalCap {
+        path: path.unwrap_or_default().to_string(),
+        bell,
+        timestamp: true,
+        channel: channel.to_string(),
+        title: title.to_string(),
+        subtitle: subtitle.to_string(),
+        sound: sound.to_string(),
+        timeout_ms: 10_000,
+    };
+    let policy = Policy {
+        allow_exec: true,
+        allow_paths,
+        ..Policy::default()
+    };
+    let out = call_notify_local(&cap, &json!({ "message": message }), &json!({}), &policy)?;
+    let chan = out["channel"].as_str().unwrap_or("");
+    let delivered = out["macos"]["delivered"].as_bool().unwrap_or(false);
+    let log = out["path"]
+        .as_str()
+        .filter(|p| !p.is_empty())
+        .map(|p| format!(" path={p}"))
+        .unwrap_or_default();
+    println!("notify: channel={chan} delivered={delivered}{log}");
+    Ok(())
+}
+
 /// `plugin install | list | dir`. Kept tiny: the real work (validation, sparse
 /// clone, copy, discovery) lives in `capability::plugin` so it is unit-tested.
 fn run_plugin(cmd: &PluginCmd) -> Result<()> {
@@ -936,6 +1027,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("db",        "HTAP store in two modes: `kind: \"db\"` pairs SQLite (ACID) with DuckDB (analytics) over one file — `embed` (local CLIs) or `server` (`db serve` daemon, shared writer).", "orchestrate"),
+        ("notify",    "Desktop notifications: `kind: \"notify\"` or `laya-workflow notify` posts a macOS Notification Center banner (via `osascript`, so `policy.allow_exec`) with a `log`-file fallback (`auto` picks per host).", "orchestrate"),
         ("safety",    "Safety gates every spec goes through: `policy.allow_exec`, `policy.allow_paths`, `policy.allow_hosts`, `policy.max_timeout_ms`, `policy.max_output`, secret redaction.", "validate"),
     ]
 }
@@ -1012,6 +1104,7 @@ fn print_overview() {
     println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  db s|e|st|p    serve/ensure/status/stop the HTAP SQLite+DuckDB daemon");
+    println!("  notify         post a macOS Notification Center banner (osascript) with a log-file fallback");
     println!("  skill          this help (progressive disclosure)");
     println!();
     println!("Pick the entry point that matches your intent:");
@@ -1060,6 +1153,7 @@ fn print_section(name: &str) -> Result<()> {
         "plugins" => SKILL_PLUGINS,
         "orchestrate" => SKILL_ORCHESTRATE,
         "db" => SKILL_DB,
+        "notify" => SKILL_NOTIFY,
         other => {
             eprintln!("# no such section: {other}");
             eprintln!("run `laya-workflow skill --list` to see the names.");
@@ -1109,6 +1203,7 @@ static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
 static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
 static SKILL_ORCHESTRATE: &str = include_str!("skill/sections/orchestrate.md");
 static SKILL_DB: &str = include_str!("skill/sections/db.md");
+static SKILL_NOTIFY: &str = include_str!("skill/sections/notify.md");
 
 static RECIPE_FIRST_RUN: &str = include_str!("skill/recipes/first_run.md");
 static RECIPE_LIVE_SERVER: &str = include_str!("skill/recipes/live_server.md");

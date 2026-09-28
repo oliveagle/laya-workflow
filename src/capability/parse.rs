@@ -226,6 +226,11 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             path: def.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             bell: def.get("bell").and_then(|v| v.as_bool()).unwrap_or(false),
             timestamp: def.get("timestamp").and_then(|v| v.as_bool()).unwrap_or(true),
+            channel: def.get("channel").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: def.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            subtitle: def.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            sound: def.get("sound").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
         })),
         "tcp" => Ok(Capability::Tcp(proto::TcpCap {
             host: def.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string(),

@@ -526,6 +526,12 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
             walk(&Value::String(c.username.clone()), &mut out);
             walk(&Value::String(c.password.clone()), &mut out);
         }
+        Capability::NotifyLocal(c) => {
+            walk(&Value::String(c.path.clone()), &mut out);
+            walk(&Value::String(c.title.clone()), &mut out);
+            walk(&Value::String(c.subtitle.clone()), &mut out);
+            walk(&Value::String(c.sound.clone()), &mut out);
+        }
         Capability::Db(c) => {
             walk(&Value::String(c.sqlite.clone()), &mut out);
             walk(&Value::String(c.duckdb.clone()), &mut out);
