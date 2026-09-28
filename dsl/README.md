@@ -63,6 +63,7 @@ Specs in this directory:
 | `capabilities/script_plugin.json` | `kind: "plugin"` — a workflow calling a Rhai plugin (offline) |
 | `capabilities/hf_trending.json` | HuggingFace model monitor via the `websites/huggingface.co` Rhai plugin (network: `huggingface.co`) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
+| `browser/browser_base_probe.json` | generic localhost-page smoke probe via the bundled `plugins/browser_base` plugin (open → wait_htmx → assert → done), no site logic |
 | `browser/alphaxiv_paper.json` | the alphaXiv downloader, driven by the `websites/alphaxiv.org` Rhai plugin |
 
 External capabilities: declare them under `"capabilities"` and call them from a node

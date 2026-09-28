@@ -223,6 +223,11 @@ fn builtin(name: &str) -> Option<Sources> {
             include_str!("../../plugins/textdigest/main.rhai"),
             Vec::new(),
         ),
+        "browser_base" => (
+            include_str!("../../plugins/browser_base/plugin.json"),
+            include_str!("../../plugins/browser_base/main.rhai"),
+            Vec::new(),
+        ),
         "hf-trending" => (
             include_str!("../../websites/huggingface.co/plugin/plugin.json"),
             include_str!("../../websites/huggingface.co/plugin/main.rhai"),
@@ -361,6 +366,7 @@ pub fn builtin_names() -> &'static [&'static str] {
     &[
         ALPHAXIV_PLUGIN,
         "textdigest",
+        "browser_base",
         "hf-trending",
         "hackernews",
         "arxiv",
@@ -2257,6 +2263,28 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn bundled_browser_base_compiles_and_guards() {
+        let src = builtin("browser_base").expect("bundled browser_base plugin");
+        let m = Manifest::parse(&src.manifest, "browser_base").unwrap();
+        assert_eq!(m.name, "browser_base");
+        assert_eq!(m.group, "plugins");
+        assert_eq!(m.entry_op, "run");
+        // The whole script must compile on the same engine the host builds.
+        assert!(build_engine(0).compile(&src.entry).is_ok());
+        // All four ops are present; `run` is a guard that tells you to pick one.
+        for op in ["open", "evaluate", "wait_htmx", "assert"] {
+            assert!(build_engine(0)
+                .compile(&src.entry)
+                .unwrap()
+                .iter_functions()
+                .any(|f| f.name.to_string() == op),
+                "browser_base must define op {op}");
+        }
+        let guard = call_with_host("browser_base", "run", json!({ "with": {} }));
+        assert!(guard.is_err(), "run() must reject direct invocation");
+    }
+
     fn bundled_v2ex_compiles_and_plans() {
         let src = builtin("v2ex").expect("bundled v2ex plugin");
         let m = Manifest::parse(&src.manifest, "v2ex").unwrap();

@@ -1,0 +1,10 @@
+{
+  "name": "browser_base",
+  "group": "plugins",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "description": "Generic single-page browser primitives for Laya workflows, embedded in the binary so any checkout can drive a real Chrome page via a chrome_cdp capability. Provides deterministic navigation wait (`_wait_loaded` URL polling — the engine's wait_ready skips the URL check and can return on the pre-navigation about:blank target, racing the real navigation commit), best-effort page release, a fresh-page retry wrapper, arbitrary-JS evaluation, an htmx wait, and a generic assert. No site-specific logic: consumers pass url/expression/checks via `with` and keep their own assertions."
+}

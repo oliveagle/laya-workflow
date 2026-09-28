@@ -1,0 +1,187 @@
+{
+  "name": "browser_base_probe",
+  "dsl_version": 2,
+  "description": "Generic localhost-page smoke probe driving the bundled `browser_base` plugin (embedded in the binary, so it works from any checkout): open the URL and deterministically wait until it is actually loaded (URL-polling `_wait_loaded`, not the pre-navigation about:blank trap), report whether htmx loads, then assert the page really rendered (non-empty title + body). No site-specific logic — point state.url at any local server. Run with the offline heuristic: a plugin op that throws (page never reached / assert failed) fails the whole run (rc=1); otherwise the graph just routes to the terminal node.",
+  "start": "open",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 262144,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 15000,
+      "max_text": 6000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000
+    },
+    "page_open": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "open",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    },
+    "page_htmx": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "wait_htmx",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    },
+    "page_assert": {
+      "kind": "plugin",
+      "plugin": "browser_base",
+      "op": "assert",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open the target URL in a real Chrome page and wait until it is actually loaded (URL matches + readyState complete)?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "wait_htmx"
+      },
+      "state": {
+        "keep": [
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_open",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "page_url": "/url",
+          "page_title": "/title",
+          "page_sample": "/sample"
+        }
+      }
+    },
+    {
+      "name": "wait_htmx",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Wait up to 15s for window.htmx to become defined on the page, then report whether it loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "assert"
+      },
+      "state": {
+        "keep": [
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_htmx",
+        "with": {
+          "url": "${state.url}"
+        },
+        "project": {
+          "htmx_loaded": "/htmx_loaded",
+          "htmx_url": "/url",
+          "htmx_title": "/title"
+        }
+      }
+    },
+    {
+      "name": "assert",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Run the generic rendered-page assertion (non-empty title and body text) and require it to pass?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "done"
+      },
+      "state": {
+        "keep": [
+          "url"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "page_assert",
+        "with": {
+          "url": "${state.url}",
+          "expression": "({ title_ok: (document.title || \"\").length > 0, text_ok: !!(document.body && document.body.innerText.length > 0), url: location.href, sample: document.body ? document.body.innerText.slice(0, 200) : \"\" })",
+          "checks": {
+            "title_ok": true,
+            "text_ok": true
+          }
+        },
+        "project": {
+          "assert_url": "/url",
+          "assert_sample": "/sample",
+          "assert_pass": "/pass"
+        }
+      }
+    },
+    {
+      "name": "done",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Is the browser_base probe complete after the page loaded, htmx was reported, and the render assertion passed?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url"
+        ]
+      }
+    }
+  ]
+}

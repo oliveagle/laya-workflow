@@ -219,8 +219,9 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 
 | plugin | what it shows |
 |--------|---------------|
-| `websites/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
+| `websites/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, on-demand AI Overview generation, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
+| `plugins/browser_base` | generic single-page browser primitives (open / evaluate / wait_htmx / assert) with deterministic navigation-wait + retry — the shared base for browser verification plugins; `dsl/browser/browser_base_probe.json` demos it |
 | `websites/hf-trending` | a HuggingFace model monitor (no browser): per-model rank / likes / downloads / card metadata + the model card, written to snapshots, a report, `cards/` and `history.jsonl` (`dsl/capabilities/hf_trending.json`) |
 | `websites/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), a full-text search (public Algolia index) and one discussion with its comment tree (`dsl/browser/hackernews.json`) |
 | `websites/arxiv` | an arXiv reader over Chrome/CDP: search papers by phrase, or read one paper's abstract page into a Markdown digest + `meta.json` (`dsl/browser/arxiv.json`) |
@@ -236,5 +237,79 @@ Two Rhai sharp edges are worth knowing when writing plugins:
 `dsl/browser/alphaxiv_paper.json` is the plugin-driven spec:
 `laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending" --state '{"count":3}'`.
 
+### Generating a missing AI Overview
+
+alphaXiv generates a paper's AI Overview on request. Until it exists, the page's
+overview section reads "No overview yet…", and a plain render saves that string
+as though it were the overview — so the Markdown looks complete while carrying
+nothing. `page/overview.js` reads the section's real state (`ready`,
+`placeholder`, `generating`, `absent`, `unknown`), and in `url` mode
+`main.rhai` clicks the site's own **Generate overview** button and waits for the
+result before capturing. The capture then reuses the tab it waited on, via
+`save_article`'s `target_id`, instead of navigating to the paper twice.
+
+The wait is bounded on purpose: one CDP poll per round (kept under the
+capability's per-call timeout), a wall-clock budget (`overview_wait_ms`, default
+7 minutes — the site itself says about five), and a bounded number of
+re-entries. Re-entering the paper is what makes the wait work at all: the
+generation is server-side and survives a reload, but the page's live channel is
+not, so the tab that clicked may never hear about the run it started, while a
+page loaded afterwards re-reads what the server already has.
+
+`generate_overview` (default on for `url` mode, off for `search`/`trending`
+because generation costs minutes per paper) turns it off;
+`overview_max_papers` caps how many papers of a listing run generate one.
+Every paper's outcome lands in the run result and in `<slug>_meta.json` as
+`overview_state`, `overview_ready`, `overview_clicked` and `overview_waited_ms`.
+
 The browser capability's `op: "alphaxiv"` is kept as a compatibility entry point
 and simply forwards to the same plugin.
+
+
+## Bundled base browser plugin: `plugins/browser_base`
+
+The binary ships one **generic** browser plugin so a checkout can drive a real
+Chrome page (via a `chrome_cdp` capability) without shipping any site logic.
+It exists to hold the browser mechanics every verification plugin would
+otherwise re-implement, factored out of `devine_int`'s `devine_console_probe`:
+
+* **`_wait_loaded(host, target, prefix)`** — poll short evaluates until the
+  target URL matches `prefix` **and** `readyState` is `complete`. This is
+  deliberate: `host.browser_wait_ready` skips the URL check and can return on
+  the pre-navigation `about:blank` target, so a long evaluate issued right
+  after races the real navigation commit (CDP `-32000 Inspected target
+  navigated or closed`). 100 × 0.15s ≈ 15s worst case.
+* **`_safe_release`** — best-effort page close that never masks the primary
+  error.
+* **`_retry(host, ctx, op)`** — up to 3 attempts, a fresh page per attempt for
+  self-contained ops, as a secondary net for any other transient CDP failure.
+* **`wait_htmx_helper()`** — the in-page JS that waits for `window.htmx`.
+
+Ops (pick via the capability `op` or `with.op`):
+
+| op | `with` | behaviour |
+|----|--------|-----------|
+| `open` | `url`, `prefix` (default `url`), `keep_open` | open + `_wait_loaded`; reports `{url, title, ready, sample}`; self-contained (page closed) unless `keep_open: true`, which returns a live `target_id` for later nodes |
+| `evaluate` | `expression` (JS), `url`/`target_id`, `prefix`, `await_promise` | run arbitrary JS on a page; returns the evaluate result |
+| `wait_htmx` | `url`/`target_id`, `prefix` | wait up to 15s for `window.htmx`; reports `{htmx_loaded, url, title, text}` |
+| `assert` | `expression`, `checks` (map of key → expected), `url`/`target_id` | run the expression and require every check to equal its expected value; **throws a deterministic FAIL otherwise** — a throwing plugin fails the workflow (rc=1), so a spec routes PASS/FAIL without an LLM |
+
+`run()` is a guard that tells you to pick an op. `dsl/browser/browser_base_probe.json`
+is a runnable demo (open → wait_htmx → assert → done) against any localhost URL.
+Site/specific assertions (e.g. devine console's hub/shell/pong checks) stay in
+the owning repo — `devine_int` keeps its own `devine_console_probe` on top.
+
+Local orchestration helpers live in `scripts/` (both are the generic,
+repo-agnostic half of the devine_int workflow; the devine-specific server build
+stays in `devine_int`):
+
+* `scripts/laya-ensure-chrome.sh` — ensure a CDP Chrome on `127.0.0.1:<port>`
+  (idempotent; `LAYA_CDP_PORT` / `CHROME_BIN` override). Point the spec's
+  `chrome_cdp` endpoint at it and run via a `shell` capability
+  (`policy.allow_exec: true`) before the browser nodes.
+* `scripts/laya-ensure-server.py` — generic local HTTP server lifecycle
+  (`ensure` / `start [--daemon]` / `stop` / `status`) for any command and port.
+  Liveness = "the port answers HTTP at all" (2xx–5xx), so a plain
+  `python3 -m http.server` counts as up even on a default `/healthz` 404; pass
+  `--health-path` when the server has a real health endpoint. State files under
+  `/tmp/laya-ensure-server-<port>.{pid,base,log}`.
