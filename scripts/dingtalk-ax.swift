@@ -678,6 +678,21 @@ case "imgmap":
         }
         print("\(i): n=\(imgs.count) " + parts.joined(separator: " "))
     }
+case "rowkids":
+    let idx = Int(args.dropFirst().first ?? "0") ?? 0
+    let rows = messageRows()
+    guard idx < rows.count else { print("no row"); exit(2) }
+    for e in all(rows[idx]) {
+        let p = point(e, kAXPositionAttribute as String).map { "(\(Int($0.x)),\(Int($0.y)))" } ?? "-"
+        let sz = size(e).map { "\(Int($0.width))x\(Int($0.height))" } ?? "-"
+        print("\(s(e, kAXRoleAttribute as String) ?? "?") \(p) \(sz) val=\(s(e,kAXValueAttribute as String) ?? "") t=\(s(e,kAXTitleAttribute as String) ?? "")")
+    }
+case "rowpos":
+    for (i, r) in messageRows().enumerated() {
+        let p = point(r, kAXPositionAttribute as String).map { "(\(Int($0.x)),\(Int($0.y)))" } ?? "-"
+        let sz = size(r).map { "\(Int($0.width))x\(Int($0.height))" } ?? "-"
+        print("\(i) \(p) \(sz)")
+    }
 case "imgattrs":
     for (i, r) in messageRows().enumerated() {
         for e in all(r, role: "AXImage") {
