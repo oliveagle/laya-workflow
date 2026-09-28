@@ -21,7 +21,7 @@ pub struct MathCap {
 
 pub fn call_math(c: &MathCap, with: &Value, _state: &Value) -> Result<Value> {
     let op = effective_op(&c.op, with, "eval");
-        match op.as_str() {
+    match op.as_str() {
         "eval" => {
             let expr = get_text(with, "expression")?;
             let v = eval_expr(&expr).ok_or_else(|| anyhow!("math.eval: cannot parse {expr:?}"))?;
@@ -179,10 +179,16 @@ pub fn eval_expr(s: &str) -> Option<f64> {
             if start == self.i {
                 return None;
             }
-            std::str::from_utf8(&self.b[start..self.i]).ok()?.parse().ok()
+            std::str::from_utf8(&self.b[start..self.i])
+                .ok()?
+                .parse()
+                .ok()
         }
     }
-    let mut p = P { b: s.as_bytes(), i: 0 };
+    let mut p = P {
+        b: s.as_bytes(),
+        i: 0,
+    };
     let v = p.expr()?;
     p.ws();
     if p.i == p.b.len() {
@@ -191,4 +197,3 @@ pub fn eval_expr(s: &str) -> Option<f64> {
         None
     }
 }
-

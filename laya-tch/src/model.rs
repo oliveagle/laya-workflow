@@ -62,8 +62,8 @@ struct HeadLayer {
 }
 
 pub struct LayaModel {
-    tok_emb: Tensor,     // [V, HIDDEN]
-    emb_norm_w: Tensor,  // [HIDDEN]
+    tok_emb: Tensor,    // [V, HIDDEN]
+    emb_norm_w: Tensor, // [HIDDEN]
     layers: Vec<EncLayer>,
     final_norm_w: Tensor,
     type_emb: Tensor, // [3, HIDDEN]
@@ -98,7 +98,11 @@ fn f16_to_f32(bytes: &[u8]) -> f32 {
 
 fn bf16_to_f32(bytes: &[u8]) -> f32 {
     let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
-    let sign = if (bits >> 15) & 1 == 1 { -1.0f32 } else { 1.0f32 };
+    let sign = if (bits >> 15) & 1 == 1 {
+        -1.0f32
+    } else {
+        1.0f32
+    };
     let exp = ((bits >> 7) & 0xFF) as i32;
     let man = (bits & 0x7F) as u32;
     if exp == 0xFF {
@@ -115,7 +119,11 @@ fn bf16_to_f32(bytes: &[u8]) -> f32 {
 }
 
 fn half_bits_to_f32(bits: u16) -> f32 {
-    let sign = if (bits >> 15) & 1 == 1 { -1.0f32 } else { 1.0f32 };
+    let sign = if (bits >> 15) & 1 == 1 {
+        -1.0f32
+    } else {
+        1.0f32
+    };
     let exp = ((bits >> 10) & 0x1F) as i32;
     let man = (bits & 0x3FF) as f32 / 1024.0;
     if exp == 0x1F {
@@ -201,8 +209,12 @@ fn rope_table(l: i64, theta: f64, device: Device) -> (Tensor, Tensor) {
         }
     }
     (
-        Tensor::from_slice(&cos).view([l, HEAD_DIM]).to_device(device),
-        Tensor::from_slice(&sin).view([l, HEAD_DIM]).to_device(device),
+        Tensor::from_slice(&cos)
+            .view([l, HEAD_DIM])
+            .to_device(device),
+        Tensor::from_slice(&sin)
+            .view([l, HEAD_DIM])
+            .to_device(device),
     )
 }
 
@@ -334,7 +346,11 @@ impl LayaModel {
         if let Some(v) = cache.get(&key) {
             return (v.0.shallow_clone(), v.1.shallow_clone());
         }
-        let theta = if is_full { ROPE_THETA_FULL } else { ROPE_THETA_SLIDING };
+        let theta = if is_full {
+            ROPE_THETA_FULL
+        } else {
+            ROPE_THETA_SLIDING
+        };
         let tables = rope_table(l, theta, self.device);
         let out = (tables.0.shallow_clone(), tables.1.shallow_clone());
         cache.insert(key, tables);
@@ -389,9 +405,21 @@ impl LayaModel {
                 None => h.shallow_clone(),
             };
             let qkv = normed.linear(&layer.wqkv, None::<&Tensor>); // [L, 3H]
-            let q = qkv.narrow(1, 0, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
-            let k = qkv.narrow(1, HIDDEN, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
-            let v = qkv.narrow(1, 2 * HIDDEN, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
+            let q = qkv
+                .narrow(1, 0, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
+            let k = qkv
+                .narrow(1, HIDDEN, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
+            let v = qkv
+                .narrow(1, 2 * HIDDEN, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
             let (cos, sin) = self.rope(l, layer.is_full);
             let q = apply_rope(&q, &cos, &sin);
             let k = apply_rope(&k, &cos, &sin);
@@ -422,7 +450,9 @@ impl LayaModel {
         let encoder_out = h.shallow_clone();
 
         // add type embedding (broadcast over sequence)
-        let te = self.type_emb.index_select(0, &Tensor::from_slice(&[qtype]).to_device(self.device)); // [1, HIDDEN]
+        let te = self
+            .type_emb
+            .index_select(0, &Tensor::from_slice(&[qtype]).to_device(self.device)); // [1, HIDDEN]
         h = h + te;
         let after_type = h.shallow_clone();
 
@@ -431,9 +461,21 @@ impl LayaModel {
             // self-attention
             let x = layer_norm(&h, &layer.norm1_w, Some(&layer.norm1_b));
             let qkv = x.linear(&layer.in_proj_w, Some(&layer.in_proj_b)); // [L, 3H]
-            let q = qkv.narrow(1, 0, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
-            let k = qkv.narrow(1, HIDDEN, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
-            let v = qkv.narrow(1, 2 * HIDDEN, HIDDEN).view([l, HEADS, HEAD_DIM]).transpose(0, 1).contiguous();
+            let q = qkv
+                .narrow(1, 0, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
+            let k = qkv
+                .narrow(1, HIDDEN, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
+            let v = qkv
+                .narrow(1, 2 * HIDDEN, HIDDEN)
+                .view([l, HEADS, HEAD_DIM])
+                .transpose(0, 1)
+                .contiguous();
             let scaling = 1.0f64 / (HEAD_DIM as f64).sqrt();
             let scores = q.matmul(&k.transpose(-2, -1)) * scaling;
             let probs = scores.softmax(-1, Kind::Float);
@@ -499,7 +541,9 @@ impl LayaModel {
                 attn_v[bi * lmax as usize + i] = 1.0;
             }
         }
-        let ids_t = Tensor::from_slice(&ids_v).view([bf, lmax]).to_device(self.device);
+        let ids_t = Tensor::from_slice(&ids_v)
+            .view([bf, lmax])
+            .to_device(self.device);
         let mut h = self
             .tok_emb
             .index_select(0, &ids_t.view([-1]))
@@ -522,9 +566,21 @@ impl LayaModel {
             lap!(1);
             let qkv = normed.linear(&layer.wqkv, None::<&Tensor>); // [B,L,3H]
             lap!(2);
-            let q = qkv.narrow(2, 0, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
-            let k = qkv.narrow(2, HIDDEN, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
-            let v = qkv.narrow(2, 2 * HIDDEN, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
+            let q = qkv
+                .narrow(2, 0, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
+            let k = qkv
+                .narrow(2, HIDDEN, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
+            let v = qkv
+                .narrow(2, 2 * HIDDEN, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
             let (cos, sin) = self.rope(lmax, layer.is_full);
             let cos = cos.view([1, 1, lmax, HEAD_DIM]);
             let sin = sin.view([1, 1, lmax, HEAD_DIM]);
@@ -562,7 +618,8 @@ impl LayaModel {
         lap!(5);
 
         let qt: Vec<i64> = seqs.iter().map(|s| s.qtype).collect();
-        let te = self.type_emb
+        let te = self
+            .type_emb
             .index_select(0, &Tensor::from_slice(&qt).to_device(self.device))
             .unsqueeze(1); // [B,1,H]
         h = h + te;
@@ -575,9 +632,21 @@ impl LayaModel {
         for layer in &self.head {
             let x = layer_norm(&h, &layer.norm1_w, Some(&layer.norm1_b));
             let qkv = x.linear(&layer.in_proj_w, Some(&layer.in_proj_b));
-            let q = qkv.narrow(2, 0, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
-            let k = qkv.narrow(2, HIDDEN, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
-            let v = qkv.narrow(2, 2 * HIDDEN, HIDDEN).view([bf, lmax, HEADS, HEAD_DIM]).transpose(1, 2).contiguous();
+            let q = qkv
+                .narrow(2, 0, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
+            let k = qkv
+                .narrow(2, HIDDEN, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
+            let v = qkv
+                .narrow(2, 2 * HIDDEN, HIDDEN)
+                .view([bf, lmax, HEADS, HEAD_DIM])
+                .transpose(1, 2)
+                .contiguous();
             let scaling = 1.0f64 / (HEAD_DIM as f64).sqrt();
             let scores = q.matmul(&k.transpose(-2, -1)) * scaling + &pad_mask;
             let probs = scores.softmax(-1, Kind::Float);
@@ -613,8 +682,14 @@ impl LayaModel {
         lap!(6);
         if profile {
             let names = [
-                "embed", "enc_norm", "enc_qkv_linear", "enc_attn(rope+sdpa)", "enc_mlp",
-                "final_norm", "head(type+2L)", "scorer",
+                "embed",
+                "enc_norm",
+                "enc_qkv_linear",
+                "enc_attn(rope+sdpa)",
+                "enc_mlp",
+                "final_norm",
+                "head(type+2L)",
+                "scorer",
             ];
             for (i, n) in names.iter().enumerate() {
                 eprintln!("[prof] {:<20} {:8.1} ms", n, acc[i] * 1000.0);

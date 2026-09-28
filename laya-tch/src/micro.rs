@@ -39,28 +39,40 @@ fn main() {
     for _ in 0..iters {
         let _ = x.layer_norm(&[1024], Some(&w), None::<&Tensor>, 1e-5, false);
     }
-    println!("  layer_norm [384x1024]        {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  layer_norm [384x1024]        {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     let g = Tensor::randn([384, 2624], (Kind::Float, tch::Device::Cpu));
     let t = Instant::now();
     for _ in 0..iters {
         let _ = g.gelu("none");
     }
-    println!("  gelu [384x2624]              {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  gelu [384x2624]              {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     let s = Tensor::randn([4, 16, 96, 96], (Kind::Float, tch::Device::Cpu));
     let t = Instant::now();
     for _ in 0..iters {
         let _ = s.softmax(-1, Kind::Float);
     }
-    println!("  softmax [4,16,96,96]         {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  softmax [4,16,96,96]         {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     let q = Tensor::randn([4, 16, 96, 64], (Kind::Float, tch::Device::Cpu));
     let t = Instant::now();
     for _ in 0..iters {
         let _ = q.transpose(1, 2).contiguous();
     }
-    println!("  transpose+contig [4,16,96,64] {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  transpose+contig [4,16,96,64] {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     // ---- composite blocks replicating the real forward shapes ----
     let m = 384i64;
@@ -77,11 +89,18 @@ fn main() {
         let act = inp.gelu("none") * gt;
         let _ = act.linear(&wo_mlp, None::<&Tensor>);
     }
-    println!("  MLP block (ln+wi+gelu+wo)       {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  MLP block (ln+wi+gelu+wo)       {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     // 28 distinct weight sets (emulates streaming the real encoder weights)
-    let wis: Vec<Tensor> = (0..28).map(|_| Tensor::randn([5248, 1024], (Kind::Float, tch::Device::Cpu))).collect();
-    let wos: Vec<Tensor> = (0..28).map(|_| Tensor::randn([1024, 2624], (Kind::Float, tch::Device::Cpu))).collect();
+    let wis: Vec<Tensor> = (0..28)
+        .map(|_| Tensor::randn([5248, 1024], (Kind::Float, tch::Device::Cpu)))
+        .collect();
+    let wos: Vec<Tensor> = (0..28)
+        .map(|_| Tensor::randn([1024, 2624], (Kind::Float, tch::Device::Cpu)))
+        .collect();
     let t = Instant::now();
     for _ in 0..iters {
         let mut h = x0.shallow_clone();
@@ -94,7 +113,10 @@ fn main() {
             h = h + act.linear(&wos[li], None::<&Tensor>);
         }
     }
-    println!("  MLP x28 distinct weights        {:7.3} ms/iter (28 layers)", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  MLP x28 distinct weights        {:7.3} ms/iter (28 layers)",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 
     let wqkv = Tensor::randn([3072, 1024], (Kind::Float, tch::Device::Cpu));
     let wo_attn = Tensor::randn([1024, 1024], (Kind::Float, tch::Device::Cpu));
@@ -104,14 +126,34 @@ fn main() {
     let t = Instant::now();
     for _ in 0..iters {
         let qkv = x0.linear(&wqkv, None::<&Tensor>).view([4, 96, 3072]);
-        let q = qkv.narrow(2, 0, 1024).view([4, 96, 16, 64]).transpose(1, 2).contiguous();
-        let k = qkv.narrow(2, 1024, 1024).view([4, 96, 16, 64]).transpose(1, 2).contiguous();
-        let v = qkv.narrow(2, 2048, 1024).view([4, 96, 16, 64]).transpose(1, 2).contiguous();
+        let q = qkv
+            .narrow(2, 0, 1024)
+            .view([4, 96, 16, 64])
+            .transpose(1, 2)
+            .contiguous();
+        let k = qkv
+            .narrow(2, 1024, 1024)
+            .view([4, 96, 16, 64])
+            .transpose(1, 2)
+            .contiguous();
+        let v = qkv
+            .narrow(2, 2048, 1024)
+            .view([4, 96, 16, 64])
+            .transpose(1, 2)
+            .contiguous();
         let q = &q * &cos + &q * &sin;
         let k = &k * &cos + &k * &sin;
         let s = q.matmul(&k.transpose(-2, -1)) * 0.125 + &mask;
         let p = s.softmax(-1, Kind::Float);
-        let _ = p.matmul(&v).transpose(1, 2).contiguous().view([m, 1024]).linear(&wo_attn, None::<&Tensor>);
+        let _ = p
+            .matmul(&v)
+            .transpose(1, 2)
+            .contiguous()
+            .view([m, 1024])
+            .linear(&wo_attn, None::<&Tensor>);
     }
-    println!("  Attn block (qkv+rope+sdpa+wo)   {:7.3} ms/iter", t.elapsed().as_secs_f64() / iters as f64 * 1000.0);
+    println!(
+        "  Attn block (qkv+rope+sdpa+wo)   {:7.3} ms/iter",
+        t.elapsed().as_secs_f64() / iters as f64 * 1000.0
+    );
 }

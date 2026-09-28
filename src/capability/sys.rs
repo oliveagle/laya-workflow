@@ -35,7 +35,11 @@ pub fn call_metrics(c: &MetricsCap, with: &Value, state: &Value) -> Result<Value
 
     if want.contains(&"uptime") {
         if let Ok(t) = std::fs::read_to_string("/proc/uptime") {
-            if let Some(secs) = t.split_whitespace().next().and_then(|s| s.parse::<f64>().ok()) {
+            if let Some(secs) = t
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<f64>().ok())
+            {
                 out.insert("uptime_secs".into(), json!(secs));
             }
         }
@@ -58,7 +62,11 @@ pub fn call_metrics(c: &MetricsCap, with: &Value, state: &Value) -> Result<Value
             let mut kb = std::collections::HashMap::new();
             for line in t.lines() {
                 if let Some((k, rest)) = line.split_once(':') {
-                    if let Some(v) = rest.split_whitespace().next().and_then(|s| s.parse::<u64>().ok()) {
+                    if let Some(v) = rest
+                        .split_whitespace()
+                        .next()
+                        .and_then(|s| s.parse::<u64>().ok())
+                    {
                         kb.insert(k.trim().to_string(), v);
                     }
                 }
@@ -82,7 +90,9 @@ pub fn call_metrics(c: &MetricsCap, with: &Value, state: &Value) -> Result<Value
     }
     if want.contains(&"disk") {
         let p = if c.disk_path.is_empty() {
-            with.get("disk_path").map(stringify).unwrap_or_else(|| "/".to_string())
+            with.get("disk_path")
+                .map(stringify)
+                .unwrap_or_else(|| "/".to_string())
         } else {
             c.disk_path.clone()
         };
@@ -90,7 +100,10 @@ pub fn call_metrics(c: &MetricsCap, with: &Value, state: &Value) -> Result<Value
         // statvfs via `df -Pk` would need a shell; read /proc/self/mountinfo is
         // messy, so use libc-free fallback: report the mount point only.
         out.insert("disk_path".into(), json!(p));
-        out.insert("disk_note".into(), json!("use the `shell` or `exec` capability for exact df numbers"));
+        out.insert(
+            "disk_note".into(),
+            json!("use the `shell` or `exec` capability for exact df numbers"),
+        );
     }
     Ok(Value::Object(out))
 }
@@ -107,8 +120,16 @@ pub struct NotifyLocalCap {
     pub timestamp: bool,
 }
 
-pub fn call_notify_local(c: &NotifyLocalCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
-    let event = with.get("event").map(stringify).unwrap_or_else(|| "notify".to_string());
+pub fn call_notify_local(
+    c: &NotifyLocalCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
+    let event = with
+        .get("event")
+        .map(stringify)
+        .unwrap_or_else(|| "notify".to_string());
     let message = with.get("message").map(stringify).unwrap_or_default();
     let raw_path = if c.path.is_empty() {
         with.get("path").map(stringify).unwrap_or_default()
@@ -131,7 +152,10 @@ pub fn call_notify_local(c: &NotifyLocalCap, with: &Value, state: &Value, policy
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
     f.write_all(line.as_bytes())?;
     if c.bell {
         let _ = std::io::stderr().write_all(b"\x07");

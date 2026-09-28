@@ -65,7 +65,10 @@ pub enum VersionCheck {
 
 /// Read and check `"dsl_version"` without parsing the rest of the spec.
 pub fn check_version(spec: &Value) -> Result<VersionCheck> {
-    let declared = spec.get("dsl_version").and_then(|v| v.as_u64()).unwrap_or(1);
+    let declared = spec
+        .get("dsl_version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1);
     if declared == 0 {
         bail!("spec 'dsl_version' must be >= 1 (got 0)");
     }
@@ -76,7 +79,10 @@ pub fn check_version(spec: &Value) -> Result<VersionCheck> {
         );
     }
     if declared < DSL_VERSION {
-        return Ok(VersionCheck::Upgradable { from: declared, to: DSL_VERSION });
+        return Ok(VersionCheck::Upgradable {
+            from: declared,
+            to: DSL_VERSION,
+        });
     }
     Ok(VersionCheck::Ok(declared))
 }
@@ -193,11 +199,18 @@ pub fn user_spec_dir() -> Option<std::path::PathBuf> {
         return Some(std::path::PathBuf::from(d));
     }
     if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        return Some(std::path::PathBuf::from(x).join("laya-workflow").join("dsl"));
+        return Some(
+            std::path::PathBuf::from(x)
+                .join("laya-workflow")
+                .join("dsl"),
+        );
     }
-    std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .map(|h| std::path::PathBuf::from(h).join(".config").join("laya-workflow").join("dsl"))
+    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| {
+        std::path::PathBuf::from(h)
+            .join(".config")
+            .join("laya-workflow")
+            .join("dsl")
+    })
 }
 
 /// The explicitly pinned root, if any.
@@ -244,18 +257,30 @@ pub fn discover_repo_spec_dir(start: &std::path::Path) -> Option<std::path::Path
 /// that *is* the checkout) are collapsed, keeping the higher-priority layer.
 pub fn spec_roots() -> Vec<SpecRoot> {
     if let Some(ex) = explicit_dsl_dir() {
-        return vec![SpecRoot { path: ex, layer: SpecLayer::Explicit }];
+        return vec![SpecRoot {
+            path: ex,
+            layer: SpecLayer::Explicit,
+        }];
     }
     let mut roots: Vec<SpecRoot> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(repo) = discover_repo_spec_dir(&cwd) {
-            roots.push(SpecRoot { path: repo, layer: SpecLayer::Repo });
+            roots.push(SpecRoot {
+                path: repo,
+                layer: SpecLayer::Repo,
+            });
         }
     }
     if let Some(user) = user_spec_dir() {
-        roots.push(SpecRoot { path: user, layer: SpecLayer::User });
+        roots.push(SpecRoot {
+            path: user,
+            layer: SpecLayer::User,
+        });
     }
-    roots.push(SpecRoot { path: builtin_spec_dir(), layer: SpecLayer::Builtin });
+    roots.push(SpecRoot {
+        path: builtin_spec_dir(),
+        layer: SpecLayer::Builtin,
+    });
     dedup_by_real_path(roots)
 }
 
@@ -358,7 +383,9 @@ fn resolve_ref_dir(
     from_dir: Option<&std::path::Path>,
 ) -> Result<(Value, Option<std::path::PathBuf>)> {
     match r {
-        Value::Object(o) if o.contains_key("inline") => Ok((o["inline"].clone(), from_dir.map(|d| d.to_path_buf()))),
+        Value::Object(o) if o.contains_key("inline") => {
+            Ok((o["inline"].clone(), from_dir.map(|d| d.to_path_buf())))
+        }
         Value::String(raw) => {
             let (name, pinned) = split_version(raw);
             if pinned.is_none() {
@@ -388,7 +415,10 @@ fn resolve_ref_dir(
                 }
                 // tree search, honouring the version pin (or picking the highest)
                 if let Some(found) = find_in_tree_versioned(base, &name, pinned)? {
-                    return Ok((read_spec_file(&found)?, found.parent().map(|d| d.to_path_buf())));
+                    return Ok((
+                        read_spec_file(&found)?,
+                        found.parent().map(|d| d.to_path_buf()),
+                    ));
                 }
             }
             let hint = match pinned {
@@ -459,7 +489,10 @@ fn find_in_tree_versioned(
                         }
                     }
                     if p.join("workflow.json").is_file() {
-                        hits.push((declared_version(&p.join("workflow.json")).unwrap_or(1), p.join("workflow.json")));
+                        hits.push((
+                            declared_version(&p.join("workflow.json")).unwrap_or(1),
+                            p.join("workflow.json"),
+                        ));
                     }
                 }
                 dirs.push(p);
@@ -476,7 +509,11 @@ fn find_in_tree_versioned(
         }
     }
     if let Some(w) = want {
-        return Ok(hits.into_iter().filter(|(v, _)| *v == w).map(|(_, p)| p).min());
+        return Ok(hits
+            .into_iter()
+            .filter(|(v, _)| *v == w)
+            .map(|(_, p)| p)
+            .min());
     }
     hits.sort_by_key(|(v, p)| (*v, p.clone()));
     Ok(hits.pop().map(|(_, p)| p)) // highest version
@@ -591,7 +628,10 @@ pub fn from_spec_with_dir(
                     .and_then(|v| v.as_str())
                     .or_else(|| sub_spec.get("name").and_then(|v| v.as_str()))
                     .unwrap_or("sub");
-                let sub_start = sub_spec.get("start").and_then(|v| v.as_str()).unwrap_or("start");
+                let sub_start = sub_spec
+                    .get("start")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("start");
                 start = format!("{sub_name}::{sub_start}");
             }
         }
@@ -641,7 +681,10 @@ pub fn node_from_spec_with(n: &Value, registry: Option<Registry>) -> Result<Work
         .or_else(|| edge_v.get("min_confidence"))
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
-    let refs: Vec<(&str, &str)> = condition.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let refs: Vec<(&str, &str)> = condition
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
     let edge = Edge::new(&refs, default, min_confidence);
 
     let mut node = WorkflowNode::new(name, questions.clone(), edge);
@@ -807,12 +850,16 @@ pub fn run_call_action(
         }
         for (out_key, ptr) in proj {
             if let Some(ptr) = ptr.as_str() {
-                let segs: Vec<&str> = ptr.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+                let segs: Vec<&str> = ptr
+                    .trim_start_matches('/')
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 let mut found: Option<Value> = None;
                 for root in &roots {
-                    if let Some(v) = json_pointer(root, &segs).or_else(|| {
-                        root.get("body").and_then(|b| json_pointer(b, &segs))
-                    }) {
+                    if let Some(v) = json_pointer(root, &segs)
+                        .or_else(|| root.get("body").and_then(|b| json_pointer(b, &segs)))
+                    {
                         found = Some(v.clone());
                         break;
                     }
@@ -869,10 +916,7 @@ pub fn run_action(
         .get("kind")
         .and_then(|k| k.as_str())
         .ok_or_else(|| anyhow!("action missing 'kind'"))?;
-    let q = action
-        .get("question")
-        .and_then(|q| q.as_str())
-        .or(primary);
+    let q = action.get("question").and_then(|q| q.as_str()).or(primary);
     let q = match q {
         Some(q) => q,
         None => {
@@ -891,7 +935,11 @@ pub fn run_action(
             let keys: Vec<String> = action
                 .get("keys")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
                 .unwrap_or_default();
             let mut out = Map::new();
             for k in keys {
@@ -945,8 +993,14 @@ pub fn run_action(
                 .answers
                 .get(q)
                 .ok_or_else(|| anyhow!("action gate: no answer {q:?}"))?;
-            let block_at = action.get("block_at").and_then(|x| x.as_f64()).unwrap_or(0.85);
-            let allow_at = action.get("allow_at").and_then(|x| x.as_f64()).unwrap_or(0.85);
+            let block_at = action
+                .get("block_at")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.85);
+            let allow_at = action
+                .get("allow_at")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.85);
             let option = action.get("option").and_then(|x| x.as_str()).unwrap_or("B");
             let p_unsafe = d.prob(option);
             let p_safe = 1.0 - p_unsafe;
@@ -989,7 +1043,11 @@ fn apply_rules_multi(
     default_d: &crate::workflow::Decision,
 ) -> String {
     for r in rules {
-        let label = r.get("label").and_then(|l| l.as_str()).unwrap_or("unknown").to_string();
+        let label = r
+            .get("label")
+            .and_then(|l| l.as_str())
+            .unwrap_or("unknown")
+            .to_string();
         match r.get("when") {
             Some(w) if rule_matches_multi(w, v, default_d) => return label,
             Some(_) => continue,
@@ -1004,7 +1062,11 @@ fn apply_rules_multi(
 #[allow(dead_code)]
 fn apply_rules(rules: &[Value], d: &crate::workflow::Decision) -> String {
     for r in rules {
-        let label = r.get("label").and_then(|l| l.as_str()).unwrap_or("unknown").to_string();
+        let label = r
+            .get("label")
+            .and_then(|l| l.as_str())
+            .unwrap_or("unknown")
+            .to_string();
         let when = match r.get("when") {
             Some(w) => w,
             None => return label,
@@ -1017,7 +1079,11 @@ fn apply_rules(rules: &[Value], d: &crate::workflow::Decision) -> String {
 }
 
 fn rule_matches(when: &Value, d: &crate::workflow::Decision) -> bool {
-    if when.get("always").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if when
+        .get("always")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         return true;
     }
     if let Some(ans) = when.get("answer_in").and_then(|v| v.as_array()) {
@@ -1053,7 +1119,11 @@ fn rule_matches_multi(
     v: &crate::workflow::Verdict,
     default_d: &crate::workflow::Decision,
 ) -> bool {
-    if when.get("always").and_then(|x| x.as_bool()).unwrap_or(false) {
+    if when
+        .get("always")
+        .and_then(|x| x.as_bool())
+        .unwrap_or(false)
+    {
         return true;
     }
     match when.get("question").and_then(|x| x.as_str()) {
@@ -1137,7 +1207,11 @@ pub fn discover(root: &str) -> Result<Vec<(String, std::path::PathBuf)>> {
             if p.is_dir() {
                 dirs.push(p);
             } else if p.extension().and_then(|x| x.to_str()) == Some("json") {
-                let stem = p.file_stem().and_then(|x| x.to_str()).unwrap_or("").to_string();
+                let stem = p
+                    .file_stem()
+                    .and_then(|x| x.to_str())
+                    .unwrap_or("")
+                    .to_string();
                 out.push((stem, p));
             }
         }

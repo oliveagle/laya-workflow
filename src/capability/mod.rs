@@ -26,16 +26,16 @@
 //! by a timeout and an output-size cap.
 
 pub mod data;
-pub mod local;
 pub mod goal;
+pub mod local;
 pub mod math;
-pub mod secret;
 pub mod net;
+mod parse;
 pub mod proto;
+pub mod secret;
 pub mod service;
 pub mod store;
 pub mod sys;
-mod parse;
 pub mod web;
 
 use anyhow::{anyhow, bail, Result};
@@ -194,7 +194,10 @@ impl Registry {
                 policy.allow_exec = v;
             }
             if let Some(a) = p.get("allow_hosts").and_then(|v| v.as_array()) {
-                policy.allow_hosts = a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                policy.allow_hosts = a
+                    .iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect();
             }
             if let Some(a) = p.get("allow_paths").and_then(|v| v.as_array()) {
                 // allow_paths may use ${env.NAME} / ${secret.NAME} (paths must
@@ -203,8 +206,9 @@ impl Registry {
                 // empty string that silently redirects writes elsewhere.
                 let mut paths = Vec::with_capacity(a.len());
                 for x in a.iter().filter_map(|x| x.as_str()) {
-                    let resolved = try_expand_env_only(x)
-                        .map_err(|e| anyhow!("policy.allow_paths entry {x:?} could not be resolved: {e}"))?;
+                    let resolved = try_expand_env_only(x).map_err(|e| {
+                        anyhow!("policy.allow_paths entry {x:?} could not be resolved: {e}")
+                    })?;
                     paths.push(resolved);
                 }
                 policy.allow_paths = paths;
@@ -259,7 +263,9 @@ impl Registry {
             for (k, v) in o {
                 if let Some(s) = v.as_str() {
                     if has_unresolved(s) {
-                        bail!("capability {name:?} argument {k:?} has an unresolved reference: {s}");
+                        bail!(
+                            "capability {name:?} argument {k:?} has an unresolved reference: {s}"
+                        );
                     }
                 }
             }
@@ -327,7 +333,6 @@ impl Registry {
     }
 }
 
-
 // ── template expansion ──────────────────────────────────────────────
 
 /// Expand `"${state.a.b}"` / `"${env.NAME}"` / `"${with.k}"` inside a JSON value.
@@ -338,7 +343,11 @@ pub fn expand(t: &Value, state: &Value, with: &Value) -> Value {
             None => Value::String(s.clone()),
         },
         Value::Array(a) => Value::Array(a.iter().map(|x| expand(x, state, with)).collect()),
-        Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), expand(v, state, with))).collect()),
+        Value::Object(o) => Value::Object(
+            o.iter()
+                .map(|(k, v)| (k.clone(), expand(v, state, with)))
+                .collect(),
+        ),
         other => other.clone(),
     }
 }
@@ -363,7 +372,10 @@ fn try_expand_env_only(s: &str) -> Result<String> {
         match after.find('}') {
             Some(j) => {
                 let path = &after[..j];
-                match path.strip_prefix("env.").or_else(|| path.strip_prefix("secret.")) {
+                match path
+                    .strip_prefix("env.")
+                    .or_else(|| path.strip_prefix("secret."))
+                {
                     Some(name) => out.push_str(&secret::get(name)?),
                     None => out.push_str(&format!("${{{path}}}")),
                 }
@@ -431,7 +443,8 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
     fn walk(v: &Value, out: &mut Vec<String>) {
         match v {
             Value::String(s) => {
-                if let Value::String(e) = expand(&Value::String(s.clone()), &json!({}), &json!({})) {
+                if let Value::String(e) = expand(&Value::String(s.clone()), &json!({}), &json!({}))
+                {
                     if has_unresolved(&e) {
                         out.push(e);
                     }
@@ -545,7 +558,11 @@ fn lookup(path: &str, state: &Value, with: &Value) -> Value {
         _ => state, // bare path ⇒ state
     };
     let mut cur = base;
-    let path = if root == "state" || root == "with" { rest } else { path };
+    let path = if root == "state" || root == "with" {
+        rest
+    } else {
+        path
+    };
     for seg in path.split('.').filter(|s| !s.is_empty()) {
         cur = match cur {
             Value::Object(o) => match o.get(seg) {
@@ -581,7 +598,8 @@ pub(crate) fn effective_op(configured: &str, with: &Value, fallback: &str) -> St
     fallback.to_string()
 }
 
-fn stringify(v: &Value) -> String {    match v {
+fn stringify(v: &Value) -> String {
+    match v {
         Value::String(s) => s.clone(),
         other => other.to_string(),
     }
@@ -624,7 +642,9 @@ fn bounded_timeout(ms: u64, policy: &Policy) -> Duration {
 fn call_http(c: &HttpCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
     let url = stringify(&expand(&Value::String(c.url.clone()), state, with));
     check_host(&url, policy)?;
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
 
     let mut req = match c.method.as_str() {
         "GET" => agent.get(&url),
@@ -649,7 +669,9 @@ fn call_http(c: &HttpCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     };
     let resp = resp.map_err(|e| anyhow!("http {url} failed: {e}"))?;
     let status = resp.status() as i64;
-    let text = resp.into_string().map_err(|e| anyhow!("http read failed: {e}"))?;
+    let text = resp
+        .into_string()
+        .map_err(|e| anyhow!("http read failed: {e}"))?;
     let text = truncate(text, policy.max_output);
     let body = if c.expect_json {
         serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text))
@@ -679,8 +701,11 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     for (k, v) in &c.env {
         cmd.env(k, stringify(&expand(v, state, with)));
     }
-    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    let child = cmd.spawn().map_err(|e| anyhow!("spawn {:?} failed: {e}", argv[0]))?;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = cmd
+        .spawn()
+        .map_err(|e| anyhow!("spawn {:?} failed: {e}", argv[0]))?;
 
     // Bounded wait: poll with a deadline, then kill.
     let deadline = std::time::Instant::now() + bounded_timeout(c.timeout_ms, policy);
@@ -698,7 +723,9 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
             Err(e) => bail!("exec wait failed: {e}"),
         }
     }
-    let out = child.wait_with_output().map_err(|e| anyhow!("exec collect failed: {e}"))?;
+    let out = child
+        .wait_with_output()
+        .map_err(|e| anyhow!("exec collect failed: {e}"))?;
     let cap = c.max_output.min(policy.max_output);
     let stdout = truncate(String::from_utf8_lossy(&out.stdout).to_string(), cap);
     let stderr = truncate(String::from_utf8_lossy(&out.stderr).to_string(), cap);
@@ -722,21 +749,32 @@ fn call_agent(c: &AgentCap, with: &Value, state: &Value, policy: &Policy) -> Res
     });
     match c.transport.as_str() {
         "http" => {
-            let url = stringify(&expand(&Value::String(c.url.clone().unwrap_or_default()), state, with));
+            let url = stringify(&expand(
+                &Value::String(c.url.clone().unwrap_or_default()),
+                state,
+                with,
+            ));
             if url.is_empty() {
                 bail!("agent capability needs 'url' for transport=http");
             }
             check_host(&url, policy)?;
-            let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+            let agent = ureq::AgentBuilder::new()
+                .timeout(bounded_timeout(c.timeout_ms, policy))
+                .build();
             let resp = agent
                 .post(&url)
                 .set("content-type", "application/json")
                 .send_json(request)
                 .map_err(|e| anyhow!("agent http {url} failed: {e}"))?;
             let status = resp.status() as i64;
-            let text = truncate(resp.into_string().map_err(|e| anyhow!("agent read: {e}"))?, policy.max_output);
+            let text = truncate(
+                resp.into_string().map_err(|e| anyhow!("agent read: {e}"))?,
+                policy.max_output,
+            );
             let body = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
-            Ok(json!({ "status": status, "body": body, "capability": "agent", "transport": "http" }))
+            Ok(
+                json!({ "status": status, "body": body, "capability": "agent", "transport": "http" }),
+            )
         }
         "stdio" => {
             if !policy.allow_exec {
@@ -762,7 +800,12 @@ fn call_agent(c: &AgentCap, with: &Value, state: &Value, policy: &Policy) -> Res
 /// This is the shape used by codex-style app-servers (JSON-RPC-ish, one JSON
 /// object per line). A long-lived server can be used by keeping it as a
 /// capability per node invocation.
-fn stdio_json_rpc(argv: &[String], request: &Value, timeout_ms: u64, policy: &Policy) -> Result<Value> {
+fn stdio_json_rpc(
+    argv: &[String],
+    request: &Value,
+    timeout_ms: u64,
+    policy: &Policy,
+) -> Result<Value> {
     use std::io::{BufRead, BufReader, Write};
     if argv.is_empty() {
         bail!("stdio agent has empty command");

@@ -8,18 +8,17 @@
 //! `capabilities*`, `secrets`, `timeouts`, `heuristics`); this file owns the
 //! harness, the shared helpers and the section registry.
 
-mod t_apps;
 mod capabilities;
 mod capabilities2;
 mod capabilities3;
 mod engine;
 mod heuristics;
+mod persist;
 mod secrets;
+mod t_apps;
 mod t_spec;
 mod timeouts;
-mod persist;
 
-pub use serde_json::{json, Map, Value};
 pub use laya_workflow::apps;
 pub use laya_workflow::backend::{choice, noul, score, verdict, ScriptedBackend};
 pub use laya_workflow::capability;
@@ -29,6 +28,7 @@ pub use laya_workflow::workflow::{
     consecutive_same, Checkpoint, Decide, Edge, FanOut, NodeAction, ResilientWorkflow, SubWorkflow,
     WorkflowNode,
 };
+pub use serde_json::{json, Map, Value};
 
 pub struct Harness {
     pub passed: usize,
@@ -68,7 +68,10 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("node", engine::test_node),
         ("workflow", engine::test_workflow),
         ("composition", engine::test_composition),
-        ("apps: rule logic with scripted verdicts", t_apps::test_apps_rule_logic_with_scripted_verdicts),
+        (
+            "apps: rule logic with scripted verdicts",
+            t_apps::test_apps_rule_logic_with_scripted_verdicts,
+        ),
         ("app workflows", t_apps::test_app_workflows),
         ("optimizer", t_apps::test_optimizer),
         ("spec", t_spec::test_spec),
@@ -78,8 +81,14 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-layers", t_spec::test_spec_layers),
         ("capabilities", capabilities::test_capabilities),
         ("capabilities-extra", capabilities::test_capabilities_extra),
-        ("capabilities-batch2", capabilities2::test_capabilities_batch2),
-        ("capabilities-batch3", capabilities3::test_capabilities_batch3),
+        (
+            "capabilities-batch2",
+            capabilities2::test_capabilities_batch2,
+        ),
+        (
+            "capabilities-batch3",
+            capabilities3::test_capabilities_batch3,
+        ),
         ("web-research", capabilities3::test_web_research),
         ("secrets", secrets::test_secrets),
         ("capability-timeouts", timeouts::test_capability_timeouts),
@@ -99,27 +108,45 @@ fn main() {
         eprintln!("  env LAYA_TEST_SECTIONS=comma,list  same selection");
         eprintln!();
         eprintln!("sections:");
-        for (name, _) in sections() { eprintln!("  {name}"); }
+        for (name, _) in sections() {
+            eprintln!("  {name}");
+        }
         std::process::exit(if args.len() > 1 { 0 } else { 2 });
     }
     if args.iter().any(|a| a == "--list" || a == "-l") {
-        for (name, _) in sections() { println!("{name}"); }
+        for (name, _) in sections() {
+            println!("{name}");
+        }
         return;
     }
-    let mut h = Harness { passed: 0, failed: 0 };
+    let mut h = Harness {
+        passed: 0,
+        failed: 0,
+    };
     let mut filters: Vec<String> = args;
     if let Ok(env) = std::env::var("LAYA_TEST_SECTIONS") {
-        for s in env.split(',') { let s = s.trim(); if !s.is_empty() { filters.push(s.to_string()); } }
+        for s in env.split(',') {
+            let s = s.trim();
+            if !s.is_empty() {
+                filters.push(s.to_string());
+            }
+        }
     }
     for (name, run) in sections() {
         let selected = filters.is_empty()
-            || filters.iter().any(|f| f == "all" || name.starts_with(f.as_str()));
-        if !selected { continue; }
+            || filters
+                .iter()
+                .any(|f| f == "all" || name.starts_with(f.as_str()));
+        if !selected {
+            continue;
+        }
         println!("[{name}]");
         run(&mut h);
     }
     println!("\n{} passed, {} failed", h.passed, h.failed);
-    if h.failed > 0 { std::process::exit(1); }
+    if h.failed > 0 {
+        std::process::exit(1);
+    }
 }
 
 fn _assert_trait_object() {

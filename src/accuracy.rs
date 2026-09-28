@@ -145,9 +145,10 @@ impl Score {
         let mut misses = Vec::new();
         let mut correct = 0usize;
         for s in samples {
-            let e = per_app
-                .entry(s.app.clone())
-                .or_insert(AppScore { correct: 0, total: 0 });
+            let e = per_app.entry(s.app.clone()).or_insert(AppScore {
+                correct: 0,
+                total: 0,
+            });
             e.total += 1;
             if s.correct() {
                 correct += 1;
@@ -165,7 +166,11 @@ impl Score {
         Score {
             correct,
             total,
-            accuracy: if total == 0 { 0.0 } else { correct as f64 / total as f64 },
+            accuracy: if total == 0 {
+                0.0
+            } else {
+                correct as f64 / total as f64
+            },
             per_app,
             misses,
         }
@@ -246,7 +251,10 @@ impl AccuracyLoop {
 
     /// Persist the current policy (called after an accepted update).
     pub fn save(&self) -> Result<()> {
-        fs::write(self.policy_path(), serde_json::to_string_pretty(&self.policy)?)?;
+        fs::write(
+            self.policy_path(),
+            serde_json::to_string_pretty(&self.policy)?,
+        )?;
         Ok(())
     }
 
@@ -349,7 +357,9 @@ impl AccuracyLoop {
             if labels_match(&m.expected, &m.observed) {
                 continue;
             }
-            let failing = serde_json::to_string(&m.state).unwrap_or_default().to_lowercase();
+            let failing = serde_json::to_string(&m.state)
+                .unwrap_or_default()
+                .to_lowercase();
             let tokens: Vec<String> = failing
                 .split(|c: char| !c.is_alphanumeric())
                 .filter(|t| t.len() >= 3)
@@ -360,7 +370,11 @@ impl AccuracyLoop {
             let passing_text: String = all
                 .iter()
                 .filter(|s| s.app == m.app && s.correct())
-                .map(|s| serde_json::to_string(&s.state).unwrap_or_default().to_lowercase())
+                .map(|s| {
+                    serde_json::to_string(&s.state)
+                        .unwrap_or_default()
+                        .to_lowercase()
+                })
                 .collect::<Vec<_>>()
                 .join(" ");
             for t in tokens {
@@ -368,7 +382,17 @@ impl AccuracyLoop {
                     continue;
                 }
                 // Ignore tokens that are just JSON structure or field names.
-                if matches!(t.as_str(), "command" | "intent" | "cwd" | "text" | "source" | "subject" | "body" | "sender") {
+                if matches!(
+                    t.as_str(),
+                    "command"
+                        | "intent"
+                        | "cwd"
+                        | "text"
+                        | "source"
+                        | "subject"
+                        | "body"
+                        | "sender"
+                ) {
                     continue;
                 }
                 let key = (m.app.clone(), m.expected.clone(), t.clone());
@@ -462,7 +486,13 @@ impl AccuracyLoop {
                 return Ok(report);
             }
         };
-        self.gated_apply(&prop, &train, &holdout, base_train.accuracy, base_hold.accuracy)
+        self.gated_apply(
+            &prop,
+            &train,
+            &holdout,
+            base_train.accuracy,
+            base_hold.accuracy,
+        )
     }
 
     /// Gate and (if accepted) persist a proposal. Kept separate so tests can
@@ -500,7 +530,11 @@ impl AccuracyLoop {
 
         let report = RoundReport {
             revision_from: self.policy.revision,
-            revision_to: if accepted { self.policy.revision + 1 } else { self.policy.revision },
+            revision_to: if accepted {
+                self.policy.revision + 1
+            } else {
+                self.policy.revision
+            },
             train_before: base_train,
             train_after: cand_train,
             holdout_before: base_hold,
@@ -515,8 +549,8 @@ impl AccuracyLoop {
             // directly rather than mutating — the caller re-opens to see it.
             let mut next = candidate;
             next.revision = self.policy.revision + 1;
-            next.baseline_accuracy = Score::from_samples(&evaluate_with(&next, &self.evaluate_reference()))
-                .accuracy;
+            next.baseline_accuracy =
+                Score::from_samples(&evaluate_with(&next, &self.evaluate_reference())).accuracy;
             fs::write(self.policy_path(), serde_json::to_string_pretty(&next)?)?;
         }
         self.append_history(&report)?;
@@ -571,12 +605,17 @@ fn evaluate_with(policy: &Policy, samples: &[Sample]) -> Vec<Sample> {
             // A learned override wins over the app's own routing — that is the
             // point of it: it encodes a correction the built-in rules cannot.
             if let Some(rules) = policy.overrides.get(&s.app) {
-                let text = serde_json::to_string(&s.state).unwrap_or_default().to_lowercase();
+                let text = serde_json::to_string(&s.state)
+                    .unwrap_or_default()
+                    .to_lowercase();
                 // Longest matching token wins, so a specific rule beats a loose one.
                 let mut best: Option<(&String, &String)> = None;
                 for (tok, label) in rules {
                     if text.contains(tok.as_str())
-                        && best.as_ref().map(|(t, _)| tok.len() > t.len()).unwrap_or(true)
+                        && best
+                            .as_ref()
+                            .map(|(t, _)| tok.len() > t.len())
+                            .unwrap_or(true)
                     {
                         best = Some((tok, label));
                     }
@@ -658,30 +697,49 @@ pub fn require_nonempty(samples: &[Sample]) -> Result<()> {
 /// Picks the rarest token present in this case's state (so it discriminates
 /// rather than matching everything), ignoring JSON/structure noise.
 fn discriminator_token(target: &Sample, siblings: &[&Sample]) -> Option<String> {
-let text = serde_json::to_string(&target.state).unwrap_or_default().to_lowercase();
-let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-for s in siblings {
-    if s.state == target.state {
-        continue;
+    let text = serde_json::to_string(&target.state)
+        .unwrap_or_default()
+        .to_lowercase();
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for s in siblings {
+        if s.state == target.state {
+            continue;
+        }
+        let other = serde_json::to_string(&s.state)
+            .unwrap_or_default()
+            .to_lowercase();
+        for t in other
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 4)
+        {
+            *counts.entry(t.to_string()).or_insert(0) += 1;
+        }
     }
-    let other = serde_json::to_string(&s.state).unwrap_or_default().to_lowercase();
-    for t in other.split(|c: char| !c.is_alphanumeric()).filter(|t| t.len() >= 4) {
-        *counts.entry(t.to_string()).or_insert(0) += 1;
+    let mut best: Option<(String, usize)> = None;
+    for t in text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 4)
+    {
+        if matches!(
+            t,
+            "command"
+                | "intent"
+                | "cwd"
+                | "text"
+                | "source"
+                | "subject"
+                | "body"
+                | "sender"
+                | "true"
+                | "false"
+                | "none"
+        ) {
+            continue;
+        }
+        let seen = counts.get(t).copied().unwrap_or(0);
+        if best.as_ref().map(|(_, c)| seen < *c).unwrap_or(true) {
+            best = Some((t.to_string(), seen));
+        }
     }
-}
-let mut best: Option<(String, usize)> = None;
-for t in text.split(|c: char| !c.is_alphanumeric()).filter(|t| t.len() >= 4) {
-    if matches!(
-        t,
-        "command" | "intent" | "cwd" | "text" | "source" | "subject" | "body" | "sender"
-            | "true" | "false" | "none"
-    ) {
-        continue;
-    }
-    let seen = counts.get(t).copied().unwrap_or(0);
-    if best.as_ref().map(|(_, c)| seen < *c).unwrap_or(true) {
-        best = Some((t.to_string(), seen));
-    }
-}
-best.map(|(t, _)| t)
+    best.map(|(t, _)| t)
 }

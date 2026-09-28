@@ -157,6 +157,29 @@ laya-workflow run \
   --state '{"query":"jev ai","result_count":5,"max_open":10,"max_text":4000}'
 ```
 
+For the common query-only case, use the CLI shorthand:
+
+```bash
+laya-workflow run \
+  --spec dsl/browser/google_research.json \
+  --query "jev ai"
+```
+
+Research opens and extracts pages concurrently. The default is **5 tabs**;
+control it with `tab_concurrency` (alias: `concurrency`), bounded to 1–10:
+
+```bash
+laya-workflow run \
+  --spec dsl/browser/google_research.json \
+  --query "jev ai" \
+  --state '{"result_count":5,"max_open":10,"tab_concurrency":5,"max_text":4000}'
+```
+
+Resource safety is preserved: resource reclamation and target creation are
+serialized, but page navigation, text extraction, scoring, and classification run
+in parallel across independent page websockets. The response includes
+`tab_concurrency`, and cleanup still closes every non-pinned research tab.
+
 `query` is required. Readable page text is returned in
 `result.scored_pages[*].text`; its size is `content_chars`, and
 `content_truncated` records whether the configured `max_text` limit clipped it.
@@ -197,6 +220,18 @@ honors target-ID and URL-prefix keeps:
 `open_many` is intentionally short-lived by default. Pass `"keep_open": true`
 when opening result tabs for the user is the actual task (as
 `dsl/browser/google_search_top10.json` does).
+
+Both `research` and `open_many` open pages concurrently. The default is **5
+tabs**; set `tab_concurrency` (alias: `concurrency`) to change it, bounded to
+`1..=10`. Chrome target creation and Laya-owned-page reclamation are serialized to
+keep the ownership registry consistent, while the page work runs in parallel:
+
+```bash
+laya-workflow run \
+  --spec dsl/browser/google_search_top10.json \
+  --query "内容" \
+  --state '{"tab_concurrency":5}'
+```
 
 As an explicit, conservative sweep, `"dedupe_urls": true` keeps one tab for each
 exact URL and closes only later duplicates. It still skips non-page targets and

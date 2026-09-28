@@ -88,7 +88,9 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
         // (5) `clarity` keyed only off typo words, so a one-word "ok" reply scored
         // "crystal clear"; brevity is the signal that it conveys too little.
         let dq = laya_workflow::apps::draft_scorer::questions();
-        let short = be.decide(&json!({"audience": "manager", "text": "ok"}), &dq).unwrap();
+        let short = be
+            .decide(&json!({"audience": "manager", "text": "ok"}), &dq)
+            .unwrap();
         let long = be
             .decide(
                 &json!({"audience": "team", "text": "Hey everyone, I will be out of office next week and back on the 15th. Ping me if anything is urgent."}),
@@ -97,12 +99,21 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
             .unwrap();
         h.check(
             "fix: a one-word reply is not 'crystal clear'",
-            short.answer_value("clarity").unwrap().as_f64().unwrap_or(9.0)
-                < long.answer_value("clarity").unwrap().as_f64().unwrap_or(0.0),
+            short
+                .answer_value("clarity")
+                .unwrap()
+                .as_f64()
+                .unwrap_or(9.0)
+                < long
+                    .answer_value("clarity")
+                    .unwrap()
+                    .as_f64()
+                    .unwrap_or(0.0),
         );
         h.check(
             "fix: a terse reply routes away from send_now",
-            laya_workflow::apps::draft_scorer::route(&short)["suggestion"].as_str() != Some("send_now"),
+            laya_workflow::apps::draft_scorer::route(&short)["suggestion"].as_str()
+                != Some("send_now"),
         );
 
         // (6) `tone` only looked for two hostile phrases, so a resignation letter
@@ -134,12 +145,21 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
             // A server that is not reachable still fails loudly (not silently),
             // and the config error for a missing url is explicit.
             let reg = capability::registry_from(
-                &[("mcp_no_url", json!({"kind": "mcp", "transport": "http", "tool": "t"}))],
+                &[(
+                    "mcp_no_url",
+                    json!({"kind": "mcp", "transport": "http", "tool": "t"}),
+                )],
                 Some(npol.clone()),
             )
             .unwrap();
-            let e = reg.call("mcp_no_url", &json!({}), &json!({})).unwrap_err().to_string();
-            h.check("fix: mcp http without a url errors clearly", e.contains("needs 'url'"));
+            let e = reg
+                .call("mcp_no_url", &json!({}), &json!({}))
+                .unwrap_err()
+                .to_string();
+            h.check(
+                "fix: mcp http without a url errors clearly",
+                e.contains("needs 'url'"),
+            );
 
             // Headers are part of the parsed capability, so an authenticated
             // server is configurable at all (this field did not exist before).
@@ -160,7 +180,10 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
             // sending a literal (the old behaviour produced "Bearer null").
             std::env::remove_var("LAYA_TEST_MCP_KEY");
             let with_key = json!({"token": "Bearer ${env.LAYA_TEST_MCP_KEY}"});
-            let e2 = reg2.call("mcp_auth", &with_key, &json!({})).unwrap_err().to_string();
+            let e2 = reg2
+                .call("mcp_auth", &with_key, &json!({}))
+                .unwrap_err()
+                .to_string();
             h.check(
                 "fix: an unset secret in a header fails closed",
                 e2.contains("unresolved"),
@@ -176,20 +199,27 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
         let _ = std::fs::remove_dir_all(&dir);
         let lp = laya_workflow::accuracy::AccuracyLoop::open(&dir).unwrap();
         let s = lp.score(&lp.evaluate_reference());
-        h.eq("fix: all reference cases pass with no learned policy", s.correct, s.total);
+        h.eq(
+            "fix: all reference cases pass with no learned policy",
+            s.correct,
+            s.total,
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── accuracy self-improvement loop ──────────────────────────────
 }
 
-
 pub fn test_accuracy(h: &mut Harness) {
     {
         use laya_workflow::accuracy::{self, AccuracyLoop, Policy, Sample};
 
         // (a) the evaluation set is the apps' reference cases and did not shrink
-        h.eq("accuracy: reference case count", accuracy::reference_case_count(), 25);
+        h.eq(
+            "accuracy: reference case count",
+            accuracy::reference_case_count(),
+            25,
+        );
 
         // (b) baseline: the shipped policy's accuracy on those cases is measurable
         let dir = std::env::temp_dir().join("laya_acc_tests");
@@ -212,15 +242,28 @@ pub fn test_accuracy(h: &mut Harness) {
             impl Decide for Wrong {
                 fn decide(&self, _s: &Value, q: &Value) -> anyhow::Result<Verdict> {
                     let mut answers = std::collections::HashMap::new();
-                    for qid in q.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default() {
+                    for qid in q
+                        .as_object()
+                        .map(|o| o.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                    {
                         let mut probs = serde_json::Map::new();
                         probs.insert("A".to_string(), json!(1.0));
                         probs.insert("B".to_string(), json!(0.0));
-                        answers.insert(qid, laya_workflow::workflow::Decision {
-                            answer: json!("A"), probabilities: probs, confidence: 1.0,
-                        });
+                        answers.insert(
+                            qid,
+                            laya_workflow::workflow::Decision {
+                                answer: json!("A"),
+                                probabilities: probs,
+                                confidence: 1.0,
+                            },
+                        );
                     }
-                    Ok(Verdict { answers, input_tokens: 0, latency_ms: 0.0 })
+                    Ok(Verdict {
+                        answers,
+                        input_tokens: 0,
+                        latency_ms: 0.0,
+                    })
                 }
             }
             let mut broken = Vec::new();
@@ -238,8 +281,14 @@ pub fn test_accuracy(h: &mut Harness) {
                 });
             }
             let bs = lp.score(&broken);
-            h.check("accuracy: scorer still detects misses", !bs.misses.is_empty());
-            h.check("accuracy: a broken backend scores below the clean one", bs.accuracy < base.accuracy);
+            h.check(
+                "accuracy: scorer still detects misses",
+                !bs.misses.is_empty(),
+            );
+            h.check(
+                "accuracy: a broken backend scores below the clean one",
+                bs.accuracy < base.accuracy,
+            );
         }
 
         // (c) hold-out split is deterministic and keeps both sides non-empty
@@ -247,9 +296,17 @@ pub fn test_accuracy(h: &mut Harness) {
         let (train, holdout) = AccuracyLoop::split(&all);
         h.check("accuracy: train split non-empty", !train.is_empty());
         h.check("accuracy: holdout split non-empty", !holdout.is_empty());
-        h.eq("accuracy: split is total", train.len() + holdout.len(), all.len());
+        h.eq(
+            "accuracy: split is total",
+            train.len() + holdout.len(),
+            all.len(),
+        );
         let (t2, h2) = AccuracyLoop::split(&all);
-        h.eq("accuracy: split is deterministic", (t2.len(), h2.len()), (train.len(), holdout.len()));
+        h.eq(
+            "accuracy: split is deterministic",
+            (t2.len(), h2.len()),
+            (train.len(), holdout.len()),
+        );
 
         // (d) feedback is recorded and read back (production traffic can feed it)
         let sample = Sample {
@@ -262,7 +319,10 @@ pub fn test_accuracy(h: &mut Harness) {
         lp.record(&[sample.clone()]).unwrap();
         let back = lp.samples().unwrap();
         h.eq("accuracy: feedback round-trips", back.len(), 1);
-        h.check("accuracy: feedback keeps the note", back[0].note.contains("operator"));
+        h.check(
+            "accuracy: feedback keeps the note",
+            back[0].note.contains("operator"),
+        );
         h.check("accuracy: correct() agrees", back[0].correct());
 
         // (e) label alternatives match apps.rs semantics ("ALLOW|CONFIRM")
@@ -277,8 +337,16 @@ pub fn test_accuracy(h: &mut Harness) {
 
         // (f) the gate REJECTS an update that does not improve (rollback path)
         let bad = accuracy::Proposal {
-            keywords: vec![("agent_gate".to_string(), "ALLOW".to_string(), "zzzznomatch".to_string())],
-            overrides: vec![("agent_gate".to_string(), "zzzznomatch".to_string(), "BLOCK".to_string())],
+            keywords: vec![(
+                "agent_gate".to_string(),
+                "ALLOW".to_string(),
+                "zzzznomatch".to_string(),
+            )],
+            overrides: vec![(
+                "agent_gate".to_string(),
+                "zzzznomatch".to_string(),
+                "BLOCK".to_string(),
+            )],
             rationale: "deliberately useless".to_string(),
         };
         let base_hold = lp.score(&holdout).accuracy;
@@ -290,14 +358,21 @@ pub fn test_accuracy(h: &mut Harness) {
             "accuracy: rejection explains itself",
             rep.reason.contains("did not improve"),
         );
-        h.eq("accuracy: rejected update does not bump revision", rep.revision_to, rep.revision_from);
+        h.eq(
+            "accuracy: rejected update does not bump revision",
+            rep.revision_to,
+            rep.revision_from,
+        );
 
         // (g) the gate ACCEPTS a real improvement — and the score goes up
         // With a clean baseline the loop must decline to change anything: it
         // reports that no proposal follows from the (empty) miss set rather than
         // fabricating one. Accepting a no-op update would be a false claim.
         let step = lp.step().unwrap();
-        h.check("accuracy: no update invented for a clean baseline", !step.accepted);
+        h.check(
+            "accuracy: no update invented for a clean baseline",
+            !step.accepted,
+        );
         h.check(
             "accuracy: clean baseline reports no proposal",
             step.reason.contains("no proposal"),
@@ -309,7 +384,11 @@ pub fn test_accuracy(h: &mut Harness) {
 
         // (h) persistence: a *fresh* loop sees the accepted revision and its gain
         let reopened = AccuracyLoop::open(&dir).unwrap();
-        h.eq("accuracy: revision unchanged for a clean baseline", reopened.policy().revision, 0);
+        h.eq(
+            "accuracy: revision unchanged for a clean baseline",
+            reopened.policy().revision,
+            0,
+        );
         let after = reopened.score(&reopened.evaluate_reference());
         h.check(
             "accuracy: reopened policy still scores the clean baseline",
@@ -325,8 +404,14 @@ pub fn test_accuracy(h: &mut Harness) {
 
         // (i) history is append-only and auditable
         let hist = std::fs::read_to_string(dir.join("rounds.jsonl")).unwrap();
-        h.check("accuracy: round history recorded", hist.lines().count() >= 2);
-        h.check("accuracy: history is JSON per line", hist.lines().all(|l| l.starts_with('{')));
+        h.check(
+            "accuracy: round history recorded",
+            hist.lines().count() >= 2,
+        );
+        h.check(
+            "accuracy: history is JSON per line",
+            hist.lines().all(|l| l.starts_with('{')),
+        );
 
         // (j) a hand-written policy applies overrides deterministically
         let mut p = Policy::default();

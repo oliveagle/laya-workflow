@@ -59,14 +59,29 @@ impl NodeRecord {
         m.insert("timestamp_ms".into(), json!(self.timestamp_ms));
         m.insert("state_before".into(), self.state_before.clone());
         m.insert("state_after".into(), self.state_after.clone());
-        m.insert("payload".into(), self.payload.clone().unwrap_or(Value::Null));
+        m.insert(
+            "payload".into(),
+            self.payload.clone().unwrap_or(Value::Null),
+        );
         m.insert("action".into(), json!(self.action));
         m.insert("edge_answer".into(), self.edge_answer.clone());
         m.insert("confidence".into(), json!(self.confidence));
         m.insert("latency_ms".into(), json!(self.latency_ms));
-        m.insert("next_node".into(), self.next_node.clone().map(|v| json!(v)).unwrap_or(Value::Null));
-        m.insert("detail".into(), self.detail.clone().map(|v| json!(v)).unwrap_or(Value::Null));
-        m.insert("error".into(), self.error.clone().map(|v| json!(v)).unwrap_or(Value::Null));
+        m.insert(
+            "next_node".into(),
+            self.next_node
+                .clone()
+                .map(|v| json!(v))
+                .unwrap_or(Value::Null),
+        );
+        m.insert(
+            "detail".into(),
+            self.detail.clone().map(|v| json!(v)).unwrap_or(Value::Null),
+        );
+        m.insert(
+            "error".into(),
+            self.error.clone().map(|v| json!(v)).unwrap_or(Value::Null),
+        );
         Value::Object(m)
     }
 
@@ -75,19 +90,51 @@ impl NodeRecord {
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("node record: expected object"))?;
         Ok(Self {
-            node: obj.get("node").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            node: obj
+                .get("node")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             iteration: obj.get("iteration").and_then(|x| x.as_u64()).unwrap_or(0),
-            timestamp_ms: obj.get("timestamp_ms").and_then(|x| x.as_i64()).unwrap_or(0),
-            state_before: obj.get("state_before").cloned().unwrap_or(Value::Object(Map::new())),
-            state_after: obj.get("state_after").cloned().unwrap_or(Value::Object(Map::new())),
+            timestamp_ms: obj
+                .get("timestamp_ms")
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0),
+            state_before: obj
+                .get("state_before")
+                .cloned()
+                .unwrap_or(Value::Object(Map::new())),
+            state_after: obj
+                .get("state_after")
+                .cloned()
+                .unwrap_or(Value::Object(Map::new())),
             payload: obj.get("payload").filter(|x| !x.is_null()).cloned(),
-            action: obj.get("action").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            action: obj
+                .get("action")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             edge_answer: obj.get("edge_answer").cloned().unwrap_or(Value::Null),
-            confidence: obj.get("confidence").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            latency_ms: obj.get("latency_ms").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            next_node: obj.get("next_node").and_then(|x| x.as_str()).map(|s| s.to_string()),
-            detail: obj.get("detail").and_then(|x| x.as_str()).map(|s| s.to_string()),
-            error: obj.get("error").and_then(|x| x.as_str()).map(|s| s.to_string()),
+            confidence: obj
+                .get("confidence")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0),
+            latency_ms: obj
+                .get("latency_ms")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0),
+            next_node: obj
+                .get("next_node")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string()),
+            detail: obj
+                .get("detail")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string()),
+            error: obj
+                .get("error")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string()),
         })
     }
 }
@@ -163,8 +210,7 @@ impl NodeStore {
         entries.sort_by_key(|(n, _)| *n);
         let mut out = Vec::with_capacity(entries.len());
         for (_, p) in entries {
-            let raw = std::fs::read_to_string(&p)
-                .with_context(|| format!("reading {p:?}"))?;
+            let raw = std::fs::read_to_string(&p).with_context(|| format!("reading {p:?}"))?;
             let v: Value = serde_json::from_str(&raw).with_context(|| format!("parsing {p:?}"))?;
             out.push(NodeRecord::from_json(&v)?);
         }
@@ -244,10 +290,7 @@ impl NodeStore {
             if r.iteration > through {
                 continue;
             }
-            if let (Some(obj), Some(p)) = (
-                state.as_object_mut(),
-                r.state_after.as_object(),
-            ) {
+            if let (Some(obj), Some(p)) = (state.as_object_mut(), r.state_after.as_object()) {
                 for (k, v) in p {
                     obj.insert(k.clone(), v.clone());
                 }

@@ -74,7 +74,9 @@ fn resolve_runner(name: &str) -> Result<(&'static str, PathBuf)> {
         })?;
     // The wrappers live next to each other under a bin dir; find that dir from
     // the environment rather than hard-coding a user path.
-    let bin = std::env::var("LAYA_AGENT_BIN_DIR").ok().filter(|s| !s.is_empty());
+    let bin = std::env::var("LAYA_AGENT_BIN_DIR")
+        .ok()
+        .filter(|s| !s.is_empty());
     let wrapper = match bin {
         Some(d) => PathBuf::from(d).join(want),
         None => {
@@ -85,7 +87,12 @@ fn resolve_runner(name: &str) -> Result<(&'static str, PathBuf)> {
     Ok((script, wrapper))
 }
 
-pub fn call_goal_runner(c: &GoalRunnerCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+pub fn call_goal_runner(
+    c: &GoalRunnerCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
     if !policy.allow_exec {
         bail!("goal_runner spawns an agent process; set policy.allow_exec = true to enable");
     }
@@ -125,12 +132,30 @@ pub fn call_goal_runner(c: &GoalRunnerCap, with: &Value, state: &Value, policy: 
         .map(stringify)
         .filter(|w| !w.trim().is_empty())
         .unwrap_or_else(|| {
-            cand.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| ".".to_string())
+            cand.parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string())
         });
-    let reports = if c.reports_dir.is_empty() { "acceptance-reports" } else { c.reports_dir.as_str() };
+    let reports = if c.reports_dir.is_empty() {
+        "acceptance-reports"
+    } else {
+        c.reports_dir.as_str()
+    };
 
-    let timeout = bounded_timeout(if c.timeout_ms == 0 { 1_800_000 } else { c.timeout_ms }, policy);
-    let cap = if c.max_output == 0 { 256 << 10 } else { c.max_output }.min(policy.max_output);
+    let timeout = bounded_timeout(
+        if c.timeout_ms == 0 {
+            1_800_000
+        } else {
+            c.timeout_ms
+        },
+        policy,
+    );
+    let cap = if c.max_output == 0 {
+        256 << 10
+    } else {
+        c.max_output
+    }
+    .min(policy.max_output);
 
     // Assemble: <wrapper> <doc> [extra args...]
     let mut argv: Vec<String> = vec![wrapper.to_string_lossy().to_string(), doc.clone()];
@@ -159,7 +184,11 @@ pub fn call_goal_runner(c: &GoalRunnerCap, with: &Value, state: &Value, policy: 
 
     let reports_path = Path::new(&workdir).join(reports);
     let report_count = std::fs::read_dir(&reports_path)
-        .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count())
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
+                .count()
+        })
         .unwrap_or(0);
 
     // `ok` is the runner's own externally-checked verdict, never a guess.
@@ -193,8 +222,14 @@ fn wait_with_cap(
 ) -> Result<(String, String, Option<i32>, bool)> {
     use std::io::Read as _;
 
-    let out_pipe = child.stdout.take().ok_or_else(|| anyhow!("goal_runner: no stdout"))?;
-    let err_pipe = child.stderr.take().ok_or_else(|| anyhow!("goal_runner: no stderr"))?;
+    let out_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("goal_runner: no stdout"))?;
+    let err_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow!("goal_runner: no stderr"))?;
 
     let out_h = std::thread::spawn(move || {
         let mut buf = Vec::new();

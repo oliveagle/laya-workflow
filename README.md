@@ -57,6 +57,12 @@ end-to-end smoke tests (`python3 bench/dsl_smoke.py`).
 A bare `"workflow": "<name>"` reference — and `laya-workflow list` — resolves
 through a **layered** set of spec roots (highest priority first):
 
+For query-driven specs, `--query` is a concise alternative to JSON state:
+
+```bash
+laya-workflow run --spec dsl/browser/google_research.json --query "typesafe ai"
+```
+
 1. **explicit** — `--dsl-dir <path>` / `$LAYA_DSL_DIR` *pins* the root and
    replaces the layers below (legacy single-root behaviour).
 2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, found by walking up

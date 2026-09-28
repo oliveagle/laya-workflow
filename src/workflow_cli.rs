@@ -8,7 +8,7 @@
 //! With `--base-url` the CLI drives a running `laya-tch` server (its
 //! `/v1/systemone` endpoint); the graph logic is identical to the Python side.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 
@@ -17,7 +17,10 @@ use laya_workflow::backend::{HeuristicBackend, LayaBackend};
 use laya_workflow::workflow::{Decide, ResilientWorkflow};
 
 #[derive(Parser)]
-#[command(name = "laya-workflow", about = "Run Laya workflows / apps on the Rust engine")]
+#[command(
+    name = "laya-workflow",
+    about = "Run Laya workflows / apps on the Rust engine"
+)]
 struct Cli {
     /// Base URL of a running `laya-tch` server, e.g. http://127.0.0.1:8400.
     /// Omit to run the offline heuristic backend (graph/plumbing checks only).
@@ -47,7 +50,10 @@ enum Cmd {
         #[arg(long, default_value_t = 12)]
         steps: usize,
         /// Comma-separated strategy names the Laya strategy node may switch to
-        #[arg(long, default_value = "aggressive_step,conservative_step,random_restart")]
+        #[arg(
+            long,
+            default_value = "aggressive_step,conservative_step,random_restart"
+        )]
         strategies: String,
     },
     /// Accuracy self-improvement: measure decisions, learn from misses under a
@@ -73,6 +79,10 @@ enum Cmd {
         /// State JSON to feed the workflow (default: {})
         #[arg(long, default_value = "{}")]
         state: String,
+        /// Shorthand for --state '{"query":"..."}'; merged into --state when
+        /// both are supplied (the --query value wins)
+        #[arg(long)]
+        query: Option<String>,
     },
     /// Print every stored node record (per-iteration tracking)
     State {
@@ -135,6 +145,25 @@ fn make_backend(url: Option<&str>) -> (Box<dyn Decide>, String) {
     }
 }
 
+/// Build run state, supporting the human-friendly `--query TEXT` shorthand.
+/// Any JSON remains valid for `--state`; when `--query` is present, that value
+/// is inserted into the object's `query` field.
+fn run_state(state: &str, query: Option<&str>) -> Result<Value> {
+    let mut value: Value = serde_json::from_str(state)?;
+    let Some(query) = query else {
+        return Ok(value);
+    };
+    let query = query.trim();
+    if query.is_empty() {
+        bail!("--query must not be empty");
+    }
+    let Some(obj) = value.as_object_mut() else {
+        bail!("--query can only be combined with a JSON object in --state");
+    };
+    obj.insert("query".to_string(), json!(query));
+    Ok(value)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     // Pin the spec root only when asked (`--dsl-dir` > `LAYA_DSL_DIR`); otherwise
@@ -155,20 +184,32 @@ fn main() -> Result<()> {
         }
         Cmd::Demo => run_demo(backend.as_ref(), &label),
         Cmd::Optimize { steps, strategies } => {
-            let strats: Vec<String> = strategies.split(',').map(|s| s.trim().to_string()).collect();
+            let strats: Vec<String> = strategies
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
             run_optimize(backend.as_ref(), &label, *steps, strats)
         }
-        Cmd::Improve { dir, rounds, score_only } => run_improve(dir, *rounds, *score_only),
+        Cmd::Improve {
+            dir,
+            rounds,
+            score_only,
+        } => run_improve(dir, *rounds, *score_only),
         Cmd::Export { app } => {
             let wf = app_workflow(app)?;
-            println!("{}", serde_json::to_string_pretty(&laya_workflow::spec::to_spec(&wf, app))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&laya_workflow::spec::to_spec(&wf, app))?
+            );
             Ok(())
         }
         Cmd::Validate { spec } => {
             let raw = std::fs::read_to_string(spec)?;
             let sv: Value = serde_json::from_str(&raw)?;
             match laya_workflow::spec::check_version(&sv)? {
-                laya_workflow::spec::VersionCheck::Ok(v) => println!("# dsl_version: {v} (current)"),
+                laya_workflow::spec::VersionCheck::Ok(v) => {
+                    println!("# dsl_version: {v} (current)")
+                }
                 laya_workflow::spec::VersionCheck::Upgradable { from, to } => {
                     println!("# dsl_version: {from} (legacy; engine supports {to})")
                 }
@@ -211,18 +252,24 @@ fn main() -> Result<()> {
             }
             let envnames = laya_workflow::capability::secret::env_names(&sv);
             if !envnames.is_empty() {
-                println!("# env vars referenced (names only): {}", envnames.join(", "));
+                println!(
+                    "# env vars referenced (names only): {}",
+                    envnames.join(", ")
+                );
             }
             let hard = laya_workflow::capability::secret::hardcoded_secret_fields(&sv);
             if !hard.is_empty() {
-                println!("# WARNING: possible hard-coded secrets at: {}", hard.join(", "));
+                println!(
+                    "# WARNING: possible hard-coded secrets at: {}",
+                    hard.join(", ")
+                );
             }
             println!("{}", serde_json::to_string_pretty(&wf.describe())?);
             Ok(())
         }
-        Cmd::Run { spec, state } => {
+        Cmd::Run { spec, state, query } => {
             let wf = laya_workflow::spec::load_file(spec)?;
-            let st: Value = serde_json::from_str(state)?;
+            let st = run_state(state, query.as_deref())?;
             println!("backend: {label}");
             let out = wf.run(backend.as_ref(), &st)?;
             // redact before printing: a secret must never reach stdout
@@ -239,7 +286,9 @@ fn main() -> Result<()> {
             } else {
                 println!("dir: {dir}");
                 println!("records: {}", recs.len());
-                if let Some(last) = store.last_iteration()? { println!("last_iteration: {last}"); }
+                if let Some(last) = store.last_iteration()? {
+                    println!("last_iteration: {last}");
+                }
                 for r in &recs {
                     println!(
                         "  iter={:04} node={:>14} action={:8} conf={:.3} next={:?} detail={:?}",
@@ -249,17 +298,28 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Resume { spec, dir, from, state } => {
+        Cmd::Resume {
+            spec,
+            dir,
+            from,
+            state,
+        } => {
             let wf = laya_workflow::spec::load_file(spec)?;
             let mut store = laya_workflow::persist::NodeStore::open(dir)?;
-            let initial: Option<serde_json::Value> = if state == "{}" { None } else {
+            let initial: Option<serde_json::Value> = if state == "{}" {
+                None
+            } else {
                 Some(serde_json::from_str(state)?)
             };
             let (backend, label) = make_backend(cli.base_url.as_deref());
             println!("backend: {label}");
             let out = wf.run_persistent(backend.as_ref(), &mut store, initial.as_ref(), *from)?;
-            println!("final_action={} iterations={} stored_iterations={}",
-                     out.final_action(), out.iterations, store.last_iteration()?.unwrap_or(0));
+            println!(
+                "final_action={} iterations={} stored_iterations={}",
+                out.final_action(),
+                out.iterations,
+                store.last_iteration()?.unwrap_or(0)
+            );
             Ok(())
         }
         Cmd::Replay { spec, dir, iter } => {
@@ -268,13 +328,18 @@ fn main() -> Result<()> {
             let (backend, label) = make_backend(cli.base_url.as_deref());
             println!("backend: {label}");
             let rec = wf.replay(backend.as_ref(), &mut store, *iter)?;
-            println!("replayed iter={} node={} action={} conf={:.3}",
-                     rec.iteration, rec.node, rec.action, rec.confidence);
+            println!(
+                "replayed iter={} node={} action={} conf={:.3}",
+                rec.iteration, rec.node, rec.action, rec.confidence
+            );
             Ok(())
         }
-        Cmd::Skill { section, recipe, list, format } => {
-            run_skill(section.as_deref(), recipe.as_deref(), *list, format)
-        }
+        Cmd::Skill {
+            section,
+            recipe,
+            list,
+            format,
+        } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
@@ -297,7 +362,11 @@ fn main() -> Result<()> {
                     s.path.display()
                 );
                 if let Some((layer, root)) = &s.shadowed_by {
-                    line.push_str(&format!("  (shadowed by {} {})", layer.as_str(), root.display()));
+                    line.push_str(&format!(
+                        "  (shadowed by {} {})",
+                        layer.as_str(),
+                        root.display()
+                    ));
                 }
                 println!("{line}");
             }
@@ -316,15 +385,24 @@ fn main() -> Result<()> {
 ///
 /// `format=json` on `--list` returns the index as JSON (machine-readable).
 /// All content is self-contained so the binary ships without external files.
-fn run_skill(section: Option<&str>, recipe: Option<&str>, only_list: bool, format: &str) -> Result<()> {
+fn run_skill(
+    section: Option<&str>,
+    recipe: Option<&str>,
+    only_list: bool,
+    format: &str,
+) -> Result<()> {
     let index = skill_index();
     if only_list || (section.is_none() && recipe.is_none() && format == "json") {
         if format == "json" {
-            let v: Vec<serde_json::Value> = index.iter().map(|(k, d, _b)| {
-                json!({"name": k, "kind": "section", "description": d})
-            }).chain(skill_recipes().iter().map(|(k, d, _b)| {
-                json!({"name": k, "kind": "recipe", "description": d})
-            })).collect();
+            let v: Vec<serde_json::Value> = index
+                .iter()
+                .map(|(k, d, _b)| json!({"name": k, "kind": "section", "description": d}))
+                .chain(
+                    skill_recipes()
+                        .iter()
+                        .map(|(k, d, _b)| json!({"name": k, "kind": "recipe", "description": d})),
+                )
+                .collect();
             println!("{}", serde_json::to_string_pretty(&v)?);
             return Ok(());
         }
@@ -376,11 +454,16 @@ fn skill_recipes() -> Vec<(&'static str, &'static str, &'static str)> {
     ]
 }
 
-fn print_index(sections: &[(&'static str, &'static str, &str)], recipes: &[(&'static str, &'static str, &str)]) {
+fn print_index(
+    sections: &[(&'static str, &'static str, &str)],
+    recipes: &[(&'static str, &'static str, &str)],
+) {
     println!("# laya-workflow skill index");
     println!();
     println!("Run `laya-workflow skill` for the top-level map.");
-    println!("Run `laya-workflow skill --section <name>` or `--recipe <name>` to expand one entry.");
+    println!(
+        "Run `laya-workflow skill --section <name>` or `--recipe <name>` to expand one entry."
+    );
     println!("Run `laya-workflow skill --list --format json` for machine-readable index.");
     println!();
     println!("## Sections ({})", sections.len());
@@ -437,7 +520,9 @@ fn print_overview() {
     println!("  * New to the tool?                        → skill --recipe agent-onboarding");
     println!();
     println!("Common env vars:");
-    println!("  LAYA_DSL_DIR     pin the spec root (overrides the layered repo/user/builtin lookup)");
+    println!(
+        "  LAYA_DSL_DIR     pin the spec root (overrides the layered repo/user/builtin lookup)"
+    );
     println!("  LAYA_USER_DSL_DIR  per-user spec root (default: ~/.config/laya-workflow/dsl)");
     println!("  LAYA_TEST_PYTHON python3 binary for mock agent capability");
     println!("  LAYA_MOCK3       host:redis:nats:mqtt:smtp:s3:prom:kafka:udp");
@@ -555,7 +640,13 @@ fn run_apps(backend: &dyn Decide, label: &str) -> Result<()> {
         let ok = expected.split('|').any(|e| e == action);
         total += 1;
         pass += ok as usize;
-        println!("  {} {:8} {:>7.1}ms  {}", if ok { "OK " } else { "!! " }, action, r["latency_ms"].as_f64().unwrap_or(0.0), cmd);
+        println!(
+            "  {} {:8} {:>7.1}ms  {}",
+            if ok { "OK " } else { "!! " },
+            action,
+            r["latency_ms"].as_f64().unwrap_or(0.0),
+            cmd
+        );
     }
 
     println!("== App 2: email_triage ==");
@@ -565,7 +656,14 @@ fn run_apps(backend: &dyn Decide, label: &str) -> Result<()> {
         let ok = action == expected;
         total += 1;
         pass += ok as usize;
-        println!("  {} {:14} cat={:9} {:>7.1}ms  {}", if ok { "OK " } else { "!! " }, action, r["category"].as_str().unwrap_or(""), r["latency_ms"].as_f64().unwrap_or(0.0), subj);
+        println!(
+            "  {} {:14} cat={:9} {:>7.1}ms  {}",
+            if ok { "OK " } else { "!! " },
+            action,
+            r["category"].as_str().unwrap_or(""),
+            r["latency_ms"].as_f64().unwrap_or(0.0),
+            subj
+        );
     }
 
     println!("== App 3: content_moderation ==");
@@ -575,7 +673,14 @@ fn run_apps(backend: &dyn Decide, label: &str) -> Result<()> {
         let ok = action == expected;
         total += 1;
         pass += ok as usize;
-        println!("  {} {:8} label={:11} {:>7.1}ms  {}", if ok { "OK " } else { "!! " }, action, r["label"].as_str().unwrap_or(""), r["latency_ms"].as_f64().unwrap_or(0.0), &text[..text.len().min(44)]);
+        println!(
+            "  {} {:8} label={:11} {:>7.1}ms  {}",
+            if ok { "OK " } else { "!! " },
+            action,
+            r["label"].as_str().unwrap_or(""),
+            r["latency_ms"].as_f64().unwrap_or(0.0),
+            &text[..text.len().min(44)]
+        );
     }
 
     println!("== App 4: draft_scorer ==");
@@ -585,18 +690,30 @@ fn run_apps(backend: &dyn Decide, label: &str) -> Result<()> {
         let ok = expected.split('|').any(|e| e == sug);
         total += 1;
         pass += ok as usize;
-        println!("  {} {:8} {:>7.1}ms  {}", if ok { "OK " } else { "!! " }, sug, r["latency_ms"].as_f64().unwrap_or(0.0), &text[..text.len().min(44)]);
+        println!(
+            "  {} {:8} {:>7.1}ms  {}",
+            if ok { "OK " } else { "!! " },
+            sug,
+            r["latency_ms"].as_f64().unwrap_or(0.0),
+            &text[..text.len().min(44)]
+        );
     }
 
     println!("\ntotal: {pass}/{total} cases matched");
     Ok(())
 }
 
-fn run_optimize(backend: &dyn Decide, label: &str, steps: usize, strategies: Vec<String>) -> Result<()> {
+fn run_optimize(
+    backend: &dyn Decide,
+    label: &str,
+    steps: usize,
+    strategies: Vec<String>,
+) -> Result<()> {
     use laya_workflow::optimizer::LayaOptimizerLoop;
 
     println!("backend: {label}");
-    let mut lp = LayaOptimizerLoop::new(strategies, /*maximize=*/ true, steps).with_task("demo_quadratic");
+    let mut lp =
+        LayaOptimizerLoop::new(strategies, /*maximize=*/ true, steps).with_task("demo_quadratic");
 
     // A deterministic "solver": proposes delta_params that move k toward 5.
     let propose = |prompt: &str| {
@@ -638,7 +755,10 @@ fn run_improve(dir: &str, rounds: usize, score_only: bool) -> Result<()> {
     }
 
     if score_only {
-        println!("{}", serde_json::to_string_pretty(&accuracy::summarize(&score))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&accuracy::summarize(&score))?
+        );
         return Ok(());
     }
 
@@ -710,9 +830,28 @@ fn run_demo(backend: &dyn Decide, label: &str) -> Result<()> {
         let out = wf.run(backend, &st)?;
         println!(
             "\nstate command={} -> final_action={} iterations={}",
-            st["command"], out.final_action(), out.iterations
+            st["command"],
+            out.final_action(),
+            out.iterations
         );
         println!("{}", serde_json::to_string_pretty(&out.to_json())?);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_shorthand_merges_into_object_state() {
+        let value = run_state(r#"{"result_count":5}"#, Some("  jev ai  ")).unwrap();
+        assert_eq!(value, json!({"result_count":5, "query":"jev ai"}));
+    }
+
+    #[test]
+    fn query_shorthand_requires_object_state() {
+        let err = run_state("[]", Some("jev ai")).unwrap_err().to_string();
+        assert!(err.contains("JSON object"), "unexpected error: {err}");
+    }
 }

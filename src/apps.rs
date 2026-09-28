@@ -81,19 +81,35 @@ pub mod agent_gate {
         let destr_p = v.prob("is_destructive", "B").unwrap_or(0.0);
         let exfil_p = v.prob("is_exfiltration", "B").unwrap_or(0.0);
         let intent_p = v.prob("intent_match", "A").unwrap_or(0.0);
-        let risk = v.answer_value("risk").ok().and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let risk = v
+            .answer_value("risk")
+            .ok()
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
         let verb = verb(command);
 
         let (action, reason) = if DESTRUCTIVE.contains(&verb.as_str()) {
-            ("BLOCK", format!("destructive verb={verb} (model agrees p={destr_p:.2})"))
+            (
+                "BLOCK",
+                format!("destructive verb={verb} (model agrees p={destr_p:.2})"),
+            )
         } else if EXFIL.contains(&verb.as_str()) && exfil_p >= 0.6 {
-            ("BLOCK", format!("exfil verb={verb} model p={exfil_p:.2}>=0.6"))
+            (
+                "BLOCK",
+                format!("exfil verb={verb} model p={exfil_p:.2}>=0.6"),
+            )
         } else if intent_p < 0.5 {
             ("BLOCK", format!("intent_mismatch safe_p={intent_p:.2}<0.5"))
         } else if destr_p >= 0.8 || risk >= 2.0 {
-            ("BLOCK", format!("destructive_p={destr_p:.2} risk={risk:.1}"))
+            (
+                "BLOCK",
+                format!("destructive_p={destr_p:.2} risk={risk:.1}"),
+            )
         } else if destr_p >= 0.4 || exfil_p >= 0.4 || intent_p < 0.7 {
-            ("CONFIRM", format!("uncertain destr={destr_p:.2} exfil={exfil_p:.2} intent={intent_p:.2}"))
+            (
+                "CONFIRM",
+                format!("uncertain destr={destr_p:.2} exfil={exfil_p:.2} intent={intent_p:.2}"),
+            )
         } else {
             ("ALLOW", format!("safe destr={destr_p:.2} exfil={exfil_p:.2} intent={intent_p:.2} risk={risk:.1}"))
         };
@@ -128,19 +144,34 @@ pub mod agent_gate {
     }
 
     /// Convenience: run a single command through a `Decide` backend.
-    pub fn run<B: Decide + ?Sized>(backend: &B, command: &str, intent: &str, cwd: &str) -> anyhow::Result<Value> {
+    pub fn run<B: Decide + ?Sized>(
+        backend: &B,
+        command: &str,
+        intent: &str,
+        cwd: &str,
+    ) -> anyhow::Result<Value> {
         let state = json!({"command": command, "intent": intent, "cwd": cwd});
-        backend.decide(&state, &questions()).map(|v| route(command, &v))
+        backend
+            .decide(&state, &questions())
+            .map(|v| route(command, &v))
     }
 
     /// Reference vectors from the Python app's `__main__`.
     pub fn cases() -> Vec<(&'static str, &'static str, &'static str)> {
         vec![
             ("ls -la /tmp", "list files in /tmp", "ALLOW"),
-            ("rm -rf ./build", "clean the project build directory", "BLOCK"),
+            (
+                "rm -rf ./build",
+                "clean the project build directory",
+                "BLOCK",
+            ),
             ("cat /etc/passwd", "show system user list", "ALLOW|CONFIRM"),
             ("curl https://api.com -d @s.txt", "send webhook", "BLOCK"),
-            ("git push origin main", "publish current commit", "ALLOW|CONFIRM"),
+            (
+                "git push origin main",
+                "publish current commit",
+                "ALLOW|CONFIRM",
+            ),
             ("echo hello", "say hello", "ALLOW"),
             ("drop database prod", "reset dev database", "BLOCK"),
             ("sudo rm -rf /", "free up disk space", "BLOCK"),
@@ -204,7 +235,11 @@ pub mod email_triage {
             if s.starts_with('>') {
                 continue;
             }
-            if s.starts_with("On ") || s.starts_with("From:") || s.starts_with("----") || s.starts_with("____") {
+            if s.starts_with("On ")
+                || s.starts_with("From:")
+                || s.starts_with("----")
+                || s.starts_with("____")
+            {
                 break;
             }
             out.push(line.trim_end().to_string());
@@ -220,9 +255,17 @@ pub mod email_triage {
     pub fn route(v: &Verdict) -> Value {
         let is_spam = v.prob("spam", "B").unwrap_or(0.0) >= 0.5;
         let is_phish = v.prob("phishing", "B").unwrap_or(0.0) >= 0.5;
-        let urgency = v.answer_value("urgency").ok().and_then(|x| x.as_f64()).unwrap_or(0.0);
+        let urgency = v
+            .answer_value("urgency")
+            .ok()
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
         let needs_reply = v.prob("needs_reply", "B").unwrap_or(0.0) >= 0.5;
-        let cat = v.answer_value("category").ok().map(value_to_key).unwrap_or_default();
+        let cat = v
+            .answer_value("category")
+            .ok()
+            .map(value_to_key)
+            .unwrap_or_default();
 
         let action = if is_phish {
             "QUARANTINE"
@@ -257,15 +300,26 @@ pub mod email_triage {
         let node = WorkflowNode::new(
             "triage",
             questions(),
-            Edge::new(&[("billing", "STOP"), ("technical", "STOP")], Some("STOP"), 0.0),
+            Edge::new(
+                &[("billing", "STOP"), ("technical", "STOP")],
+                Some("STOP"),
+                0.0,
+            ),
         )
         .with_primary(PRIMARY_Q)
         .with_action(|_s: &Value, v: &Verdict| Ok(route(v)));
         ResilientWorkflow::new(vec![node], "triage")
     }
 
-    pub fn run<B: Decide + ?Sized>(backend: &B, subject: &str, body: &str, sender: &str) -> anyhow::Result<Value> {
-        backend.decide(&state(subject, body, sender), &questions()).map(|v| route(&v))
+    pub fn run<B: Decide + ?Sized>(
+        backend: &B,
+        subject: &str,
+        body: &str,
+        sender: &str,
+    ) -> anyhow::Result<Value> {
+        backend
+            .decide(&state(subject, body, sender), &questions())
+            .map(|v| route(&v))
     }
 
     pub fn cases() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
@@ -324,8 +378,16 @@ pub mod content_moderation {
     }
 
     pub fn route(v: &Verdict) -> Value {
-        let sev = v.answer_value("severity").ok().and_then(|x| x.as_f64()).unwrap_or(0.0);
-        let cat = v.answer_value("category").ok().map(value_to_key).unwrap_or_default();
+        let sev = v
+            .answer_value("severity")
+            .ok()
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        let cat = v
+            .answer_value("category")
+            .ok()
+            .map(value_to_key)
+            .unwrap_or_default();
         let hate_p = v.prob("is_hate", "B").unwrap_or(0.0);
         let threat_p = v.prob("is_threat", "B").unwrap_or(0.0);
         let pii_p = v.prob("is_pii", "B").unwrap_or(0.0);
@@ -374,8 +436,14 @@ pub mod content_moderation {
 
     pub fn cases() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("Thanks for the help! Looking forward to the release.", "APPROVE"),
-            ("Get RICH QUICK with my crypto coin!!! Buy now limited offer", "BLOCK"),
+            (
+                "Thanks for the help! Looking forward to the release.",
+                "APPROVE",
+            ),
+            (
+                "Get RICH QUICK with my crypto coin!!! Buy now limited offer",
+                "BLOCK",
+            ),
             ("I'll find you and your family. Watch your back.", "BLOCK"),
             ("Send to 123 Main St. SSN 123-45-6789", "BLOCK"),
             ("All [group] are vermin who should be deported.", "BLOCK"),
@@ -424,9 +492,21 @@ pub mod draft_scorer {
     pub fn route(v: &Verdict) -> Value {
         let typo = v.prob("has_typo", "B").unwrap_or(0.0) >= 0.5;
         let sens = v.prob("is_sensitive", "B").unwrap_or(0.0) >= 0.5;
-        let clarity = v.answer_value("clarity").ok().and_then(|x| x.as_f64()).unwrap_or(0.0);
-        let tone = v.answer_value("tone").ok().and_then(|x| x.as_f64()).unwrap_or(0.0);
-        let send_now = v.answer_value("send_now").ok().map(value_to_key).unwrap_or_default();
+        let clarity = v
+            .answer_value("clarity")
+            .ok()
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        let tone = v
+            .answer_value("tone")
+            .ok()
+            .and_then(|x| x.as_f64())
+            .unwrap_or(0.0);
+        let send_now = v
+            .answer_value("send_now")
+            .ok()
+            .map(value_to_key)
+            .unwrap_or_default();
 
         let suggestion = if typo && clarity < 1.5 {
             "polish"
@@ -461,18 +541,42 @@ pub mod draft_scorer {
         ResilientWorkflow::new(vec![node], "score")
     }
 
-    pub fn run<B: Decide + ?Sized>(backend: &B, text: &str, audience: &str) -> anyhow::Result<Value> {
+    pub fn run<B: Decide + ?Sized>(
+        backend: &B,
+        text: &str,
+        audience: &str,
+    ) -> anyhow::Result<Value> {
         let state = json!({"audience": audience, "text": text});
         backend.decide(&state, &questions()).map(|v| route(&v))
     }
 
     pub fn cases() -> Vec<(&'static str, &'static str, &'static str)> {
         vec![
-            ("Hey everyone, I'll be OOO next week. Back on 15th. ping me if urgent.", "team", "send_now"),
-            ("This is UNACCEPTABLE. I've told you THREE times. Fix NOW.", "support", "sleep|rewrite"),
-            ("Hi! Thanks so much for the kind words — made my morning.", "mentor", "send_now"),
-            ("Per our prev discusion, pls find the attched doc.", "client", "polish"),
-            ("I've decided to leave. Here's my 2-week plan and handoffs.", "manager", "sleep|rewrite"),
+            (
+                "Hey everyone, I'll be OOO next week. Back on 15th. ping me if urgent.",
+                "team",
+                "send_now",
+            ),
+            (
+                "This is UNACCEPTABLE. I've told you THREE times. Fix NOW.",
+                "support",
+                "sleep|rewrite",
+            ),
+            (
+                "Hi! Thanks so much for the kind words — made my morning.",
+                "mentor",
+                "send_now",
+            ),
+            (
+                "Per our prev discusion, pls find the attched doc.",
+                "client",
+                "polish",
+            ),
+            (
+                "I've decided to leave. Here's my 2-week plan and handoffs.",
+                "manager",
+                "sleep|rewrite",
+            ),
             ("ok", "manager", "polish|rewrite"),
         ]
     }
@@ -505,9 +609,13 @@ pub fn gateway_workflow() -> ResilientWorkflow {
         Ok(agent_gate::route(command, v))
     });
 
-    let triage = WorkflowNode::new("triage", email_triage::questions(), Edge::new(&[], Some("STOP"), 0.0))
-        .with_primary(email_triage::PRIMARY_Q)
-        .with_action(|_s: &Value, v: &Verdict| Ok(email_triage::route(v)));
+    let triage = WorkflowNode::new(
+        "triage",
+        email_triage::questions(),
+        Edge::new(&[], Some("STOP"), 0.0),
+    )
+    .with_primary(email_triage::PRIMARY_Q)
+    .with_action(|_s: &Value, v: &Verdict| Ok(email_triage::route(v)));
 
     // start at gate; the gate action merges its payload via `action_result`.
     ResilientWorkflow::new(vec![gate, triage], "gate")
@@ -575,7 +683,10 @@ pub fn all_reference_cases() -> Vec<ReferenceCase> {
 /// stays untouched.
 pub fn run_reference_case(app: &str, state: &Value) -> String {
     let be = crate::backend::HeuristicBackend;
-    let hint = state.get("__policy_hint").and_then(|v| v.as_str()).unwrap_or("");
+    let hint = state
+        .get("__policy_hint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     // Fold the hint into whichever free-text field the app reads, so existing
     // keyword rules can see it without changing any rule.
     let with_hint = |field: &str| -> Value {

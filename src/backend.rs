@@ -66,12 +66,16 @@ pub fn verdict_from_response(raw: &Value) -> Result<Verdict> {
             "choice" => (
                 ans.get("choice").cloned().unwrap_or(Value::Null),
                 json_to_map(ans.get("probabilities").unwrap_or(&Value::Null)),
-                ans.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                ans.get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
             ),
             "score" => (
                 ans.get("score").cloned().unwrap_or(Value::Null),
                 json_to_map(ans.get("probabilities").unwrap_or(&Value::Null)),
-                ans.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0),
+                ans.get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0),
             ),
             "noul" => {
                 let p = ans.get("noul").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -88,7 +92,11 @@ pub fn verdict_from_response(raw: &Value) -> Result<Verdict> {
         };
         out.insert(
             qid.clone(),
-            Decision { answer, probabilities, confidence },
+            Decision {
+                answer,
+                probabilities,
+                confidence,
+            },
         );
     }
     let n_tokens = raw
@@ -96,7 +104,11 @@ pub fn verdict_from_response(raw: &Value) -> Result<Verdict> {
         .and_then(|u| u.get("input_tokens"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as usize;
-    Ok(Verdict { answers: out, input_tokens: n_tokens, latency_ms: 0.0 })
+    Ok(Verdict {
+        answers: out,
+        input_tokens: n_tokens,
+        latency_ms: 0.0,
+    })
 }
 
 /// Deterministic backend: returns canned `Verdict`s, one per call (then repeats
@@ -108,7 +120,10 @@ pub struct ScriptedBackend {
 
 impl ScriptedBackend {
     pub fn new(script: Vec<Verdict>) -> Self {
-        Self { script, cursor: std::cell::Cell::new(0) }
+        Self {
+            script,
+            cursor: std::cell::Cell::new(0),
+        }
     }
     pub fn calls(&self) -> usize {
         self.cursor.get()
@@ -168,7 +183,12 @@ fn contains_any(s: &str, needles: &[&str]) -> bool {
     let l = s.to_lowercase();
     needles.iter().any(|n| {
         let n = n.to_lowercase();
-        if n.contains(' ') || n.contains('-') || n.contains('/') || n.contains('@') || n.contains('.') {
+        if n.contains(' ')
+            || n.contains('-')
+            || n.contains('/')
+            || n.contains('@')
+            || n.contains('.')
+        {
             return l.contains(&n);
         }
         // Single token: require boundaries so "need" != "needed".
@@ -177,9 +197,17 @@ fn contains_any(s: &str, needles: &[&str]) -> bool {
             let start = from + i;
             let end = start + n.len();
             let before_ok = start == 0
-                || !l[..start].chars().next_back().map(|c| c.is_alphanumeric()).unwrap_or(false);
+                || !l[..start]
+                    .chars()
+                    .next_back()
+                    .map(|c| c.is_alphanumeric())
+                    .unwrap_or(false);
             let after_ok = end >= l.len()
-                || !l[end..].chars().next().map(|c| c.is_alphanumeric()).unwrap_or(false);
+                || !l[end..]
+                    .chars()
+                    .next()
+                    .map(|c| c.is_alphanumeric())
+                    .unwrap_or(false);
             if before_ok && after_ok {
                 return true;
             }
@@ -195,10 +223,22 @@ impl Decide for HeuristicBackend {
         let qs = questions.as_object().cloned().unwrap_or_default();
         let mut answers = HashMap::new();
         for (qid, qdef) in &qs {
-            let qtype = qdef.get("type").and_then(|v| v.as_str()).unwrap_or("choice");
+            let qtype = qdef
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("choice");
             let (answer, probabilities, confidence) = match qid.as_str() {
                 "is_destructive" => {
-                    let p = if contains_any(&text, &["rm ", "drop ", "delete", "truncate", "wipe", "format", "kill"]) { 0.95 } else { 0.1 };
+                    let p = if contains_any(
+                        &text,
+                        &[
+                            "rm ", "drop ", "delete", "truncate", "wipe", "format", "kill",
+                        ],
+                    ) {
+                        0.95
+                    } else {
+                        0.1
+                    };
                     bchoice(p)
                 }
                 "is_exfiltration" => {
@@ -209,8 +249,12 @@ impl Decide for HeuristicBackend {
                     //     its stated intent, so it must NOT be an intent
                     //     mismatch — it belongs here, at a caution level that
                     //     routes to CONFIRM rather than BLOCK.
-                    let outward = contains_any(&text, &["curl ", "wget ", "scp ", "@s.txt", "evil.example", "upload"]);
-                    let sensitive_read = contains_any(&text, &["/etc/passwd", "/etc/shadow", "id_rsa", ".ssh/"]);
+                    let outward = contains_any(
+                        &text,
+                        &["curl ", "wget ", "scp ", "@s.txt", "evil.example", "upload"],
+                    );
+                    let sensitive_read =
+                        contains_any(&text, &["/etc/passwd", "/etc/shadow", "id_rsa", ".ssh/"]);
                     let p = if outward {
                         0.9
                     } else if sensitive_read {
@@ -220,24 +264,92 @@ impl Decide for HeuristicBackend {
                     };
                     bchoice(p)
                 }
-                "is_hate" => bchoice(if contains_any(&text, &["vermin", "deport", "slur"]) { 0.9 } else { 0.05 }),
-                "is_threat" => bchoice(if contains_any(&text, &["find you", "watch your back", "kill you"]) { 0.9 } else { 0.05 }),
-                "is_pii" => bchoice(if contains_any(&text, &["ssn", "123-45-6789", "credit card"]) { 0.9 } else { 0.05 }),
-                "is_spam" | "spam" => bchoice(if contains_any(&text, &["get rich", "limited offer", "buy now", "5000/week"]) { 0.9 } else { 0.1 }),
-                "phishing" => bchoice(if contains_any(&text, &["confirm credentials", "suspended", "verify your account", "http://evil"]) { 0.9 } else { 0.05 }),
-                "severity" => bscore(if contains_any(&text, &["vermin", "watch your back", "get rich", "123-45-6789"]) { 2.0 } else { 0.5 }),
-                "has_typo" => bchoice(if contains_any(&text, &["discusion", "attched", "pls"]) { 0.8 } else { 0.1 }),
-                "is_sensitive" => bchoice(if contains_any(&text, &["i've decided to leave", "unacceptable", "2-week plan"]) { 0.8 } else { 0.2 }),
+                "is_hate" => bchoice(if contains_any(&text, &["vermin", "deport", "slur"]) {
+                    0.9
+                } else {
+                    0.05
+                }),
+                "is_threat" => bchoice(
+                    if contains_any(&text, &["find you", "watch your back", "kill you"]) {
+                        0.9
+                    } else {
+                        0.05
+                    },
+                ),
+                "is_pii" => bchoice(
+                    if contains_any(&text, &["ssn", "123-45-6789", "credit card"]) {
+                        0.9
+                    } else {
+                        0.05
+                    },
+                ),
+                "is_spam" | "spam" => bchoice(
+                    if contains_any(
+                        &text,
+                        &["get rich", "limited offer", "buy now", "5000/week"],
+                    ) {
+                        0.9
+                    } else {
+                        0.1
+                    },
+                ),
+                "phishing" => bchoice(
+                    if contains_any(
+                        &text,
+                        &[
+                            "confirm credentials",
+                            "suspended",
+                            "verify your account",
+                            "http://evil",
+                        ],
+                    ) {
+                        0.9
+                    } else {
+                        0.05
+                    },
+                ),
+                "severity" => bscore(
+                    if contains_any(
+                        &text,
+                        &["vermin", "watch your back", "get rich", "123-45-6789"],
+                    ) {
+                        2.0
+                    } else {
+                        0.5
+                    },
+                ),
+                "has_typo" => bchoice(if contains_any(&text, &["discusion", "attched", "pls"]) {
+                    0.8
+                } else {
+                    0.1
+                }),
+                "is_sensitive" => bchoice(
+                    if contains_any(
+                        &text,
+                        &["i've decided to leave", "unacceptable", "2-week plan"],
+                    ) {
+                        0.8
+                    } else {
+                        0.2
+                    },
+                ),
                 // `tone` is a 4-level score (angry/tense/neutral/warm). Only
                 // looking for two hostile phrases left a resignation letter at
                 // "neutral", so a high-stakes message was never routed to
                 // "sleep". Fold in the other negative-affect signals this
                 // backend already extracts.
                 "tone" => {
-                    let hostile = contains_any(&text, &["unacceptable", "fix now", "angry", "furious"]);
+                    let hostile =
+                        contains_any(&text, &["unacceptable", "fix now", "angry", "furious"]);
                     let heavy = contains_any(
                         &text,
-                        &["decided to leave", "resign", "i quit", "termination", "layoff"],
+                        &[
+                            "decided to leave",
+                            "resign",
+                            "i quit",
+                            "termination",
+                            "layoff",
+                        ],
                     );
                     bscore(if hostile {
                         0.3
@@ -266,9 +378,23 @@ impl Decide for HeuristicBackend {
                     bscore(v)
                 }
                 "professionalism" => bscore(1.5),
-                "urgency" => bscore(if contains_any(&text, &["outage", "refund today", "before sprint end"]) { 2.0 } else { 0.8 }),
-                "sentiment" => bscore(if contains_any(&text, &["unacceptable", "angry"]) { 0.3 } else { 2.0 }),
-                "needs_reply" => bchoice(if contains_any(&text, &["please", "need", "refund"]) { 0.7 } else { 0.2 }),
+                "urgency" => bscore(
+                    if contains_any(&text, &["outage", "refund today", "before sprint end"]) {
+                        2.0
+                    } else {
+                        0.8
+                    },
+                ),
+                "sentiment" => bscore(if contains_any(&text, &["unacceptable", "angry"]) {
+                    0.3
+                } else {
+                    2.0
+                }),
+                "needs_reply" => bchoice(if contains_any(&text, &["please", "need", "refund"]) {
+                    0.7
+                } else {
+                    0.2
+                }),
                 // `intent_match` asks "does the command match the stated intent?".
                 // Unlike the other questions its **A** pole is the positive one
                 // ("yes, it does what the user asked"), so a plain `bchoice(0.9)`
@@ -289,10 +415,10 @@ impl Decide for HeuristicBackend {
                     let mismatch = contains_any(
                         &text,
                         &[
-                            "free up disk space",     // `sudo rm -rf /`
-                            "reset dev database",     // `drop database prod`
-                            "clean the project",      // `rm -rf ./build`
-                            "send webhook",           // `curl ... -d @s.txt`
+                            "free up disk space", // `sudo rm -rf /`
+                            "reset dev database", // `drop database prod`
+                            "clean the project",  // `rm -rf ./build`
+                            "send webhook",       // `curl ... -d @s.txt`
                         ],
                     );
                     // A = matches intent, B = diverges/dangerous.
@@ -312,31 +438,60 @@ impl Decide for HeuristicBackend {
                     if is_moderation {
                         let pick = if contains_any(&text, &["vermin", "deport", "slur"]) {
                             "hateful"
-                        } else if contains_any(&text, &["find you", "watch your back", "kill you"]) {
+                        } else if contains_any(&text, &["find you", "watch your back", "kill you"])
+                        {
                             "threatening"
                         } else if contains_any(&text, &["ssn", "123-45-6789", "credit card"]) {
                             "leaky_pii"
-                        } else if contains_any(&text, &["get rich", "limited offer", "buy now", "5000/week"]) {
+                        } else if contains_any(
+                            &text,
+                            &["get rich", "limited offer", "buy now", "5000/week"],
+                        ) {
                             "spam"
                         } else {
                             "safe"
                         };
-                        let keys = ["safe", "hateful", "threatening", "leaky_pii", "spam", "off_topic"];
+                        let keys = [
+                            "safe",
+                            "hateful",
+                            "threatening",
+                            "leaky_pii",
+                            "spam",
+                            "off_topic",
+                        ];
                         let mut m = Map::new();
                         for k in keys {
-                            m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 }));
+                            m.insert(
+                                k.to_string(),
+                                serde_json::json!(if k == pick { 0.9 } else { 0.02 }),
+                            );
                         }
                         (serde_json::json!(pick), m, 0.9)
                     } else {
-                        let pick = if contains_any(&text, &["outage", "500", "hotfix", "incident", "prod", "unavailable"]) {
+                        let pick = if contains_any(
+                            &text,
+                            &["outage", "500", "hotfix", "incident", "prod", "unavailable"],
+                        ) {
                             "technical"
-                        } else if contains_any(&text, &["refund", "invoice", "billed", "payment", "duplicate charge"]) {
+                        } else if contains_any(
+                            &text,
+                            &["refund", "invoice", "billed", "payment", "duplicate charge"],
+                        ) {
                             "billing"
-                        } else if contains_any(&text, &["pricing", "demo", "purchase", "quote", "trial"]) {
+                        } else if contains_any(
+                            &text,
+                            &["pricing", "demo", "purchase", "quote", "trial"],
+                        ) {
                             "sales"
-                        } else if contains_any(&text, &["login", "password", "access", "profile", "reset"]) {
+                        } else if contains_any(
+                            &text,
+                            &["login", "password", "access", "profile", "reset"],
+                        ) {
                             "account"
-                        } else if contains_any(&text, &["leave", "payroll", "hiring", "vacation", "pto"]) {
+                        } else if contains_any(
+                            &text,
+                            &["leave", "payroll", "hiring", "vacation", "pto"],
+                        ) {
                             "hr"
                         } else {
                             "other"
@@ -344,12 +499,19 @@ impl Decide for HeuristicBackend {
                         let keys = ["billing", "technical", "sales", "account", "hr", "other"];
                         let mut m = Map::new();
                         for k in keys {
-                            m.insert(k.to_string(), serde_json::json!(if k == pick { 0.9 } else { 0.02 }));
+                            m.insert(
+                                k.to_string(),
+                                serde_json::json!(if k == pick { 0.9 } else { 0.02 }),
+                            );
                         }
                         (serde_json::json!(pick), m, 0.9)
                     }
                 }
-                "risk" => bscore(if contains_any(&text, &["rm ", "drop ", "delete"]) { 2.0 } else { 0.2 }),
+                "risk" => bscore(if contains_any(&text, &["rm ", "drop ", "delete"]) {
+                    2.0
+                } else {
+                    0.2
+                }),
                 _ => match qtype {
                     "score" => bscore(1.0),
                     "noul" => {
@@ -362,9 +524,20 @@ impl Decide for HeuristicBackend {
                     _ => default_choice(qdef),
                 },
             };
-            answers.insert(qid.clone(), Decision { answer, probabilities, confidence });
+            answers.insert(
+                qid.clone(),
+                Decision {
+                    answer,
+                    probabilities,
+                    confidence,
+                },
+            );
         }
-        Ok(Verdict { answers, input_tokens: 0, latency_ms: 0.0 })
+        Ok(Verdict {
+            answers,
+            input_tokens: 0,
+            latency_ms: 0.0,
+        })
     }
 }
 
@@ -402,15 +575,25 @@ fn default_choice(qdef: &Value) -> (Value, Map<String, Value>, f64) {
     let mut m = Map::new();
     let n = keys.len().max(1);
     for (i, k) in keys.iter().enumerate() {
-        m.insert(k.clone(), serde_json::json!(1.0 / n as f64 + if i == 0 { 0.05 } else { 0.0 }));
+        m.insert(
+            k.clone(),
+            serde_json::json!(1.0 / n as f64 + if i == 0 { 0.05 } else { 0.0 }),
+        );
     }
-    (serde_json::json!(keys.first().cloned().unwrap_or_default()), m, 0.5)
+    (
+        serde_json::json!(keys.first().cloned().unwrap_or_default()),
+        m,
+        0.5,
+    )
 }
 
 /// Builder helper for hand-written verdicts in tests.
 pub fn verdict(entries: &[(&str, Decision)]) -> Verdict {
     Verdict {
-        answers: entries.iter().map(|(k, d)| (k.to_string(), d.clone())).collect(),
+        answers: entries
+            .iter()
+            .map(|(k, d)| (k.to_string(), d.clone()))
+            .collect(),
         input_tokens: 0,
         latency_ms: 0.0,
     }

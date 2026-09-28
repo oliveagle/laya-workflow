@@ -46,14 +46,19 @@ pub fn call_rpc(c: &RpcCap, with: &Value, state: &Value, policy: &Policy) -> Res
     let id = c.id.unwrap_or(1);
     let req = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
 
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let resp = agent
         .post(&url)
         .set("content-type", "application/json")
         .send_json(req)
         .map_err(|e| anyhow!("rpc {url} failed: {e}"))?;
     let status = resp.status() as i64;
-    let text = truncate(resp.into_string().map_err(|e| anyhow!("rpc read: {e}"))?, policy.max_output);
+    let text = truncate(
+        resp.into_string().map_err(|e| anyhow!("rpc read: {e}"))?,
+        policy.max_output,
+    );
     let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
     if let Some(err) = body.get("error") {
         bail!("rpc {method} returned error: {err}");
@@ -93,11 +98,7 @@ pub fn call_graphql(c: &GraphqlCap, with: &Value, state: &Value, policy: &Policy
     if query.is_empty() {
         bail!("graphql capability needs 'query' (in config or 'with')");
     }
-    let mut vars: Map<String, Value> = c
-        .variables
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
+    let mut vars: Map<String, Value> = c.variables.as_object().cloned().unwrap_or_default();
     if let Some(extra) = with.get("variables").and_then(|v| v.as_object()) {
         for (k, v) in extra {
             vars.insert(k.clone(), expand(v, state, with));
@@ -105,15 +106,23 @@ pub fn call_graphql(c: &GraphqlCap, with: &Value, state: &Value, policy: &Policy
     }
     let body = json!({ "query": query, "variables": Value::Object(vars) });
 
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let mut req = agent.post(&url).set("content-type", "application/json");
     if !c.auth_header.is_empty() {
         let v = stringify(&expand(&Value::String(c.auth_value.clone()), state, with));
         req = req.set(&c.auth_header, &v);
     }
-    let resp = req.send_json(body).map_err(|e| anyhow!("graphql {url} failed: {e}"))?;
+    let resp = req
+        .send_json(body)
+        .map_err(|e| anyhow!("graphql {url} failed: {e}"))?;
     let status = resp.status() as i64;
-    let text = truncate(resp.into_string().map_err(|e| anyhow!("graphql read: {e}"))?, policy.max_output);
+    let text = truncate(
+        resp.into_string()
+            .map_err(|e| anyhow!("graphql read: {e}"))?,
+        policy.max_output,
+    );
     let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
     if let Some(errors) = body.get("errors").and_then(|v| v.as_array()) {
         if !errors.is_empty() {
@@ -153,7 +162,9 @@ pub fn call_llm(c: &LlmCap, with: &Value, state: &Value, policy: &Policy) -> Res
     };
     check_host(&url, policy)?;
     let model = if c.model.is_empty() {
-        with.get("model").map(stringify).unwrap_or_else(|| "default".to_string())
+        with.get("model")
+            .map(stringify)
+            .unwrap_or_else(|| "default".to_string())
     } else {
         c.model.clone()
     };
@@ -174,15 +185,22 @@ pub fn call_llm(c: &LlmCap, with: &Value, state: &Value, policy: &Policy) -> Res
         "temperature": c.temperature,
     });
 
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let mut req = agent.post(&url).set("content-type", "application/json");
     if !c.auth_header.is_empty() {
         let v = stringify(&expand(&Value::String(c.auth_value.clone()), state, with));
         req = req.set(&c.auth_header, &v);
     }
-    let resp = req.send_json(body).map_err(|e| anyhow!("llm {url} failed: {e}"))?;
+    let resp = req
+        .send_json(body)
+        .map_err(|e| anyhow!("llm {url} failed: {e}"))?;
     let status = resp.status() as i64;
-    let text = truncate(resp.into_string().map_err(|e| anyhow!("llm read: {e}"))?, policy.max_output);
+    let text = truncate(
+        resp.into_string().map_err(|e| anyhow!("llm read: {e}"))?,
+        policy.max_output,
+    );
     let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
     let content = body
         .get("choices")
@@ -261,7 +279,9 @@ pub fn call_mcp(c: &McpCap, with: &Value, state: &Value, policy: &Policy) -> Res
                 bail!("mcp transport=http needs 'url'");
             }
             check_host(&url, policy)?;
-            let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+            let agent = ureq::AgentBuilder::new()
+                .timeout(bounded_timeout(c.timeout_ms, policy))
+                .build();
 
             // Streamable-HTTP MCP servers are stateful: they require an
             // `initialize` handshake and then every subsequent request must carry
@@ -334,7 +354,9 @@ pub fn call_mcp(c: &McpCap, with: &Value, state: &Value, policy: &Policy) -> Res
         }
         "stdio" => {
             if !policy.allow_exec {
-                bail!("mcp transport=stdio spawns a process; set policy.allow_exec = true to enable");
+                bail!(
+                    "mcp transport=stdio spawns a process; set policy.allow_exec = true to enable"
+                );
             }
             let cmd = c
                 .command
@@ -374,7 +396,11 @@ pub fn call_vector(c: &VectorCap, with: &Value, state: &Value, policy: &Policy) 
         bail!("vector capability needs 'url'");
     }
     check_host(&url, policy)?;
-    let op = if c.op.is_empty() { "search" } else { c.op.as_str() };
+    let op = if c.op.is_empty() {
+        "search"
+    } else {
+        c.op.as_str()
+    };
     let collection = stringify(&expand(&Value::String(c.collection.clone()), state, with));
     let body = match op {
         "search" => {
@@ -394,14 +420,20 @@ pub fn call_vector(c: &VectorCap, with: &Value, state: &Value, policy: &Policy) 
         }
         other => bail!("vector op {other:?} unsupported (upsert | search)"),
     };
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let resp = agent
         .post(&url)
         .set("content-type", "application/json")
         .send_json(body)
         .map_err(|e| anyhow!("vector {url} failed: {e}"))?;
     let status = resp.status() as i64;
-    let text = truncate(resp.into_string().map_err(|e| anyhow!("vector read: {e}"))?, policy.max_output);
+    let text = truncate(
+        resp.into_string()
+            .map_err(|e| anyhow!("vector read: {e}"))?,
+        policy.max_output,
+    );
     let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
     Ok(json!({
         "capability": "vector", "op": op, "collection": collection,
@@ -428,7 +460,10 @@ pub fn call_webhook(c: &WebhookCap, with: &Value, state: &Value, policy: &Policy
     }
     check_host(&url, policy)?;
     let payload = with.get("payload").cloned().unwrap_or_else(|| json!({}));
-    let event = with.get("event").map(stringify).unwrap_or_else(|| "notify".to_string());
+    let event = with
+        .get("event")
+        .map(stringify)
+        .unwrap_or_else(|| "notify".to_string());
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -436,7 +471,9 @@ pub fn call_webhook(c: &WebhookCap, with: &Value, state: &Value, policy: &Policy
     let body = json!({ "event": event, "timestamp": ts, "payload": payload });
     let body_text = serde_json::to_string(&body)?;
 
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let attempts = policy.retries + 1;
     let mut last_err = String::new();
     for attempt in 0..attempts {
@@ -524,7 +561,12 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     for chunk in msg.chunks(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3]]);
+            w[i] = u32::from_be_bytes([
+                chunk[i * 4],
+                chunk[i * 4 + 1],
+                chunk[i * 4 + 2],
+                chunk[i * 4 + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
@@ -547,8 +589,14 @@ fn sha256(data: &[u8]) -> [u8; 32] {
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);
-            hh = g; g = f; f = e; e = d.wrapping_add(t1);
-            d = c; c = b; b = a; a = t1.wrapping_add(t2);
+            hh = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
         }
         h[0] = h[0].wrapping_add(a);
         h[1] = h[1].wrapping_add(b);
@@ -583,7 +631,9 @@ pub fn call_sse(c: &SseCap, with: &Value, state: &Value, policy: &Policy) -> Res
         bail!("sse capability needs 'url'");
     }
     check_host(&url, policy)?;
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(c.timeout_ms, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(c.timeout_ms, policy))
+        .build();
     let resp = agent
         .get(&url)
         .set("accept", "text/event-stream")

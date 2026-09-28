@@ -13,7 +13,10 @@
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
-use super::{bounded_timeout, check_host, expand, host_of, stringify, truncate, ExecCap, Policy, effective_op};
+use super::{
+    bounded_timeout, check_host, effective_op, expand, host_of, stringify, truncate, ExecCap,
+    Policy,
+};
 
 // ── s3 ──────────────────────────────────────────────────────────────
 
@@ -45,7 +48,9 @@ pub fn call_s3(c: &S3Cap, with: &Value, state: &Value, policy: &Policy) -> Resul
     } else if key.is_empty() {
         "list".to_string()
     } else {
-        with.get("op").map(stringify).unwrap_or_else(|| "get".to_string())
+        with.get("op")
+            .map(stringify)
+            .unwrap_or_else(|| "get".to_string())
     };
     // Two S3 addressing styles exist and the endpoint tells us which one to use:
     //   * path-style         http://127.0.0.1:9000        + /bucket/key
@@ -81,7 +86,16 @@ pub fn call_s3(c: &S3Cap, with: &Value, state: &Value, policy: &Policy) -> Resul
     };
     check_host(&url, policy)?;
 
-    let agent = ureq::AgentBuilder::new().timeout(bounded_timeout(if c.timeout_ms == 0 { 10_000 } else { c.timeout_ms }, policy)).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(bounded_timeout(
+            if c.timeout_ms == 0 {
+                10_000
+            } else {
+                c.timeout_ms
+            },
+            policy,
+        ))
+        .build();
     let mut req = match op.as_str() {
         "put" => agent.put(&url),
         "delete" => agent.delete(&url),
@@ -102,7 +116,9 @@ pub fn call_s3(c: &S3Cap, with: &Value, state: &Value, policy: &Policy) -> Resul
     let text = truncate(resp.into_string().unwrap_or_default(), policy.max_output);
     let keys: Vec<String> = if op == "list" {
         let re = regex_lite::Regex::new(r"<Key>([^<]+)</Key>").map_err(|e| anyhow!("{e}"))?;
-        re.captures_iter(&text).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect()
+        re.captures_iter(&text)
+            .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+            .collect()
     } else {
         Vec::new()
     };
@@ -122,14 +138,26 @@ pub struct PrometheusCap {
     pub timeout_ms: u64,
 }
 
-pub fn call_prometheus(c: &PrometheusCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+pub fn call_prometheus(
+    c: &PrometheusCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
     let url = stringify(&expand(&Value::String(c.url.clone()), state, with));
     if url.is_empty() {
         bail!("prometheus needs 'url' (the /metrics or /api/v1/query endpoint)");
     }
     check_host(&url, policy)?;
     let agent = ureq::AgentBuilder::new()
-        .timeout(bounded_timeout(if c.timeout_ms == 0 { 8000 } else { c.timeout_ms }, policy))
+        .timeout(bounded_timeout(
+            if c.timeout_ms == 0 {
+                8000
+            } else {
+                c.timeout_ms
+            },
+            policy,
+        ))
         .build();
 
     // Query API mode when a query is provided, else scrape the text endpoint.
@@ -137,14 +165,22 @@ pub fn call_prometheus(c: &PrometheusCap, with: &Value, state: &Value, policy: &
     if !query.is_empty() {
         let sep = if url.contains('?') { '&' } else { '?' };
         let qurl = format!("{url}{sep}query={}", urlencode(&query));
-        let resp = agent.get(&qurl).call().map_err(|e| anyhow!("prometheus query failed: {e}"))?;
+        let resp = agent
+            .get(&qurl)
+            .call()
+            .map_err(|e| anyhow!("prometheus query failed: {e}"))?;
         let status = resp.status() as i64;
         let text = truncate(resp.into_string().unwrap_or_default(), policy.max_output);
         let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
-        return Ok(json!({ "capability": "prometheus", "mode": "query", "status": status, "query": query, "body": body }));
+        return Ok(
+            json!({ "capability": "prometheus", "mode": "query", "status": status, "query": query, "body": body }),
+        );
     }
 
-    let resp = agent.get(&url).call().map_err(|e| anyhow!("prometheus scrape failed: {e}"))?;
+    let resp = agent
+        .get(&url)
+        .call()
+        .map_err(|e| anyhow!("prometheus scrape failed: {e}"))?;
     let status = resp.status() as i64;
     let text = truncate(resp.into_string().unwrap_or_default(), policy.max_output);
     let mut samples = Vec::new();
@@ -179,7 +215,9 @@ pub fn call_prometheus(c: &PrometheusCap, with: &Value, state: &Value, policy: &
 fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
             b' ' => "%20".to_string(),
             other => format!("%{other:02X}"),
         })
@@ -202,14 +240,25 @@ pub fn call_kafka(c: &KafkaCap, with: &Value, state: &Value, policy: &Policy) ->
         bail!("kafka needs 'url' (the REST proxy)");
     }
     check_host(&url, policy)?;
-    let topic = if c.topic.is_empty() { with.get("topic").map(stringify).unwrap_or_default() } else { c.topic.clone() };
+    let topic = if c.topic.is_empty() {
+        with.get("topic").map(stringify).unwrap_or_default()
+    } else {
+        c.topic.clone()
+    };
     if topic.is_empty() {
         bail!("kafka needs 'topic'");
     }
     let value = with.get("value").cloned().unwrap_or_else(|| json!({}));
     let body = json!({ "records": [{ "value": value }] });
     let agent = ureq::AgentBuilder::new()
-        .timeout(bounded_timeout(if c.timeout_ms == 0 { 10_000 } else { c.timeout_ms }, policy))
+        .timeout(bounded_timeout(
+            if c.timeout_ms == 0 {
+                10_000
+            } else {
+                c.timeout_ms
+            },
+            policy,
+        ))
         .build();
     let url = format!("{}/topics/{}", url.trim_end_matches('/'), topic);
     let resp = agent
@@ -241,7 +290,11 @@ pub fn call_pdf(c: &PdfCap, with: &Value, state: &Value, policy: &Policy) -> Res
         bail!("pdf shells out to pdftotext/pdfinfo; set policy.allow_exec = true to enable");
     }
     let path = stringify(&expand(
-        &Value::String(if c.path.is_empty() { with.get("path").map(stringify).unwrap_or_default() } else { c.path.clone() }),
+        &Value::String(if c.path.is_empty() {
+            with.get("path").map(stringify).unwrap_or_default()
+        } else {
+            c.path.clone()
+        }),
         state,
         with,
     ));
@@ -252,13 +305,22 @@ pub fn call_pdf(c: &PdfCap, with: &Value, state: &Value, policy: &Policy) -> Res
     let op = effective_op(&c.op, with, "text");
     let argv = match op.as_str() {
         "info" => vec!["pdfinfo".to_string(), path.clone()],
-        _ => vec!["pdftotext".to_string(), "-layout".to_string(), path.clone(), "-".to_string()],
+        _ => vec![
+            "pdftotext".to_string(),
+            "-layout".to_string(),
+            path.clone(),
+            "-".to_string(),
+        ],
     };
     let cap = ExecCap {
         argv,
         cwd: None,
         env: serde_json::Map::new(),
-        timeout_ms: if c.timeout_ms == 0 { 30_000 } else { c.timeout_ms },
+        timeout_ms: if c.timeout_ms == 0 {
+            30_000
+        } else {
+            c.timeout_ms
+        },
         max_output: policy.max_output,
     };
     let out = super::call_exec(&cap, &json!({}), &json!({}), policy)?;
@@ -289,15 +351,29 @@ pub fn call_sql(c: &SqlCap, with: &Value, state: &Value, policy: &Policy) -> Res
     if dsn.is_empty() {
         bail!("sql needs 'dsn'");
     }
-    let sql = with.get("sql").map(stringify).ok_or_else(|| anyhow!("sql needs 'sql'"))?;
+    let sql = with
+        .get("sql")
+        .map(stringify)
+        .ok_or_else(|| anyhow!("sql needs 'sql'"))?;
     let sql = stringify(&expand(&Value::String(sql), state, with));
-    let driver = if c.driver.is_empty() { "sqlite3".to_string() } else { c.driver.clone() };
+    let driver = if c.driver.is_empty() {
+        "sqlite3".to_string()
+    } else {
+        c.driver.clone()
+    };
     let argv: Vec<String> = match driver.as_str() {
         "sqlite3" => {
             super::store::resolve_store_path(&dsn, policy)?;
             vec!["sqlite3".into(), "-json".into(), dsn.clone(), sql.clone()]
         }
-        "psql" => vec!["psql".into(), dsn.clone(), "-c".into(), sql.clone(), "--no-align".into(), "--tuples-only".into()],
+        "psql" => vec![
+            "psql".into(),
+            dsn.clone(),
+            "-c".into(),
+            sql.clone(),
+            "--no-align".into(),
+            "--tuples-only".into(),
+        ],
         "mysql" => vec!["mysql".into(), dsn.clone(), "-e".into(), sql.clone()],
         other => bail!("sql driver {other:?} unsupported (sqlite3 | psql | mysql)"),
     };
@@ -305,7 +381,11 @@ pub fn call_sql(c: &SqlCap, with: &Value, state: &Value, policy: &Policy) -> Res
         argv,
         cwd: None,
         env: serde_json::Map::new(),
-        timeout_ms: if c.timeout_ms == 0 { 30_000 } else { c.timeout_ms },
+        timeout_ms: if c.timeout_ms == 0 {
+            30_000
+        } else {
+            c.timeout_ms
+        },
         max_output: policy.max_output,
     };
     let out = super::call_exec(&cap, &json!({}), &json!({}), policy)?;

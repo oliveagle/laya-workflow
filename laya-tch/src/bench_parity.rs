@@ -60,10 +60,12 @@ fn max_abs_diff(a: &[f32], b: &[f32]) -> (f32, usize) {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let model_dir = args
-        .get(1)
-        .cloned()
-        .unwrap_or_else(|| format!("{}/models/convaiinnovations--laya", std::env::var("HOME").unwrap_or_default()));
+    let model_dir = args.get(1).cloned().unwrap_or_else(|| {
+        format!(
+            "{}/models/convaiinnovations--laya",
+            std::env::var("HOME").unwrap_or_default()
+        )
+    });
     let bench_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bench");
     let trace_path = args
         .get(2)
@@ -107,10 +109,18 @@ fn main() -> Result<()> {
 
     // ── end-to-end: all rows from the trace ──────────────────────────────
     let trace: Trace = serde_json::from_slice(&std::fs::read(&trace_path)?)?;
-    println!("\n[parity] {} rows from {}", trace.rows.len(), trace_path.display());
+    println!(
+        "\n[parity] {} rows from {}",
+        trace.rows.len(),
+        trace_path.display()
+    );
 
     // warmup
-    let _ = model.forward(&trace.rows[0].ids, &trace.rows[0].markers, trace.rows[0].qtype)?;
+    let _ = model.forward(
+        &trace.rows[0].ids,
+        &trace.rows[0].markers,
+        trace.rows[0].qtype,
+    )?;
 
     let mut worst = 0f32;
     let mut t_all = 0f64;
@@ -127,8 +137,14 @@ fn main() -> Result<()> {
             row.ids.len(),
             row.markers.len(),
             d,
-            logits.iter().map(|x| (x * 1e4).round() / 1e4).collect::<Vec<_>>(),
-            expected.iter().map(|x| (x * 1e4).round() / 1e4).collect::<Vec<_>>(),
+            logits
+                .iter()
+                .map(|x| (x * 1e4).round() / 1e4)
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|x| (x * 1e4).round() / 1e4)
+                .collect::<Vec<_>>(),
         );
         let _ = at;
     }
@@ -143,7 +159,11 @@ fn main() -> Result<()> {
     let inputs: Vec<SeqInput> = trace
         .rows
         .iter()
-        .map(|r| SeqInput { ids: &r.ids, markers: &r.markers, qtype: r.qtype })
+        .map(|r| SeqInput {
+            ids: &r.ids,
+            markers: &r.markers,
+            qtype: r.qtype,
+        })
         .collect();
     let _ = model.forward_batch(&inputs)?;
     let mut bt = f64::INFINITY;
@@ -161,7 +181,11 @@ fn main() -> Result<()> {
         let (d, _) = max_abs_diff(&o.logits, &expected);
         bworst = bworst.max(d);
         // act probability: softmax(act_logits)[0]
-        let mx = o.act_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mx = o
+            .act_logits
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
         let ex: Vec<f32> = o.act_logits.iter().map(|v| (v - mx).exp()).collect();
         let sm: f32 = ex.iter().sum();
         let p0 = ex[0] / sm;

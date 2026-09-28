@@ -50,7 +50,10 @@ pub fn resolve_store_path(raw: &str, policy: &Policy) -> Result<PathBuf> {
     let cand = if p.exists() {
         std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
     } else {
-        let parent = p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+        let parent = p
+            .parent()
+            .map(|d| d.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
         std::fs::canonicalize(&parent)
             .map(|d| d.join(p.file_name().unwrap_or_default()))
             .unwrap_or_else(|_| p.to_path_buf())
@@ -64,7 +67,10 @@ pub fn resolve_store_path(raw: &str, policy: &Policy) -> Result<PathBuf> {
             return Ok(cand);
         }
     }
-    bail!("path {raw:?} is outside the allowed roots {:?} (denied)", policy.allow_paths)
+    bail!(
+        "path {raw:?} is outside the allowed roots {:?} (denied)",
+        policy.allow_paths
+    )
 }
 
 /// Load a JSON object store.
@@ -134,7 +140,10 @@ fn store(path: &Path, m: &Map<String, Value>) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    write_atomic(path, &serde_json::to_string_pretty(&Value::Object(m.clone()))?)?;
+    write_atomic(
+        path,
+        &serde_json::to_string_pretty(&Value::Object(m.clone()))?,
+    )?;
     Ok(())
 }
 
@@ -155,23 +164,38 @@ pub struct KeyValueCap {
     pub key: String,
 }
 
-pub fn call_keyvalue(c: &KeyValueCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+pub fn call_keyvalue(
+    c: &KeyValueCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
     let raw = stringify(&expand(
-        &Value::String(if c.path.is_empty() { with.get("path").map(stringify).unwrap_or_default() } else { c.path.clone() }),
+        &Value::String(if c.path.is_empty() {
+            with.get("path").map(stringify).unwrap_or_default()
+        } else {
+            c.path.clone()
+        }),
         state,
         with,
     ));
     let path = resolve_store_path(&raw, policy)?;
     with_lock(&path, || {
         let mut m = load(&path)?;
-        let key = if c.key.is_empty() { with.get("key").map(stringify).unwrap_or_default() } else { c.key.clone() };
+        let key = if c.key.is_empty() {
+            with.get("key").map(stringify).unwrap_or_default()
+        } else {
+            c.key.clone()
+        };
         let op = effective_op(&c.op, with, "length");
         match op.as_str() {
             "get" => Ok(json!({
                 "capability": "keyvalue", "op": "get", "key": key,
                 "found": m.contains_key(&key), "value": m.get(&key).cloned().unwrap_or(Value::Null),
             })),
-            "has" => Ok(json!({ "capability": "keyvalue", "op": "has", "key": key, "found": m.contains_key(&key) })),
+            "has" => Ok(
+                json!({ "capability": "keyvalue", "op": "has", "key": key, "found": m.contains_key(&key) }),
+            ),
             "set" => {
                 if key.is_empty() {
                     bail!("keyvalue.set needs 'key'");
@@ -180,12 +204,16 @@ pub fn call_keyvalue(c: &KeyValueCap, with: &Value, state: &Value, policy: &Poli
                 let v = expand(&v, state, with);
                 m.insert(key.clone(), v.clone());
                 store(&path, &m)?;
-                Ok(json!({ "capability": "keyvalue", "op": "set", "key": key, "value": v, "size": m.len() }))
+                Ok(
+                    json!({ "capability": "keyvalue", "op": "set", "key": key, "value": v, "size": m.len() }),
+                )
             }
             "del" => {
                 let existed = m.remove(&key).is_some();
                 store(&path, &m)?;
-                Ok(json!({ "capability": "keyvalue", "op": "del", "key": key, "removed": existed, "size": m.len() }))
+                Ok(
+                    json!({ "capability": "keyvalue", "op": "del", "key": key, "removed": existed, "size": m.len() }),
+                )
             }
             "incr" => {
                 if key.is_empty() {
@@ -196,12 +224,16 @@ pub fn call_keyvalue(c: &KeyValueCap, with: &Value, state: &Value, policy: &Poli
                 let next = cur + by;
                 m.insert(key.clone(), json!(next));
                 store(&path, &m)?;
-                Ok(json!({ "capability": "keyvalue", "op": "incr", "key": key, "from": cur, "to": next }))
+                Ok(
+                    json!({ "capability": "keyvalue", "op": "incr", "key": key, "from": cur, "to": next }),
+                )
             }
             "list" => {
                 let mut keys: Vec<String> = m.keys().cloned().collect();
                 keys.sort();
-                Ok(json!({ "capability": "keyvalue", "op": "list", "keys": keys, "count": keys.len() }))
+                Ok(
+                    json!({ "capability": "keyvalue", "op": "list", "keys": keys, "count": keys.len() }),
+                )
             }
             other => bail!("keyvalue op {other:?} unsupported (get|set|del|incr|list|has)"),
         }
@@ -221,7 +253,11 @@ pub struct CacheCap {
 /// Cache entries are stored as `{"v": <value>, "e": <expiry_epoch>}`.
 pub fn call_cache(c: &CacheCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
     let raw = stringify(&expand(
-        &Value::String(if c.path.is_empty() { with.get("path").map(stringify).unwrap_or_default() } else { c.path.clone() }),
+        &Value::String(if c.path.is_empty() {
+            with.get("path").map(stringify).unwrap_or_default()
+        } else {
+            c.path.clone()
+        }),
         state,
         with,
     ));
@@ -237,7 +273,11 @@ pub fn call_cache(c: &CacheCap, with: &Value, state: &Value, policy: &Policy) ->
         match op.as_str() {
             "get" => {
                 let entry = m.get(&key);
-                let live = entry.and_then(|e| e.get("e")).and_then(|e| e.as_i64()).map(|e| e > t).unwrap_or(false);
+                let live = entry
+                    .and_then(|e| e.get("e"))
+                    .and_then(|e| e.as_i64())
+                    .map(|e| e > t)
+                    .unwrap_or(false);
                 Ok(json!({
                     "capability": "cache", "op": "get", "key": key, "hit": live,
                     "value": if live { entry.and_then(|e| e.get("v")).cloned().unwrap_or(Value::Null) } else { Value::Null },
@@ -250,13 +290,22 @@ pub fn call_cache(c: &CacheCap, with: &Value, state: &Value, policy: &Policy) ->
                 } else {
                     c.ttl_secs
                 };
-                let v = expand(&with.get("value").cloned().unwrap_or(Value::Null), state, with);
+                let v = expand(
+                    &with.get("value").cloned().unwrap_or(Value::Null),
+                    state,
+                    with,
+                );
                 m.insert(key.clone(), json!({ "v": v, "e": t + ttl }));
                 store(&path, &m)?;
-                Ok(json!({ "capability": "cache", "op": "set", "key": key, "ttl_secs": ttl, "expires_at": t + ttl }))
+                Ok(
+                    json!({ "capability": "cache", "op": "set", "key": key, "ttl_secs": ttl, "expires_at": t + ttl }),
+                )
             }
             "ttl" => {
-                let e = m.get(&key).and_then(|x| x.get("e")).and_then(|x| x.as_i64());
+                let e = m
+                    .get(&key)
+                    .and_then(|x| x.get("e"))
+                    .and_then(|x| x.as_i64());
                 Ok(json!({
                     "capability": "cache", "op": "ttl", "key": key,
                     "ttl_secs": e.map(|e| (e - t).max(0)), "expired": e.map(|e| e <= t).unwrap_or(true),
@@ -264,10 +313,17 @@ pub fn call_cache(c: &CacheCap, with: &Value, state: &Value, policy: &Policy) ->
             }
             "purge" => {
                 let before = m.len();
-                m.retain(|_, v| v.get("e").and_then(|e| e.as_i64()).map(|e| e > t).unwrap_or(true));
+                m.retain(|_, v| {
+                    v.get("e")
+                        .and_then(|e| e.as_i64())
+                        .map(|e| e > t)
+                        .unwrap_or(true)
+                });
                 let removed = before - m.len();
                 store(&path, &m)?;
-                Ok(json!({ "capability": "cache", "op": "purge", "removed": removed, "remaining": m.len() }))
+                Ok(
+                    json!({ "capability": "cache", "op": "purge", "removed": removed, "remaining": m.len() }),
+                )
             }
             other => bail!("cache op {other:?} unsupported (get | set | ttl | purge)"),
         }
@@ -285,7 +341,11 @@ pub struct QueueCap {
 
 pub fn call_queue(c: &QueueCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
     let raw = stringify(&expand(
-        &Value::String(if c.path.is_empty() { with.get("path").map(stringify).unwrap_or_default() } else { c.path.clone() }),
+        &Value::String(if c.path.is_empty() {
+            with.get("path").map(stringify).unwrap_or_default()
+        } else {
+            c.path.clone()
+        }),
         state,
         with,
     ));
@@ -305,16 +365,24 @@ pub fn call_queue(c: &QueueCap, with: &Value, state: &Value, policy: &Policy) ->
         let op = effective_op(&c.op, with, "length");
         match op.as_str() {
             "push" => {
-                let v = expand(&with.get("value").cloned().unwrap_or(Value::Null), state, with);
+                let v = expand(
+                    &with.get("value").cloned().unwrap_or(Value::Null),
+                    state,
+                    with,
+                );
                 items.push(v.clone());
                 save(&items)?;
-                Ok(json!({ "capability": "queue", "op": "push", "value": v, "length": items.len() }))
+                Ok(
+                    json!({ "capability": "queue", "op": "push", "value": v, "length": items.len() }),
+                )
             }
             "pop" => {
                 let had = !items.is_empty();
                 let v = if had { items.remove(0) } else { Value::Null };
                 save(&items)?;
-                Ok(json!({ "capability": "queue", "op": "pop", "found": had, "value": v, "length": items.len() }))
+                Ok(
+                    json!({ "capability": "queue", "op": "pop", "found": had, "value": v, "length": items.len() }),
+                )
             }
             "peek" => Ok(json!({
                 "capability": "queue", "op": "peek",

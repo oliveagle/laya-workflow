@@ -45,12 +45,19 @@ pub fn test_capability_timeouts(h: &mut Harness) {
         for mode in ["garbage", "silent"] {
             let port = hostile(mode);
             let reg = capability::registry_from(
-                &[("m", json!({"kind": "smtp", "host": "127.0.0.1", "port": port, "timeout_ms": 2000}))],
+                &[(
+                    "m",
+                    json!({"kind": "smtp", "host": "127.0.0.1", "port": port, "timeout_ms": 2000}),
+                )],
                 Some(pol.clone()),
             )
             .unwrap();
             let t0 = std::time::Instant::now();
-            let r = reg.call("m", &json!({"to": ["a@b.c"], "subject": "s", "body": "b"}), &json!({}));
+            let r = reg.call(
+                "m",
+                &json!({"to": ["a@b.c"], "subject": "s", "body": "b"}),
+                &json!({}),
+            );
             let ms = t0.elapsed().as_millis() as u64;
             h.check(&format!("fix: smtp vs {mode} fails"), r.is_err());
             h.check(
@@ -64,7 +71,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
         for kind in ["redis", "tcp", "nats", "mqtt", "smtp"] {
             let port = hostile("silent");
             let reg = capability::registry_from(
-                &[("m", json!({"kind": kind, "host": "127.0.0.1", "port": port, "timeout_ms": 2000}))],
+                &[(
+                    "m",
+                    json!({"kind": kind, "host": "127.0.0.1", "port": port, "timeout_ms": 2000}),
+                )],
                 Some(pol.clone()),
             )
             .unwrap();
@@ -81,12 +91,18 @@ pub fn test_capability_timeouts(h: &mut Harness) {
         for kind in ["redis", "mqtt"] {
             let port = hostile("garbage");
             let reg = capability::registry_from(
-                &[("m", json!({"kind": kind, "host": "127.0.0.1", "port": port, "timeout_ms": 2000}))],
+                &[(
+                    "m",
+                    json!({"kind": kind, "host": "127.0.0.1", "port": port, "timeout_ms": 2000}),
+                )],
                 Some(pol.clone()),
             )
             .unwrap();
             let r = reg.call("m", &json!({"op": "ping", "message": "y"}), &json!({}));
-            h.check(&format!("fix: {kind} rejects malformed bytes with an error"), r.is_err());
+            h.check(
+                &format!("fix: {kind} rejects malformed bytes with an error"),
+                r.is_err(),
+            );
         }
 
         // (3a) Non-finite numeric results must error, not serialise to JSON
@@ -114,7 +130,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             )
             .unwrap();
             let ov = reg2.call("s", &json!({"values": [1e308, 1e308, -1e308]}), &json!({}));
-            h.check("fix: math.stats rejects an overflowing mean/stddev", ov.is_err());
+            h.check(
+                "fix: math.stats rejects an overflowing mean/stddev",
+                ov.is_err(),
+            );
             let ok = reg2.call("s", &json!({"values": [1, 2, 3, 4]}), &json!({}));
             h.check(
                 "fix: math.stats still returns finite values",
@@ -154,14 +173,24 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Ok(v) => {
                     let samples = v["samples"].as_array().cloned().unwrap_or_default();
                     let find = |m: &str| samples.iter().find(|s| s["metric"] == json!(m)).cloned();
-                    h.eq("fix: prometheus keeps a finite sample numeric", find("metric_a").map(|s| s["value"].clone()).unwrap_or(Value::Null), json!(1.5));
+                    h.eq(
+                        "fix: prometheus keeps a finite sample numeric",
+                        find("metric_a")
+                            .map(|s| s["value"].clone())
+                            .unwrap_or(Value::Null),
+                        json!(1.5),
+                    );
                     h.check(
                         "fix: prometheus does not turn +Inf into null",
-                        find("metric_b").map(|s| !s["value"].is_null()).unwrap_or(false),
+                        find("metric_b")
+                            .map(|s| !s["value"].is_null())
+                            .unwrap_or(false),
                     );
                     h.check(
                         "fix: prometheus does not turn NaN into null",
-                        find("metric_c").map(|s| !s["value"].is_null()).unwrap_or(false),
+                        find("metric_c")
+                            .map(|s| !s["value"].is_null())
+                            .unwrap_or(false),
                     );
                 }
                 Err(e) => h.check(&format!("fix: prometheus scrape (skipped: {e})"), true),
@@ -189,7 +218,11 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Some(p.clone()),
             )
             .unwrap();
-            let r = reg.call("f", &json!({"path": format!("{}/escape/passwd", root.to_string_lossy())}), &json!({}));
+            let r = reg.call(
+                "f",
+                &json!({"path": format!("{}/escape/passwd", root.to_string_lossy())}),
+                &json!({}),
+            );
             h.check("fix: a symlink out of allow_paths is denied", r.is_err());
 
             let regw = capability::registry_from(
@@ -199,7 +232,11 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             .unwrap();
             let out_path = std::env::temp_dir().join("laya_should_not_exist.txt");
             let _ = std::fs::remove_file(&out_path);
-            let rw = regw.call("f", &json!({"path": "/etc/EVIL_SHOULD_NOT_EXIST", "text": "x"}), &json!({}));
+            let rw = regw.call(
+                "f",
+                &json!({"path": "/etc/EVIL_SHOULD_NOT_EXIST", "text": "x"}),
+                &json!({}),
+            );
             h.check("fix: a write outside allow_paths is denied", rw.is_err());
             h.check(
                 "fix: the denied write created no file",
@@ -222,7 +259,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             p.allow_paths = vec![std::env::temp_dir().to_string_lossy().to_string()];
             let reg = std::sync::Arc::new(
                 capability::registry_from(
-                    &[("q", json!({"kind": "queue", "op": "push", "path": path.to_string_lossy()}))],
+                    &[(
+                        "q",
+                        json!({"kind": "queue", "op": "push", "path": path.to_string_lossy()}),
+                    )],
                     Some(p),
                 )
                 .unwrap(),
@@ -238,7 +278,9 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                     }
                 }));
             }
-            for h in hs { h.join().unwrap(); }
+            for h in hs {
+                h.join().unwrap();
+            }
 
             // Read the file directly: this is the ground truth, independent of
             // whichever op the capability happens to default to.
@@ -249,7 +291,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 .unwrap_or_default();
             let expected = THREADS * PER;
             h.check(
-                &format!("fix: concurrent pushes keep every item (expected {expected}, got {})", items.len()),
+                &format!(
+                    "fix: concurrent pushes keep every item (expected {expected}, got {})",
+                    items.len()
+                ),
                 items.len() == expected,
             );
             h.check(
@@ -269,7 +314,11 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 .and_then(|t| serde_json::from_str::<Value>(&t).ok())
                 .and_then(|v| v.as_array().cloned())
                 .unwrap_or_default();
-            h.eq("fix: a length call does not mutate the store", after.len(), expected);
+            h.eq(
+                "fix: a length call does not mutate the store",
+                after.len(),
+                expected,
+            );
 
             let _ = std::fs::remove_file(&path);
         }
@@ -291,7 +340,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let _ = std::fs::remove_file(&kv_path);
             let kv = std::sync::Arc::new(
                 capability::registry_from(
-                    &[("k", json!({"kind": "keyvalue", "op": "set", "path": kv_path.to_string_lossy()}))],
+                    &[(
+                        "k",
+                        json!({"kind": "keyvalue", "op": "set", "path": kv_path.to_string_lossy()}),
+                    )],
                     Some(p.clone()),
                 )
                 .unwrap(),
@@ -309,7 +361,9 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                     }
                 }));
             }
-            for h in hs { h.join().unwrap(); }
+            for h in hs {
+                h.join().unwrap();
+            }
             let kv_map: Map<String, Value> = std::fs::read_to_string(&kv_path)
                 .ok()
                 .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -355,7 +409,9 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                     }
                 }));
             }
-            for h in hs { h.join().unwrap(); }
+            for h in hs {
+                h.join().unwrap();
+            }
             let cache_map: Map<String, Value> = std::fs::read_to_string(&cache_path)
                 .ok()
                 .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -394,18 +450,30 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 hs.push(std::thread::spawn(move || {
                     let mut ok = 0usize;
                     for i in 0..PER {
-                        if r.call("q", &json!({"value": format!("t{t}-i{i}")}), &json!({})).is_ok() { ok += 1; }
+                        if r.call("q", &json!({"value": format!("t{t}-i{i}")}), &json!({}))
+                            .is_ok()
+                        {
+                            ok += 1;
+                        }
                         // `text` / `math` read their inputs from `with`
                         // (not `state`), so passing state here would silently
                         // fail every call.
-                        if r.call("t", &json!({"text": "abc"}), &json!({})).is_ok() { ok += 1; }
-                        if r.call("m", &json!({"expression": "1 + 2"}), &json!({})).is_ok() { ok += 1; }
+                        if r.call("t", &json!({"text": "abc"}), &json!({})).is_ok() {
+                            ok += 1;
+                        }
+                        if r.call("m", &json!({"expression": "1 + 2"}), &json!({}))
+                            .is_ok()
+                        {
+                            ok += 1;
+                        }
                     }
                     ok
                 }));
             }
             let mut total_ok = 0usize;
-            for h in hs { total_ok += h.join().unwrap(); }
+            for h in hs {
+                total_ok += h.join().unwrap();
+            }
             h.check(
                 &format!(
                     "fix: a shared registry serves every concurrent call (expected {}, got {})",
@@ -446,12 +514,19 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             )
             .unwrap();
             let set = reg.call("k", &json!({"op": "set", "value": "hello"}), &json!({}));
-            h.check("fix: keyvalue honours a runtime op override (set)", set.is_ok());
+            h.check(
+                "fix: keyvalue honours a runtime op override (set)",
+                set.is_ok(),
+            );
             let got = reg
                 .call("k", &json!({"op": "get"}), &json!({}))
                 .map(|v| v["value"].clone())
                 .unwrap_or(Value::Null);
-            h.eq("fix: keyvalue reads back what the override wrote", got, json!("hello"));
+            h.eq(
+                "fix: keyvalue reads back what the override wrote",
+                got,
+                json!("hello"),
+            );
 
             // json: declared `pick`, asked for `sort_keys`.
             let jr = capability::registry_from(
@@ -459,8 +534,15 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Some(p.clone()),
             )
             .unwrap();
-            let jv = jr.call("j", &json!({"op": "sort_keys", "value": {"b": 1, "a": 2}}), &json!({}));
-            h.check("fix: json honours a runtime op override (sort_keys)", jv.is_ok());
+            let jv = jr.call(
+                "j",
+                &json!({"op": "sort_keys", "value": {"b": 1, "a": 2}}),
+                &json!({}),
+            );
+            h.check(
+                "fix: json honours a runtime op override (sort_keys)",
+                jv.is_ok(),
+            );
 
             // math: declared `stats`, asked for `eval`.
             let mr = capability::registry_from(
@@ -494,8 +576,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Some(no_exec.clone()),
             )
             .unwrap();
-            let e = reg.call("g", &json!({"goal": doc.to_string_lossy()}), &json!({}))
-                .unwrap_err().to_string();
+            let e = reg
+                .call("g", &json!({"goal": doc.to_string_lossy()}), &json!({}))
+                .unwrap_err()
+                .to_string();
             h.check(
                 "goal_runner: requires allow_exec (spawns an agent process)",
                 e.contains("allow_exec"),
@@ -510,9 +594,14 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Some(ok_pol.clone()),
             )
             .unwrap();
-            let e2 = reg_bad.call("g", &json!({"goal": doc.to_string_lossy()}), &json!({}))
-                .unwrap_err().to_string();
-            h.check("goal_runner: refuses an unknown runner", e2.contains("unknown runner"));
+            let e2 = reg_bad
+                .call("g", &json!({"goal": doc.to_string_lossy()}), &json!({}))
+                .unwrap_err()
+                .to_string();
+            h.check(
+                "goal_runner: refuses an unknown runner",
+                e2.contains("unknown runner"),
+            );
 
             // A doc outside allow_paths is denied.
             let reg_ok = capability::registry_from(
@@ -520,18 +609,27 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                 Some(ok_pol.clone()),
             )
             .unwrap();
-            let e3 = reg_ok.call("g", &json!({"goal": "/etc/passwd"}), &json!({}))
-                .unwrap_err().to_string();
+            let e3 = reg_ok
+                .call("g", &json!({"goal": "/etc/passwd"}), &json!({}))
+                .unwrap_err()
+                .to_string();
             h.check(
                 "goal_runner: denies a goal outside allow_paths",
                 e3.contains("outside"),
             );
             // A missing doc is an explicit error, not a silent no-op run.
             let e4 = reg_ok
-                .call("g", &json!({"goal": dir.join("nope.md").to_string_lossy()}), &json!({}))
+                .call(
+                    "g",
+                    &json!({"goal": dir.join("nope.md").to_string_lossy()}),
+                    &json!({}),
+                )
                 .unwrap_err()
                 .to_string();
-            h.check("goal_runner: a missing goal doc errors", e4.contains("does not exist"));
+            h.check(
+                "goal_runner: a missing goal doc errors",
+                e4.contains("does not exist"),
+            );
             // And a missing 'goal' argument is rejected.
             h.check(
                 "goal_runner: needs a goal doc",
@@ -540,7 +638,6 @@ pub fn test_capability_timeouts(h: &mut Harness) {
 
             let _ = std::fs::remove_dir_all(&dir);
         }
-
 
         // (3a6b) `goal_runner` success + failure paths, driven by a stub runner
         // so the test does not depend on `cmdgo`/`cxgo` being installed or
@@ -578,27 +675,55 @@ pub fn test_capability_timeouts(h: &mut Harness) {
 
             // success path
             let reg = capability::registry_from(
-                &[("g", json!({"kind": "goal_runner", "runner": "cmdgo",
-                               "args": ["--fresh", "--max-rounds", "2"]}))],
+                &[(
+                    "g",
+                    json!({"kind": "goal_runner", "runner": "cmdgo",
+                               "args": ["--fresh", "--max-rounds", "2"]}),
+                )],
                 Some(p.clone()),
             )
             .unwrap();
             let out = reg
-                .call("g", &json!({"goal": doc.to_string_lossy(), "workdir": dir.to_string_lossy()}), &json!({}))
+                .call(
+                    "g",
+                    &json!({"goal": doc.to_string_lossy(), "workdir": dir.to_string_lossy()}),
+                    &json!({}),
+                )
                 .unwrap();
-            h.check("goal_runner: success path returns ok=true", out["ok"].as_bool().unwrap_or(false));
-            h.eq("goal_runner: exit_code tracks the child", out["exit_code"].as_i64().unwrap_or(-1), 0);
-            h.check("goal_runner: not timed out", !out["timed_out"].as_bool().unwrap_or(true));
-            h.eq("goal_runner: counts the acceptance reports", out["report_count"].as_u64().unwrap_or(0), 2);
+            h.check(
+                "goal_runner: success path returns ok=true",
+                out["ok"].as_bool().unwrap_or(false),
+            );
+            h.eq(
+                "goal_runner: exit_code tracks the child",
+                out["exit_code"].as_i64().unwrap_or(-1),
+                0,
+            );
+            h.check(
+                "goal_runner: not timed out",
+                !out["timed_out"].as_bool().unwrap_or(true),
+            );
+            h.eq(
+                "goal_runner: counts the acceptance reports",
+                out["report_count"].as_u64().unwrap_or(0),
+                2,
+            );
             let cmd = out["command"].as_array().cloned().unwrap_or_default();
-            let joined = cmd.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" ");
+            let joined = cmd
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             h.check(
                 "goal_runner: forwards the configured args",
                 joined.contains("--fresh") && joined.contains("--max-rounds"),
             );
             h.check(
                 "goal_runner: passes the goal doc as the first arg",
-                cmd.get(1).and_then(|v| v.as_str()).map(|s| s.ends_with("g.md")).unwrap_or(false),
+                cmd.get(1)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.ends_with("g.md"))
+                    .unwrap_or(false),
             );
 
             // failure path: non-zero exit is reported, never masked as success
@@ -612,20 +737,45 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let fail_dir = dir.join("failwd");
             std::fs::create_dir_all(&fail_dir).unwrap();
             let bad = reg_bad
-                .call("g", &json!({"goal": doc.to_string_lossy(), "workdir": fail_dir.to_string_lossy()}), &json!({}))
+                .call(
+                    "g",
+                    &json!({"goal": doc.to_string_lossy(), "workdir": fail_dir.to_string_lossy()}),
+                    &json!({}),
+                )
                 .unwrap();
-            h.check("goal_runner: a failing runner reports ok=false", !bad["ok"].as_bool().unwrap_or(true));
-            h.eq("goal_runner: a failing runner keeps its exit code", bad["exit_code"].as_i64().unwrap_or(0), 3);
-            h.check("goal_runner: a failing runner surfaces stderr", bad["stderr"].as_str().unwrap_or("").contains("boom"));
-            h.eq("goal_runner: a failing runner has no reports", bad["report_count"].as_u64().unwrap_or(9), 0);
+            h.check(
+                "goal_runner: a failing runner reports ok=false",
+                !bad["ok"].as_bool().unwrap_or(true),
+            );
+            h.eq(
+                "goal_runner: a failing runner keeps its exit code",
+                bad["exit_code"].as_i64().unwrap_or(0),
+                3,
+            );
+            h.check(
+                "goal_runner: a failing runner surfaces stderr",
+                bad["stderr"].as_str().unwrap_or("").contains("boom"),
+            );
+            h.eq(
+                "goal_runner: a failing runner has no reports",
+                bad["report_count"].as_u64().unwrap_or(9),
+                0,
+            );
 
             // missing runner binary is an error, not a fake run
             std::fs::remove_file(&ok_stub).unwrap();
             let e = reg
-                .call("g", &json!({"goal": doc.to_string_lossy(), "workdir": dir.to_string_lossy()}), &json!({}))
+                .call(
+                    "g",
+                    &json!({"goal": doc.to_string_lossy(), "workdir": dir.to_string_lossy()}),
+                    &json!({}),
+                )
                 .unwrap_err()
                 .to_string();
-            h.check("goal_runner: a missing runner binary errors", e.contains("cannot start"));
+            h.check(
+                "goal_runner: a missing runner binary errors",
+                e.contains("cannot start"),
+            );
 
             match prev_bin {
                 Some(v) => std::env::set_var("LAYA_AGENT_BIN_DIR", v),
@@ -683,13 +833,43 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let mut stops = Vec::new();
             let mut cases: Vec<(&str, u16)> = Vec::new();
             for (label, status, ctype, body) in [
-                ("malformed json", "200 OK", "application/json", &b"{not json"[..]),
-                ("missing answers envelope", "200 OK", "application/json", &b"{}"[..]),
-                ("answers wrong type", "200 OK", "application/json", &br#"{"answers": 42}"#[..]),
+                (
+                    "malformed json",
+                    "200 OK",
+                    "application/json",
+                    &b"{not json"[..],
+                ),
+                (
+                    "missing answers envelope",
+                    "200 OK",
+                    "application/json",
+                    &b"{}"[..],
+                ),
+                (
+                    "answers wrong type",
+                    "200 OK",
+                    "application/json",
+                    &br#"{"answers": 42}"#[..],
+                ),
                 ("empty body", "200 OK", "application/json", &b""[..]),
-                ("server error", "500 Internal Server Error", "application/json", &b"{}"[..]),
-                ("html instead of json", "200 OK", "text/html", &b"<html>nope</html>"[..]),
-                ("truncated json", "200 OK", "application/json", &br#"{"answers": {"dep"#[..]),
+                (
+                    "server error",
+                    "500 Internal Server Error",
+                    "application/json",
+                    &b"{}"[..],
+                ),
+                (
+                    "html instead of json",
+                    "200 OK",
+                    "text/html",
+                    &b"<html>nope</html>"[..],
+                ),
+                (
+                    "truncated json",
+                    "200 OK",
+                    "application/json",
+                    &br#"{"answers": {"dep"#[..],
+                ),
             ] {
                 let (port, stop) = serve_always(status, ctype, body);
                 stops.push(stop);
@@ -697,12 +877,17 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             }
 
             for (label, port) in cases {
-                let be = laya_workflow::backend::LayaBackend::new(&format!("http://127.0.0.1:{port}"));
+                let be =
+                    laya_workflow::backend::LayaBackend::new(&format!("http://127.0.0.1:{port}"));
                 // A panic here would abort the process, which is the bug we are
                 // guarding against; an Err/Ok-with-empty-answers is acceptable.
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| be.decide(&st, &q)));
+                let r =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| be.decide(&st, &q)));
                 match r {
-                    Err(_) => h.check(&format!("fix: LayaBackend does not panic on {label}"), false),
+                    Err(_) => h.check(
+                        &format!("fix: LayaBackend does not panic on {label}"),
+                        false,
+                    ),
                     Ok(Ok(v)) => {
                         // If it returns Ok, it must not have invented an answer
                         // for a question the server never answered.
@@ -711,7 +896,9 @@ pub fn test_capability_timeouts(h: &mut Harness) {
                             v.answers.is_empty() || v.answers.contains_key("department"),
                         );
                     }
-                    Ok(Err(_)) => h.check(&format!("fix: LayaBackend errors cleanly on {label}"), true),
+                    Ok(Err(_)) => {
+                        h.check(&format!("fix: LayaBackend errors cleanly on {label}"), true)
+                    }
                 }
             }
 
@@ -729,7 +916,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             if let Ok(v) = v {
                 h.check(
                     "fix: the parsed answer is kept",
-                    v.answers.get("department").map(|d| d.as_str() == "billing").unwrap_or(false),
+                    v.answers
+                        .get("department")
+                        .map(|d| d.as_str() == "billing")
+                        .unwrap_or(false),
                 );
                 h.eq("fix: usage tokens are kept", v.input_tokens, 3);
             }
@@ -757,34 +947,45 @@ pub fn test_capability_timeouts(h: &mut Harness) {
         {
             /// Count open file descriptors for this process.
             fn fd_count() -> usize {
-                std::fs::read_dir("/proc/self/fd").map(|d| d.count()).unwrap_or(0)
+                std::fs::read_dir("/proc/self/fd")
+                    .map(|d| d.count())
+                    .unwrap_or(0)
             }
             /// RSS in KiB (field 2 of /proc/self/statm is resident pages).
             fn rss_kib() -> u64 {
                 let s = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
-                let pages: u64 = s.split_whitespace().nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+                let pages: u64 = s
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|x| x.parse().ok())
+                    .unwrap_or(0);
                 pages * 4 // 4 KiB pages
             }
             /// Direct children of this process (zombie or live).
             fn child_count() -> usize {
                 let me = std::process::id().to_string();
-                std::fs::read_dir("/proc").map(|d| {
-                    d.filter_map(|e| e.ok())
-                        .filter(|e| {
-                            let name = e.file_name().to_string_lossy().into_owned();
-                            if !name.chars().all(|c| c.is_ascii_digit()) { return false; }
-                            std::fs::read_to_string(format!("/proc/{name}/stat"))
-                                .map(|st| {
-                                    // "pid (comm) state ppid ..." — comm may contain spaces.
-                                    let close = st.rfind(')').unwrap_or(0);
-                                    st.get(close + 2..).and_then(|r| r.split_whitespace().nth(1))
-                                        .map(|ppid| ppid == me).unwrap_or(false)
-                                })
-                                .unwrap_or(false)
-                        })
-                        .count()
-                })
-                .unwrap_or(0)
+                std::fs::read_dir("/proc")
+                    .map(|d| {
+                        d.filter_map(|e| e.ok())
+                            .filter(|e| {
+                                let name = e.file_name().to_string_lossy().into_owned();
+                                if !name.chars().all(|c| c.is_ascii_digit()) {
+                                    return false;
+                                }
+                                std::fs::read_to_string(format!("/proc/{name}/stat"))
+                                    .map(|st| {
+                                        // "pid (comm) state ppid ..." — comm may contain spaces.
+                                        let close = st.rfind(')').unwrap_or(0);
+                                        st.get(close + 2..)
+                                            .and_then(|r| r.split_whitespace().nth(1))
+                                            .map(|ppid| ppid == me)
+                                            .unwrap_or(false)
+                                    })
+                                    .unwrap_or(false)
+                            })
+                            .count()
+                    })
+                    .unwrap_or(0)
             }
 
             // A throwaway TCP echo + UDP listener so the socket capabilities have
@@ -867,7 +1068,8 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let len = reg.call("q", &json!({}), &json!({"op": "length"}));
             h.check(
                 "fix: the store still answers after the soak",
-                len.map(|v| v.is_object() || v.is_array() || v.is_number() || v.is_string()).unwrap_or(false),
+                len.map(|v| v.is_object() || v.is_array() || v.is_number() || v.is_string())
+                    .unwrap_or(false),
             );
         }
 
@@ -881,15 +1083,23 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let mut p = capability::Policy::default();
             p.allow_paths = vec![std::env::temp_dir().to_string_lossy().to_string()];
             let reg = capability::registry_from(
-                &[("s", json!({"kind": kind, "op": "set", "path": f.to_string_lossy(), "key": "k"}))],
+                &[(
+                    "s",
+                    json!({"kind": kind, "op": "set", "path": f.to_string_lossy(), "key": "k"}),
+                )],
                 Some(p),
             )
             .unwrap();
             let r = reg.call("s", &json!({"value": "v"}), &json!({}));
-            h.check(&format!("fix: {kind} errors on a corrupt store file"), r.is_err());
+            h.check(
+                &format!("fix: {kind} errors on a corrupt store file"),
+                r.is_err(),
+            );
             h.check(
                 &format!("fix: {kind} leaves the corrupt file intact"),
-                std::fs::read_to_string(&f).map(|c| c.contains("CORRUPT")).unwrap_or(false),
+                std::fs::read_to_string(&f)
+                    .map(|c| c.contains("CORRUPT"))
+                    .unwrap_or(false),
             );
             let _ = std::fs::remove_file(&f);
         }
@@ -934,7 +1144,10 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             Some(pol.clone()),
         )
         .unwrap();
-        let e = reg.call("m", &json!({}), &json!({})).unwrap_err().to_string();
+        let e = reg
+            .call("m", &json!({}), &json!({}))
+            .unwrap_err()
+            .to_string();
         h.check(
             "fix: a failing call does not leak the secret into its error",
             !e.contains("super-secret-value-1234"),
@@ -948,4 +1161,3 @@ pub fn test_capability_timeouts(h: &mut Harness) {
     // as semantic statements (what the app must decide and why) rather than
     // snapshots of numbers, so they keep their meaning if thresholds move.
 }
-

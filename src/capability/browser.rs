@@ -1718,6 +1718,18 @@ fn research_norm(v: &str) -> String {
         .join(" ")
 }
 
+/// How many page tabs research / open_many may drive at once.
+///
+/// Defaults to 5 and is clamped to `1..=10`; `concurrency` is accepted as an
+/// alias for `tab_concurrency`.
+fn tab_concurrency_of(with: &Value) -> usize {
+    with.get("tab_concurrency")
+        .or_else(|| with.get("concurrency"))
+        .and_then(Value::as_u64)
+        .unwrap_or(5)
+        .clamp(1, 10) as usize
+}
+
 /// Count case-insensitive token occurrences. Chinese tokens are short strings,
 /// so counting a substring is intentional here.
 fn research_count(hay: &str, token: &str) -> usize {
@@ -2062,8 +2074,9 @@ fn run_research(
         .get("keep_open_pages")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let mut cleanup = TargetCleanupGuard::new(endpoint);
-    let mut manually_closed = 0usize;
+    let tab_concurrency = tab_concurrency_of(with);
+    let cleanup = Arc::new(Mutex::new(TargetCleanupGuard::new(endpoint)));
+    let manually_closed = Arc::new(Mutex::new(0usize));
     enforce_owned_target_limit(endpoint, c.max_owned_pages, c.owned_idle_ms, page_timeout)?;
 
     let mut search_target: Option<String> = None;
@@ -2085,7 +2098,10 @@ fn run_research(
                 if keep_open_pages {
                     track_owned_target(endpoint, id, true);
                 } else {
-                    cleanup.track(id.clone());
+                    cleanup
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .track(id.clone());
                     track_owned_target(endpoint, id, false);
                 }
             }
@@ -2130,120 +2146,184 @@ fn run_research(
 
     let mut pages = Vec::new();
     let mut failed = Vec::new();
-    for candidate in candidates.iter().take(max_open) {
-        let title = candidate
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let result_url = candidate
-            .get("url")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if check_host(result_url, policy).is_err() {
-            failed.push(json!({"title": title, "url": result_url, "error": "policy denied"}));
-            continue;
-        }
-        enforce_owned_target_limit(endpoint, c.max_owned_pages, c.owned_idle_ms, page_timeout)?;
-        let opened = open_background_target(endpoint, page_timeout);
-        let target_id = match opened {
-            Ok(x) => x,
-            Err(e) => {
-                failed.push(json!({"title": title, "url": result_url, "error": e.to_string()}));
-                continue;
+    let selected: Vec<(usize, &Value)> = candidates.iter().take(max_open).enumerate().collect();
+    for batch in selected.chunks(tab_concurrency) {
+        let open_lock = Arc::new(Mutex::new(()));
+        let mut batch_outcomes = Vec::with_capacity(batch.len());
+        std::thread::scope(|scope| {
+            let handles = batch
+                .iter()
+                .map(|(rank, candidate)| {
+                    let cleanup = Arc::clone(&cleanup);
+                    let manually_closed = Arc::clone(&manually_closed);
+                    let open_lock = Arc::clone(&open_lock);
+                    let query = query.clone();
+                    scope.spawn(move || -> Result<(Option<Value>, Option<Value>)> {
+                        let title = candidate
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let result_url = candidate
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if check_host(result_url, policy).is_err() {
+                            return Ok((None, Some(json!({"title": title, "url": result_url, "error": "policy denied"}))));
+                        }
+
+                        // Serialize only the resource-control + create sequence.
+                        // Once the target is registered, navigation/extraction can
+                        // proceed concurrently on independent page websockets.
+                        let opened = {
+                            let _permit = open_lock.lock().unwrap_or_else(|e| e.into_inner());
+                            enforce_owned_target_limit(
+                                endpoint,
+                                c.max_owned_pages,
+                                c.owned_idle_ms,
+                                page_timeout,
+                            )?;
+                            open_background_target(endpoint, page_timeout)
+                        };
+                        let target_id = match opened {
+                            Ok(x) => x,
+                            Err(e) => {
+                                return Ok((None, Some(json!({"title": title, "url": result_url, "error": e.to_string()}))));
+                            }
+                        };
+                        if keep_open_pages {
+                            track_owned_target(endpoint, &target_id, true);
+                        } else {
+                            cleanup
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .track(target_id.clone());
+                            track_owned_target(endpoint, &target_id, false);
+                        }
+                        let navigation = cdp_page_call(
+                            endpoint,
+                            &target_id,
+                            "Page.navigate",
+                            json!({"url": result_url}),
+                            page_timeout,
+                        )
+                        .and_then(|_| wait_page_ready(endpoint, &target_id, page_timeout, None));
+                        if let Err(e) = navigation {
+                            let _ = http_close(endpoint, &target_id, Duration::from_secs(1));
+                            if cleanup
+                                .lock()
+                                .unwrap_or_else(|err| err.into_inner())
+                                .untrack(&target_id)
+                            {
+                                *manually_closed.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                            }
+                            return Ok((None, Some(json!({"title": title, "url": result_url, "target_id": target_id, "error": e.to_string()}))));
+                        }
+                        let mut page = match evaluate(
+                            endpoint,
+                            &target_id,
+                            READABLE_PAGE_JS,
+                            page_timeout,
+                            false,
+                        ) {
+                            Ok(x) => x,
+                            Err(e) => {
+                                let _ = http_json(
+                                    endpoint,
+                                    "GET",
+                                    &format!("/json/close/{target_id}"),
+                                    Duration::from_secs(1),
+                                );
+                                if cleanup
+                                    .lock()
+                                    .unwrap_or_else(|err| err.into_inner())
+                                    .untrack(&target_id)
+                                {
+                                    *manually_closed.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+                                }
+                                return Ok((None, Some(json!({"title": title, "url": result_url, "target_id": target_id, "error": e.to_string()}))));
+                            }
+                        };
+                        if page
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .len()
+                            > max_text
+                        {
+                            let clipped: String = page
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .chars()
+                                .take(max_text)
+                                .collect();
+                            if let Some(obj) = page.as_object_mut() {
+                                obj.insert("text".into(), json!(clipped));
+                                obj.insert("content_truncated".into(), json!(true));
+                            }
+                        } else if let Some(obj) = page.as_object_mut() {
+                            obj.insert("content_truncated".into(), json!(false));
+                        }
+                        page["search_rank"] = json!(rank);
+                        page["search_title"] = json!(title);
+                        page["search_url"] = json!(result_url);
+                        page["search_snippet"] = candidate.get("snippet").cloned().unwrap_or(Value::Null);
+                        let final_url = page
+                            .get("final_url")
+                            .and_then(Value::as_str)
+                            .unwrap_or(result_url);
+                        let (score, relevance, effectiveness, reasons) =
+                            score_research_page(&query, &page, final_url);
+                        let content_chars = page
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .map(|x| x.chars().count())
+                            .unwrap_or_default();
+                        let classification = classify_research_page(
+                            &query,
+                            candidate,
+                            &page,
+                            final_url,
+                            score,
+                            relevance,
+                        );
+                        let accepted = score >= min_score
+                            && relevance >= 0.40
+                            && page
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .map(str::len)
+                                .unwrap_or_default()
+                                >= 600;
+                        page["target_id"] = json!(target_id);
+                        page["score"] = json!((score * 1000.0).round() / 1000.0);
+                        page["relevance"] = json!((relevance * 1000.0).round() / 1000.0);
+                        page["effectiveness"] = json!((effectiveness * 1000.0).round() / 1000.0);
+                        page["content_chars"] = json!(content_chars);
+                        page["classification"] = classification;
+                        page["reasons"] = json!(reasons);
+                        page["accepted"] = json!(accepted);
+                        Ok((Some(page), None))
+                    })
+                })
+            .collect::<Vec<_>>();
+            for handle in handles {
+                batch_outcomes.push(handle.join());
             }
-        };
-        if keep_open_pages {
-            track_owned_target(endpoint, &target_id, true);
-        } else {
-            cleanup.track(target_id.clone());
-            track_owned_target(endpoint, &target_id, false);
-        }
-        let navigation = cdp_page_call(
-            endpoint,
-            &target_id,
-            "Page.navigate",
-            json!({"url": result_url}),
-            page_timeout,
-        )
-        .and_then(|_| wait_page_ready(endpoint, &target_id, page_timeout, None));
-        if let Err(e) = navigation {
-            failed.push(json!({"title": title, "url": result_url, "target_id": target_id, "error": e.to_string()}));
-            let _ = http_close(endpoint, &target_id, Duration::from_secs(1));
-            if cleanup.untrack(&target_id) {
-                manually_closed += 1;
+            Result::<()>::Ok(())
+        })?;
+        for outcome in batch_outcomes {
+            let (page, failure) = match outcome {
+                Ok(result) => result?,
+                Err(panic) => anyhow::bail!("research worker panicked: {panic:?}"),
+            };
+            if let Some(page) = page {
+                pages.push(page);
             }
-            continue;
-        }
-        let mut page = match evaluate(endpoint, &target_id, READABLE_PAGE_JS, page_timeout, false) {
-            Ok(x) => x,
-            Err(e) => {
-                failed.push(json!({"title": title, "url": result_url, "target_id": target_id, "error": e.to_string()}));
-                let _ = http_json(
-                    endpoint,
-                    "GET",
-                    &format!("/json/close/{target_id}"),
-                    Duration::from_secs(1),
-                );
-                if cleanup.untrack(&target_id) {
-                    manually_closed += 1;
-                }
-                continue;
+            if let Some(failure) = failure {
+                failed.push(failure);
             }
-        };
-        if page
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .len()
-            > max_text
-        {
-            let clipped: String = page
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .chars()
-                .take(max_text)
-                .collect();
-            if let Some(obj) = page.as_object_mut() {
-                obj.insert("text".into(), json!(clipped));
-                obj.insert("content_truncated".into(), json!(true));
-            }
-        } else if let Some(obj) = page.as_object_mut() {
-            obj.insert("content_truncated".into(), json!(false));
         }
-        page["search_title"] = json!(title);
-        page["search_url"] = json!(result_url);
-        page["search_snippet"] = candidate.get("snippet").cloned().unwrap_or(Value::Null);
-        let final_url = page
-            .get("final_url")
-            .and_then(Value::as_str)
-            .unwrap_or(result_url);
-        let (score, relevance, effectiveness, reasons) =
-            score_research_page(&query, &page, final_url);
-        let content_chars = page
-            .get("text")
-            .and_then(Value::as_str)
-            .map(|x| x.chars().count())
-            .unwrap_or_default();
-        let classification =
-            classify_research_page(&query, candidate, &page, final_url, score, relevance);
-        let accepted = score >= min_score
-            && relevance >= 0.40
-            && page
-                .get("text")
-                .and_then(Value::as_str)
-                .map(str::len)
-                .unwrap_or_default()
-                >= 600;
-        page["target_id"] = json!(target_id);
-        page["score"] = json!((score * 1000.0).round() / 1000.0);
-        page["relevance"] = json!((relevance * 1000.0).round() / 1000.0);
-        page["effectiveness"] = json!((effectiveness * 1000.0).round() / 1000.0);
-        page["content_chars"] = json!(content_chars);
-        page["classification"] = classification;
-        page["reasons"] = json!(reasons);
-        page["accepted"] = json!(accepted);
-        pages.push(page);
     }
 
     pages.sort_by(|a, b| {
@@ -2252,6 +2332,16 @@ fn run_research(
             .unwrap_or(0.0)
             .partial_cmp(&a.get("score").and_then(Value::as_f64).unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a.get("search_rank")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(u64::MAX)
+                    .cmp(
+                        &b.get("search_rank")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(u64::MAX),
+                    )
+            })
     });
     let accepted: Vec<Value> = pages
         .iter()
@@ -2260,7 +2350,11 @@ fn run_research(
         .cloned()
         .collect();
     let collected = accepted.len();
-    let (closed_research_targets, cleanup_errors) = cleanup.finish(!keep_open_pages, timeout);
+    let (closed_research_targets, cleanup_errors) = cleanup
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .finish(!keep_open_pages, timeout);
+    let manually_closed = *manually_closed.lock().unwrap_or_else(|e| e.into_inner());
     Ok(json!({
         "capability": "chrome_cdp",
         "op": "research",
@@ -2268,6 +2362,7 @@ fn run_research(
         "query": query,
         "scorer": "laya-browser-heuristic-v1",
         "background_only": true,
+        "tab_concurrency": tab_concurrency,
         "result_count_requested": result_count,
         "search_candidates": candidates.len(),
         "ads_found": ads.len(),
@@ -2282,8 +2377,13 @@ fn run_research(
         "complete": collected >= result_count,
         "cleanup": {
                 "enabled": !keep_open_pages,
-                "opened_count": cleanup.ids.len() + manually_closed,
-            "closed_count": closed_research_targets,
+                "opened_count": cleanup
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .ids
+                    .len()
+                    + manually_closed,
+            "closed_count": closed_research_targets + manually_closed,
             "errors": cleanup_errors
         }
     }))
@@ -2374,56 +2474,107 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             if urls.len() > 100 {
                 bail!("browser open_many accepts at most 100 URLs");
             }
-            let mut cleanup = TargetCleanupGuard::new(&endpoint);
-            let mut opened = Vec::with_capacity(urls.len());
+            let keep_open = with
+                .get("keep_open")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let tab_concurrency = tab_concurrency_of(with);
+            // Validate every URL first so a policy denial fails the batch without
+            // leaving a partial set of tabs behind.
+            let mut parsed = Vec::with_capacity(urls.len());
             for (index, value) in urls.iter().enumerate() {
                 let url = value.as_str().ok_or_else(|| {
                     anyhow!("browser open_many urls[{index}] must be a string")
                 })?;
                 check_host(url, policy)?;
-                enforce_owned_target_limit(
-                    &endpoint,
-                    c.max_owned_pages,
-                    c.owned_idle_ms,
-                    timeout,
-                )?;
-                let created = cdp_browser_call(
-                    &endpoint,
-                    "Target.createTarget",
-                    json!({"url": url, "background": true}),
-                    timeout,
-                )?;
-                let target_id = created
-                    .get("targetId")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("Chrome Target.createTarget returned no targetId"))?;
-
-                let keep_open = with
-                    .get("keep_open")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false);
-                track_owned_target(&endpoint, target_id, keep_open);
-                cleanup.track(target_id);
-                opened.push(json!({
-                    "index": index,
-                    "url": url,
-                    "target_id": target_id,
-                    "opened": true
-                }));
+                parsed.push((index, url.to_string()));
             }
+            let cleanup = Arc::new(Mutex::new(TargetCleanupGuard::new(&endpoint)));
+            let open_lock = Arc::new(Mutex::new(()));
+            let mut opened = Vec::with_capacity(parsed.len());
+            for batch in parsed.chunks(tab_concurrency) {
+                let results: Vec<Result<Value>> = std::thread::scope(|scope| {
+                    let handles: Vec<_> = batch
+                        .iter()
+                        .map(|(index, url)| {
+                            let cleanup = Arc::clone(&cleanup);
+                            let open_lock = Arc::clone(&open_lock);
+                            let index = *index;
+                            let url = url.clone();
+                            let endpoint = endpoint.clone();
+                            scope.spawn(move || -> Result<Value> {
+                                // Only the resource-control + create sequence is
+                                // serialized; Chrome handles the create calls.
+                                let target_id = {
+                                    let _permit =
+                                        open_lock.lock().unwrap_or_else(|e| e.into_inner());
+                                    enforce_owned_target_limit(
+                                        &endpoint,
+                                        c.max_owned_pages,
+                                        c.owned_idle_ms,
+                                        timeout,
+                                    )?;
+                                    let created = cdp_browser_call(
+                                        &endpoint,
+                                        "Target.createTarget",
+                                        json!({"url": url, "background": true}),
+                                        timeout,
+                                    )?;
+                                    created
+                                        .get("targetId")
+                                        .and_then(Value::as_str)
+                                        .ok_or_else(|| {
+                                            anyhow!(
+                                                "Chrome Target.createTarget returned no targetId"
+                                            )
+                                        })?
+                                        .to_string()
+                                };
+                                track_owned_target(&endpoint, &target_id, keep_open);
+                                cleanup
+                                    .lock()
+                                    .unwrap_or_else(|e| e.into_inner())
+                                    .track(target_id.clone());
+                                Ok(json!({
+                                    "index": index,
+                                    "url": url,
+                                    "target_id": target_id,
+                                    "opened": true
+                                }))
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| {
+                            handle
+                                .join()
+                                .map_err(|panic| anyhow!("open_many worker panicked: {panic:?}"))
+                                .and_then(|result| result)
+                        })
+                        .collect()
+                });
+                for result in results {
+                    opened.push(result?);
+                }
+            }
+            opened.sort_by_key(|value| value.get("index").and_then(Value::as_u64).unwrap_or(0));
             let opened_count = opened.len();
-            let keep_open = with
-                .get("keep_open")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
             let (closed_count, cleanup_errors) = if keep_open {
-                cleanup.finish(false, timeout)
+                cleanup
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .finish(false, timeout)
             } else {
-                cleanup.finish(true, timeout)
+                cleanup
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .finish(true, timeout)
             };
             out["opened"] = Value::Array(opened);
             out["opened_count"] = json!(opened_count);
             out["keep_open"] = json!(keep_open);
+            out["tab_concurrency"] = json!(tab_concurrency);
             out["closed_count"] = json!(closed_count);
             out["cleanup_errors"] = Value::Array(cleanup_errors);
         }
@@ -2952,6 +3103,17 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(err.contains("non-empty 'query'"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn tab_concurrency_defaults_to_five_and_clamps() {
+        assert_eq!(tab_concurrency_of(&json!({})), 5);
+        assert_eq!(tab_concurrency_of(&json!({"tab_concurrency": 1})), 1);
+        assert_eq!(tab_concurrency_of(&json!({"tab_concurrency": 8})), 8);
+        assert_eq!(tab_concurrency_of(&json!({"tab_concurrency": 0})), 1);
+        assert_eq!(tab_concurrency_of(&json!({"tab_concurrency": 99})), 10);
+        // `concurrency` is an accepted alias.
+        assert_eq!(tab_concurrency_of(&json!({"concurrency": 3})), 3);
     }
 
     #[test]

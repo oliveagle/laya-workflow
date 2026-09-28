@@ -342,16 +342,32 @@ pub fn hardcoded_secret_fields(spec: &Value) -> Vec<String> {
 }
 
 const SECRETISH: &[&str] = &[
-    "password", "passwd", "secret", "token", "api_key", "apikey", "access_key",
-    "private_key", "client_secret", "authorization", "auth_value", "sign_secret",
-    "passphrase", "credential", "bearer",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_key",
+    "private_key",
+    "client_secret",
+    "authorization",
+    "auth_value",
+    "sign_secret",
+    "passphrase",
+    "credential",
+    "bearer",
 ];
 
 fn scan_hardcoded(v: &Value, path: &str, out: &mut Vec<String>) {
     match v {
         Value::Object(o) => {
             for (k, val) in o {
-                let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                let p = if path.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{path}.{k}")
+                };
                 let kl = k.to_ascii_lowercase();
                 // Prompt-text subtrees (`criteria` choice labels and score
                 // descriptions) are never credentials, and their keys are
@@ -385,7 +401,10 @@ fn scan_hardcoded(v: &Value, path: &str, out: &mut Vec<String>) {
 
 /// Human-readable provenance of the loaded sources (paths only, no values).
 pub fn sources_note(dsl_dir: Option<&Path>) -> String {
-    let files: Vec<String> = env_files(dsl_dir).iter().map(|p| p.display().to_string()).collect();
+    let files: Vec<String> = env_files(dsl_dir)
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
     if files.is_empty() {
         "environment only".to_string()
     } else {

@@ -10,7 +10,7 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-use super::{bounded_timeout, expand, stringify, truncate, ExecCap, Policy, effective_op};
+use super::{bounded_timeout, effective_op, expand, stringify, truncate, ExecCap, Policy};
 
 // ── datetime ────────────────────────────────────────────────────────
 
@@ -23,7 +23,11 @@ pub struct DatetimeCap {
 }
 
 pub fn call_datetime(c: &DatetimeCap, with: &Value, state: &Value) -> Result<Value> {
-    let op = if c.op.is_empty() { "now" } else { c.op.as_str() };
+    let op = if c.op.is_empty() {
+        "now"
+    } else {
+        c.op.as_str()
+    };
     let with = expand(with, state, with);
     let epoch = with.get("epoch").and_then(|v| v.as_i64());
     match op {
@@ -32,11 +36,15 @@ pub fn call_datetime(c: &DatetimeCap, with: &Value, state: &Value) -> Result<Val
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0);
-            Ok(json!({ "capability": "datetime", "op": "now", "epoch": now, "offset_secs": c.offset_secs }))
+            Ok(
+                json!({ "capability": "datetime", "op": "now", "epoch": now, "offset_secs": c.offset_secs }),
+            )
         }
         "add" => {
             let base = epoch.unwrap_or(0) + c.offset_secs;
-            Ok(json!({ "capability": "datetime", "op": "add", "epoch": base, "offset_secs": c.offset_secs }))
+            Ok(
+                json!({ "capability": "datetime", "op": "add", "epoch": base, "offset_secs": c.offset_secs }),
+            )
         }
         "format" => {
             // Formatting uses the civil-date algorithm in `civil_from_days`
@@ -66,7 +74,11 @@ pub fn civil_from_epoch_pub(epoch: i64) -> (i64, u32, u32, u32, u32, u32) {
 fn civil_from_epoch(epoch: i64) -> (i64, u32, u32, u32, u32, u32) {
     let days = epoch.div_euclid(86_400);
     let secs = epoch.rem_euclid(86_400);
-    let (hh, mm, ss) = ((secs / 3600) as u32, ((secs % 3600) / 60) as u32, (secs % 60) as u32);
+    let (hh, mm, ss) = (
+        (secs / 3600) as u32,
+        ((secs % 3600) / 60) as u32,
+        (secs % 60) as u32,
+    );
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -81,7 +93,11 @@ fn civil_from_epoch(epoch: i64) -> (i64, u32, u32, u32, u32, u32) {
 }
 
 fn render_time(fmt: &str, y: i64, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> String {
-    let f = if fmt.is_empty() { "%Y-%m-%dT%H:%M:%SZ" } else { fmt };
+    let f = if fmt.is_empty() {
+        "%Y-%m-%dT%H:%M:%SZ"
+    } else {
+        fmt
+    };
     f.replace("%Y", &format!("{y:04}"))
         .replace("%m", &format!("{m:02}"))
         .replace("%d", &format!("{d:02}"))
@@ -140,14 +156,18 @@ pub fn call_text(c: &TextCap, with: &Value, state: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("text capability needs 'text' in 'with'"))?;
     let pat = stringify(&expand(&Value::String(c.pattern.clone()), state, with));
     let op = effective_op(&c.op, with, "now");
-        match op.as_str() {
+    match op.as_str() {
         "length" => Ok(json!({ "capability": "text", "op": "length",
                               "chars": input.chars().count(), "bytes": input.len() })),
         "upper" => Ok(json!({ "capability": "text", "op": "upper", "text": input.to_uppercase() })),
         "lower" => Ok(json!({ "capability": "text", "op": "lower", "text": input.to_lowercase() })),
         "trim" => Ok(json!({ "capability": "text", "op": "trim", "text": input.trim() })),
         "split" => {
-            let sep = if c.separator.is_empty() { "\n".to_string() } else { c.separator.clone() };
+            let sep = if c.separator.is_empty() {
+                "\n".to_string()
+            } else {
+                c.separator.clone()
+            };
             let parts: Vec<&str> = if sep.is_empty() {
                 input.split_whitespace().collect()
             } else {
@@ -156,7 +176,8 @@ pub fn call_text(c: &TextCap, with: &Value, state: &Value) -> Result<Value> {
             Ok(json!({ "capability": "text", "op": "split", "parts": parts, "count": parts.len() }))
         }
         "extract" => {
-            let rx = regex_lite::Regex::new(&pat).map_err(|e| anyhow!("text.extract bad pattern: {e}"))?;
+            let rx = regex_lite::Regex::new(&pat)
+                .map_err(|e| anyhow!("text.extract bad pattern: {e}"))?;
             let caps: Vec<Value> = rx
                 .captures_iter(&input)
                 .map(|c| {
@@ -171,17 +192,26 @@ pub fn call_text(c: &TextCap, with: &Value, state: &Value) -> Result<Value> {
             Ok(json!({ "capability": "text", "op": "extract", "matches": caps, "count": count }))
         }
         "replace" => {
-            let rx = regex_lite::Regex::new(&pat).map_err(|e| anyhow!("text.replace bad pattern: {e}"))?;
+            let rx = regex_lite::Regex::new(&pat)
+                .map_err(|e| anyhow!("text.replace bad pattern: {e}"))?;
             let out = rx.replace_all(&input, c.replacement.as_str()).to_string();
-            Ok(json!({ "capability": "text", "op": "replace", "text": out, "changed": out != input }))
+            Ok(
+                json!({ "capability": "text", "op": "replace", "text": out, "changed": out != input }),
+            )
         }
         "hash" => {
-            let algo = if c.hash.is_empty() { "fnv1a64" } else { c.hash.as_str() };
+            let algo = if c.hash.is_empty() {
+                "fnv1a64"
+            } else {
+                c.hash.as_str()
+            };
             let h = match algo {
                 "fnv1a64" => fnv1a64(input.as_bytes()),
                 other => bail!("text.hash algo {other:?} unsupported (fnv1a64)"),
             };
-            Ok(json!({ "capability": "text", "op": "hash", "algo": algo, "hex": format!("{h:016x}") }))
+            Ok(
+                json!({ "capability": "text", "op": "hash", "algo": algo, "hex": format!("{h:016x}") }),
+            )
         }
         "base64_encode" => Ok(json!({ "capability": "text", "op": "base64_encode",
                                      "text": base64_encode(input.as_bytes()) })),
@@ -191,13 +221,23 @@ pub fn call_text(c: &TextCap, with: &Value, state: &Value) -> Result<Value> {
             Ok(json!({ "capability": "text", "op": "base64_decode", "text": s }))
         }
         "json_get" => {
-            let v: Value = serde_json::from_str(&input).map_err(|e| anyhow!("text.json_get: {e}"))?;
+            let v: Value =
+                serde_json::from_str(&input).map_err(|e| anyhow!("text.json_get: {e}"))?;
             let mut cur = &v;
-            for seg in pat.trim_start_matches('/').split('/').filter(|s| !s.is_empty()) {
+            for seg in pat
+                .trim_start_matches('/')
+                .split('/')
+                .filter(|s| !s.is_empty())
+            {
                 cur = match cur {
-                    Value::Object(o) => o.get(seg).ok_or_else(|| anyhow!("json_get: {seg} missing"))?,
+                    Value::Object(o) => o
+                        .get(seg)
+                        .ok_or_else(|| anyhow!("json_get: {seg} missing"))?,
                     Value::Array(a) => a
-                        .get(seg.parse::<usize>().map_err(|_| anyhow!("json_get: bad index {seg}"))?)
+                        .get(
+                            seg.parse::<usize>()
+                                .map_err(|_| anyhow!("json_get: bad index {seg}"))?,
+                        )
                         .ok_or_else(|| anyhow!("json_get: index {seg} out of range"))?,
                     _ => bail!("json_get: {seg} not traversable"),
                 };
@@ -225,19 +265,34 @@ fn base64_encode(data: &[u8]) -> String {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::new();
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         out.push(T[((n >> 18) & 63) as usize] as char);
         out.push(T[((n >> 12) & 63) as usize] as char);
-        out.push(if chunk.len() > 1 { T[((n >> 6) & 63) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[(n & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            T[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
 
 fn base64_decode(s: &str) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    let clean: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace() && *b != b'=').collect();
+    let clean: Vec<u8> = s
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
+        .collect();
     let val = |c: u8| -> Result<u8> {
         match c {
             b'A'..=b'Z' => Ok(c - b'A'),
@@ -318,7 +373,7 @@ pub fn call_file(c: &FileCap, with: &Value, _state: &Value, policy: &Policy) -> 
     let path = check_path(c, &raw_path, policy)?;
     let limit = c.max_bytes.min(policy.max_output);
     let op = effective_op(&c.op, with, "now");
-        match op.as_str() {
+    match op.as_str() {
         "read" => {
             let meta = std::fs::metadata(&path)?;
             if meta.len() as usize > limit {
@@ -326,8 +381,10 @@ pub fn call_file(c: &FileCap, with: &Value, _state: &Value, policy: &Policy) -> 
             }
             let s = truncate(std::fs::read_to_string(&path)?, limit);
             let bytes = s.len();
-            Ok(json!({ "capability": "file", "op": "read", "path": path.display().to_string(),
-                       "text": s, "bytes": bytes }))
+            Ok(
+                json!({ "capability": "file", "op": "read", "path": path.display().to_string(),
+                       "text": s, "bytes": bytes }),
+            )
         }
         "write" | "append" => {
             let text = with
@@ -345,13 +402,17 @@ pub fn call_file(c: &FileCap, with: &Value, _state: &Value, policy: &Policy) -> 
                 .truncate(c.op == "write")
                 .open(&path)?;
             f.write_all(text.as_bytes())?;
-            Ok(json!({ "capability": "file", "op": c.op, "path": path.display().to_string(),
-                       "bytes": text.len() }))
+            Ok(
+                json!({ "capability": "file", "op": c.op, "path": path.display().to_string(),
+                       "bytes": text.len() }),
+            )
         }
         "stat" => {
             let m = std::fs::metadata(&path)?;
-            Ok(json!({ "capability": "file", "op": "stat", "path": path.display().to_string(),
-                       "bytes": m.len(), "is_dir": m.is_dir() }))
+            Ok(
+                json!({ "capability": "file", "op": "stat", "path": path.display().to_string(),
+                       "bytes": m.len(), "is_dir": m.is_dir() }),
+            )
         }
         "list" => {
             let mut names: Vec<String> = std::fs::read_dir(&path)?
@@ -359,8 +420,10 @@ pub fn call_file(c: &FileCap, with: &Value, _state: &Value, policy: &Policy) -> 
                 .map(|e| e.file_name().to_string_lossy().to_string())
                 .collect();
             names.sort();
-            Ok(json!({ "capability": "file", "op": "list", "path": path.display().to_string(),
-                       "entries": names, "count": names.len() }))
+            Ok(
+                json!({ "capability": "file", "op": "list", "path": path.display().to_string(),
+                       "entries": names, "count": names.len() }),
+            )
         }
         other => bail!("file op {other:?} unsupported (read | write | append | stat | list)"),
     }
@@ -390,9 +453,11 @@ pub fn call_sqlite(c: &SqliteCap, with: &Value, state: &Value, policy: &Policy) 
     let readonly = c.readonly || c.op == "query";
     if readonly {
         let head = sql.trim_start().to_ascii_lowercase();
-        let mutating = ["insert", "update", "delete", "drop", "alter", "create", "replace", "attach", "pragma"]
-            .iter()
-            .any(|k| head.starts_with(k));
+        let mutating = [
+            "insert", "update", "delete", "drop", "alter", "create", "replace", "attach", "pragma",
+        ]
+        .iter()
+        .any(|k| head.starts_with(k));
         if mutating {
             bail!("sqlite is read-only (set capability readonly=false and op=exec to write)");
         }
@@ -409,7 +474,11 @@ pub fn call_sqlite(c: &SqliteCap, with: &Value, state: &Value, policy: &Policy) 
         argv,
         cwd: None,
         env: serde_json::Map::new(),
-        timeout_ms: if c.timeout_ms == 0 { 10_000 } else { c.timeout_ms },
+        timeout_ms: if c.timeout_ms == 0 {
+            10_000
+        } else {
+            c.timeout_ms
+        },
         max_output: policy.max_output,
     };
     // sqlite is a process spawn → governed by allow_exec
@@ -441,7 +510,11 @@ pub fn call_shell(c: &ShellCap, with: &Value, state: &Value, policy: &Policy) ->
         argv: vec!["/bin/sh".to_string(), "-c".to_string(), cmd.clone()],
         cwd: c.cwd.clone(),
         env: serde_json::Map::new(),
-        timeout_ms: if c.timeout_ms == 0 { 30_000 } else { c.timeout_ms },
+        timeout_ms: if c.timeout_ms == 0 {
+            30_000
+        } else {
+            c.timeout_ms
+        },
         max_output: policy.max_output,
     };
     let out = super::call_exec(&cap, &json!({}), &json!({}), policy)?;

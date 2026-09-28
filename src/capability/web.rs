@@ -64,7 +64,12 @@ pub struct WebSearchCap {
     pub max_bytes: usize,
 }
 
-pub fn call_web_search(c: &WebSearchCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+pub fn call_web_search(
+    c: &WebSearchCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
     let query = with
         .get("query")
         .map(stringify)
@@ -78,8 +83,16 @@ pub fn call_web_search(c: &WebSearchCap, with: &Value, state: &Value, policy: &P
         bail!("web_search needs 'endpoint'");
     }
 
-    let method = if c.method.is_empty() { "GET" } else { c.method.as_str() };
-    let qkey = if c.query_param.is_empty() { "q" } else { c.query_param.as_str() };
+    let method = if c.method.is_empty() {
+        "GET"
+    } else {
+        c.method.as_str()
+    };
+    let qkey = if c.query_param.is_empty() {
+        "q"
+    } else {
+        c.query_param.as_str()
+    };
     let url = if endpoint.contains("{query}") {
         endpoint.replace("{query}", &urlencode(&query))
     } else if method.eq_ignore_ascii_case("GET") {
@@ -90,10 +103,21 @@ pub fn call_web_search(c: &WebSearchCap, with: &Value, state: &Value, policy: &P
     };
     check_url(&url, policy)?;
 
-    let max_results = if c.max_results == 0 { DEFAULT_MAX_RESULTS } else { c.max_results };
+    let max_results = if c.max_results == 0 {
+        DEFAULT_MAX_RESULTS
+    } else {
+        c.max_results
+    };
     let max_bytes = byte_cap(c.max_bytes, policy);
     let agent = ureq::AgentBuilder::new()
-        .timeout(bounded_timeout(if c.timeout_ms == 0 { 15_000 } else { c.timeout_ms }, policy))
+        .timeout(bounded_timeout(
+            if c.timeout_ms == 0 {
+                15_000
+            } else {
+                c.timeout_ms
+            },
+            policy,
+        ))
         // Search endpoints are trusted config, but a redirect still moves the
         // request to another host — surface it instead of following blindly.
         .redirects(0)
@@ -177,7 +201,11 @@ fn parse_results(body: &str, c: &WebSearchCap, max: usize) -> Vec<Value> {
         .map(|item| {
             let title = pick(item, &c.title_field, &["title", "name", "heading"]);
             let url = pick(item, &c.url_field, &["url", "link", "href"]);
-            let snippet = pick(item, &c.snippet_field, &["snippet", "description", "summary", "content", "text"]);
+            let snippet = pick(
+                item,
+                &c.snippet_field,
+                &["snippet", "description", "summary", "content", "text"],
+            );
             json!({ "title": title, "url": url, "snippet": snippet })
         })
         .filter(|r| {
@@ -264,7 +292,12 @@ pub struct WebFetchCap {
     pub title_field: String,
 }
 
-pub fn call_web_fetch(c: &WebFetchCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
+pub fn call_web_fetch(
+    c: &WebFetchCap,
+    with: &Value,
+    state: &Value,
+    policy: &Policy,
+) -> Result<Value> {
     let raw_url = with
         .get("url")
         .map(stringify)
@@ -283,7 +316,14 @@ pub fn call_web_fetch(c: &WebFetchCap, with: &Value, state: &Value, policy: &Pol
 
     let max_bytes = byte_cap(c.max_bytes, policy);
     let agent = ureq::AgentBuilder::new()
-        .timeout(bounded_timeout(if c.timeout_ms == 0 { 20_000 } else { c.timeout_ms }, policy))
+        .timeout(bounded_timeout(
+            if c.timeout_ms == 0 {
+                20_000
+            } else {
+                c.timeout_ms
+            },
+            policy,
+        ))
         // Do not chase redirects: a 302 to an un-listed host must not be
         // reachable through the first hop.
         .redirects(0)
@@ -299,11 +339,18 @@ pub fn call_web_fetch(c: &WebFetchCap, with: &Value, state: &Value, policy: &Pol
     }
 
     let resp = match req.call() {
-
         Ok(r) => r,
         Err(ureq::Error::Status(code, r)) => {
             let (body, truncated) = read_body(r.into_reader(), max_bytes)?;
-            return Ok(render_fetch(&url, code as i64, "", &body, truncated, c, policy));
+            return Ok(render_fetch(
+                &url,
+                code as i64,
+                "",
+                &body,
+                truncated,
+                c,
+                policy,
+            ));
         }
         Err(e) => return Err(anyhow!("web_fetch request failed: {e}")),
     };
@@ -329,7 +376,11 @@ fn render_fetch(
     c: &WebFetchCap,
     policy: &Policy,
 ) -> Value {
-    let format = if c.format.is_empty() { "text" } else { c.format.as_str() };
+    let format = if c.format.is_empty() {
+        "text"
+    } else {
+        c.format.as_str()
+    };
     let is_html = content_type.contains("html") || body.trim_start().starts_with('<');
     let (text, title) = match format {
         "raw" => (body.to_string(), String::new()),
@@ -381,15 +432,33 @@ fn call_web_fetch_api(
     with: &Value,
     policy: &Policy,
 ) -> Result<Value> {
-    let field = if c.body_field.is_empty() { "url" } else { c.body_field.as_str() };
-    let mut body = if c.body.is_object() { c.body.clone() } else { json!({}) };
-    body[field] = if c.body_urls_array { json!([url]) } else { json!(url) };
-    let method = if c.method.is_empty() { "POST" } else { c.method.as_str() };
+    let field = if c.body_field.is_empty() {
+        "url"
+    } else {
+        c.body_field.as_str()
+    };
+    let mut body = if c.body.is_object() {
+        c.body.clone()
+    } else {
+        json!({})
+    };
+    body[field] = if c.body_urls_array {
+        json!([url])
+    } else {
+        json!(url)
+    };
+    let method = if c.method.is_empty() {
+        "POST"
+    } else {
+        c.method.as_str()
+    };
 
     let mut req = if method.eq_ignore_ascii_case("POST") {
         agent.post(endpoint).set("content-type", "application/json")
     } else {
-        agent.request(method, endpoint).set("content-type", "application/json")
+        agent
+            .request(method, endpoint)
+            .set("content-type", "application/json")
     };
     for (k, v) in &c.headers {
         req = req.set(k, &stringify(&expand(v, state, with)));
@@ -415,10 +484,24 @@ fn call_web_fetch_api(
 
     let parsed: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
     let doc = locate_document(&parsed, c);
-    let text_key = if c.text_field.is_empty() { "text" } else { c.text_field.as_str() };
-    let title_key = if c.title_field.is_empty() { "title" } else { c.title_field.as_str() };
-    let mut text = doc.and_then(|d| d.get(text_key)).map(stringify).unwrap_or_default();
-    let mut title = doc.and_then(|d| d.get(title_key)).map(stringify).unwrap_or_default();
+    let text_key = if c.text_field.is_empty() {
+        "text"
+    } else {
+        c.text_field.as_str()
+    };
+    let title_key = if c.title_field.is_empty() {
+        "title"
+    } else {
+        c.title_field.as_str()
+    };
+    let mut text = doc
+        .and_then(|d| d.get(text_key))
+        .map(stringify)
+        .unwrap_or_default();
+    let mut title = doc
+        .and_then(|d| d.get(title_key))
+        .map(stringify)
+        .unwrap_or_default();
 
     // A plain (non-JSON) body is still usable as the content itself.
     let mut note = Value::Null;
@@ -430,7 +513,11 @@ fn call_web_fetch_api(
         }
     }
     if title.is_empty() {
-        if let Some(t) = parsed.pointer("/results/0/title").map(stringify).filter(|s| !s.is_empty()) {
+        if let Some(t) = parsed
+            .pointer("/results/0/title")
+            .map(stringify)
+            .filter(|s| !s.is_empty())
+        {
             title = t;
         }
     }
@@ -505,11 +592,29 @@ fn html_to_text(html: &str) -> (String, String) {
                 in_tag = false;
                 let t = tag.trim().to_ascii_lowercase();
                 // Block-ish tags become line breaks; <br> is a single break.
-                let name = t.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+                let name = t
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
                 if matches!(
                     name,
-                    "p" | "div" | "br" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                        | "section" | "article" | "header" | "footer" | "blockquote" | "pre"
+                    "p" | "div"
+                        | "br"
+                        | "li"
+                        | "tr"
+                        | "h1"
+                        | "h2"
+                        | "h3"
+                        | "h4"
+                        | "h5"
+                        | "h6"
+                        | "section"
+                        | "article"
+                        | "header"
+                        | "footer"
+                        | "blockquote"
+                        | "pre"
                 ) {
                     out.push('\n');
                 } else if matches!(name, "td" | "th") {
@@ -545,14 +650,20 @@ fn html_to_markdown(html: &str) -> (String, String) {
             '>' if in_tag => {
                 in_tag = false;
                 let t = tag.trim().to_ascii_lowercase();
-                let name = t.trim_start_matches('/').split_whitespace().next().unwrap_or("");
+                let name = t
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
                 match name {
                     "a" => {
                         if t.starts_with("/a") {
                             // Close the link, using its text as the label.
                             let label = link_text.trim();
                             match href.take() {
-                                Some(h) if !label.is_empty() => out.push_str(&format!("[{label}]({h})")),
+                                Some(h) if !label.is_empty() => {
+                                    out.push_str(&format!("[{label}]({h})"))
+                                }
                                 Some(h) => out.push_str(&h),
                                 None => out.push_str(label),
                             }
@@ -578,7 +689,9 @@ fn html_to_markdown(html: &str) -> (String, String) {
                             out.push_str("\n- ");
                         }
                     }
-                    "p" | "div" | "br" | "tr" | "section" | "article" | "blockquote" | "pre" => out.push('\n'),
+                    "p" | "div" | "br" | "tr" | "section" | "article" | "blockquote" | "pre" => {
+                        out.push('\n')
+                    }
                     _ => {}
                 }
                 tag.clear();
@@ -724,7 +837,10 @@ fn decode_entities(s: &str) -> String {
             }
         };
         let digits = &rest[..end];
-        let code = if let Some(hex) = digits.strip_prefix('x').or_else(|| digits.strip_prefix('X')) {
+        let code = if let Some(hex) = digits
+            .strip_prefix('x')
+            .or_else(|| digits.strip_prefix('X'))
+        {
             u32::from_str_radix(hex, 16).ok()
         } else {
             digits.parse::<u32>().ok()
@@ -759,7 +875,11 @@ fn check_url(url: &str, policy: &Policy) -> Result<()> {
 
 /// Effective byte cap: never above what the policy allows for output.
 fn byte_cap(requested: usize, policy: &Policy) -> usize {
-    let want = if requested == 0 { DEFAULT_MAX_BYTES } else { requested };
+    let want = if requested == 0 {
+        DEFAULT_MAX_BYTES
+    } else {
+        requested
+    };
     want.min(policy.max_output.max(1))
 }
 
@@ -769,7 +889,9 @@ fn read_body(reader: impl std::io::Read, max: usize) -> Result<(String, bool)> {
     let mut buf = Vec::with_capacity(8192);
     // Read one byte past the cap so we can tell "exactly max" from "more".
     let mut limited = reader.take((max as u64).saturating_add(1));
-    limited.read_to_end(&mut buf).map_err(|e| anyhow!("reading response body failed: {e}"))?;
+    limited
+        .read_to_end(&mut buf)
+        .map_err(|e| anyhow!("reading response body failed: {e}"))?;
     let truncated = buf.len() > max;
     if truncated {
         buf.truncate(max);
@@ -782,7 +904,9 @@ fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             b' ' => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }

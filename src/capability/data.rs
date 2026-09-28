@@ -15,7 +15,7 @@
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};
 
-use super::{expand, stringify, effective_op};
+use super::{effective_op, expand, stringify};
 
 // `math` lives in its own module (see `math.rs`); re-export so existing paths
 // like `data::MathCap` / `data::call_math` keep resolving.
@@ -37,13 +37,20 @@ pub struct JsonCap {
 
 pub fn call_json(c: &JsonCap, with: &Value, _state: &Value) -> Result<Value> {
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "pick" => {
-            let src = with.get("value").cloned().ok_or_else(|| anyhow!("json.pick needs 'value'"))?;
+            let src = with
+                .get("value")
+                .cloned()
+                .ok_or_else(|| anyhow!("json.pick needs 'value'"))?;
             let keys: Vec<String> = with
                 .get("keys")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
                 .ok_or_else(|| anyhow!("json.pick needs 'keys'"))?;
             let mut out = Map::new();
             if let Some(o) = src.as_object() {
@@ -69,7 +76,10 @@ pub fn call_json(c: &JsonCap, with: &Value, _state: &Value) -> Result<Value> {
         "patch" => {
             let mut base = with.get("value").cloned().unwrap_or_else(|| json!({}));
             // RFC-7386-ish: null deletes the key
-            if let (Some(bo), Some(po)) = (base.as_object_mut(), with.get("patch").and_then(|p| p.as_object())) {
+            if let (Some(bo), Some(po)) = (
+                base.as_object_mut(),
+                with.get("patch").and_then(|p| p.as_object()),
+            ) {
                 for (k, v) in po {
                     if v.is_null() {
                         bo.remove(k);
@@ -97,12 +107,18 @@ pub fn call_json(c: &JsonCap, with: &Value, _state: &Value) -> Result<Value> {
             let src = with.get("value").cloned().unwrap_or_else(|| json!({}));
             Ok(json!({ "capability": "json", "op": "sort_keys", "text": stable_json(&src) }))
         }
-        other => bail!("json op {other:?} unsupported (pick|merge|patch|path_set|flatten|sort_keys)"),
+        other => {
+            bail!("json op {other:?} unsupported (pick|merge|patch|path_set|flatten|sort_keys)")
+        }
     }
 }
 
 fn set_path(v: &mut Value, path: &str, newv: Value) {
-    let segs: Vec<&str> = path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let segs: Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     if segs.is_empty() {
         *v = newv;
         return;
@@ -121,14 +137,20 @@ fn set_path(v: &mut Value, path: &str, newv: Value) {
     if !cur.is_object() {
         *cur = json!({});
     }
-    cur.as_object_mut().unwrap().insert(segs[segs.len() - 1].to_string(), newv);
+    cur.as_object_mut()
+        .unwrap()
+        .insert(segs[segs.len() - 1].to_string(), newv);
 }
 
 fn flatten_into(v: &Value, prefix: &str, out: &mut Map<String, Value>) {
     match v {
         Value::Object(o) => {
             for (k, val) in o {
-                let p = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                let p = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
                 flatten_into(val, &p, out);
             }
         }
@@ -154,13 +176,20 @@ pub struct CsvCap {
 
 pub fn call_csv(c: &CsvCap, with: &Value, _state: &Value) -> Result<Value> {
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "parse" => {
             let text = get_text(with, "text")?;
-            let delim = if c.delimiter == '\0' { ',' } else { c.delimiter };
+            let delim = if c.delimiter == '\0' {
+                ','
+            } else {
+                c.delimiter
+            };
             let rows = parse_csv(&text, delim);
             let (headers, data) = if c.headers || !rows.is_empty() {
-                (rows.first().cloned().unwrap_or_default(), rows.iter().skip(1).cloned().collect::<Vec<_>>())
+                (
+                    rows.first().cloned().unwrap_or_default(),
+                    rows.iter().skip(1).cloned().collect::<Vec<_>>(),
+                )
             } else {
                 (Vec::new(), rows.clone())
             };
@@ -174,11 +203,20 @@ pub fn call_csv(c: &CsvCap, with: &Value, _state: &Value) -> Result<Value> {
                 .get("rows")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| anyhow!("csv.generate needs 'rows'"))?;
-            let delim = if c.delimiter == '\0' { ',' } else { c.delimiter };
+            let delim = if c.delimiter == '\0' {
+                ','
+            } else {
+                c.delimiter
+            };
             let mut out = String::new();
             if c.headers {
                 if let Some(h) = with.get("headers").and_then(|v| v.as_array()) {
-                    out.push_str(&h.iter().map(|v| csv_escape(&stringify(v), delim)).collect::<Vec<_>>().join(&delim.to_string()));
+                    out.push_str(
+                        &h.iter()
+                            .map(|v| csv_escape(&stringify(v), delim))
+                            .collect::<Vec<_>>()
+                            .join(&delim.to_string()),
+                    );
                     out.push('\n');
                 }
             }
@@ -190,7 +228,9 @@ pub fn call_csv(c: &CsvCap, with: &Value, _state: &Value) -> Result<Value> {
                 out.push_str(&cells.join(&delim.to_string()));
                 out.push('\n');
             }
-            Ok(json!({ "capability": "csv", "op": "generate", "text": out, "lines": out.lines().count() }))
+            Ok(
+                json!({ "capability": "csv", "op": "generate", "text": out, "lines": out.lines().count() }),
+            )
         }
         other => bail!("csv op {other:?} unsupported (parse | generate)"),
     }
@@ -252,9 +292,10 @@ pub struct XmlCap {
 pub fn call_xml(c: &XmlCap, with: &Value, _state: &Value) -> Result<Value> {
     let text = get_text(with, "text")?;
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "tags" => {
-            let re = regex_lite::Regex::new(r"<\s*([A-Za-z_][\w:.-]*)").map_err(|e| anyhow!("{e}"))?;
+            let re =
+                regex_lite::Regex::new(r"<\s*([A-Za-z_][\w:.-]*)").map_err(|e| anyhow!("{e}"))?;
             let mut names: Vec<String> = re
                 .captures_iter(&text)
                 .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
@@ -267,14 +308,20 @@ pub fn call_xml(c: &XmlCap, with: &Value, _state: &Value) -> Result<Value> {
             if c.tag.is_empty() {
                 bail!("xml.text needs 'tag'");
             }
-            let pat = format!(r"(?is)<\s*{}\b[^>]*>(.*?)<\s*/\s*{}\s*>", regex_escape(&c.tag), regex_escape(&c.tag));
+            let pat = format!(
+                r"(?is)<\s*{}\b[^>]*>(.*?)<\s*/\s*{}\s*>",
+                regex_escape(&c.tag),
+                regex_escape(&c.tag)
+            );
             let re = regex_lite::Regex::new(&pat).map_err(|e| anyhow!("{e}"))?;
             let found: Vec<String> = re
                 .captures_iter(&text)
                 .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
             let count = found.len();
-            Ok(json!({ "capability": "xml", "op": "text", "tag": c.tag, "texts": found, "count": count }))
+            Ok(
+                json!({ "capability": "xml", "op": "text", "tag": c.tag, "texts": found, "count": count }),
+            )
         }
         "attrs" => {
             if c.tag.is_empty() {
@@ -287,7 +334,9 @@ pub fn call_xml(c: &XmlCap, with: &Value, _state: &Value) -> Result<Value> {
                 .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
                 .collect();
             let count = attrs.len();
-            Ok(json!({ "capability": "xml", "op": "attrs", "tag": c.tag, "attrs": attrs, "count": count }))
+            Ok(
+                json!({ "capability": "xml", "op": "attrs", "tag": c.tag, "attrs": attrs, "count": count }),
+            )
         }
         other => bail!("xml op {other:?} unsupported (tags | text | attrs)"),
     }
@@ -295,7 +344,13 @@ pub fn call_xml(c: &XmlCap, with: &Value, _state: &Value) -> Result<Value> {
 
 fn regex_escape(s: &str) -> String {
     s.chars()
-        .map(|c| if "\\^$.|?*+()[]{}".contains(c) { format!("\\{c}") } else { c.to_string() })
+        .map(|c| {
+            if "\\^$.|?*+()[]{}".contains(c) {
+                format!("\\{c}")
+            } else {
+                c.to_string()
+            }
+        })
         .collect()
 }
 
@@ -309,7 +364,7 @@ pub fn call_markdown(c: &MarkdownCap, with: &Value, _state: &Value) -> Result<Va
     let text = get_text(with, "text")?;
     let lines: Vec<&str> = text.lines().collect();
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "headings" => {
             let mut hs = Vec::new();
             let mut in_fence = false;
@@ -331,7 +386,9 @@ pub fn call_markdown(c: &MarkdownCap, with: &Value, _state: &Value) -> Result<Va
                 }
             }
             let count = hs.len();
-            Ok(json!({ "capability": "markdown", "op": "headings", "headings": hs, "count": count }))
+            Ok(
+                json!({ "capability": "markdown", "op": "headings", "headings": hs, "count": count }),
+            )
         }
         "code_blocks" => {
             let mut blocks = Vec::new();
@@ -340,17 +397,22 @@ pub fn call_markdown(c: &MarkdownCap, with: &Value, _state: &Value) -> Result<Va
                 if let Some(rest) = l.trim_start().strip_prefix("```") {
                     match cur.take() {
                         None => cur = Some((rest.trim().to_string(), Vec::new())),
-                        Some((lang, body)) => blocks.push(json!({ "lang": lang, "code": body.join("\n") })),
+                        Some((lang, body)) => {
+                            blocks.push(json!({ "lang": lang, "code": body.join("\n") }))
+                        }
                     }
                 } else if let Some((_, body)) = cur.as_mut() {
                     body.push(l.to_string());
                 }
             }
             let count = blocks.len();
-            Ok(json!({ "capability": "markdown", "op": "code_blocks", "blocks": blocks, "count": count }))
+            Ok(
+                json!({ "capability": "markdown", "op": "code_blocks", "blocks": blocks, "count": count }),
+            )
         }
         "links" => {
-            let re = regex_lite::Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").map_err(|e| anyhow!("{e}"))?;
+            let re =
+                regex_lite::Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").map_err(|e| anyhow!("{e}"))?;
             let links: Vec<Value> = re
                 .captures_iter(&text)
                 .map(|c| {
@@ -364,21 +426,35 @@ pub fn call_markdown(c: &MarkdownCap, with: &Value, _state: &Value) -> Result<Va
             Ok(json!({ "capability": "markdown", "op": "links", "links": links, "count": count }))
         }
         "outline" => {
-            let hs = call_markdown(&MarkdownCap { op: "headings".into() }, with, _state)?;
+            let hs = call_markdown(
+                &MarkdownCap {
+                    op: "headings".into(),
+                },
+                with,
+                _state,
+            )?;
             let titles: Vec<String> = hs["headings"]
                 .as_array()
                 .map(|a| {
                     a.iter()
                         .map(|h| {
                             let lvl = h["level"].as_u64().unwrap_or(1) as usize;
-                            format!("{}{}", "  ".repeat(lvl - 1), h["title"].as_str().unwrap_or(""))
+                            format!(
+                                "{}{}",
+                                "  ".repeat(lvl - 1),
+                                h["title"].as_str().unwrap_or("")
+                            )
                         })
                         .collect()
                 })
                 .unwrap_or_default();
-            Ok(json!({ "capability": "markdown", "op": "outline", "outline": titles, "count": titles.len() }))
+            Ok(
+                json!({ "capability": "markdown", "op": "outline", "outline": titles, "count": titles.len() }),
+            )
         }
-        other => bail!("markdown op {other:?} unsupported (headings | code_blocks | links | outline)"),
+        other => {
+            bail!("markdown op {other:?} unsupported (headings | code_blocks | links | outline)")
+        }
     }
 }
 
@@ -392,7 +468,7 @@ pub struct DiffCap {
 
 pub fn call_diff(c: &DiffCap, with: &Value, _state: &Value) -> Result<Value> {
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "lines" => {
             let a = get_text(with, "a")?;
             let b = get_text(with, "b")?;
@@ -405,7 +481,9 @@ pub fn call_diff(c: &DiffCap, with: &Value, _state: &Value) -> Result<Value> {
             for i in 0..n {
                 match (al.get(i), bl.get(i)) {
                     (Some(x), Some(y)) if x == y => {}
-                    (Some(x), Some(y)) => changed.push(json!({ "line": i + 1, "from": x, "to": y })),
+                    (Some(x), Some(y)) => {
+                        changed.push(json!({ "line": i + 1, "from": x, "to": y }))
+                    }
                     (Some(x), None) => removed.push(json!({ "line": i + 1, "text": x })),
                     (None, Some(y)) => added.push(json!({ "line": i + 1, "text": y })),
                     (None, None) => {}
@@ -423,8 +501,10 @@ pub fn call_diff(c: &DiffCap, with: &Value, _state: &Value) -> Result<Value> {
             let mut deltas = Vec::new();
             json_delta(&a, &b, "", &mut deltas);
             let count = deltas.len();
-            Ok(json!({ "capability": "diff", "op": "json", "deltas": deltas, "count": count,
-                       "identical": count == 0 }))
+            Ok(
+                json!({ "capability": "diff", "op": "json", "deltas": deltas, "count": count,
+                       "identical": count == 0 }),
+            )
         }
         other => bail!("diff op {other:?} unsupported (lines | json)"),
     }
@@ -434,7 +514,11 @@ fn json_delta(a: &Value, b: &Value, path: &str, out: &mut Vec<Value>) {
     match (a, b) {
         (Value::Object(ao), Value::Object(bo)) => {
             for (k, av) in ao {
-                let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                let p = if path.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{path}.{k}")
+                };
                 match bo.get(k) {
                     Some(bv) => json_delta(av, bv, &p, out),
                     None => out.push(json!({ "path": p, "from": av, "to": null, "op": "remove" })),
@@ -442,7 +526,11 @@ fn json_delta(a: &Value, b: &Value, path: &str, out: &mut Vec<Value>) {
             }
             for (k, bv) in bo {
                 if !ao.contains_key(k) {
-                    let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                    let p = if path.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{path}.{k}")
+                    };
                     out.push(json!({ "path": p, "from": null, "to": bv, "op": "add" }));
                 }
             }
@@ -458,8 +546,14 @@ fn json_delta(a: &Value, b: &Value, path: &str, out: &mut Vec<Value>) {
 pub struct ValidateCap;
 
 pub fn call_validate(_c: &ValidateCap, with: &Value, _state: &Value) -> Result<Value> {
-    let value = with.get("value").cloned().ok_or_else(|| anyhow!("validate needs 'value'"))?;
-    let schema = with.get("schema").cloned().ok_or_else(|| anyhow!("validate needs 'schema'"))?;
+    let value = with
+        .get("value")
+        .cloned()
+        .ok_or_else(|| anyhow!("validate needs 'value'"))?;
+    let schema = with
+        .get("schema")
+        .cloned()
+        .ok_or_else(|| anyhow!("validate needs 'schema'"))?;
     let mut errors: Vec<String> = Vec::new();
     check_schema(&value, &schema, "", &mut errors);
     Ok(json!({
@@ -512,7 +606,10 @@ fn check_schema(v: &Value, s: &Value, path: &str, errs: &mut Vec<String>) {
         }
     }
     if let Some(min) = s.get("min_length").and_then(|x| x.as_u64()) {
-        if v.as_str().map(|t| (t.chars().count() as u64) < min).unwrap_or(false) {
+        if v.as_str()
+            .map(|t| (t.chars().count() as u64) < min)
+            .unwrap_or(false)
+        {
             errs.push(format!("{p}: shorter than min_length {min}"));
         }
     }
@@ -558,7 +655,7 @@ pub struct HashCap {
 pub fn call_hash(c: &HashCap, with: &Value, _state: &Value) -> Result<Value> {
     let text = get_text(with, "text")?;
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "sha256" | "sha256_hex" => Ok(json!({
             "capability": "hash", "op": "sha256",
             "hex": super::net::sha256_hex(text.as_bytes()),
@@ -613,7 +710,9 @@ pub fn call_graph(c: &GraphCap, with: &Value, _state: &Value) -> Result<Value> {
     let mut adj: Map<String, Value> = Map::new();
     let mut nodes: Vec<String> = Vec::new();
     for e in edges {
-        let pair = e.as_array().ok_or_else(|| anyhow!("graph edge must be [from, to]"))?;
+        let pair = e
+            .as_array()
+            .ok_or_else(|| anyhow!("graph edge must be [from, to]"))?;
         let from = pair.first().map(stringify).unwrap_or_default();
         let to = pair.get(1).map(stringify).unwrap_or_default();
         for n in [&from, &to] {
@@ -628,7 +727,7 @@ pub fn call_graph(c: &GraphCap, with: &Value, _state: &Value) -> Result<Value> {
     }
     let start = with.get("start").map(stringify).unwrap_or_default();
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "reachable" | "bfs" => {
             if start.is_empty() {
                 bail!("graph.{:?} needs 'start'", c.op);
@@ -654,13 +753,18 @@ pub fn call_graph(c: &GraphCap, with: &Value, _state: &Value) -> Result<Value> {
         }
         "toposort" => {
             // Kahn's algorithm; detects cycles
-            let mut indeg: std::collections::HashMap<String, i64> = nodes.iter().map(|n| (n.clone(), 0)).collect();
+            let mut indeg: std::collections::HashMap<String, i64> =
+                nodes.iter().map(|n| (n.clone(), 0)).collect();
             for e in edges {
                 let p = e.as_array().unwrap();
                 let to = p.get(1).map(stringify).unwrap_or_default();
                 *indeg.entry(to).or_insert(0) += 1;
             }
-            let mut ready: Vec<String> = indeg.iter().filter(|(_, d)| **d == 0).map(|(n, _)| n.clone()).collect();
+            let mut ready: Vec<String> = indeg
+                .iter()
+                .filter(|(_, d)| **d == 0)
+                .map(|(n, _)| n.clone())
+                .collect();
             ready.sort();
             let mut out: Vec<String> = Vec::new();
             while let Some(n) = ready.pop() {
@@ -698,9 +802,13 @@ pub struct TokenizeCap {
 
 pub fn call_tokenize(c: &TokenizeCap, with: &Value, _state: &Value) -> Result<Value> {
     let text = get_text(with, "text")?;
-    let cpt = if c.chars_per_token <= 0.0 { 4.0 } else { c.chars_per_token };
+    let cpt = if c.chars_per_token <= 0.0 {
+        4.0
+    } else {
+        c.chars_per_token
+    };
     let op = effective_op(&c.op, with, "pick");
-        match op.as_str() {
+    match op.as_str() {
         "count" => {
             let chars = text.chars().count() as f64;
             let words = text.split_whitespace().count();
@@ -714,7 +822,10 @@ pub fn call_tokenize(c: &TokenizeCap, with: &Value, _state: &Value) -> Result<Va
         }
         "split" => {
             // whitespace+punctuation heuristic chunking, cap slice length
-            let max = with.get("chunk_chars").and_then(|v| v.as_u64()).unwrap_or(48) as usize;
+            let max = with
+                .get("chunk_chars")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(48) as usize;
             let mut chunks: Vec<String> = Vec::new();
             let mut cur = String::new();
             for ch in text.chars() {
@@ -759,7 +870,10 @@ pub fn call_cron(c: &CronCap, with: &Value, _state: &Value) -> Result<Value> {
     }
     let fields: Vec<&str> = expr.split_whitespace().collect();
     if fields.len() != 5 {
-        bail!("cron expr must have 5 fields (got {}): {expr:?}", fields.len());
+        bail!(
+            "cron expr must have 5 fields (got {}): {expr:?}",
+            fields.len()
+        );
     }
     let from = with
         .get("from_epoch")

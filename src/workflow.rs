@@ -99,7 +99,10 @@ pub struct Edge {
 impl Edge {
     pub fn new(condition: &[(&str, &str)], default: Option<&str>, min_confidence: f64) -> Self {
         Self {
-            condition: condition.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            condition: condition
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             default: default.map(|s| s.to_string()),
             min_confidence,
         }
@@ -114,7 +117,10 @@ impl Edge {
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        self.condition.get(&key).cloned().or_else(|| self.default.clone())
+        self.condition
+            .get(&key)
+            .cloned()
+            .or_else(|| self.default.clone())
     }
 }
 
@@ -249,9 +255,10 @@ impl WorkflowNode {
             None => (NodeAction::Escalate, None),
             Some(n) if n == "STOP" => (NodeAction::Stop, None),
             Some(n) if n == self.name => (NodeAction::Retry, Some(n)),
-            Some(n) if n.strip_prefix("EXECUTE:").is_some() => {
-                (NodeAction::Execute, n.strip_prefix("EXECUTE:").map(str::to_string))
-            }
+            Some(n) if n.strip_prefix("EXECUTE:").is_some() => (
+                NodeAction::Execute,
+                n.strip_prefix("EXECUTE:").map(str::to_string),
+            ),
             Some(n) => (NodeAction::Route, Some(n)),
         };
 
@@ -319,7 +326,10 @@ fn r4(x: f64) -> f64 {
 /// Merge a node's app-level payload into the workflow state (top-level keys),
 /// mirroring the Python `on_action` / `action_result` handling.
 fn merge_payload(state: &mut Value, payload: &Option<Value>) {
-    if let (Some(obj), Some(p)) = (state.as_object_mut(), payload.as_ref().and_then(|v| v.as_object())) {
+    if let (Some(obj), Some(p)) = (
+        state.as_object_mut(),
+        payload.as_ref().and_then(|v| v.as_object()),
+    ) {
         for (k, v) in p {
             obj.insert(k.clone(), v.clone());
         }
@@ -453,13 +463,17 @@ impl ResilientWorkflow {
                     merge_payload(&mut state, &result.action_result);
                     retry_count = 0;
                     current = result.next_node.clone();
-                    step["detail"] = json!(format!("routed to {}", current.clone().unwrap_or_default()));
+                    step["detail"] =
+                        json!(format!("routed to {}", current.clone().unwrap_or_default()));
                 }
                 NodeAction::Execute => {
                     merge_payload(&mut state, &result.action_result);
                     retry_count = 0;
                     current = result.next_node.clone();
-                    step["detail"] = json!(format!("executed + routed to {}", current.clone().unwrap_or_default()));
+                    step["detail"] = json!(format!(
+                        "executed + routed to {}",
+                        current.clone().unwrap_or_default()
+                    ));
                 }
                 NodeAction::Stop => {
                     merge_payload(&mut state, &result.action_result);
@@ -473,7 +487,11 @@ impl ResilientWorkflow {
 
             if score_history.len() >= self.convergence_window {
                 let w = &score_history[score_history.len() - self.convergence_window..];
-                let (mn, mx) = w.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+                let (mn, mx) = w
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+                        (a.min(v), b.max(v))
+                    });
                 if mx - mn <= self.convergence_eps {
                     trace.final_action = "converged".to_string();
                     trace.loop_detected = true;
@@ -546,9 +564,10 @@ impl ResilientWorkflow {
         let mut current = match initial_state {
             Some(_) => self.start.clone(),
             None => match store.read_all()?.last() {
-                Some(last_rec) if last_rec.iteration + 1 == next_iter => {
-                    last_rec.next_node.clone().unwrap_or_else(|| self.start.clone())
-                }
+                Some(last_rec) if last_rec.iteration + 1 == next_iter => last_rec
+                    .next_node
+                    .clone()
+                    .unwrap_or_else(|| self.start.clone()),
                 _ => self.start.clone(),
             },
         };
@@ -644,19 +663,27 @@ impl ResilientWorkflow {
                 NodeAction::Route => {
                     retry_count = 0;
                     next = result.next_node.clone();
-                    step["detail"] = json!(format!("routed to {}", next.clone().unwrap_or_default()));
+                    step["detail"] =
+                        json!(format!("routed to {}", next.clone().unwrap_or_default()));
                 }
                 NodeAction::Execute => {
                     retry_count = 0;
                     next = result.next_node.clone();
-                    step["detail"] = json!(format!("executed + routed to {}", next.clone().unwrap_or_default()));
+                    step["detail"] = json!(format!(
+                        "executed + routed to {}",
+                        next.clone().unwrap_or_default()
+                    ));
                 }
                 NodeAction::Stop => {
                     trace.final_action = "stop".to_string();
                     step["detail"] = json!("workflow stopped");
                 }
             }
-            let step_detail = step.get("detail").and_then(|d| d.as_str()).unwrap_or("").to_string();
+            let step_detail = step
+                .get("detail")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
             history.push(step);
 
             let rec = NodeRecord {
@@ -674,7 +701,11 @@ impl ResilientWorkflow {
                 confidence: result.confidence,
                 latency_ms: result.latency_ms,
                 next_node: next.clone(),
-                detail: if step_detail.is_empty() { None } else { Some(step_detail) },
+                detail: if step_detail.is_empty() {
+                    None
+                } else {
+                    Some(step_detail)
+                },
                 error: None,
             };
             store.write(&rec)?;
@@ -689,7 +720,11 @@ impl ResilientWorkflow {
 
             if score_history.len() >= self.convergence_window {
                 let w = &score_history[score_history.len() - self.convergence_window..];
-                let (mn, mx) = w.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+                let (mn, mx) = w
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+                        (a.min(v), b.max(v))
+                    });
                 if mx - mn <= self.convergence_eps {
                     trace.final_action = "converged".to_string();
                     trace.loop_detected = true;
@@ -732,10 +767,15 @@ impl ResilientWorkflow {
         store: &mut NodeStore,
         iter: u64,
     ) -> Result<NodeRecord> {
-        let old = store.read(iter)?
+        let old = store
+            .read(iter)?
             .ok_or_else(|| anyhow!("cannot replay iteration {iter}: no record"))?;
-        let node = self.nodes.get(&old.node)
-            .ok_or_else(|| anyhow!("cannot replay iteration {iter}: node {:?} not in spec", old.node))?;
+        let node = self.nodes.get(&old.node).ok_or_else(|| {
+            anyhow!(
+                "cannot replay iteration {iter}: node {:?} not in spec",
+                old.node
+            )
+        })?;
         let result = node.run(backend, &old.state_before)?;
         let mut state_after = old.state_before.clone();
         merge_payload(&mut state_after, &result.action_result);
@@ -809,14 +849,22 @@ pub struct Checkpoint {
 
 impl Checkpoint {
     pub fn new(path: &str) -> Self {
-        Self { path: path.to_string() }
+        Self {
+            path: path.to_string(),
+        }
     }
 
     pub fn exists(&self) -> bool {
         Path::new(&self.path).exists()
     }
 
-    pub fn save(&self, state: &Value, iteration: usize, history: &[Value], extra: Option<&Value>) -> Result<()> {
+    pub fn save(
+        &self,
+        state: &Value,
+        iteration: usize,
+        history: &[Value],
+        extra: Option<&Value>,
+    ) -> Result<()> {
         if let Some(parent) = Path::new(&self.path).parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -844,10 +892,17 @@ impl Checkpoint {
         let raw = std::fs::read_to_string(&self.path)?;
         let data: Value = serde_json::from_str(&raw)?;
         Ok(Some((
-            data.get("state").cloned().unwrap_or(Value::Object(Map::new())),
+            data.get("state")
+                .cloned()
+                .unwrap_or(Value::Object(Map::new())),
             data.get("iteration").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-            data.get("history").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
-            data.get("extra").cloned().unwrap_or(Value::Object(Map::new())),
+            data.get("history")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            data.get("extra")
+                .cloned()
+                .unwrap_or(Value::Object(Map::new())),
         )))
     }
 
@@ -869,7 +924,10 @@ pub struct SubWorkflow {
 
 impl SubWorkflow {
     pub fn new(name: &str, workflow: ResilientWorkflow) -> Self {
-        Self { name: name.to_string(), workflow }
+        Self {
+            name: name.to_string(),
+            workflow,
+        }
     }
 
     pub fn execute<B: Decide + ?Sized>(&self, backend: &B, state: &Value) -> Result<Value> {
@@ -902,7 +960,11 @@ pub struct FanOut {
 
 impl FanOut {
     pub fn new(name: &str, branches: Vec<(String, ResilientWorkflow)>) -> Self {
-        Self { name: name.to_string(), branches, merge_fn: None }
+        Self {
+            name: name.to_string(),
+            branches,
+            merge_fn: None,
+        }
     }
 
     pub fn with_merge<F>(mut self, f: F) -> Self

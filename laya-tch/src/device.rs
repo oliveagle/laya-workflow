@@ -163,13 +163,28 @@ mod tests {
     use super::*;
 
     fn mac(mlx: bool) -> DeviceEnv {
-        DeviceEnv { platform: Platform::Macos, mlx_available: mlx, cuda_available: false, cuda_count: 0 }
+        DeviceEnv {
+            platform: Platform::Macos,
+            mlx_available: mlx,
+            cuda_available: false,
+            cuda_count: 0,
+        }
     }
     fn mac_cuda(mlx: bool, count: usize) -> DeviceEnv {
-        DeviceEnv { platform: Platform::Macos, mlx_available: mlx, cuda_available: count > 0, cuda_count: count }
+        DeviceEnv {
+            platform: Platform::Macos,
+            mlx_available: mlx,
+            cuda_available: count > 0,
+            cuda_count: count,
+        }
     }
     fn linux(cuda: bool, count: usize) -> DeviceEnv {
-        DeviceEnv { platform: Platform::Other, mlx_available: false, cuda_available: cuda, cuda_count: count }
+        DeviceEnv {
+            platform: Platform::Other,
+            mlx_available: false,
+            cuda_available: cuda,
+            cuda_count: count,
+        }
     }
 
     #[test]
@@ -182,25 +197,40 @@ mod tests {
     #[test]
     fn cuda_requires_available_cuda() {
         assert_eq!(resolve("cuda", &linux(true, 2)).unwrap(), Backend::Cuda(0));
-        assert_eq!(resolve("cuda", &mac_cuda(true, 1)).unwrap(), Backend::Cuda(0));
+        assert_eq!(
+            resolve("cuda", &mac_cuda(true, 1)).unwrap(),
+            Backend::Cuda(0)
+        );
         assert!(resolve("cuda", &linux(false, 0)).is_err());
         assert!(resolve("cuda", &mac(false)).is_err());
     }
 
     #[test]
     fn cuda_index_is_validated() {
-        assert_eq!(resolve("cuda:0", &linux(true, 4)).unwrap(), Backend::Cuda(0));
-        assert_eq!(resolve("cuda:3", &linux(true, 4)).unwrap(), Backend::Cuda(3));
+        assert_eq!(
+            resolve("cuda:0", &linux(true, 4)).unwrap(),
+            Backend::Cuda(0)
+        );
+        assert_eq!(
+            resolve("cuda:3", &linux(true, 4)).unwrap(),
+            Backend::Cuda(3)
+        );
         assert!(resolve("cuda:4", &linux(true, 4)).is_err(), "out of range");
         assert!(resolve("cuda:1", &linux(true, 1)).is_err());
-        assert!(resolve("cuda:x", &linux(true, 4)).is_err(), "non-numeric index");
+        assert!(
+            resolve("cuda:x", &linux(true, 4)).is_err(),
+            "non-numeric index"
+        );
         assert!(resolve("cuda:", &linux(true, 4)).is_err(), "empty index");
     }
 
     #[test]
     fn mlx_requires_macos_and_runtime() {
         assert_eq!(resolve("mlx", &mac(true)).unwrap(), Backend::Mlx);
-        assert!(resolve("mlx", &mac(false)).is_err(), "no MLX runtime on macOS");
+        assert!(
+            resolve("mlx", &mac(false)).is_err(),
+            "no MLX runtime on macOS"
+        );
     }
 
     #[test]
@@ -218,7 +248,10 @@ mod tests {
     #[test]
     fn auto_falls_back_without_mlx() {
         assert_eq!(resolve("auto", &mac(false)).unwrap(), Backend::Cpu);
-        assert_eq!(resolve("auto", &mac_cuda(false, 2)).unwrap(), Backend::Cuda(0));
+        assert_eq!(
+            resolve("auto", &mac_cuda(false, 2)).unwrap(),
+            Backend::Cuda(0)
+        );
         assert_eq!(resolve("auto", &linux(false, 0)).unwrap(), Backend::Cpu);
         assert_eq!(resolve("auto", &linux(true, 1)).unwrap(), Backend::Cuda(0));
     }

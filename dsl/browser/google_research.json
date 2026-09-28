@@ -49,6 +49,7 @@
           "timeout_ms": 30000,
           "result_count": "${state.result_count}",
           "max_open": "${state.max_open}",
+          "tab_concurrency": "${state.tab_concurrency}",
           "min_score": 0.5,
           "max_text": "${state.max_text}"
         },

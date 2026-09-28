@@ -6,9 +6,9 @@
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
-use super::{data, goal, local, net, proto, service, store, sys, web, AgentCap, Capability, ExecCap, HttpCap};
-
-
+use super::{
+    data, goal, local, net, proto, service, store, sys, web, AgentCap, Capability, ExecCap, HttpCap,
+};
 
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
     let kind = def

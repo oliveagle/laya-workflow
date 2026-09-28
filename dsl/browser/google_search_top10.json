@@ -223,7 +223,7 @@
       "action": {
         "kind": "call",
         "capability": "chrome",
-        "with": {"op": "open_many", "urls": "${state.urls}", "keep_open": true},
+        "with": {"op": "open_many", "urls": "${state.urls}", "keep_open": true, "tab_concurrency": "${state.tab_concurrency}"},
         "project": {
           "opened": "/opened",
           "opened_count": "/opened_count"

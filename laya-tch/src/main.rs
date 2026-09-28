@@ -156,17 +156,16 @@ fn py_str(v: &Value) -> String {
         Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
-        Value::Array(a) => format!(
-            "[{}]",
-            a.iter().map(py_str).collect::<Vec<_>>().join(", ")
-        ),
+        Value::Array(a) => format!("[{}]", a.iter().map(py_str).collect::<Vec<_>>().join(", ")),
         Value::Object(_) => json_dumps_python(v),
     }
 }
 
 /// Mirrors `RLAgent._to_internal`.
 fn to_internal(qdef: &Value) -> Result<InternalQ> {
-    let obj = qdef.as_object().ok_or_else(|| anyhow!("question must be an object"))?;
+    let obj = qdef
+        .as_object()
+        .ok_or_else(|| anyhow!("question must be an object"))?;
     let t = match obj.get("type").and_then(|v| v.as_str()) {
         Some("choice") => QType::Choice,
         Some("score") => QType::Score,
@@ -174,7 +173,9 @@ fn to_internal(qdef: &Value) -> Result<InternalQ> {
         Some(other) => bail!("unknown question type {other}"),
         None => bail!("question missing 'type'"),
     };
-    let ins_v = obj.get("instructions").ok_or_else(|| anyhow!("question missing 'instructions'"))?;
+    let ins_v = obj
+        .get("instructions")
+        .ok_or_else(|| anyhow!("question missing 'instructions'"))?;
     let ins = match ins_v {
         Value::String(s) => s.clone(),
         other => json_dumps_python(other),
@@ -247,7 +248,9 @@ fn build_sequence(
     let cls_id = tok.token_to_id("[CLS]").unwrap_or(CLS_ID) as i64;
     let sep_id = tok.token_to_id("[SEP]").unwrap_or(SEP_ID) as i64;
     let mask_id = tok.token_to_id("[MASK]").unwrap_or(MASK_ID) as i64;
-    let mask_tok = tok.id_to_token(mask_id as u32).unwrap_or_else(|| "[MASK]".to_string());
+    let mask_tok = tok
+        .id_to_token(mask_id as u32)
+        .unwrap_or_else(|| "[MASK]".to_string());
 
     let encode = |text: &str| -> Result<Vec<i64>> {
         Ok(tok
@@ -275,7 +278,10 @@ fn build_sequence(
     let sum = |v: &Vec<Vec<i64>>| v.iter().map(|x| x.len()).sum::<usize>();
     let mut opt_budget = head_max_len as i64 - sum(&opt_ids) as i64;
     if opt_budget < 16 {
-        let per = std::cmp::max(4, (head_max_len as i64 - 16) / std::cmp::max(1, opt_ids.len() as i64));
+        let per = std::cmp::max(
+            4,
+            (head_max_len as i64 - 16) / std::cmp::max(1, opt_ids.len() as i64),
+        );
         for o in opt_ids.iter_mut() {
             o.truncate(per as usize);
         }
@@ -300,7 +306,10 @@ fn build_sequence(
     ids.extend_from_slice(&st);
     ids.push(sep_id);
     ids.truncate(max_len);
-    let markers: Vec<i64> = markers.into_iter().filter(|&m| (m as usize) < max_len).collect();
+    let markers: Vec<i64> = markers
+        .into_iter()
+        .filter(|&m| (m as usize) < max_len)
+        .collect();
     Ok((ids, markers))
 }
 
@@ -383,7 +392,11 @@ impl Engine {
 
     /// Same as `predict` but includes raw (unrounded) probabilities for debugging
     /// mismatches against the PyTorch reference.
-    fn predict_debug(&self, state: &Value, questions: &Map<String, Value>) -> Result<(Value, usize)> {
+    fn predict_debug(
+        &self,
+        state: &Value,
+        questions: &Map<String, Value>,
+    ) -> Result<(Value, usize)> {
         self.predict_impl(state, questions, true)
     }
 
@@ -410,7 +423,10 @@ impl Engine {
             metas.push((qid.clone(), q, k, qt));
         }
         if id_store.is_empty() {
-            return Ok((json!({ "model": "rl-agent", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0} }), 0));
+            return Ok((
+                json!({ "model": "rl-agent", "answers": {}, "usage": {"input_tokens": 0, "output_tokens": 0} }),
+                0,
+            ));
         }
 
         let seqs: Vec<SeqInput> = (0..id_store.len())
@@ -431,14 +447,20 @@ impl Engine {
             let p = softmax_f32(&z);
             let conf = r4(confidence_from_probs(&p, *k) as f64);
             // act probability = softmax(act_logits)[0], computed in f32 like torch
-            let am = outs[i].act_logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let am = outs[i]
+                .act_logits
+                .iter()
+                .cloned()
+                .fold(f32::NEG_INFINITY, f32::max);
             let ae: Vec<f32> = outs[i].act_logits.iter().map(|&v| (v - am).exp()).collect();
             let act_probability = (ae[0] / ae.iter().sum::<f32>()) as f64;
 
             if debug {
                 eprintln!(
                     "[dbg] qid={} k={} temp={} logits={:?} raw_p={:?} raw_act={}",
-                    qid, k, temp,
+                    qid,
+                    k,
+                    temp,
                     logits.iter().map(|v| *v as f64).collect::<Vec<_>>(),
                     p.iter().map(|v| *v as f64).collect::<Vec<_>>(),
                     act_probability
@@ -471,7 +493,11 @@ impl Engine {
                     })
                 }
                 QType::Score => {
-                    let score: f64 = p.iter().enumerate().map(|(i, &pi)| pi as f64 * i as f64).sum();
+                    let score: f64 = p
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &pi)| pi as f64 * i as f64)
+                        .sum();
                     let legend: Map<String, Value> = match &q.crit {
                         Some(Value::Array(a)) => a
                             .iter()
@@ -526,13 +552,24 @@ async fn system_one(
         .get("questions")
         .and_then(|v| v.as_object())
         .cloned()
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "missing questions".to_string()))?;
+        .ok_or_else(|| {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                "missing questions".to_string(),
+            )
+        })?;
     let engine = state.lock().map_err(|_| {
-        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "engine lock poisoned".to_string())
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "engine lock poisoned".to_string(),
+        )
     })?;
-    let (resp, _n) = engine
-        .predict(&st, &qs)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")))?;
+    let (resp, _n) = engine.predict(&st, &qs).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{e}"),
+        )
+    })?;
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
     eprintln!("[laya-tch] {ms:.0}ms  questions={}", qs.len());
     Ok(axum::Json(resp))
@@ -541,7 +578,6 @@ async fn system_one(
 async fn health() -> &'static str {
     "ok"
 }
-
 
 /// Whether an importable MLX runtime is present. macOS only; on other platforms
 /// the MLX backend does not exist, so this is always `false`.
@@ -581,7 +617,11 @@ fn resolve_backend(flag: &str) -> Result<laya_tch::device::Backend> {
         platform: laya_tch::device::Platform::current(),
         mlx_available: mlx_runtime_available(),
         cuda_available,
-        cuda_count: if cuda_available { tch::Cuda::device_count() as usize } else { 0 },
+        cuda_count: if cuda_available {
+            tch::Cuda::device_count() as usize
+        } else {
+            0
+        },
     };
     let backend = laya_tch::device::resolve(flag, &env)?;
     if flag == "auto" && backend == laya_tch::device::Backend::Mlx {
@@ -618,7 +658,10 @@ async fn main() -> Result<()> {
              Re-run the tch engine with `--device cpu` (or `cuda` where available)."
         ),
     };
-    eprintln!("[laya-tch] loading model from {} on {:?}", cli.model_dir, device);
+    eprintln!(
+        "[laya-tch] loading model from {} on {:?}",
+        cli.model_dir, device
+    );
     let engine = Engine::load_on(&cli.model_dir, device)?;
     eprintln!("[laya-tch] loaded in {:.1}s", t0.elapsed().as_secs_f64());
 

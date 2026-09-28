@@ -41,7 +41,11 @@ fn count_consecutive_rejects(history: &[Value]) -> usize {
 
 /// Mirror of `optimizer_integration._build_laya_state`.
 pub fn build_laya_state(optim: &Value) -> Value {
-    let history = optim.get("history").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let history = optim
+        .get("history")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
     let recent: Vec<Value> = history.iter().rev().take(5).rev().cloned().collect();
     let last_trial = recent
         .last()
@@ -51,14 +55,23 @@ pub fn build_laya_state(optim: &Value) -> Value {
     let score = optim.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let recent_scores: Vec<Value> = recent
         .iter()
-        .map(|h| json!(r6(h.get("trial_score").and_then(|v| v.as_f64()).unwrap_or(0.0))))
+        .map(|h| {
+            json!(r6(h
+                .get("trial_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)))
+        })
         .collect();
     let recent_accepted: Vec<Value> = recent
         .iter()
         .map(|h| json!(h.get("accepted").and_then(|v| v.as_bool()).unwrap_or(false)))
         .collect();
     let params = optim.get("params").cloned().unwrap_or_else(|| json!({}));
-    let params_summary: String = serde_json::to_string(&params).unwrap_or_default().chars().take(200).collect();
+    let params_summary: String = serde_json::to_string(&params)
+        .unwrap_or_default()
+        .chars()
+        .take(200)
+        .collect();
 
     json!({
         "task": optim.get("task").cloned().unwrap_or_else(|| json!("unknown")),
@@ -125,7 +138,13 @@ impl ResilientLoop {
     ///
     /// `step_fn` is called once per iteration with the current state; Laya then
     /// decides continue/stop (`stop` with confidence ≥ 0.7 stops the loop).
-    pub fn run<B, F>(&self, backend: &B, initial_state: &Value, step_fn: F, max_iterations: usize) -> Result<Value>
+    pub fn run<B, F>(
+        &self,
+        backend: &B,
+        initial_state: &Value,
+        step_fn: F,
+        max_iterations: usize,
+    ) -> Result<Value>
     where
         B: Decide + ?Sized,
         F: Fn(&Value) -> Result<Value>,
@@ -188,7 +207,11 @@ impl ResilientLoop {
         let window = 5usize.min(score_history.len());
         let converged = window >= 5 && {
             let w = &score_history[score_history.len() - 5..];
-            let (mn, mx) = w.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+            let (mn, mx) = w
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+                    (a.min(v), b.max(v))
+                });
             mx - mn <= 1e-4
         };
 
@@ -228,7 +251,11 @@ pub fn make_continue_node() -> WorkflowNode {
     WorkflowNode::new(
         "continue_check",
         questions,
-        Edge::new(&[("stop", "STOP"), ("continue", "evaluate")], Some("evaluate"), 0.0),
+        Edge::new(
+            &[("stop", "STOP"), ("continue", "evaluate")],
+            Some("evaluate"),
+            0.0,
+        ),
     )
     .with_primary("should_continue")
     .with_state_fn(build_laya_state_action)
@@ -246,7 +273,10 @@ pub fn make_strategy_node(strategies: &[String]) -> WorkflowNode {
     for s in strategies {
         criteria.insert(s.clone(), json!(format!("use strategy {s}")));
     }
-    criteria.insert("keep".to_string(), json!("keep the current strategy, don't switch"));
+    criteria.insert(
+        "keep".to_string(),
+        json!("keep the current strategy, don't switch"),
+    );
 
     let questions = json!({
         "strategy_choice": {
@@ -264,14 +294,15 @@ pub fn make_strategy_node(strategies: &[String]) -> WorkflowNode {
             ]
         }
     });
-    let cond: Vec<(String, String)> = strategies
-        .iter()
-        .map(|s| (s.clone(), s.clone()))
-        .collect();
+    let cond: Vec<(String, String)> = strategies.iter().map(|s| (s.clone(), s.clone())).collect();
     let refs: Vec<(&str, &str)> = cond.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-    WorkflowNode::new("strategy_check", questions, Edge::new(&refs, Some("keep"), 0.3))
-        .with_primary("strategy_choice")
-        .with_state_fn(build_laya_state_action)
+    WorkflowNode::new(
+        "strategy_check",
+        questions,
+        Edge::new(&refs, Some("keep"), 0.3),
+    )
+    .with_primary("strategy_choice")
+    .with_state_fn(build_laya_state_action)
 }
 
 /// Action node that always routes to `continue_check` (eval is injected by the runner).
@@ -371,11 +402,18 @@ impl LayaOptimizerLoop {
         P: Fn(&str) -> String,
         F: Fn(&Value) -> Result<f64>,
     {
-        let previous = if self.state.score.is_finite() { self.state.score } else { 0.0 };
+        let previous = if self.state.score.is_finite() {
+            self.state.score
+        } else {
+            0.0
+        };
         let prompt = self.build_prompt();
         let output = propose_fn(&prompt);
         let proposal = parse_proposal(&output);
-        let delta = proposal.get("delta_params").cloned().unwrap_or_else(|| json!({}));
+        let delta = proposal
+            .get("delta_params")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         // candidate = params merged with delta
         let mut candidate = self.state.params.as_object().cloned().unwrap_or_default();
@@ -388,12 +426,20 @@ impl LayaOptimizerLoop {
 
         let trial = eval_fn(&candidate)?;
         let gain = trial - previous;
-        let accepted = if self.state.maximize { trial >= previous } else { trial <= previous };
+        let accepted = if self.state.maximize {
+            trial >= previous
+        } else {
+            trial <= previous
+        };
 
         if accepted {
             self.state.params = candidate.clone();
             self.state.score = trial;
-            let better = if self.state.maximize { trial > self.state.best_score } else { trial < self.state.best_score };
+            let better = if self.state.maximize {
+                trial > self.state.best_score
+            } else {
+                trial < self.state.best_score
+            };
             if better || !self.state.best_score.is_finite() {
                 self.state.best_score = trial;
                 self.state.best_params = candidate.clone();
@@ -440,9 +486,18 @@ impl LayaOptimizerLoop {
             .state
             .params
             .as_object()
-            .map(|o| o.iter().filter(|(k, _)| !k.starts_with('_')).map(|(k, v)| (k.clone(), v.clone())).collect())
+            .map(|o| {
+                o.iter()
+                    .filter(|(k, _)| !k.starts_with('_'))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
-        let params_summary: String = serde_json::to_string(&visible).unwrap_or_default().chars().take(300).collect();
+        let params_summary: String = serde_json::to_string(&visible)
+            .unwrap_or_default()
+            .chars()
+            .take(300)
+            .collect();
 
         format!(
             "You are an optimization agent. Current state:\n  task: {}\n  current_score: {:.4}\n  best_score: {:.4}\n  step: {}\n  strategy: {}\n  params: {}\n\nRecent history:\n{}\n\nPropose a parameter change (JSON with \"delta_params\" and \"rationale\"):\n",
@@ -567,7 +622,11 @@ impl LayaOptimizerLoop {
             }
             if score_history.len() >= workflow.convergence_window {
                 let w = &score_history[score_history.len() - workflow.convergence_window..];
-                let (mn, mx) = w.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+                let (mn, mx) = w
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| {
+                        (a.min(v), b.max(v))
+                    });
                 if mx - mn <= workflow.convergence_eps {
                     trace.final_action = "converged".to_string();
                     break;
@@ -579,7 +638,11 @@ impl LayaOptimizerLoop {
             trace.final_action = "max_iterations".to_string();
         }
         trace.total_latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        trace.loop_count = node_visits.values().filter_map(|v| v.as_u64()).max().unwrap_or(0) as usize;
+        trace.loop_count = node_visits
+            .values()
+            .filter_map(|v| v.as_u64())
+            .max()
+            .unwrap_or(0) as usize;
 
         Ok(json!({
             "steps": self.state.history.len(),

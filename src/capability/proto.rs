@@ -17,7 +17,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::Duration;
 
-use super::{check_host, expand, stringify, truncate, Policy, effective_op};
+use super::{check_host, effective_op, expand, stringify, truncate, Policy};
 
 fn tcp_connect(host: &str, port: u16, timeout_ms: u64, policy: &Policy) -> Result<TcpStream> {
     let url = format!("tcp://{host}:{port}");
@@ -48,7 +48,11 @@ pub fn call_tcp(c: &TcpCap, with: &Value, state: &Value, policy: &Policy) -> Res
     if host.is_empty() || c.port == 0 {
         bail!("tcp needs 'host' and 'port'");
     }
-    let timeout = if c.timeout_ms == 0 { 5000 } else { c.timeout_ms };
+    let timeout = if c.timeout_ms == 0 {
+        5000
+    } else {
+        c.timeout_ms
+    };
     let mut s = tcp_connect(&host, c.port, timeout, policy)?;
     let _ = s.set_read_timeout(Some(Duration::from_millis(timeout)));
     let sent = if payload.is_empty() {
@@ -61,10 +65,18 @@ pub fn call_tcp(c: &TcpCap, with: &Value, state: &Value, policy: &Policy) -> Res
     let mut buf = vec![0u8; 8192];
     let n = match s.read(&mut buf) {
         Ok(n) => n,
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => 0,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            0
+        }
         Err(e) => return Err(anyhow!("tcp read failed: {e}")),
     };
-    let reply = truncate(String::from_utf8_lossy(&buf[..n]).to_string(), policy.max_output);
+    let reply = truncate(
+        String::from_utf8_lossy(&buf[..n]).to_string(),
+        policy.max_output,
+    );
     Ok(json!({
         "capability": "tcp", "host": host, "port": c.port,
         "sent_bytes": sent, "recv_bytes": n, "reply": reply,
@@ -88,9 +100,15 @@ pub fn call_udp(c: &UdpCap, with: &Value, state: &Value, policy: &Policy) -> Res
         bail!("udp needs 'host' and 'port'");
     }
     check_host(&format!("udp://{host}:{}", c.port), policy)?;
-    let timeout = if c.timeout_ms == 0 { 3000 } else { c.timeout_ms };
+    let timeout = if c.timeout_ms == 0 {
+        3000
+    } else {
+        c.timeout_ms
+    };
     let sock = UdpSocket::bind("0.0.0.0:0")?;
-    sock.set_read_timeout(Some(Duration::from_millis(timeout.min(policy.max_timeout_ms))))?;
+    sock.set_read_timeout(Some(Duration::from_millis(
+        timeout.min(policy.max_timeout_ms),
+    )))?;
     sock.send_to(payload.as_bytes(), (host.as_str(), c.port))
         .map_err(|e| anyhow!("udp send failed: {e}"))?;
     let mut buf = vec![0u8; 8192];
@@ -177,9 +195,15 @@ pub fn call_redis(c: &RedisCap, with: &Value, state: &Value, policy: &Policy) ->
     if host.is_empty() || c.port == 0 {
         bail!("redis needs 'host' and 'port'");
     }
-    let timeout = if c.timeout_ms == 0 { 5000 } else { c.timeout_ms };
+    let timeout = if c.timeout_ms == 0 {
+        5000
+    } else {
+        c.timeout_ms
+    };
     let mut s = tcp_connect(&host, c.port, timeout, policy)?;
-    s.set_read_timeout(Some(Duration::from_millis(timeout.min(policy.max_timeout_ms))))?;
+    s.set_read_timeout(Some(Duration::from_millis(
+        timeout.min(policy.max_timeout_ms),
+    )))?;
 
     if !c.password.is_empty() {
         let pw = stringify(&expand(&Value::String(c.password.clone()), state, with));
@@ -187,21 +211,35 @@ pub fn call_redis(c: &RedisCap, with: &Value, state: &Value, policy: &Policy) ->
         let _ = resp_read(&mut s)?;
     }
 
-    let op = with.get("op").map(stringify).unwrap_or_else(|| "ping".to_string());
+    let op = with
+        .get("op")
+        .map(stringify)
+        .unwrap_or_else(|| "ping".to_string());
     let key = with.get("key").map(stringify).unwrap_or_default();
     let args: Vec<String> = match op.as_str() {
         "ping" => vec!["PING".into()],
         "get" => vec!["GET".into(), key.clone()],
-        "set" => vec!["SET".into(), key.clone(), with.get("value").map(stringify).unwrap_or_default()],
+        "set" => vec![
+            "SET".into(),
+            key.clone(),
+            with.get("value").map(stringify).unwrap_or_default(),
+        ],
         "del" => vec!["DEL".into(), key.clone()],
         "incr" => vec!["INCR".into(), key.clone()],
         "ttl" => vec!["TTL".into(), key.clone()],
-        "keys" => vec!["KEYS".into(), with.get("pattern").map(stringify).unwrap_or_else(|| "*".into())],
+        "keys" => vec![
+            "KEYS".into(),
+            with.get("pattern")
+                .map(stringify)
+                .unwrap_or_else(|| "*".into()),
+        ],
         other => bail!("redis op {other:?} unsupported (ping|get|set|del|incr|ttl|keys)"),
     };
     resp_write(&args, &mut s)?;
     let reply = resp_read(&mut s)?;
-    Ok(json!({ "capability": "redis", "op": op, "key": key, "reply": reply, "host": host, "port": c.port }))
+    Ok(
+        json!({ "capability": "redis", "op": op, "key": key, "reply": reply, "host": host, "port": c.port }),
+    )
 }
 
 // ── nats (text protocol) ────────────────────────────────────────────
@@ -218,11 +256,20 @@ pub fn call_nats(c: &NatsCap, with: &Value, state: &Value, policy: &Policy) -> R
     if host.is_empty() || c.port == 0 {
         bail!("nats needs 'host' and 'port'");
     }
-    let subject = with.get("subject").map(stringify).ok_or_else(|| anyhow!("nats needs 'subject'"))?;
+    let subject = with
+        .get("subject")
+        .map(stringify)
+        .ok_or_else(|| anyhow!("nats needs 'subject'"))?;
     let payload = with.get("message").map(stringify).unwrap_or_default();
-    let timeout = if c.timeout_ms == 0 { 5000 } else { c.timeout_ms };
+    let timeout = if c.timeout_ms == 0 {
+        5000
+    } else {
+        c.timeout_ms
+    };
     let mut s = tcp_connect(&host, c.port, timeout, policy)?;
-    s.set_read_timeout(Some(Duration::from_millis(timeout.min(policy.max_timeout_ms))))?;
+    s.set_read_timeout(Some(Duration::from_millis(
+        timeout.min(policy.max_timeout_ms),
+    )))?;
 
     // server sends INFO first; read it (best effort) before publishing
     let mut info = vec![0u8; 4096];
@@ -234,7 +281,10 @@ pub fn call_nats(c: &NatsCap, with: &Value, state: &Value, policy: &Policy) -> R
     s.flush()?;
     let mut echo = vec![0u8; 2048];
     let n2 = s.read(&mut echo).unwrap_or(0);
-    let reply = truncate(String::from_utf8_lossy(&echo[..n2]).to_string(), policy.max_output);
+    let reply = truncate(
+        String::from_utf8_lossy(&echo[..n2]).to_string(),
+        policy.max_output,
+    );
     Ok(json!({
         "capability": "nats", "host": host, "port": c.port, "subject": subject,
         "sent_bytes": payload.len(), "greeting": truncate(greeting, 512), "reply": reply,
@@ -277,12 +327,25 @@ pub fn call_mqtt(c: &MqttCap, with: &Value, state: &Value, policy: &Policy) -> R
     if host.is_empty() || c.port == 0 {
         bail!("mqtt needs 'host' and 'port'");
     }
-    let topic = with.get("topic").map(stringify).ok_or_else(|| anyhow!("mqtt needs 'topic'"))?;
+    let topic = with
+        .get("topic")
+        .map(stringify)
+        .ok_or_else(|| anyhow!("mqtt needs 'topic'"))?;
     let payload = with.get("message").map(stringify).unwrap_or_default();
-    let timeout = if c.timeout_ms == 0 { 5000 } else { c.timeout_ms };
-    let client_id = if c.client_id.is_empty() { "laya-workflow".to_string() } else { c.client_id.clone() };
+    let timeout = if c.timeout_ms == 0 {
+        5000
+    } else {
+        c.timeout_ms
+    };
+    let client_id = if c.client_id.is_empty() {
+        "laya-workflow".to_string()
+    } else {
+        c.client_id.clone()
+    };
     let mut s = tcp_connect(&host, c.port, timeout, policy)?;
-    s.set_read_timeout(Some(Duration::from_millis(timeout.min(policy.max_timeout_ms))))?;
+    s.set_read_timeout(Some(Duration::from_millis(
+        timeout.min(policy.max_timeout_ms),
+    )))?;
 
     // CONNECT
     let mut body = mqtt_string("MQTT");
@@ -357,7 +420,8 @@ impl SmtpReader {
         Self {
             buf: Vec::new(),
             pos: 0,
-            deadline: std::time::Instant::now() + std::time::Duration::from_millis(budget_ms.max(1)),
+            deadline: std::time::Instant::now()
+                + std::time::Duration::from_millis(budget_ms.max(1)),
         }
     }
 
@@ -431,7 +495,12 @@ fn smtp_reply(r: &mut SmtpReader, s: &mut TcpStream, out: &mut String) -> Result
     Ok(all)
 }
 
-fn smtp_expect(r: &mut SmtpReader, s: &mut TcpStream, prefix: &str, out: &mut String) -> Result<()> {
+fn smtp_expect(
+    r: &mut SmtpReader,
+    s: &mut TcpStream,
+    prefix: &str,
+    out: &mut String,
+) -> Result<()> {
     let reply = smtp_reply(r, s, out)?;
     if !reply.starts_with(prefix) {
         bail!("smtp expected {prefix:?}, got {:?}", reply.trim());
@@ -439,7 +508,13 @@ fn smtp_expect(r: &mut SmtpReader, s: &mut TcpStream, prefix: &str, out: &mut St
     Ok(())
 }
 
-fn smtp_cmd(r: &mut SmtpReader, s: &mut TcpStream, cmd: &str, expect: &str, out: &mut String) -> Result<()> {
+fn smtp_cmd(
+    r: &mut SmtpReader,
+    s: &mut TcpStream,
+    cmd: &str,
+    expect: &str,
+    out: &mut String,
+) -> Result<()> {
     s.write_all(format!("{cmd}\r\n").as_bytes())?;
     s.flush()?;
     smtp_expect(r, s, expect, out)
@@ -458,21 +533,38 @@ pub fn call_smtp(c: &SmtpCap, with: &Value, state: &Value, policy: &Policy) -> R
     if to.is_empty() {
         bail!("smtp 'to' must not be empty");
     }
-    let subject = with.get("subject").map(stringify).unwrap_or_else(|| "(no subject)".to_string());
+    let subject = with
+        .get("subject")
+        .map(stringify)
+        .unwrap_or_else(|| "(no subject)".to_string());
     let body_text = with.get("body").map(stringify).unwrap_or_default();
     let from = if c.from.is_empty() {
-        with.get("from").map(stringify).unwrap_or_else(|| "noreply@localhost".to_string())
+        with.get("from")
+            .map(stringify)
+            .unwrap_or_else(|| "noreply@localhost".to_string())
     } else {
         stringify(&expand(&Value::String(c.from.clone()), state, with))
     };
-    let timeout = if c.timeout_ms == 0 { 8000 } else { c.timeout_ms };
+    let timeout = if c.timeout_ms == 0 {
+        8000
+    } else {
+        c.timeout_ms
+    };
     let mut s = tcp_connect(&host, c.port, timeout, policy)?;
-    s.set_read_timeout(Some(Duration::from_millis(timeout.min(policy.max_timeout_ms))))?;
+    s.set_read_timeout(Some(Duration::from_millis(
+        timeout.min(policy.max_timeout_ms),
+    )))?;
 
     let mut transcript = String::new();
     let mut r = SmtpReader::new(timeout.min(policy.max_timeout_ms));
     smtp_expect(&mut r, &mut s, "220", &mut transcript)?;
-    smtp_cmd(&mut r, &mut s, &format!("EHLO {}", host), "250", &mut transcript)?;
+    smtp_cmd(
+        &mut r,
+        &mut s,
+        &format!("EHLO {}", host),
+        "250",
+        &mut transcript,
+    )?;
 
     if !c.username.is_empty() {
         let user = stringify(&expand(&Value::String(c.username.clone()), state, with));
@@ -492,9 +584,21 @@ pub fn call_smtp(c: &SmtpCap, with: &Value, state: &Value, policy: &Policy) -> R
         }
     }
 
-    smtp_cmd(&mut r, &mut s, &format!("MAIL FROM:<{from}>"), "250", &mut transcript)?;
+    smtp_cmd(
+        &mut r,
+        &mut s,
+        &format!("MAIL FROM:<{from}>"),
+        "250",
+        &mut transcript,
+    )?;
     for rcpt in &to {
-        smtp_cmd(&mut r, &mut s, &format!("RCPT TO:<{rcpt}>"), "250", &mut transcript)?;
+        smtp_cmd(
+            &mut r,
+            &mut s,
+            &format!("RCPT TO:<{rcpt}>"),
+            "250",
+            &mut transcript,
+        )?;
     }
     smtp_cmd(&mut r, &mut s, "DATA", "354", &mut transcript)?;
     let msg = format!(
@@ -529,7 +633,11 @@ pub fn call_archive(c: &ArchiveCap, with: &Value, state: &Value, policy: &Policy
         bail!("archive shells out to tar/unzip; set policy.allow_exec = true to enable");
     }
     let path = stringify(&expand(
-        &Value::String(if c.path.is_empty() { with.get("path").map(stringify).unwrap_or_default() } else { c.path.clone() }),
+        &Value::String(if c.path.is_empty() {
+            with.get("path").map(stringify).unwrap_or_default()
+        } else {
+            c.path.clone()
+        }),
         state,
         with,
     ));
@@ -543,7 +651,11 @@ pub fn call_archive(c: &ArchiveCap, with: &Value, state: &Value, policy: &Policy
         match op.as_str() {
             "list" => vec!["unzip".into(), "-l".into(), path.clone()],
             "extract" => {
-                let dest = if c.dest.is_empty() { ".".to_string() } else { c.dest.clone() };
+                let dest = if c.dest.is_empty() {
+                    ".".to_string()
+                } else {
+                    c.dest.clone()
+                };
                 super::store::resolve_store_path(&dest, policy)?;
                 vec!["unzip".into(), "-o".into(), path.clone(), "-d".into(), dest]
             }
@@ -554,7 +666,11 @@ pub fn call_archive(c: &ArchiveCap, with: &Value, state: &Value, policy: &Policy
         match op.as_str() {
             "list" => vec!["tar".into(), "-tf".into(), path.clone()],
             "extract" => {
-                let dest = if c.dest.is_empty() { ".".to_string() } else { c.dest.clone() };
+                let dest = if c.dest.is_empty() {
+                    ".".to_string()
+                } else {
+                    c.dest.clone()
+                };
                 super::store::resolve_store_path(&dest, policy)?;
                 vec!["tar".into(), "-xf".into(), path.clone(), "-C".into(), dest]
             }
@@ -565,12 +681,20 @@ pub fn call_archive(c: &ArchiveCap, with: &Value, state: &Value, policy: &Policy
         argv,
         cwd: None,
         env: serde_json::Map::new(),
-        timeout_ms: if c.timeout_ms == 0 { 30_000 } else { c.timeout_ms },
+        timeout_ms: if c.timeout_ms == 0 {
+            30_000
+        } else {
+            c.timeout_ms
+        },
         max_output: policy.max_output,
     };
     let out = super::call_exec(&cap, &json!({}), &json!({}), policy)?;
     let stdout = out["stdout"].as_str().unwrap_or("").to_string();
-    let entries: Vec<String> = stdout.lines().map(str::to_string).filter(|l| !l.trim().is_empty()).collect();
+    let entries: Vec<String> = stdout
+        .lines()
+        .map(str::to_string)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
     Ok(json!({
         "capability": "archive", "op": c.op, "path": path,
         "exit_code": out["exit_code"], "entries": entries, "count": entries.len(),

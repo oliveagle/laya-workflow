@@ -3,6 +3,8 @@
 `laya-workflow run --spec <file> --state '<json>'`
 
 * `--state` is the initial workflow state (default `{}`).
+* `--query '<text>'` is shorthand for putting `query` into that state. If both
+  flags are present, `--query` overrides `state.query`.
 * Without `--base-url` it uses the **offline heuristic backend** — topology and
   routing logic run, but decisions are canned heuristics, so use it for plumbing
   checks, not for real accuracy.
@@ -15,6 +17,8 @@ The output is the full `WorkflowOutcome` as JSON: `result` (final state),
 
 ```
 laya-workflow run --spec /tmp/persist_demo2.json --state '{"x":"A"}'
+# equivalent shorthand when the spec reads state.query
+laya-workflow run --spec dsl/browser/google_research.json --query "jev ai"
 ```
 
 ## When to use run vs resume
