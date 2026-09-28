@@ -1,0 +1,159 @@
+{
+  "name": "browser_singleton_smoke",
+  "dsl_version": 2,
+  "description": "Open one shared Chrome/CDP browser, observe the page with the bundled extension, and send real CDP input. The policy explicitly allow-lists localhost only.",
+  "start": "open_page",
+  "max_iterations": 4,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 30000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 10000,
+      "max_text": 6000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open_page",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Use the singleton browser for the requested localhost page?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "${state.url}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "observe",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Continue after taking the element observation?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "type_message"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "snapshot",
+          "target_id": "${state.target_id}"
+        },
+        "project": {
+          "page": "/result",
+          "element_count": "/result/elements/length"
+        }
+      }
+    },
+    {
+      "name": "type_message",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Continue with real CDP keystrokes?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "show_badges"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "type",
+          "target_id": "${state.target_id}",
+          "selector": "#message",
+          "text": "${state.text}"
+        },
+        "project": {
+          "typed": "/typed"
+        }
+      }
+    },
+    {
+      "name": "show_badges",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Is the browser workflow complete after the observation overlay?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "highlight",
+          "target_id": "${state.target_id}",
+          "enabled": true
+        },
+        "project": {
+          "badges": "/shown"
+        }
+      }
+    }
+  ]
+}

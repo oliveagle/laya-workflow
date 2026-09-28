@@ -13,9 +13,10 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`, `ole_eval/`, `devine/`). `laya-workflow list` walks the tree recursively.
+`pipelines/`, `ole_eval/`, `devine/`, `browser/`). `laya-workflow list` walks the tree recursively.
 See `ole_eval/README.md` for the ole-eval scenario mapping, and
-`devine/README.md` for the devine_utils release/test/integration flow.
+`devine/README.md` for the devine_utils release/test/integration flow, and
+`docs/browser_singleton.md` for singleton Chrome CDP automation.
 
 Nesting: a node may reference another workflow
 
@@ -50,6 +51,7 @@ Specs in this directory:
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
 | `devine/release_gate.json` | http probe merged into state, then ordered `threshold` (BLOCK → ALLOW) |
+| `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
 | `devine/promote.json` | composite verdict: gate probe → delegated `exec` (`workflow promote`) → post-check probe → ordered `threshold` |
 
 External capabilities: declare them under `"capabilities"` and call them from a node
@@ -57,7 +59,7 @@ with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An ac
 also list prerequisite `"chain": [{"capability":…, "as":…}]` whose results become
 `${with.<as>…}` for later steps and the main call.
 
-46 kinds (60 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
+47 kinds (62 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
 `kafka`, `archive`*, `pdf`*, `sql`*, and the earlier 26: `http`, `exec`*, `agent`, `shell`*, `file` (path allow-list), `sqlite`*, `datetime`,
 `text`, `rpc`, `graphql`, `llm`, `mcp`*, `vector`, `webhook`, `sse`, `passthrough`, `json`,
 `csv`, `xml`, `markdown`, `diff`, `validate`, `math`, `hash`, `graph`, `tokenize`, `cron`,

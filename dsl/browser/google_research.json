@@ -1,0 +1,70 @@
+{
+  "name": "google_research_open_extract_score",
+  "dsl_version": 2,
+  "description": "Search Google in a background tab, classify ad versus organic rows, open only organic pages in background tabs, extract readable text, and score relevance/effectiveness with Laya.",
+  "start": "research",
+  "max_iterations": 3,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "max_timeout_ms": 30000,
+    "max_output": 4194304,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 15000,
+      "max_text": 5000
+    }
+  },
+  "nodes": [
+    {
+      "name": "research",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Run background Google research and collect ten meaningful pages?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "research",
+          "engine": "google",
+          "query": "${state.query}",
+          "timeout_ms": 30000,
+          "result_count": "${state.result_count}",
+          "max_open": "${state.max_open}",
+          "min_score": 0.5,
+          "max_text": "${state.max_text}"
+        },
+        "project": {
+          "query": "/query",
+          "search_candidates": "/search_candidates",
+          "ads_found": "/ads_found",
+          "ads": "/ads",
+          "scored_pages": "/scored_pages",
+          "accepted_pages": "/accepted_pages",
+          "collected_count": "/collected_count",
+          "failures": "/failures",
+          "complete": "/complete"
+          , "cleanup": "/cleanup"
+        }
+      }
+    }
+  ]
+}

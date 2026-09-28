@@ -21,14 +21,18 @@ containing everything the workflow engine needs:
 
 ## Install
 
-Download the latest release for your platform (workflow CLI + offline tests):
+Download the latest release for your platform. The workflow CLI is the only
+runtime binary most users need; `laya-workflow-tests` is an optional offline
+test harness.
 
 ```bash
 # macOS arm64
 curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya-workflow-aarch64-apple-darwin.tar.gz | tar -xz
 # Linux amd64
 curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya-workflow-x86_64-unknown-linux-gnu.tar.gz | tar -xz
-sudo mv laya-workflow laya-workflow-tests /usr/local/bin/
+sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
+# Optional repository regression harness:
+# sudo install -m 0755 laya-workflow-tests /usr/local/bin/laya-workflow-tests
 ```
 
 ## Build from source
@@ -37,7 +41,7 @@ sudo mv laya-workflow laya-workflow-tests /usr/local/bin/
 # workflow engine only (fast; no libtorch needed)
 cargo build --release --locked -p laya-workflow
 ./target/release/laya-workflow --help
-./target/release/laya-workflow-tests
+# Optional: ./target/release/laya-workflow-tests
 
 # inference engine too (downloads libtorch on first build; heavy)
 cargo build --release --locked -p laya-tch
@@ -49,6 +53,13 @@ MODEL_DIR="$HOME/models/convaiinnovations--laya" \
 
 Specs live under `dsl/`. See `bench/dsl_smoke.py` for end-to-end smoke tests
 (`python3 bench/dsl_smoke.py`).
+
+### Singleton Chrome CDP
+
+The `chrome_cdp` capability drives a real Chrome profile with the bundled
+MV3 observation extension while guaranteeing one browser/CDP endpoint for all
+workflow threads. See `docs/browser_singleton.md`; a runnable localhost example
+is `dsl/browser/browser_singleton.json`.
 
 ## License
 

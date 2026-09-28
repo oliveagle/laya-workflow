@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Laya Browser Bridge",
+  "version": "1.0.0",
+  "description": "Element observation and numbered badges for Laya workflows. Chrome CDP remains the execution transport.",
+  "permissions": ["activeTab", "scripting", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Toggle Laya element badges" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*", "file:///*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "MAIN",
+      "all_frames": false
+    }
+  ]
+}

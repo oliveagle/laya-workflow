@@ -1,0 +1,234 @@
+{
+  "name": "google_search_open_top10",
+  "dsl_version": 2,
+  "description": "Open Google, search the state query, merge the first ten organic results across Google pagination, and open each result with CDP Target.createTarget.",
+  "start": "open_google",
+  "max_iterations": 16,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "max_timeout_ms": 30000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 15000,
+      "max_text": 8000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open_google",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Open Google in the singleton browser?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "wait_home"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {"op": "open", "url": "https://www.google.com/"},
+        "project": {"target_id": "/target_id"}
+      }
+    },
+    {
+      "name": "wait_home",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Continue after the Google search box is visible?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "type_query"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "wait_for",
+          "target_id": "${state.target_id}",
+          "selector": "textarea[name=q], input[name=q]",
+          "timeout_ms": 15000
+        },
+        "project": {"home_ready": "/ready"}
+      }
+    },
+    {
+      "name": "type_query",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Type the requested search query?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "submit_search"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "type",
+          "target_id": "${state.target_id}",
+          "selector": "textarea[name=q], input[name=q]",
+          "text": "${state.query}"
+        },
+        "project": {"typed": "/typed"}
+      }
+    },
+    {
+      "name": "submit_search",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Open Google's result page for the query?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "wait_results"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "navigate",
+          "target_id": "${state.target_id}",
+          "url": "https://www.google.com/search?q=${state.query}&num=20&filter=0&hl=zh-CN",
+          "timeout_ms": 20000
+        },
+        "project": {"submitted": "/ready"}
+      }
+    },
+    {
+      "name": "wait_results",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Continue after Google results become visible?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "extract_page1"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "wait_for",
+          "target_id": "${state.target_id}",
+          "selector": "#search, #rso",
+          "timeout_ms": 15000
+        },
+        "project": {"results_ready": "/ready"}
+      }
+    },
+    {
+      "name": "extract_page1",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Extract the first result page?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "navigate_page2"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "evaluate",
+          "target_id": "${state.target_id}",
+          "expression": "(() => { const seen = new Set(); const links = []; for (const h3 of document.querySelectorAll('#search a h3, #rso a h3')) { const a = h3.closest('a'); if (!a?.href || !/^https?:/i.test(a.href)) continue; const title = (h3.innerText || h3.textContent || '').trim(); if (!title || seen.has(title)) continue; seen.add(title); links.push({title, url: a.href}); } return {count: links.length, results: links, urls: links.map(x => x.url)}; })()"
+        },
+        "project": {
+          "page1_count": "/value/count",
+          "page1_results": "/value/results",
+          "urls": "/value/urls"
+        }
+      }
+    },
+    {
+      "name": "navigate_page2",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Fetch the next result page when needed to complete ten entries?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "extract_page2"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "navigate",
+          "target_id": "${state.target_id}",
+          "url": "https://www.google.com/search?q=${state.query}&num=20&filter=0&hl=zh-CN&start=8",
+          "timeout_ms": 20000
+        },
+        "project": {"page2_submitted": "/ready"}
+      }
+    },
+    {
+      "name": "extract_page2",
+      "primary_q": "proceed",
+      "questions": {
+        "proceed": {
+          "type": "choice",
+          "instructions": "Merge the next result page into the first ten?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {"A": "open_top10"}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "evaluate",
+          "target_id": "${state.target_id}",
+          "expression": "(() => { const previous = ${state.page1_results}; const seen = new Set(previous.map(x => x.title)); const links = [...previous]; for (const h3 of document.querySelectorAll('#search a h3, #rso a h3')) { const a = h3.closest('a'); if (!a?.href || !/^https?:/i.test(a.href)) continue; const title = (h3.innerText || h3.textContent || '').trim(); if (!title || seen.has(title)) continue; seen.add(title); links.push({title, url: a.href}); if (links.length >= 10) break; } return {count: links.length, requested_count: 10, results: links.slice(0, 10), urls: links.slice(0, 10).map(x => x.url)}; })()"
+        },
+        "project": {
+          "result_count": "/value/count",
+          "results": "/value/results",
+          "urls": "/value/urls"
+        }
+      }
+    },
+    {
+      "name": "open_top10",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Open all ten search results?",
+          "criteria": {"A": "yes", "B": "no"}
+        }
+      },
+      "edge": {"condition": {}, "default": "STOP"},
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {"op": "open_many", "urls": "${state.urls}", "keep_open": true},
+        "project": {
+          "opened": "/opened",
+          "opened_count": "/opened_count"
+        }
+      }
+    }
+  ]
+}
