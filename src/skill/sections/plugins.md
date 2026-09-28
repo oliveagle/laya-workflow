@@ -20,8 +20,8 @@ laya-workflow run --spec dsl/capabilities/script_plugin.json \
   --state '{"text":"the quick brown fox the fox"}'
 
 # 2. install your own copy of a plugin from any git repo (sparse: only that dir)
-laya-workflow plugin install oliveagle/agents_group \
-  --path laya-workflow/plugins/textdigest --name textdigest
+laya-workflow plugin install oliveagle/laya-workflow \
+  --path plugins/textdigest
 
 laya-workflow plugin list      # what the engine can see, and from where
 laya-workflow plugin dir       # the install root + the search path
