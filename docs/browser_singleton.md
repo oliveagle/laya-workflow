@@ -350,6 +350,13 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
   saves the top `count` (default 5).
 - `url` saves exactly the given `paper_url` / URL query.
 
+Paper pages are saved in **Chinese by default** (`lang` = `zh`). alphaXiv serves
+translated paper pages at `/<lang>/abs/<id>`, so the op rewrites each `/abs/<id>`
+URL to `/zh/abs/<id>` before rendering; a paper with no translation simply stays
+English. Pass `--state '{"lang":"en"}'` (or `off`/`auto`) to disable, or
+another locale tag (`ja`, `pt-br`, …). Listing pages (search, explore) have no
+localized variant and stay un-prefixed.
+
 It discovers the listing links in a scratch background tab (closed again
 immediately), then renders each paper with the same wait-for-SPA → Markdown →
 figures pipeline as `save_article`. Each paper is written to

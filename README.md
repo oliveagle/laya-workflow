@@ -107,6 +107,9 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
 laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
 ```
 
+Papers are saved in Chinese by default (`lang` = `zh`); opt out with
+`--state '{"lang":"en"}'`.
+
 ## License
 
 Dual-licensed: MIT OR Apache-2.0.

@@ -38,6 +38,7 @@ laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  
 
 Each paper is written under `~/tmp/alphaxiv` as Markdown plus its figures (in a
 per-paper `images/<slug>/` folder).
+Papers are fetched in Chinese by default; opt out with `--state '{"lang":"en"}'`.
 
 ## When to use run vs resume
 

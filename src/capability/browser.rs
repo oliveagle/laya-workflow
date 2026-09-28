@@ -2523,6 +2523,48 @@ fn looks_like_paper_url(s: &str) -> bool {
         || l.contains("arxiv.org/pdf/")
 }
 
+/// True for a BCP-47-ish locale path segment (`zh`, `en`, `zh-cn`, `pt-br`).
+fn is_locale_segment(segment: &str) -> bool {
+    let s = segment.to_ascii_lowercase();
+    s.len() == 2 || (s.len() == 5 && s.as_bytes().get(2) == Some(&b'-'))
+}
+
+/// Rewrite an alphaXiv `/abs/<id>` URL to a localized one (`/zh/abs/<id>`),
+/// which is how alphaXiv serves translated paper pages. Root listing pages
+/// (search, explore) have no localized variant, so only paper paths change.
+/// Non-alphaXiv URLs, a missing `<id>`, and a `lang` of `en`/`auto`/`off` are
+/// returned unchanged.
+fn localize_alphaxiv_url(url: &str, lang: &str) -> String {
+    let lang = lang.trim().trim_matches('/').to_ascii_lowercase();
+    if lang.is_empty() || matches!(lang.as_str(), "en" | "auto" | "none" | "off") {
+        return url.to_string();
+    }
+    let host = host_of(url).to_lowercase();
+    if host.strip_prefix("www.").unwrap_or(&host) != "alphaxiv.org" {
+        return url.to_string();
+    }
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let Some(slash) = rest.find('/') else {
+        return url.to_string();
+    };
+    let (authority, path) = rest.split_at(slash);
+    let clean = path.split(['?', '#']).next().unwrap_or(path);
+    let mut segments: Vec<&str> = clean.trim_start_matches('/').split('/').collect();
+    if segments.len() >= 2 && is_locale_segment(segments[0]) {
+        segments.remove(0);
+    }
+    if segments.first().copied() != Some("abs") {
+        return url.to_string();
+    }
+    let id = segments[1..].join("/");
+    if id.is_empty() {
+        return url.to_string();
+    }
+    format!("{scheme}://{authority}/{lang}/abs/{id}")
+}
+
 /// True when a natural-language query asks for the trending/explore feed rather
 /// than a keyword search.
 fn is_trending_request(s: &str) -> bool {
@@ -2690,6 +2732,14 @@ fn run_alphaxiv(
         .get("selector")
         .map(stringify)
         .filter(|s| !s.is_empty() && s != "null");
+    // Content language for the saved papers; alphaXiv serves translated abs
+    // pages under `/<lang>/abs/<id>`. Chinese by default.
+    let lang = with
+        .get("lang")
+        .or_else(|| with.get("language"))
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+        .unwrap_or_else(|| "zh".to_string());
     // Base directory for figures; each paper gets its own `<base>/<slug>`
     // folder so a multi-paper run cannot overwrite another paper's downloads.
     let image_base = with
@@ -2716,11 +2766,11 @@ fn run_alphaxiv(
 
     let (source_url, discovered) = match mode {
         "url" => {
-            let url = plan
+            let raw = plan
                 .get("target_url")
                 .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("alphaxiv url mode resolved no URL"))?
-                .to_string();
+                .ok_or_else(|| anyhow!("alphaxiv url mode resolved no URL"))?;
+            let url = localize_alphaxiv_url(raw, &lang);
             (url.clone(), vec![json!({"url": url, "title": ""})])
         }
         "search" => {
@@ -2750,11 +2800,8 @@ fn run_alphaxiv(
     let mut results = Vec::new();
     let mut failures = Vec::new();
     for (index, link) in selected.iter().enumerate() {
-        let url = link
-            .get("url")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let raw = link.get("url").and_then(Value::as_str).unwrap_or_default();
+        let url = localize_alphaxiv_url(raw, &lang);
         let title_hint = link
             .get("title")
             .and_then(Value::as_str)
@@ -2798,6 +2845,7 @@ fn run_alphaxiv(
         "op": "alphaxiv",
         "mode": mode,
         "query": query,
+        "lang": lang,
         "source_url": source_url,
         "out_dir": out_dir,
         "requested_count": count,
@@ -4451,6 +4499,40 @@ mod tests {
             alphaxiv_plan(&json!({"query": "diffusion", "mode": "search", "count": 99})).unwrap();
         assert_eq!(p["mode"], json!("search"));
         assert_eq!(p["count"], json!(10));
+    }
+
+    #[test]
+    fn localizes_alphaxiv_abs_urls() {
+        let u = "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer";
+        assert_eq!(
+            localize_alphaxiv_url(u, "zh"),
+            "https://www.alphaxiv.org/zh/abs/2609.recurrent-looped-transformer"
+        );
+        // An existing locale prefix is replaced, never doubled.
+        assert_eq!(
+            localize_alphaxiv_url("https://www.alphaxiv.org/zh/abs/2609.x", "ja"),
+            "https://www.alphaxiv.org/ja/abs/2609.x"
+        );
+        assert_eq!(
+            localize_alphaxiv_url("https://www.alphaxiv.org/zh/abs/2609.x", "zh"),
+            "https://www.alphaxiv.org/zh/abs/2609.x"
+        );
+        // en/off/empty opts out; query strings are dropped when rebuilding.
+        assert_eq!(localize_alphaxiv_url(u, "en"), u);
+        assert_eq!(localize_alphaxiv_url(u, ""), u);
+        assert_eq!(
+            localize_alphaxiv_url("https://www.alphaxiv.org/abs/2609.x?foo=1", "zh"),
+            "https://www.alphaxiv.org/zh/abs/2609.x"
+        );
+        // Non-paper paths and other hosts are untouched.
+        assert_eq!(
+            localize_alphaxiv_url("https://www.alphaxiv.org/researchers", "zh"),
+            "https://www.alphaxiv.org/researchers"
+        );
+        assert_eq!(
+            localize_alphaxiv_url("https://arxiv.org/abs/2307.12307", "zh"),
+            "https://arxiv.org/abs/2307.12307"
+        );
     }
 
     #[test]
