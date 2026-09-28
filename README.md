@@ -91,16 +91,20 @@ is `dsl/browser/browser_singleton.json`.
 
 Its `save_article` op renders a JavaScript-heavy page (waiting for the SPA to
 settle), converts it to Markdown — headings, lists, tables, code, links and
-KaTeX math — and downloads its figures next to the Markdown. The bundled
-`dsl/browser/alphaxiv_paper.json` uses it to search alphaXiv and save a paper's
-abs page (title, authors, abstract, AI overview, figures):
+KaTeX math — and downloads its figures next to the Markdown. The `alphaxiv` op
+is a natural-language downloader built on top of it. The bundled
+`dsl/browser/alphaxiv_paper.json` infers what you want from a bare `--query`:
 
 ```bash
-laya-workflow run --spec dsl/browser/alphaxiv_paper.json --state '{
-  "query": "recurrent looped transformer",
-  "paper_url": "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
-  "out_dir": "~/tmp/alphaxiv"
-}'
+# search alphaXiv and save the top paper
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"
+
+# save one paper by URL
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
+  --query "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer"
+
+# download the trending/explore feed (default 5 papers)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
 ```
 
 ## License

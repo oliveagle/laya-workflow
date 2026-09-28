@@ -79,6 +79,7 @@ be required for ordinary resource hygiene.
 | `open_many` | create multiple background targets from a `urls` array; they close by default |
 | `research` | search Google, classify ad/organic rows, open organic pages in background, extract text, and score relevance/effectiveness |
 | `save_article` | render a page, wait for the SPA to settle, convert it to Markdown (headings/lists/tables/code/links/KaTeX math), download its figures, and optionally write them to disk |
+| `alphaxiv` | natural-language alphaXiv downloader: a search phrase, a paper URL, or `trending` → discover `/abs/<id>` papers and save each one as Markdown + figures |
 | `navigate` | navigate an existing target |
 | `snapshot` | URL/title/text plus roles, names, values, hrefs, sections, rects, indexes |
 | `highlight` | show/hide numbered extension badges |
@@ -321,22 +322,42 @@ Steps and guarantees:
 `slug` defaults to the URL tail (e.g. `2609.recurrent-looped-transformer`), or a
 slugified title for a bare host URL.
 
-### alphaXiv paper workflow
+## alphaXiv downloader (search / URL / trending)
 
-`dsl/browser/alphaxiv_paper.json` uses this to search alphaXiv and save a paper's
-abs page (title, authors, abstract, AI overview, figures):
+The `alphaxiv` op turns a natural-language query into saved papers, so the
+bundled spec needs only `--query` (no JSON state):
 
 ```bash
-laya-workflow run --spec dsl/browser/alphaxiv_paper.json --state '{
-  "query": "recurrent looped transformer",
-  "paper_url": "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer",
-  "out_dir": "~/tmp/alphaxiv"
-}'
+# search alphaXiv, save the top paper
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"
+
+# save one paper by URL
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
+  --query "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer"
+
+# download the trending/explore feed (default 5 papers)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"
 ```
 
-It opens `https://www.alphaxiv.org/?query=<query>`, extracts the result list into
-`search_results`, then renders `paper_url` and writes the Markdown plus figures.
-The spec's `policy.allow_paths` must include both the Chrome profile root
+`mode` defaults to `auto` and is inferred from the inputs: an explicit paper URL
+(or `paper_url`) → `url`; a trending keyword (`trending`, `热门`, `最新`, …) →
+`trending`; anything else → `search`. Force it with
+`--state '{"mode":"trending","count":3}'`.
+
+- `search` opens `https://www.alphaxiv.org/?query=<query>`, reads the rendered
+  `/abs/<id>` cards, and saves the top `count` (default 1).
+- `trending` reads the homepage explore feed (`https://www.alphaxiv.org/`) and
+  saves the top `count` (default 5).
+- `url` saves exactly the given `paper_url` / URL query.
+
+It discovers the listing links in a scratch background tab (closed again
+immediately), then renders each paper with the same wait-for-SPA → Markdown →
+figures pipeline as `save_article`. Each paper is written to
+`<out_dir>/<slug>.md`, `<out_dir>/<slug>_meta.json` and
+`<out_dir>/images/<slug>/img-N.ext`, so papers in one run never overwrite each
+other. `out_dir` defaults to `~/tmp/alphaxiv`. The result carries `results[]`
+(each with `title` and `written`) and `failures[]`. The spec's
+`policy.allow_paths` must include both the Chrome profile root
 (`${env.HOME}/.laya-workflow`) and the output root.
 
 ## Jev-style planner step

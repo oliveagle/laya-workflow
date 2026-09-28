@@ -2473,6 +2473,342 @@ fn run_save_article(
     }))
 }
 
+// ── alphaXiv paper discovery (natural-language op) ──────────────────
+
+/// alphaXiv's homepage doubles as the explore/trending feed; every trending card
+/// links to `/abs/<id>`.
+const ALPHAXIV_HOME: &str = "https://www.alphaxiv.org/";
+
+/// Page-side collector for alphaXiv `/abs/<id>` cards. The feed and the search
+/// page are both client-rendered, so this promise polls until `limit` unique
+/// links appear or the deadline elapses, then resolves with the rows in DOM
+/// order.
+const ALPHAXIV_LINKS_JS: &str = r##"(() => new Promise((resolve) => {
+  const limit = (__LAYA_OPTS__.limit | 0) || 10;
+  const deadline = Date.now() + ((__LAYA_OPTS__.timeout_ms | 0) || 12000);
+  const collect = () => {
+    const seen = new Set();
+    const out = [];
+    for (const a of document.querySelectorAll('a[href*="/abs/"]')) {
+      const raw = a.href || '';
+      const u = raw.split('#')[0].split('?')[0];
+      if (!/^https?:\/\/(www\.)?alphaxiv\.org\/abs\//i.test(u)) continue;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      const card = a.closest('article, li, div') || a;
+      const text = ((card.innerText || a.innerText || '') + '').replace(/\s+/g, ' ').trim();
+      out.push({ url: u, title: text.slice(0, 200) });
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+  const tick = () => {
+    const links = collect();
+    if (links.length >= limit || Date.now() > deadline) {
+      resolve({ count: links.length, links: links });
+    } else {
+      setTimeout(tick, 400);
+    }
+  };
+  tick();
+}))()"##;
+
+/// True when a natural-language query points at a concrete paper page.
+fn looks_like_paper_url(s: &str) -> bool {
+    let l = s.trim().to_ascii_lowercase();
+    l.starts_with("http://")
+        || l.starts_with("https://")
+        || l.contains("alphaxiv.org/abs/")
+        || l.contains("arxiv.org/abs/")
+        || l.contains("arxiv.org/pdf/")
+}
+
+/// True when a natural-language query asks for the trending/explore feed rather
+/// than a keyword search.
+fn is_trending_request(s: &str) -> bool {
+    let l = s.trim().to_ascii_lowercase();
+    if l.is_empty() {
+        return false;
+    }
+    if ["热门", "趋势", "推荐", "最新"]
+        .iter()
+        .any(|k| l.contains(k))
+    {
+        return true;
+    }
+    if l.contains("/trending") {
+        return true;
+    }
+    if matches!(l.as_str(), "explore" | "feed" | "trending papers") {
+        return true;
+    }
+    l.split_whitespace().any(|token| token == "trending")
+}
+
+/// Resolve a call's intent into `{mode, query, target_url, count}`.
+///
+/// `mode` may be forced (`url`/`search`/`trending`); the default `auto` infers
+/// it from the inputs: an explicit paper URL → `url`, a trending keyword →
+/// `trending`, anything else → `search`. This is what lets the CLI accept a
+/// bare `--query "llm memory"` or `--query "trending"` with no JSON state.
+fn alphaxiv_plan(with: &Value) -> Result<Value> {
+    let pick = |k: &str| -> Option<String> {
+        with.get(k)
+            .map(stringify)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s != "null")
+    };
+    let query = pick("query")
+        .or_else(|| pick("q"))
+        .or_else(|| pick("topic"))
+        .unwrap_or_default();
+    let paper_url = pick("paper_url").or_else(|| pick("url"));
+    let explicit = pick("mode").unwrap_or_default().to_ascii_lowercase();
+    let mode = match explicit.as_str() {
+        "" | "auto" => {
+            if paper_url.is_some() {
+                "url"
+            } else if query.is_empty() {
+                ""
+            } else if looks_like_paper_url(&query) {
+                "url"
+            } else if is_trending_request(&query) {
+                "trending"
+            } else {
+                "search"
+            }
+        }
+        "url" | "paper" | "direct" | "abs" => "url",
+        "trending" | "feed" | "explore" | "hot" | "popular" => "trending",
+        "search" | "query" | "find" => "search",
+        other => {
+            bail!("browser alphaxiv mode {other:?} unsupported (auto|search|trending|url)")
+        }
+    };
+    if mode.is_empty() {
+        bail!(
+            "browser alphaxiv needs 'query' (search text, a paper URL, or 'trending') \
+             or 'paper_url'"
+        );
+    }
+    let target_url = if mode == "url" {
+        let url = match paper_url.clone() {
+            Some(u) => u,
+            None if looks_like_paper_url(&query) => query.clone(),
+            None => {
+                bail!("browser alphaxiv url mode needs a paper URL in 'paper_url' or 'query'")
+            }
+        };
+        Some(url)
+    } else {
+        None
+    };
+    let default_count = if mode == "trending" { 5 } else { 1 };
+    let count = with
+        .get("count")
+        .and_then(Value::as_u64)
+        .unwrap_or(default_count)
+        .clamp(1, 10);
+    Ok(json!({
+        "mode": mode,
+        "query": query,
+        "target_url": target_url,
+        "count": count,
+    }))
+}
+
+/// Open a listing page (search or trending) in a scratch background tab, read
+/// the rendered `/abs/` cards, and close the tab again.
+fn collect_alphaxiv_links(
+    c: &BrowserCap,
+    endpoint: &str,
+    page_url: &str,
+    limit: usize,
+    timeout: Duration,
+    policy: &Policy,
+) -> Result<Vec<Value>> {
+    check_host(page_url, policy)?;
+    enforce_owned_target_limit(endpoint, c.max_owned_pages, c.owned_idle_ms, timeout)?;
+    let mut guard = TargetCleanupGuard::new(endpoint);
+    let id = open_background_target(endpoint, timeout)?;
+    track_owned_target(endpoint, &id, false);
+    guard.track(id.clone());
+    let outcome = (|| -> Result<Vec<Value>> {
+        cdp_page_call(
+            endpoint,
+            &id,
+            "Page.navigate",
+            json!({"url": page_url}),
+            timeout,
+        )?;
+        let _ = wait_page_ready(endpoint, &id, timeout, None);
+        let poll_ms = timeout.as_millis().saturating_sub(4000).clamp(3000, 12000) as u64;
+        let opts = json!({"limit": limit, "timeout_ms": poll_ms});
+        let expression = format!(
+            "var __LAYA_OPTS__ = {};\n{}",
+            serde_json::to_string(&opts)?,
+            ALPHAXIV_LINKS_JS
+        );
+        let value = evaluate(endpoint, &id, &expression, timeout, true)?;
+        Ok(value
+            .get("links")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    })();
+    let _ = guard.finish(true, timeout);
+    outcome
+}
+
+/// Natural-language alphaXiv downloader.
+///
+/// One op turns a `query` (a search phrase, a paper URL, or a trending keyword)
+/// into saved papers: it discovers the `/abs/<id>` links, then renders each with
+/// `save_article` and writes Markdown + figures under `out_dir`.
+fn run_alphaxiv(
+    c: &BrowserCap,
+    endpoint: &str,
+    with: &Value,
+    timeout: Duration,
+    policy: &Policy,
+) -> Result<Value> {
+    let plan = alphaxiv_plan(with)?;
+    let mode = plan.get("mode").and_then(Value::as_str).unwrap_or("search");
+    let query = plan
+        .get("query")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let count = plan.get("count").and_then(Value::as_u64).unwrap_or(1) as usize;
+    let out_dir = with
+        .get("out_dir")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+        .unwrap_or_else(|| "~/tmp/alphaxiv".to_string());
+    // Fail fast on a denied output root before opening any tab.
+    let _ = allowed_out_dir(policy, &out_dir)?;
+    let selector = with
+        .get("selector")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null");
+    // Base directory for figures; each paper gets its own `<base>/<slug>`
+    // folder so a multi-paper run cannot overwrite another paper's downloads.
+    let image_base = with
+        .get("image_dir")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+        .unwrap_or_else(|| "images".to_string());
+    let stable_ms = with
+        .get("stable_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(1500);
+    let max_wait_ms = with
+        .get("max_wait_ms")
+        .and_then(Value::as_u64)
+        .unwrap_or(45_000)
+        .min(policy.max_timeout_ms);
+    let keep_open = with
+        .get("keep_open")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // Discover a few extra cards so a stray/degenerate first link cannot starve
+    // the requested count, then trim to `count`.
+    let collect_limit = count.clamp(5, 10);
+
+    let (source_url, discovered) = match mode {
+        "url" => {
+            let url = plan
+                .get("target_url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("alphaxiv url mode resolved no URL"))?
+                .to_string();
+            (url.clone(), vec![json!({"url": url, "title": ""})])
+        }
+        "search" => {
+            let url = format!(
+                "https://www.alphaxiv.org/?query={}",
+                urlencoding_utf8(query)
+            );
+            let links = collect_alphaxiv_links(c, endpoint, &url, collect_limit, timeout, policy)?;
+            (url, links)
+        }
+        "trending" => {
+            let url = ALPHAXIV_HOME.to_string();
+            let links = collect_alphaxiv_links(c, endpoint, &url, collect_limit, timeout, policy)?;
+            (url, links)
+        }
+        other => bail!("alphaxiv resolved mode {other:?} is not runnable"),
+    };
+
+    let selected: Vec<Value> = discovered.into_iter().take(count).collect();
+    if selected.is_empty() {
+        bail!(
+            "alphaxiv {mode} found no papers at {source_url:?} (query {query:?}); \
+             the listing may still have been loading"
+        );
+    }
+
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for (index, link) in selected.iter().enumerate() {
+        let url = link
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let title_hint = link
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let slug = derive_slug(&url, title_hint);
+        let mut leaf = json!({
+            "op": "save_article",
+            "url": url,
+            "slug": slug,
+            "out_dir": out_dir,
+            "image_dir": format!("{image_base}/{slug}"),
+            "stable_ms": stable_ms,
+            "max_wait_ms": max_wait_ms,
+            "keep_open": keep_open,
+        });
+        if let Some(selector) = selector.as_ref() {
+            leaf["selector"] = json!(selector);
+        }
+        match run_save_article(c, endpoint, &leaf, timeout, policy) {
+            Ok(saved) => results.push(json!({
+                "rank": index + 1,
+                "url": url,
+                "title_hint": title_hint,
+                "title": saved.get("title").cloned().unwrap_or(Value::Null),
+                "markdown_chars": saved.get("markdown_chars").cloned().unwrap_or(Value::Null),
+                "rendered": saved.get("rendered").cloned().unwrap_or(Value::Null),
+                "images": saved.get("images").cloned().unwrap_or(Value::Null),
+                "written": saved.get("written").cloned().unwrap_or(Value::Null),
+            })),
+            Err(e) => failures.push(json!({
+                "rank": index + 1,
+                "url": url,
+                "title_hint": title_hint,
+                "error": e.to_string(),
+            })),
+        }
+    }
+
+    Ok(json!({
+        "capability": "chrome_cdp",
+        "op": "alphaxiv",
+        "mode": mode,
+        "query": query,
+        "source_url": source_url,
+        "out_dir": out_dir,
+        "requested_count": count,
+        "selected_count": selected.len(),
+        "saved_count": results.len(),
+        "failed_count": failures.len(),
+        "results": results,
+        "failures": failures,
+    }))
+}
+
 /// Count case-insensitive token occurrences. Chinese tokens are short strings,
 /// so counting a substring is intentional here.
 fn research_count(hay: &str, token: &str) -> usize {
@@ -3213,6 +3549,9 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
         "save_article" | "save_markdown" | "fetch_article" | "save_page" => {
             return run_save_article(c, &endpoint, with, timeout, policy);
         }
+        "alphaxiv" | "alphaxiv_search" | "fetch_papers" | "trending_papers" | "paper_search" => {
+            return run_alphaxiv(c, &endpoint, with, timeout, policy);
+        }
         "status" | "targets" => {
             let version = http_json(&endpoint, "GET", "/json/version", timeout)?;
             let targets = list_targets(&endpoint, timeout)?;
@@ -3676,7 +4015,7 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             out["dedupe_urls"] = json!(dedupe_urls);
         }
         other => bail!(
-            "browser op {other:?} unsupported (status|open|open_many|research|cleanup_tabs|navigate|snapshot|highlight|agent_step|evaluate|click|type|select|scroll|key|wait_for|close|shutdown)"
+            "browser op {other:?} unsupported (status|open|open_many|research|alphaxiv|save_article|cleanup_tabs|navigate|snapshot|highlight|agent_step|evaluate|click|type|select|scroll|key|wait_for|close|shutdown)"
         ),
     }
 
@@ -4071,6 +4410,70 @@ mod tests {
             Vec::<String>::new()
         );
     }
+    #[test]
+    fn alphaxiv_plan_infers_mode_from_natural_language() {
+        // Bare search phrase → search, save the top paper.
+        let p = alphaxiv_plan(&json!({"query": "llm memory"})).unwrap();
+        assert_eq!(p["mode"], json!("search"));
+        assert_eq!(p["count"], json!(1));
+        assert!(p["target_url"].is_null());
+
+        // Trending keywords (english + chinese) → the explore feed.
+        for q in [
+            "trending",
+            "Trending Papers",
+            "explore",
+            "热门",
+            "最新的论文",
+        ] {
+            let p = alphaxiv_plan(&json!({"query": q})).unwrap();
+            assert_eq!(p["mode"], json!("trending"), "query {q:?}");
+            assert_eq!(p["count"], json!(5), "query {q:?}");
+        }
+
+        // A paper URL in the query → direct save, no listing.
+        let url = "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer";
+        let p = alphaxiv_plan(&json!({"query": url})).unwrap();
+        assert_eq!(p["mode"], json!("url"));
+        assert_eq!(p["target_url"], json!(url));
+
+        // `paper_url` wins even when the query reads like a keyword.
+        let p = alphaxiv_plan(&json!({"query": "whatever", "paper_url": url})).unwrap();
+        assert_eq!(p["mode"], json!("url"));
+        assert_eq!(p["target_url"], json!(url));
+
+        // Explicit mode + count; count is clamped to 1..=10.
+        let p =
+            alphaxiv_plan(&json!({"query": "diffusion", "mode": "trending", "count": 3})).unwrap();
+        assert_eq!(p["mode"], json!("trending"));
+        assert_eq!(p["count"], json!(3));
+        let p =
+            alphaxiv_plan(&json!({"query": "diffusion", "mode": "search", "count": 99})).unwrap();
+        assert_eq!(p["mode"], json!("search"));
+        assert_eq!(p["count"], json!(10));
+    }
+
+    #[test]
+    fn alphaxiv_plan_rejects_empty_and_bad_inputs() {
+        assert!(alphaxiv_plan(&json!({})).is_err());
+        assert!(alphaxiv_plan(&json!({"query": "   "})).is_err());
+        assert!(alphaxiv_plan(&json!({"query": "x", "mode": "bogus"})).is_err());
+        // url mode demands a concrete URL.
+        assert!(alphaxiv_plan(&json!({"mode": "url"})).is_err());
+    }
+
+    #[test]
+    fn detects_paper_urls_and_trending_words() {
+        assert!(looks_like_paper_url("https://www.alphaxiv.org/abs/2609.x"));
+        assert!(looks_like_paper_url("https://arxiv.org/abs/2307.12307"));
+        assert!(!looks_like_paper_url("recurrent looped transformer"));
+        assert!(is_trending_request("trending"));
+        assert!(is_trending_request("show me trending in llm"));
+        assert!(is_trending_request("热门论文"));
+        assert!(!is_trending_request("llm memory"));
+        assert!(!is_trending_request("attention is all you need"));
+    }
+
     #[test]
     fn parses_model_decision_json_and_code_fence() {
         let object = decision_object(&json!({"operation": "CLICK", "element": 3})).unwrap();

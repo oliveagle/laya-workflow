@@ -27,6 +27,18 @@ and direct media files by default. Opt out with `--state '{"skip_video":false}'`
 replace the set with `--state '{"skip_kinds":[]}'`. Skipped rows appear in the
 result as `skipped`/`skipped_found`, not silently dropped.
 
+`dsl/browser/alphaxiv_paper.json` is a natural-language alphaXiv downloader — a
+bare `--query` decides the mode:
+
+```
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "llm memory"   # search, save the top paper
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "trending"     # trending feed (5 papers)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json --query "<paper URL>"  # save that paper
+```
+
+Each paper is written under `~/tmp/alphaxiv` as Markdown plus its figures (in a
+per-paper `images/<slug>/` folder).
+
 ## When to use run vs resume
 
 * Fresh start → `run`.
