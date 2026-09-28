@@ -1476,7 +1476,11 @@ const ARTICLE_MD_JS: &str = r##"
     if (node.classList && node.classList.contains('katex')) {
       const tex = katexTex(node);
       if (tex == null) return '';
-      return node.classList.contains('katex-display') ? '\n\n$$' + tex + '$$\n\n' : '$' + tex + '$';
+      // KaTeX wraps display math in a *separate* `<span class="katex-display">`
+      // around the `.katex` node, so the marker is on the ancestor, not here.
+      const display = node.classList.contains('katex-display')
+        || !!(node.closest && node.closest('.katex-display'));
+      return display ? '\n\n$$' + tex + '$$\n\n' : '$' + tex + '$';
     }
     if (tag === 'BR') return '\n';
     if (tag === 'IMG') {
