@@ -12,7 +12,7 @@ either:
 Think of it as: `validate` before you run, `run` to execute, `state`/`resume`/
 `replay` to inspect and control a run, `skill` to learn any part on demand.
 
-## The five things it can do
+## The six things it can do
 
 1. **Built-in apps** — `apps`, `describe`, `demo`: the four canned workflows
    (agent gate, email triage, content moderation, draft scoring) plus a
@@ -22,7 +22,10 @@ Think of it as: `validate` before you run, `run` to execute, `state`/`resume`/
    `improve` (accuracy self-improvement under a hold-out gate).
 4. **Per-node persistence** — `state`, `resume`, `replay` against a
    `NodeStore` (`<dir>/runs/0001.json` + `manifest.json`).
-5. **Learn it** — `skill` (this command).
+5. **Extend it** — `plugin install | list | dir`: site logic lives in sandboxed
+   **Rhai plugins** (`kind: "plugin"`), not in the binary. See
+   `skill --section plugins`.
+6. **Learn it** — `skill` (this command).
 
 ## Which subcommand do I want?
 

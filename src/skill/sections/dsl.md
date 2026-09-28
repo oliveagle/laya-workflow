@@ -29,4 +29,5 @@ A spec is a JSON file:
 * Actions include `copy_keys`, `threshold`, `gate`, `call`, `capability` kinds —
   see `docs/benchmarks/laya_workflow_capabilities_20260926.md` for the catalogue.
 
-Next: `skill --section validate`, `skill --section safety`.
+Next: `skill --section plugins` (the `kind: "plugin"` extension seam),
+`skill --section validate`, `skill --section safety`.

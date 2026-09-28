@@ -135,6 +135,41 @@ enum Cmd {
     },
     /// List every spec found across the layered DSL roots (repo → user → builtin)
     List,
+    /// Manage Rhai plugins: install one from a git repo, list them, show where
+    /// they are looked up. See `skill --section plugins`.
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum PluginCmd {
+    /// Install a *single* plugin directory from a git repo (sparse clone — not
+    /// the whole repo) into the plugin root.
+    Install {
+        /// Repo as `owner/repo` or a git URL (https://, ssh://, git@).
+        repo: String,
+        /// Directory inside the repo that holds the plugin (e.g. plugins/alphaxiv).
+        #[arg(long)]
+        path: String,
+        /// Installed name (default: the last segment of --path).
+        #[arg(long)]
+        name: Option<String>,
+        /// Branch/tag/commit to check out (default: the repo's default branch).
+        #[arg(long = "git-ref")]
+        git_ref: Option<String>,
+        /// Install root (default: $LAYA_PLUGIN_DIR, else ~/.config/laya-workflow/plugins).
+        #[arg(long)]
+        root: Option<String>,
+        /// Overwrite an existing install of the same name.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+    },
+    /// List every plugin the engine can see (installed layers + built-ins).
+    List,
+    /// Print where `plugin install` writes and the search path it lands in.
+    Dir,
 }
 
 /// Live engine when `--base-url` is given, otherwise the offline heuristic.
@@ -340,6 +375,7 @@ fn main() -> Result<()> {
             list,
             format,
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
+        Cmd::Plugin { cmd } => run_plugin(cmd),
         Cmd::List => {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
@@ -370,6 +406,93 @@ fn main() -> Result<()> {
                 }
                 println!("{line}");
             }
+            Ok(())
+        }
+    }
+}
+
+/// `plugin install | list | dir`. Kept tiny: the real work (validation, sparse
+/// clone, copy, discovery) lives in `capability::plugin` so it is unit-tested.
+fn run_plugin(cmd: &PluginCmd) -> Result<()> {
+    use laya_workflow::capability::plugin as plg;
+    match cmd {
+        PluginCmd::Install {
+            repo,
+            path,
+            name,
+            git_ref,
+            root,
+            force,
+        } => {
+            let root = match root {
+                Some(r) => std::path::PathBuf::from(r),
+                None => plg::install_root()?,
+            };
+            let default_name = path
+                .trim()
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let name = name.clone().unwrap_or(default_name);
+            plg::validate_plugin_name(&name)?;
+            let url = plg::repo_clone_url(repo)?;
+            println!("repo:   {}", plg::redact_url(&url));
+            println!("path:   {}", plg::normalize_subdir(path)?);
+            println!("name:   {name}");
+            println!("root:   {}", root.display());
+            let out = plg::install_from_git(repo, path, &name, &root, git_ref.as_deref(), *force)?;
+            println!(
+                "installed {} v{} ({} file(s)) -> {}",
+                out.name,
+                out.version,
+                out.files,
+                out.dest.display()
+            );
+            println!("next:   laya-workflow plugin list   |   skill --section plugins");
+            Ok(())
+        }
+        PluginCmd::List => {
+            let entries = plg::discover_plugins();
+            if entries.is_empty() {
+                println!("# no plugins found");
+            }
+            println!(
+                "{:<16} {:<8} {:<8} {}",
+                "NAME", "LAYER", "VERSION", "LOCATION"
+            );
+            for e in &entries {
+                let loc = e
+                    .path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "(compiled into the binary)".to_string());
+                let note = if e.description.is_empty() {
+                    String::new()
+                } else {
+                    format!("  — {}", e.description)
+                };
+                println!(
+                    "{:<16} {:<8} {:<8} {}{}",
+                    e.name,
+                    e.layer.as_str(),
+                    e.version,
+                    loc,
+                    note
+                );
+            }
+            Ok(())
+        }
+        PluginCmd::Dir => {
+            let root = plg::install_root()?;
+            println!("install root: {}", root.display());
+            println!("plugin search path (high → low):");
+            for (layer, p) in plg::plugin_search_path() {
+                let mark = if p.is_dir() { "" } else { "  (missing)" };
+                println!("  {:<8} {}{}", layer.as_str(), p.display(), mark);
+            }
+            println!("  {:<8} {}", "builtin", plg::builtin_names().join(", "));
             Ok(())
         }
     }
@@ -437,6 +560,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("replay",   "Re-execute a single iteration in place from its `state_before` (atomic overwrite of one record).", "replay"),
         ("persist",   "Where the per-node store lives on disk (`<dir>/runs/0001.json` + `manifest.json`), how `run_persistent` / `rewind` / `replay` fit together.", "state"),
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
+        ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("safety",    "Safety gates every spec goes through: `policy.allow_exec`, `policy.allow_paths`, `policy.allow_hosts`, `policy.max_timeout_ms`, `policy.max_output`, secret redaction.", "validate"),
     ]
@@ -510,6 +634,7 @@ fn print_overview() {
     println!("                 continue a partial run from the last stored iter");
     println!("  replay -s S -d D -iter N");
     println!("                 re-run a single iter in place from its state_before");
+    println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
     println!("  skill          this help (progressive disclosure)");
     println!();
     println!("Pick the entry point that matches your intent:");
@@ -524,6 +649,10 @@ fn print_overview() {
         "  LAYA_DSL_DIR     pin the spec root (overrides the layered repo/user/builtin lookup)"
     );
     println!("  LAYA_USER_DSL_DIR  per-user spec root (default: ~/.config/laya-workflow/dsl)");
+    println!("  LAYA_PLUGIN_DIR  pin the plugin root (also the `plugin install` target)");
+    println!(
+        "  LAYA_USER_PLUGIN_DIR  per-user plugin root (default: ~/.config/laya-workflow/plugins)"
+    );
     println!("  LAYA_TEST_PYTHON python3 binary for mock agent capability");
     println!("  LAYA_MOCK3       host:redis:nats:mqtt:smtp:s3:prom:kafka:udp");
     println!("  LAYA_AGENT_BIN_DIR  dir containing `cxgo` / `cmdgo` wrappers");
@@ -551,6 +680,7 @@ fn print_section(name: &str) -> Result<()> {
         "dsl" => SKILL_DSL,
         "tests" => SKILL_TESTS,
         "safety" => SKILL_SAFETY,
+        "plugins" => SKILL_PLUGINS,
         other => {
             eprintln!("# no such section: {other}");
             eprintln!("run `laya-workflow skill --list` to see the names.");
@@ -597,6 +727,7 @@ static SKILL_PERSIST: &str = include_str!("skill/sections/persist.md");
 static SKILL_DSL: &str = include_str!("skill/sections/dsl.md");
 static SKILL_TESTS: &str = include_str!("skill/sections/tests.md");
 static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
+static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
 
 static RECIPE_FIRST_RUN: &str = include_str!("skill/recipes/first_run.md");
 static RECIPE_LIVE_SERVER: &str = include_str!("skill/recipes/live_server.md");

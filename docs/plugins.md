@@ -47,15 +47,36 @@ resource ownership are enforced.
 The result of the call is whatever the entry function returns (a JSON object), so
 `project`, `chain` and downstream nodes work exactly as for any other capability.
 
+## Installing a plugin
+
+`plugin install` fetches **only the one directory** you name — never the whole
+repo (`git clone --depth 1 --filter=blob:none --sparse` + `sparse-checkout set`)
+— then copies it into the plugin root:
+
+```sh
+laya-workflow plugin install <owner/repo> --path <dir> [--name N] [--git-ref R] [--force] [--root D]
+laya-workflow plugin list     # every plugin the engine can see, and its layer
+laya-workflow plugin dir      # the install root + the search path
+```
+
+`--path` is the plugin directory *inside* the repo (e.g. `plugins/alphaxiv`);
+the installed name defaults to its last segment. `--root` overrides the install
+root (default: `$LAYA_PLUGIN_DIR`, else `~/.config/laya-workflow/plugins`).
+Install is refused unless the directory has a parseable `plugin.json` (and no
+`--force` is needed only when the name is not already present); credentials in a
+URL are stripped before anything is printed.
+
 ## Resolution layers
 
-Highest priority first:
+Highest priority first — a name in a higher layer shadows the same name below:
 
 1. an explicit `dir`;
 2. `$LAYA_PLUGIN_DIR/<name>/`;
 3. `plugins/<name>/`, found by walking up from the cwd and stopping at the git root
    (this is the layer a repository commits);
-4. the copy compiled into the binary (`include_str!`), so a plugin shipped with a
+4. `~/.config/laya-workflow/plugins/<name>/` — the `plugin install` default
+   (`$LAYA_USER_PLUGIN_DIR` / `$XDG_CONFIG_HOME` override it);
+5. the copy compiled into the binary (`include_str!`), so a plugin shipped with a
    release still works after `sudo install`-ing a single binary.
 
 ## Writing one

@@ -129,10 +129,19 @@ laya-workflow run --spec dsl/capabilities/script_plugin.json \
 ```
 
 Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
-`plugins/<name>` walking up to the git root, then the copy compiled into the
-binary. `plugins/alphaxiv` (natural-language alphaXiv downloader) and
-`plugins/textdigest` (offline demo) ship with the repo. See
-[`docs/plugins.md`](./docs/plugins.md) for the host API and the DSL shape.
+`plugins/<name>` walking up to the git root, then
+`~/.config/laya-workflow/plugins` (the install default), then the copy compiled
+into the binary. `plugins/alphaxiv` (natural-language alphaXiv downloader) and
+`plugins/textdigest` (offline demo) ship with the repo. Install a single plugin
+out of any git repo (sparse clone — not the whole repo):
+
+```bash
+laya-workflow plugin install <owner/repo> --path plugins/alphaxiv
+laya-workflow plugin list       # what the engine can see, and from where
+```
+
+See [`docs/plugins.md`](./docs/plugins.md) for the host API and the DSL shape, or
+run `laya-workflow skill --section plugins` for the embedded guide.
 
 ## License
 

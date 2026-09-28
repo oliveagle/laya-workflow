@@ -43,7 +43,8 @@ The site logic (mode inference, locale URLs, feed paging) lives in
 `plugins/alphaxiv/main.rhai`, so it can change without rebuilding the engine; the
 same plugin can be called from your own spec as
 `{"kind": "plugin", "plugin": "alphaxiv", "browser": "chrome"}`. See
-`skill --section dsl` and `docs/plugins.md`.
+`skill --section plugins` (write/install your own), `skill --section dsl`, and
+`docs/plugins.md`.
 
 Each paper is written under `~/tmp/alphaxiv` as Markdown plus its figures (in a
 per-paper `images/<slug>/` folder).

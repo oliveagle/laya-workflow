@@ -19,6 +19,7 @@
 //!
 //! Plugins are resolved in layers, highest priority first: an explicit `dir` →
 //! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` walking up to the git root →
+//! `~/.config/laya-workflow/plugins/<name>` (the `plugin install` default) →
 //! the copy compiled into this binary. That last layer is why the bundled
 //! alphaXiv downloader still works after `sudo install`-ing a single binary.
 
@@ -60,9 +61,16 @@ pub struct PluginCap {
     pub timeout_ms: u64,
 }
 
+/// The plugin API version this engine implements. A `plugin.json` may declare
+/// `"api": 1`; anything else is refused, so a plugin written for a newer host
+/// fails loudly instead of half-working.
+pub const PLUGIN_API: u64 = 1;
+
 #[derive(Clone, Debug)]
 struct Manifest {
     name: String,
+    version: String,
+    description: String,
     entry: String,
     entry_op: String,
     max_operations: u64,
@@ -72,11 +80,28 @@ impl Manifest {
     fn parse(src: &str, fallback: &str) -> Result<Manifest> {
         let v: Value = serde_json::from_str(src)
             .map_err(|e| anyhow!("plugin {fallback:?} has an invalid plugin.json: {e}"))?;
+        if let Some(api) = v.get("api").and_then(Value::as_u64) {
+            if api != PLUGIN_API {
+                bail!(
+                    "plugin {fallback:?} targets plugin api v{api}, but this engine implements v{PLUGIN_API}"
+                );
+            }
+        }
         Ok(Manifest {
             name: v
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or(fallback)
+                .to_string(),
+            version: v
+                .get("version")
+                .and_then(Value::as_str)
+                .unwrap_or("0.0.0")
+                .to_string(),
+            description: v
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
                 .to_string(),
             entry: v
                 .get("entry")
@@ -137,21 +162,364 @@ fn builtin(name: &str) -> Option<Sources> {
     })
 }
 
-/// Candidate `plugins/` roots, highest priority first.
-fn plugin_roots() -> Vec<PathBuf> {
+/// Names of the plugins compiled into this binary.
+pub fn builtin_names() -> &'static [&'static str] {
+    &[ALPHAXIV_PLUGIN, "textdigest"]
+}
+
+// ── installing plugins from a git repo ──────────────────────────────
+
+/// Per-user plugin root: `$LAYA_USER_PLUGIN_DIR` →
+/// `$XDG_CONFIG_HOME/laya-workflow/plugins` → `~/.config/laya-workflow/plugins`.
+/// Mirrors `spec::user_spec_dir()`; `plugin install` writes here unless
+/// `$LAYA_PLUGIN_DIR` (or `--root`) overrides it.
+pub fn user_plugin_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("LAYA_USER_PLUGIN_DIR").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(d));
+    }
+    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(x).join("laya-workflow").join("plugins"));
+    }
+    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| {
+        PathBuf::from(h)
+            .join(".config")
+            .join("laya-workflow")
+            .join("plugins")
+    })
+}
+
+/// Where `plugin install` writes: `$LAYA_PLUGIN_DIR` when set (so a checkout can
+/// pin installs next to the repo), otherwise the per-user plugin root.
+pub fn install_root() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("LAYA_PLUGIN_DIR") {
+        if !dir.trim().is_empty() {
+            return Ok(PathBuf::from(dir));
+        }
+    }
+    user_plugin_dir().ok_or_else(|| {
+        anyhow!("cannot pick an install root: set LAYA_PLUGIN_DIR or HOME/XDG_CONFIG_HOME")
+    })
+}
+
+/// The on-disk plugin search path, highest priority first (for `plugin dir`).
+pub fn plugin_search_path() -> Vec<(PluginLayer, PathBuf)> {
+    plugin_roots()
+}
+
+/// A plugin name becomes a directory, so it must be a single, safe segment.
+pub fn validate_plugin_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        bail!("plugin name must not be empty");
+    }
+    if name != name.trim() {
+        bail!("plugin name {name:?} must not have surrounding whitespace");
+    }
+    if name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+    {
+        bail!("plugin name {name:?} must be a single path segment");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        bail!("plugin name {name:?} may only contain [A-Za-z0-9._-]");
+    }
+    Ok(())
+}
+
+/// Normalize a plugin directory *inside* a repo: no leading `/`, no `..`, not
+/// empty. Returns the cleaned, `/`-separated path.
+pub fn normalize_subdir(path: &str) -> Result<String> {
+    let p = path.trim().trim_matches('/');
+    if p.is_empty() {
+        bail!("--path must name a directory inside the repo (e.g. plugins/alphaxiv)");
+    }
+    for seg in p.split('/') {
+        if seg.is_empty() || seg == "." || seg == ".." {
+            bail!("--path {path:?} contains an empty or '.'/'..' segment");
+        }
+    }
+    Ok(p.to_string())
+}
+
+/// Turn a repo reference into a clone URL. Accepts `owner/repo`,
+/// `https://github.com/owner/repo[.git]`, an `ssh://`/`git@` URL, or any URL that
+/// already carries a scheme (passed through unchanged).
+pub fn repo_clone_url(repo: &str) -> Result<String> {
+    let r = repo.trim();
+    if r.is_empty() {
+        bail!("repo must not be empty (use e.g. owner/repo)");
+    }
+    if r.contains("://") || r.starts_with("git@") {
+        return Ok(r.to_string());
+    }
+    let parts: Vec<&str> = r.split('/').collect();
+    if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+        let slug = format!("{}/{}", parts[0], parts[1].trim_end_matches(".git"));
+        return Ok(format!("https://github.com/{slug}.git"));
+    }
+    bail!("repo {repo:?} must be `owner/repo` or a git URL (https://, ssh://, git@)")
+}
+
+/// Strip any `user:token@` credentials from a URL before printing it.
+pub fn redact_url(url: &str) -> String {
+    match url.find("://") {
+        Some(i) => {
+            let (scheme, rest) = url.split_at(i + 3);
+            match rest.find('@') {
+                Some(at) if !rest[..at].contains('/') => {
+                    format!("{scheme}***@{}", &rest[at + 1..])
+                }
+                _ => url.to_string(),
+            }
+        }
+        None => url.to_string(),
+    }
+}
+
+/// What a successful install produced.
+#[derive(Clone, Debug)]
+pub struct InstalledPlugin {
+    pub name: String,
+    pub version: String,
+    pub dest: PathBuf,
+    pub files: usize,
+}
+
+/// Copy a plugin tree `src` into `root/<name>`. Requires a readable, parseable
+/// `plugin.json`. Refuses to overwrite an existing install unless `force`.
+pub fn install_from_dir(
+    src: &std::path::Path,
+    root: &std::path::Path,
+    name: &str,
+    force: bool,
+) -> Result<InstalledPlugin> {
+    validate_plugin_name(name)?;
+    if !src.is_dir() {
+        bail!("plugin source {} is not a directory", src.display());
+    }
+    let manifest = std::fs::read_to_string(src.join("plugin.json"))
+        .map_err(|e| anyhow!("{}: cannot read plugin.json: {e}", src.display()))?;
+    let m = Manifest::parse(&manifest, name)?;
+    let dest = root.join(name);
+    if dest.exists() {
+        if !force {
+            bail!(
+                "plugin {name:?} is already installed at {} (pass --force to overwrite)",
+                dest.display()
+            );
+        }
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| anyhow!("cannot clear {}: {e}", dest.display()))?;
+    }
+    std::fs::create_dir_all(&dest)?;
+    let files = copy_tree(src, &dest, true)?;
+    Ok(InstalledPlugin {
+        name: name.to_string(),
+        version: m.version,
+        dest,
+        files,
+    })
+}
+
+/// Recursively copy regular files (skipping a top-level `.git`) from `src` to
+/// `dst`, creating directories as needed. Returns the file count. Symlinks and
+/// other special files are skipped on purpose.
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path, skip_git: bool) -> Result<usize> {
+    let mut files = 0;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if skip_git && name == ".git" {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            std::fs::create_dir_all(&to)?;
+            files += copy_tree(&from, &to, false)?;
+        } else if ty.is_file() {
+            std::fs::copy(&from, &to)?;
+            files += 1;
+        }
+    }
+    Ok(files)
+}
+
+/// One discoverable plugin and the layer it resolves from.
+#[derive(Clone, Debug)]
+pub struct PluginEntry {
+    pub name: String,
+    pub layer: PluginLayer,
+    pub version: String,
+    pub description: String,
+    pub path: Option<PathBuf>,
+}
+
+/// Discover every plugin visible to the engine, highest layer first, each name
+/// appearing once (a higher layer shadows lower ones).
+pub fn discover_plugins() -> Vec<PluginEntry> {
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (layer, root) in plugin_roots() {
+        let Ok(entries) = std::fs::read_dir(&root) else {
+            continue;
+        };
+        let mut names: Vec<String> = entries
+            .flatten()
+            .filter(|e| e.path().join("plugin.json").is_file())
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .collect();
+        names.sort();
+        for name in names {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let dir = root.join(&name);
+            let (version, description) = std::fs::read_to_string(dir.join("plugin.json"))
+                .ok()
+                .and_then(|s| Manifest::parse(&s, &name).ok())
+                .map(|m| (m.version, m.description))
+                .unwrap_or_else(|| ("0.0.0".to_string(), String::new()));
+            out.push(PluginEntry {
+                name,
+                layer,
+                version,
+                description,
+                path: Some(dir),
+            });
+        }
+    }
+    for n in builtin_names().iter().copied() {
+        if seen.insert(n.to_string()) {
+            let (version, description) = builtin(n)
+                .and_then(|s| Manifest::parse(&s.manifest, n).ok())
+                .map(|m| (m.version, m.description))
+                .unwrap_or_else(|| ("0.0.0".to_string(), String::new()));
+            out.push(PluginEntry {
+                name: n.to_string(),
+                layer: PluginLayer::Builtin,
+                version,
+                description,
+                path: None,
+            });
+        }
+    }
+    out
+}
+
+/// Clone **only** `subdir` from `repo` (a sparse, blob-filtered checkout) into a
+/// temp dir, then install it as plugin `name`. Nothing outside `subdir` is
+/// materialised on disk.
+pub fn install_from_git(
+    repo: &str,
+    subdir: &str,
+    name: &str,
+    root: &std::path::Path,
+    git_ref: Option<&str>,
+    force: bool,
+) -> Result<InstalledPlugin> {
+    let url = repo_clone_url(repo)?;
+    let sub = normalize_subdir(subdir)?;
+    validate_plugin_name(name)?;
+    let tmp = std::env::temp_dir().join(format!(
+        "laya-plugin-install-{}-{}",
+        std::process::id(),
+        util::now_unix_ms()
+    ));
+    let run = |args: &[&str], cwd: Option<&std::path::Path>| -> Result<()> {
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(args);
+        if let Some(c) = cwd {
+            cmd.current_dir(c);
+        }
+        let out = cmd
+            .output()
+            .map_err(|e| anyhow!("failed to run git: {e}"))?;
+        if !out.status.success() {
+            bail!(
+                "git {} failed: {}",
+                args.first().copied().unwrap_or(""),
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Ok(())
+    };
+    let tmp_s = tmp.to_string_lossy().to_string();
+    let mut clone: Vec<&str> = vec!["clone", "--depth", "1", "--filter=blob:none", "--sparse"];
+    if let Some(r) = git_ref.map(str::trim).filter(|r| !r.is_empty()) {
+        clone.push("--branch");
+        clone.push(r);
+    }
+    clone.push(&url);
+    clone.push(&tmp_s);
+    let result = (|| -> Result<InstalledPlugin> {
+        run(&clone, None)?;
+        run(&["sparse-checkout", "set", &sub], Some(&tmp))?;
+        let src = tmp.join(&sub);
+        if !src.is_dir() {
+            bail!(
+                "{sub:?} was not found in {} after checkout",
+                redact_url(&url)
+            );
+        }
+        install_from_dir(&src, root, name, force)
+    })();
+    std::fs::remove_dir_all(&tmp).ok();
+    result
+}
+
+/// Which layer a plugin was resolved from, highest priority first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PluginLayer {
+    /// An explicit `dir` on the capability (never in the search path).
+    Dir,
+    /// `$LAYA_PLUGIN_DIR/<name>`.
+    Env,
+    /// `plugins/<name>` walking up from the cwd to the git root.
+    Repo,
+    /// `~/.config/laya-workflow/plugins/<name>` (where `plugin install` lands).
+    User,
+    /// The copy compiled into the binary (`include_str!`).
+    Builtin,
+}
+
+impl PluginLayer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PluginLayer::Dir => "dir",
+            PluginLayer::Env => "env",
+            PluginLayer::Repo => "repo",
+            PluginLayer::User => "user",
+            PluginLayer::Builtin => "builtin",
+        }
+    }
+}
+
+/// Candidate on-disk `plugins/` roots, highest priority first: `$LAYA_PLUGIN_DIR`
+/// → `plugins/` up to the git root → the per-user install root.
+fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     let mut roots = Vec::new();
     if let Ok(dir) = std::env::var("LAYA_PLUGIN_DIR") {
         if !dir.trim().is_empty() {
-            roots.push(PathBuf::from(dir));
+            roots.push((PluginLayer::Env, PathBuf::from(dir)));
         }
     }
     let mut cur = std::env::current_dir().ok();
     while let Some(dir) = cur {
-        roots.push(dir.join("plugins"));
+        roots.push((PluginLayer::Repo, dir.join("plugins")));
         if dir.join(".git").exists() {
             break;
         }
         cur = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    if let Some(user) = user_plugin_dir() {
+        roots.push((PluginLayer::User, user));
     }
     roots
 }
@@ -208,7 +576,7 @@ fn load_sources(cap: &PluginCap) -> Result<Sources> {
     if cap.plugin.trim().is_empty() {
         bail!("plugin capability needs 'plugin' (a name) or 'dir'");
     }
-    for root in plugin_roots() {
+    for (_, root) in plugin_roots() {
         let dir = root.join(&cap.plugin);
         if dir.join("plugin.json").is_file() {
             return read_dir_sources(&dir, &cap.plugin);
@@ -979,5 +1347,117 @@ mod tests {
         // `script` is an accepted alias for the same kind.
         let alias = json!({"capabilities": {"s": {"kind": "script", "plugin": "x"}}});
         assert!(super::super::Registry::from_spec(&alias).is_ok());
+    }
+
+    #[test]
+    fn plugin_name_and_subdir_validation() {
+        for ok in ["alphaxiv", "a.b-c_1"] {
+            assert!(validate_plugin_name(ok).is_ok(), "{ok:?}");
+        }
+        for bad in ["", " ", "a/b", "..", ".", "a\\b", "../x", "a b"] {
+            assert!(validate_plugin_name(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            normalize_subdir("plugins/alphaxiv").unwrap(),
+            "plugins/alphaxiv"
+        );
+        assert_eq!(
+            normalize_subdir("/plugins/alphaxiv/").unwrap(),
+            "plugins/alphaxiv"
+        );
+        for bad in ["", "/", "plugins/../etc", "./x", "plugins//x"] {
+            assert!(normalize_subdir(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn repo_refs_normalize_to_clone_urls() {
+        assert_eq!(
+            repo_clone_url("oliveagle/agents_group").unwrap(),
+            "https://github.com/oliveagle/agents_group.git"
+        );
+        assert_eq!(
+            repo_clone_url("o/r.git").unwrap(),
+            "https://github.com/o/r.git"
+        );
+        assert_eq!(
+            repo_clone_url("https://example.com/x.git").unwrap(),
+            "https://example.com/x.git"
+        );
+        assert_eq!(
+            repo_clone_url("git@github.com:o/r.git").unwrap(),
+            "git@github.com:o/r.git"
+        );
+        for bad in ["", "just-a-name", "a/b/c"] {
+            assert!(repo_clone_url(bad).is_err(), "{bad:?}");
+        }
+        // Credentials never reach the terminal.
+        assert_eq!(
+            redact_url("https://user:tok@github.com/o/r.git"),
+            "https://***@github.com/o/r.git"
+        );
+        assert_eq!(
+            redact_url("https://github.com/o/r.git"),
+            "https://github.com/o/r.git"
+        );
+    }
+
+    #[test]
+    fn installs_a_plugin_tree_from_a_local_dir() {
+        let base =
+            std::env::temp_dir().join(format!("laya-plugin-install-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src/plugins/demo");
+        let root = base.join("root");
+        std::fs::create_dir_all(src.join("page")).unwrap();
+        std::fs::write(
+            src.join("plugin.json"),
+            r#"{"name":"demo","version":"1.2.3","entry":"main.rhai"}"#,
+        )
+        .unwrap();
+        std::fs::write(src.join("main.rhai"), "fn run(host, ctx) { #{ ok: true } }").unwrap();
+        std::fs::write(src.join("page/p.js"), "1").unwrap();
+        // A stray .git dir is skipped, never copied.
+        std::fs::create_dir_all(src.join(".git")).unwrap();
+        std::fs::write(src.join(".git/HEAD"), "x").unwrap();
+
+        let out = install_from_dir(&src, &root, "demo", false).unwrap();
+        assert_eq!(out.version, "1.2.3");
+        assert_eq!(out.files, 3); // plugin.json + main.rhai + page/p.js
+        assert!(root.join("demo/plugin.json").is_file());
+        assert!(root.join("demo/page/p.js").is_file());
+        assert!(!root.join("demo/.git").exists());
+
+        // No silent overwrite…
+        let err = install_from_dir(&src, &root, "demo", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("already installed"), "{err}");
+        // …unless forced.
+        assert!(install_from_dir(&src, &root, "demo", true).is_ok());
+
+        // A source without plugin.json is refused.
+        let empty = base.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(install_from_dir(&empty, &root, "nope", false).is_err());
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn discovery_lists_bundled_plugins_once() {
+        let found = discover_plugins();
+        let names: Vec<String> = found.iter().map(|e| e.name.clone()).collect();
+        assert!(names.iter().any(|n| n == "alphaxiv"), "{names:?}");
+        assert!(names.iter().any(|n| n == "textdigest"), "{names:?}");
+        // A name is never listed twice (higher layers shadow lower ones).
+        let mut sorted = names.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), names.len(), "{names:?}");
+        // The description/version parsed out of plugin.json survive to the listing.
+        let ax = found.iter().find(|e| e.name == "alphaxiv").unwrap();
+        assert!(!ax.version.is_empty());
+        assert!(!ax.description.is_empty());
     }
 }
