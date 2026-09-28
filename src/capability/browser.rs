@@ -1578,7 +1578,13 @@ const ARTICLE_MD_JS: &str = r##"
 
   let md = '';
   for (const p of parts) md += '\n\n' + render(p, {inline:false});
-  md = md.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+  md = md.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+  // Inline links/images that sit side by side in a flex row are separated by
+  // CSS `gap`, not by whitespace, so their labels ran together
+  // (`[A](a)[B](b)`) once the avatars between them were dropped. Insert a space
+  // only when one link/image is immediately followed by another.
+  md = md.replace(/(\]\([^()\s]+\))(?=!?\[[^\]]*\]\()/g, '$1 ');
+  md = md.trim() + '\n';
 
   const title = ((document.querySelector('h1') || {}).innerText || document.title || '').trim();
   return { title: title, markdown: md, images: images, chars: md.length, imageCount: images.length };
