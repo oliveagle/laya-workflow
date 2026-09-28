@@ -1543,6 +1543,12 @@ mod tests {
         let out: Dynamic = match dyns.len() {
             1 => engine.call_fn(&mut scope, &ast, name, (dyns[0].clone(),)),
             2 => engine.call_fn(&mut scope, &ast, name, (dyns[0].clone(), dyns[1].clone())),
+            3 => engine.call_fn(
+                &mut scope,
+                &ast,
+                name,
+                (dyns[0].clone(), dyns[1].clone(), dyns[2].clone()),
+            ),
             _ => bail!("unsupported arity"),
         }
         .map_err(|e| anyhow!("{name}(): {e}"))?;
@@ -1585,6 +1591,108 @@ mod tests {
 
     fn plan(with: Value) -> Result<Value> {
         call("plan", vec![with])
+    }
+
+    /// `opt_bool(args, key, default)`: the switch that decides whether the
+    /// downloader asks alphaXiv to generate a missing AI Overview.
+    fn opt_bool(with: Value, key: &str, dflt: bool) -> Result<Value> {
+        call("opt_bool", vec![with, json!(key), json!(dflt)])
+    }
+
+    #[test]
+    fn overview_generation_switch_is_opt_out_and_null_safe() {
+        // Absent → the caller's default.
+        assert_eq!(
+            opt_bool(json!({}), "generate_overview", true).unwrap(),
+            json!(true)
+        );
+        assert_eq!(
+            opt_bool(json!({}), "generate_overview", false).unwrap(),
+            json!(false)
+        );
+        // A `${state.x}` the workflow never resolved arrives as null and must not
+        // be read as "false": it has to fall back to the default, or every url
+        // run would silently stop generating overviews.
+        for null in [json!(null), json!(""), json!("null")] {
+            let args = json!({"generate_overview": null});
+            assert_eq!(
+                opt_bool(args.clone(), "generate_overview", true).unwrap(),
+                json!(true),
+                "state {null} should keep the default"
+            );
+            assert_eq!(
+                opt_bool(args, "generate_overview", false).unwrap(),
+                json!(false)
+            );
+        }
+        // Real booleans and the string spellings a CLI flag can produce.
+        for truthy in [
+            json!(true),
+            json!("true"),
+            json!("1"),
+            json!("yes"),
+            json!("on"),
+        ] {
+            let args = json!({"generate_overview": truthy});
+            assert_eq!(
+                opt_bool(args.clone(), "generate_overview", false).unwrap(),
+                json!(true),
+                "{truthy} should be true"
+            );
+        }
+        for falsy in [
+            json!(false),
+            json!("false"),
+            json!("0"),
+            json!("no"),
+            json!("off"),
+        ] {
+            let args = json!({"generate_overview": falsy});
+            assert_eq!(
+                opt_bool(args.clone(), "generate_overview", true).unwrap(),
+                json!(false),
+                "{falsy} should be false"
+            );
+        }
+    }
+
+    /// The wait is charged on the wall clock, and its helpers read a page result
+    /// without trusting its shape.
+    #[test]
+    fn overview_reads_page_results_defensively() {
+        let ready =
+            json!({"state": "ready", "len": 5017, "href": "https://www.alphaxiv.org/zh/abs/1"});
+        assert_eq!(
+            call("ov_str", vec![ready.clone(), json!("state")]).unwrap(),
+            json!("ready")
+        );
+        assert_eq!(
+            call("ov_int", vec![ready.clone(), json!("len"), json!(-1)]).unwrap(),
+            json!(5017)
+        );
+        // Missing keys, a null field, and a non-map all degrade to the default
+        // instead of throwing — a page that answers differently must not lose
+        // the paper.
+        assert_eq!(
+            call("ov_str", vec![ready.clone(), json!("nope")]).unwrap(),
+            json!("")
+        );
+        assert_eq!(
+            call("ov_str", vec![json!({"state": null}), json!("state")]).unwrap(),
+            json!("")
+        );
+        assert_eq!(
+            call("ov_str", vec![json!("not a map"), json!("state")]).unwrap(),
+            json!("")
+        );
+        assert_eq!(
+            call("ov_int", vec![json!("not a map"), json!("len"), json!(-1)]).unwrap(),
+            json!(-1)
+        );
+        assert_eq!(
+            call("ov_int", vec![ready, json!("len"), json!(-1)]).unwrap(),
+            json!(5017)
+        );
     }
 
     #[test]
@@ -2274,12 +2382,14 @@ mod tests {
         assert!(build_engine(0).compile(&src.entry).is_ok());
         // All four ops are present; `run` is a guard that tells you to pick one.
         for op in ["open", "evaluate", "wait_htmx", "assert"] {
-            assert!(build_engine(0)
-                .compile(&src.entry)
-                .unwrap()
-                .iter_functions()
-                .any(|f| f.name.to_string() == op),
-                "browser_base must define op {op}");
+            assert!(
+                build_engine(0)
+                    .compile(&src.entry)
+                    .unwrap()
+                    .iter_functions()
+                    .any(|f| f.name.to_string() == op),
+                "browser_base must define op {op}"
+            );
         }
         let guard = call_with_host("browser_base", "run", json!({ "with": {} }));
         assert!(guard.is_err(), "run() must reject direct invocation");

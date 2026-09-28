@@ -313,6 +313,14 @@ fn overview_probe(host, target, action, budget_ms) {
 //
 // Returns the outcome plus the `target_id` of the tab it waited on, so the caller
 // can capture that very page instead of navigating to it a second time.
+fn ov_now_ms(host) {
+    let t = host.now();
+    if type_of(t) == "map" && t.contains("unix_ms") && type_of(t["unix_ms"]) == "i64" {
+        return t["unix_ms"];
+    }
+    0
+}
+
 fn ensure_overview(host, url, wait_cap_ms, step_ms) {
     // A CDP call is capped by the capability timeout, so a poll round has to
     // finish inside it or the page script is killed while it waits.
@@ -320,7 +328,16 @@ fn ensure_overview(host, url, wait_cap_ms, step_ms) {
     const MIN_STEP = 4000;
     const RETRY_CLICK_MS = 30000;
     const MAX_CLICKS = 2;
-    const MAX_RENAVIGATIONS = 3;
+    const MAX_REOPENS = 3;
+    const FAILS_PER_REOPEN = 3;
+    const MAX_REENTERS = 20;
+    const REENTER_MS = 45000;
+    // Signed out, alphaXiv renders no generate button at all, so there is
+    // nothing to click and no result to wait for. Give up after this many
+    // re-entries without ever having seen one, instead of sitting out the whole
+    // budget on every paper.
+    const MAX_SIGHTLESS_REENTERS = 3;
+    const FINAL_LOOK_MS = 20000;
 
     let step = step_ms;
     if step > MAX_STEP { step = MAX_STEP; }
@@ -336,33 +353,85 @@ fn ensure_overview(host, url, wait_cap_ms, step_ms) {
         polls: 0,
         clicks: 0,
         renavigations: 0,
+        reopens: 0,
         url: url
     };
 
+    // Wall clock, not the sum of the poll budgets: a tab that dies makes a poll
+    // return instantly, and charging it its full slice would spend the whole
+    // waiting allowance in a couple of seconds.
+    let started_ms = ov_now_ms(host);
+
+    // One retry on opening: a freshly created background tab can be swapped out
+    // from under the first navigation, which is a transient CDP error and not a
+    // reason to give up on the paper.
     let target = "";
-    try {
-        target = host.browser_open(url);
-        host.browser_wait_ready(target);
-    } catch (e) {
-        out["error"] = "open: " + e;
-        if target != "" { host.browser_release(target); }
-        return out;
+    let opens = 0;
+    loop {
+        opens += 1;
+        try {
+            target = host.browser_open(url);
+            host.browser_wait_ready(target);
+            break;
+        } catch (e) {
+            out["last_error"] = "open: " + e;
+            if target != "" { host.browser_release(target); target = ""; }
+            if opens >= 2 { out["error"] = out["last_error"]; return out; }
+        }
     }
     out["target_id"] = target;
 
-    let budget = wait_cap_ms;
-    let waited = 0;
-    let last_click = -999999;
+    let clicks = 0;
+    let last_click_ms = -999999;
+    let last_enter_ms = started_ms;
+    let fails = 0;
+    let off_page = 0;
+    let sightless = 0;
     loop {
+        let now_ms = ov_now_ms(host);
+        let elapsed = now_ms - started_ms;
+        out["waited_ms"] = elapsed;
+
         // Every pass re-probes: the click and the sign-in detour both come back
         // through here, and only the live DOM says where the tab actually is.
         let seen = #{};
         let probe_ok = true;
         try { seen = overview_probe(host, target, "probe", 4000); }
         catch (e) { probe_ok = false; out["last_error"] = "probe: " + e; }
-        let state = "unknown";
-        if probe_ok { state = ov_str(seen, "state"); }
+
+        if !probe_ok {
+            // The tab itself is gone (Chrome discards a background page nobody is
+            // driving). Keep probing it and the run just spins, so replace it.
+            fails += 1;
+            if fails >= FAILS_PER_REOPEN {
+                // Once there is nothing left to replace it with, stop: continuing
+                // would spin on a dead target for the rest of the budget and burn
+                // the engine's operation ceiling instead of making progress.
+                if ov_int(out, "reopens", 0) >= MAX_REOPENS {
+                    out["error"] = "the browser tab stopped responding: " + ov_str(out, "last_error");
+                    break;
+                }
+                fails = 0;
+                host.browser_release(target);
+                try {
+                    target = host.browser_open(url);
+                    host.browser_wait_ready(target);
+                    out["reopens"] = ov_int(out, "reopens", 0) + 1;
+                    out["target_id"] = target;
+                    last_enter_ms = ov_now_ms(host);
+                } catch (e) {
+                    out["error"] = "reopen: " + e;
+                    break;
+                }
+            }
+            if elapsed >= wait_cap_ms { break; }
+            continue;
+        }
+        fails = 0;
+
+        let state = ov_str(seen, "state");
         if state == "" { state = "unknown"; }
+        if state == "placeholder" { sightless = 0; }
         if ov_str(out, "initial_state") == "unknown" { out["initial_state"] = state; }
         out["state"] = state;
 
@@ -370,8 +439,8 @@ fn ensure_overview(host, url, wait_cap_ms, step_ms) {
 
         // Click once the placeholder is up. The site also offers "Try again"
         // after a run that died, so one well-spaced retry is allowed.
-        if state == "placeholder" && ov_int(out, "clicks", 0) < MAX_CLICKS
-            && waited - last_click > RETRY_CLICK_MS {
+        if state == "placeholder" && clicks < MAX_CLICKS
+            && elapsed - last_click_ms > RETRY_CLICK_MS {
             let hit = #{};
             let clicked = false;
             try {
@@ -379,41 +448,85 @@ fn ensure_overview(host, url, wait_cap_ms, step_ms) {
                 clicked = ov_str(hit, "clicked") == "true";
             } catch (e) { out["last_error"] = "click: " + e; }
             if clicked {
-                out["clicks"] = ov_int(out, "clicks", 0) + 1;
+                clicks += 1;
+                out["clicks"] = clicks;
                 out["clicked"] = true;
-                last_click = waited;
+                last_click_ms = elapsed;
                 host.log("alphaxiv: asked alphaXiv to generate the overview for " + url);
                 continue;
             }
         }
 
-        if waited >= budget { break; }
+        if elapsed >= wait_cap_ms { break; }
 
         // One poll round inside the remaining budget.
-        let slice = budget - waited;
-        if slice > step { slice = step; }
+        let remaining = wait_cap_ms - elapsed;
+        let slice = step;
+        if slice > remaining { slice = remaining; }
         if slice < MIN_STEP { break; }
         let chunk = #{};
         let ok = true;
         try { chunk = overview_probe(host, target, "wait", slice); }
         catch (e) { ok = false; out["last_error"] = "wait: " + e; }
-        waited += slice;
         out["polls"] = ov_int(out, "polls", 0) + 1;
-        out["waited_ms"] = waited;
+        // Deliberately not counted as a failure: Chrome throttles timers in a
+        // background tab, so a poll round can overrun the capability's per-call
+        // timeout while the page is perfectly healthy. The probe above is what
+        // decides whether the tab itself is gone.
+        if !ok { continue; }
 
-        // Clicking can bounce the tab through alphaXiv's sign-in flow; come back
-        // to the paper and keep waiting, but only a few times.
-        if !ok || ov_str(chunk, "state") == "absent" {
-            let navs = ov_int(out, "renavigations", 0);
-            if navs < MAX_RENAVIGATIONS {
-                try {
-                    host.browser_navigate(target, url);
-                    host.browser_wait_ready(target);
-                    out["renavigations"] = navs + 1;
-                } catch (e) { out["last_error"] = "renavigate: " + e; }
+        // Re-entering the paper is the only way to learn the result. The
+        // generation itself is server-side and survives a reload, but the page's
+        // live channel is not: a click that bounces through alphaXiv's sign-in
+        // flow re-mounts the section, and from then on that page instance sits
+        // empty and never hears about a run it did not watch. A fresh load both
+        // re-subscribes and re-reads what the server already has — which is how
+        // a finished overview shows up, minutes later, on a page loaded then.
+        let href = ov_str(chunk, "href");
+        let reenter = false;
+        if !href.contains("/abs/") {
+            // Off the paper entirely: let a sign-in round trip finish on its own
+            // before dragging the tab back.
+            off_page += 1;
+            reenter = off_page >= 2;
+        } else {
+            off_page = 0;
+            reenter = ov_str(chunk, "state") == "unknown"
+                && ov_now_ms(host) - last_enter_ms >= REENTER_MS;
+        }
+        // An empty section that never grows into the placeholder, across several
+        // fresh loads, means this browser is not signed in: alphaXiv only offers
+        // generation to a signed-in reader. Waiting longer cannot change that.
+        if reenter && clicks == 0 && ov_str(chunk, "state") == "unknown" {
+            sightless += 1;
+            if sightless >= MAX_SIGHTLESS_REENTERS {
+                out["error"] = "no Generate overview button appeared (signed out?)";
+                break;
             }
         }
+        if reenter && ov_int(out, "renavigations", 0) < MAX_REENTERS {
+            try {
+                host.browser_navigate(target, url);
+                host.browser_wait_ready(target);
+                out["renavigations"] = ov_int(out, "renavigations", 0) + 1;
+                last_enter_ms = ov_now_ms(host);
+                off_page = 0;
+            } catch (e) { out["last_error"] = "reenter: " + e; }
+        }
     }
+
+    // The budget ran out (or generation was never requested): one last look, so a
+    // run that finished moments ago is still saved with its overview.
+    if !out["ready"] && ov_int(out, "clicks", 0) > 0 {
+        try {
+            host.browser_navigate(target, url);
+            host.browser_wait_ready(target);
+            let last = overview_probe(host, target, "wait", FINAL_LOOK_MS);
+            out["state"] = ov_str(last, "state");
+            out["ready"] = out["state"] == "ready";
+        } catch (e) { out["last_error"] = "final: " + e; }
+    }
+    out["waited_ms"] = ov_now_ms(host) - started_ms;
 
     out
 }
@@ -542,7 +655,7 @@ fn run(host, ctx) {
             ov = ensure_overview(host, url, overview_wait_ms, overview_step_ms);
             target = ov_str(ov, "target_id");
         } else if want_overview {
-            ov["state"] = "budget_exhausted";
+            ov["state"] = "over_paper_budget";
         }
         if target != "" { leaf.remove("url"); leaf["target_id"] = target; }
 
@@ -607,6 +720,7 @@ fn run(host, ctx) {
                 overview_ready: ov["ready"],
                 overview_clicked: ov["clicked"],
                 overview_waited_ms: ov["waited_ms"],
+                overview_error: if ov.contains("last_error") { ov["last_error"] } else { "" },
                 title: saved["title"],
                 markdown_chars: saved["markdown_chars"],
                 rendered: saved["rendered"],

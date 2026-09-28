@@ -114,6 +114,32 @@ Papers are saved in Chinese by default (`lang` = `zh`); opt out with
 `downloaded_at` timestamp (plus the trending `rank`/`interval`), handy for
 monitoring what is trending over time.
 
+alphaXiv only generates a paper's AI Overview on request, and until it does the
+page's overview section reads "No overview yet…", which a plain render would save
+as though it were the overview. When you ask for a single paper by URL the
+plugin clicks the site's own **Generate overview** button and waits for the
+result (alphaXiv says about five minutes) before capturing, so the Markdown
+carries the real overview. It is bounded and opt-out:
+
+```bash
+# skip the generation round trip (and its few minutes) entirely
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
+  --query "https://www.alphaxiv.org/abs/2609.31048" \
+  --state '{"generate_overview":false}'
+
+# cap how long to wait for it (default 420000 ms)
+laya-workflow run --spec dsl/browser/alphaxiv_paper.json \
+  --query "https://www.alphaxiv.org/abs/2609.31048" \
+  --state '{"overview_wait_ms":600000}'
+```
+
+Search and trending runs do **not** generate overviews unless you pass
+`"generate_overview":true`, and then only for the first
+`overview_max_papers` (default 3) — generation costs minutes per paper, so a
+500-paper trending run would otherwise stall for days. What happened is recorded
+per paper as `overview_state`/`overview_ready`/`overview_waited_ms` in the run
+result and in each `<slug>_meta.json`.
+
 ## Script plugins (Rhai)
 
 Site- and task-specific logic lives in **Rhai plugins**, not in the compiled
