@@ -185,6 +185,37 @@ spec. No Chrome, no network, ~0.3s. Two callers, so they cannot drift:
 * `scripts/verify.sh` — the pre-push gate.
 * `.github/workflows/ci.yml` — a step in the offline job.
 
+### Cost, and why it is serial
+
+`run.py` prints the slowest scenarios, because the cost is not where you would
+guess. Process startup and spec parsing are ~3ms (`validate` × 20 = 62ms).
+Almost all of a scenario's ~0.3s is Chrome/CDP round-trips.
+
+Two things that were measured rather than assumed:
+
+* **Chrome reuse is the whole ballgame.** A scenario costs ~1.9s when it
+  launches a fresh Chrome and ~0.75s when one is already running on the same
+  port and profile. The runner therefore hands every scenario the *same* CDP
+  endpoint, so only the first one pays for a launch. A private profile dir per
+  run is still required — a fixed one collides with the interactive Chrome.
+* **Parallel execution is not the win it looks like.** `--jobs N` works and is
+  clean, but on the machine this was measured on the box was at load 20–40 from
+  other work, and serial runs ranged 7.8s–33.9s on identical code. No honest
+  speed claim can be made from that, and one `--jobs 2` run failed where serial
+  never did. So the default stays 1 and the flag is opt-in and unvalidated.
+
+The real efficiency bug was a leak. An interrupted run left its headless Chrome
+alive; nine survivors were found, each holding a renderer, and they were enough
+to push the machine's load average from 31 to 58. Every run after that was
+slower than it should have been, and the timing noise made the numbers above
+harder to read. The runner now kills and removes what it started in a
+`finally`, and says so if it cannot:
+
+```
+after a normal run: 0 dirs, 0 chrome procs
+after SIGINT mid-run: 0 dirs, 0 chrome procs
+```
+
 **`python3 scripts/bdd/run.py`** is the CDP run. It needs a local Chrome, so it
 is an explicit local gate and deliberately *not* in CI: the runners install no
 browser, and adding one is a separate decision rather than something to smuggle

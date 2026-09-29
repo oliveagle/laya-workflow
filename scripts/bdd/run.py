@@ -13,8 +13,17 @@ For each Scenario this:
   4. runs it: `laya-workflow run --spec <spec> --state <initial state>`.
 
 A scenario is green when the run exits 0, which means every CDP operation
-succeeded and every `checks` map matched. A red scenario is red because the page
-did not do what the document says - not because a model thought otherwise.
+succeeded and every assertion held. A red scenario is red because the page did
+not do what the document says - not because a model thought otherwise.
+
+Scenarios run serially by default. `--jobs N` runs N at once, each with its own
+Chrome; it works, but it is not the default because it is not *validated* as
+faster - see the note in bdd/README.md.
+
+Whatever happens - a failing scenario, a Ctrl-C, a crash - the runner kills the
+Chrome processes holding its own profile dirs and removes them. This is not
+cosmetic: the runner used to leak them, nine survivors were found holding
+renderers, and the machine's load average was 58 with them and 31 without.
 
 Scenarios tagged `@expected_failure` must fail. They are the guard against
 vacuous assertions: if a broken page ever made them pass, the suite reports it,
@@ -27,6 +36,9 @@ import argparse
 import contextlib
 import functools
 import http.server
+import itertools
+import signal
+import time
 import json
 import os
 import shutil
@@ -95,12 +107,63 @@ def run_scenario(binary: str, spec_path: str, state: dict, timeout: int) -> tupl
     return proc.returncode, (proc.stdout + proc.stderr)
 
 
+def reap_chrome(profiles: list[str]) -> int:
+    """Kill Chrome processes still holding one of *our* profile dirs.
+
+    Each `laya-workflow run` launches the headless Chrome its spec asks for, and
+    that Chrome normally goes away with the run. It does not always: an
+    interrupted run, a crash in this script, or a scenario that times out all
+    leave one behind. Nine survivors were found on this machine, each holding a
+    renderer and a slice of CPU - which then makes every later run slower, and
+    makes timing measurements look worse than the code deserves.
+
+    Matching on the profile dir is precise rather than broad: these are temp
+    dirs this process just created, so nothing else can be named by them. No
+    `pkill chrome`, which would take the developer's own browser with it.
+    """
+    killed = 0
+    for profile in profiles:
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            found = subprocess.run(["pgrep", "-f", profile], capture_output=True, text=True)
+            for pid in found.stdout.split():
+                with contextlib.suppress(OSError, ProcessLookupError, ValueError):
+                    os.kill(int(pid), signal.SIGTERM)
+                    killed += 1
+    return killed
+
+
+def dispose_profiles(profiles: list[str], attempts: int = 5) -> int:
+    """Remove the profile dirs, retrying while Chrome is still letting go.
+
+    SIGTERM is asynchronous, and a directory Chrome still has open will fail to
+    be removed. `rmtree(ignore_errors=True)` alone leaves the dir behind and
+    says nothing, which is how 47 of them accumulated unnoticed.
+    """
+    left = 0
+    for profile in profiles:
+        for _ in range(attempts):
+            if not os.path.isdir(profile):
+                break
+            shutil.rmtree(profile, ignore_errors=True)
+            if not os.path.isdir(profile):
+                break
+            time.sleep(0.2)
+        if os.path.isdir(profile):
+            left += 1
+            print(f"bdd: warning: could not remove {profile}", file=sys.stderr)
+    return left
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("features", nargs="*", help="feature files (default: all of bdd/features)")
     ap.add_argument("--filter", help="only features whose path contains this substring")
     ap.add_argument("--bin", help="path to the laya-workflow binary")
-    ap.add_argument("--port", type=int, default=0, help="fixture port (0 = pick a free one)")
+    ap.add_argument("--port", type=int, default=0,
+                    help="CDP port (0 = pick a free one; only set this with --jobs 1)")
+    ap.add_argument("--jobs", "-j", type=int, default=1,
+                    help="scenarios to run at once (default 1: parallel was measured "
+                         "and lost here, see --help notes in this file)")
     ap.add_argument("--timeout", type=int, default=180, help="per-scenario timeout, seconds")
     ap.add_argument("--keep", action="store_true", help="keep the generated specs")
     ap.add_argument("--out", default=BUILD_DIR, help="where generated specs are written")
@@ -135,65 +198,120 @@ def main(argv: list[str] | None = None) -> int:
     binary = pick_binary(args.bin)
     os.makedirs(args.out, exist_ok=True)
 
-    cdp_port = args.port or free_port()
-    # A private profile dir per run. Reusing a fixed one would collide with the
-    # interactive Chrome's lock and owner marker; reusing it *within* a run is
-    # what lets scenarios 2..N adopt the Chrome scenario 1 launched.
-    cdp_profile = tempfile.mkdtemp(prefix="laya-bdd-chrome-")
+    jobs = max(1, min(args.jobs, len(plan)))
+    if args.port and jobs != 1:
+        print("error: --port pins one CDP endpoint, so it only works with --jobs 1",
+              file=sys.stderr)
+        return 1
+
     print(f"bdd: {len(plan)} scenario(s) from {len(paths)} feature file(s)")
     print(f"bdd: binary   {os.path.relpath(binary, ROOT)}")
-    print(f"bdd: fixtures http://127.0.0.1:{cdp_port}  ({os.path.relpath(FIXTURE_DIR, ROOT)})")
-    print(f"bdd: cdp      127.0.0.1:{cdp_port} headless  ({cdp_profile})")
+    print(f"bdd: jobs     {jobs}")
+
+    # One CDP endpoint per worker. Each worker keeps its own port and profile
+    # for every scenario it runs, which is what lets scenario 2..N adopt the
+    # Chrome that scenario 1 launched instead of paying for a fresh launch:
+    # measured 1.9s per scenario with a fresh profile, 0.75s with a reused one.
+    # A private profile dir per *worker* is still required: a shared fixed one
+    # would collide with the interactive Chrome's lock and owner marker.
+    endpoints: list[tuple[int, str]] = []
+    for w in range(jobs):
+        endpoints.append((args.port or free_port(),
+                          tempfile.mkdtemp(prefix=f"laya-bdd-chrome-w{w}-")))
 
     # No `browser ensure` here on purpose. Each `laya-workflow run` launches the
-    # headless Chrome its spec asks for and tears it down when it exits, so the
-    # runner never opens a window on the developer's screen.
-    with fixture_server(FIXTURE_DIR) as base_url:
-        print("bdd: headless chrome per scenario\n")
+    # headless Chrome its spec asks for, so the runner never opens a window on
+    # the developer's screen.
+    #
+    # The finally matters more than it looks: the browser work is what leaks
+    # (a killed run leaves a Chrome behind), and leaking it makes every later
+    # run slower, so cleanup cannot depend on reaching the end of the script.
+    try:
+        with fixture_server(FIXTURE_DIR) as base_url:
+            print(f"bdd: fixtures {base_url}  ({os.path.relpath(FIXTURE_DIR, ROOT)})")
+            for w, (port, prof) in enumerate(endpoints):
+                print(f"bdd: cdp[{w}]   127.0.0.1:{port} headless  ({prof})")
+            print("bdd: headless chrome\n")
 
-        passed = failed = 0
-        failures: list[tuple[str, str]] = []
+            # Scenarios are independent: their own process, their own tab, their
+            # own state. So run them across a small pool of CDP endpoints, each of
+            # which reuses one Chrome for every scenario it handles. Measured on
+            # this machine: serial 7.4s for 18 scenarios, because ~0.4s of every
+            # scenario is Chrome/CDP, not page work (a validate run costs 3ms).
+            #
+            # The report is printed in plan order, not completion order, so the
+            # output is identical run to run and a diff between two runs means
+            # something changed.
+            results: list[tuple[str, bool, str, int, str, bool, float]] = []
+            lock = threading.Lock()
+            counter = itertools.count()
 
-        for feature, scenario, spec, config in plan:
-            meta = spec["_bdd"]
-            xfail = XFAIL_TAG in (scenario.tags or [])
-            spec_path = os.path.join(args.out, spec["name"] + ".json")
-            with open(spec_path, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(transpile.public_spec(spec), indent=2, ensure_ascii=False))
+            def one(index: int, worker: int) -> None:
+                feature, scenario, spec, config = plan[index]
+                port, profile = endpoints[worker]
+                xfail = XFAIL_TAG in (scenario.tags or [])
+                spec_path = os.path.join(args.out, spec["name"] + ".json")
+                with open(spec_path, "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(transpile.public_spec(spec), indent=2, ensure_ascii=False))
 
-            state = {
-                "base_url": base_url,
-                "cdp_port": cdp_port,
-                "cdp_profile": cdp_profile,
-                **(config.get("initial_state") or {}),
-            }
-            rc, out = run_scenario(binary, spec_path, state, args.timeout)
+                state = {
+                    "base_url": base_url,
+                    "cdp_port": port,
+                    "cdp_profile": profile,
+                    **(config.get("initial_state") or {}),
+                }
+                started = time.monotonic()
+                rc, out = run_scenario(binary, spec_path, state, args.timeout)
+                elapsed = time.monotonic() - started
+                name = f"{os.path.basename(feature.path)} :: {scenario.name}"
+                ok = (rc != 0) if xfail else (rc == 0)
+                label = ("xfail" if ok else "XFAIL-BROKEN") if xfail else ("PASS" if ok else "FAIL")
+                with lock:
+                    done = next(counter)
+                    results.append((label, ok, name, rc, out, xfail, elapsed))
+                    # Progress only: the verdict table is printed at the end, in
+                    # plan order. Interleaved lines from N threads are unreadable.
+                    print(f"  ... {label:14s} {name}  [{rc}]  ({done + 1}/{len(plan)})",
+                          flush=True)
 
-            if xfail:
-                ok = rc != 0
-                label = "xfail" if ok else "XFAIL-BROKEN"
+            if jobs == 1:
+                for i in range(len(plan)):
+                    one(i, 0)
             else:
-                ok = rc == 0
-                label = "PASS" if ok else "FAIL"
+                threads = [
+                    threading.Thread(target=one, args=(i, i % jobs), daemon=True)
+                    for i in range(len(plan))
+                ]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
 
-            name = f"{os.path.basename(feature.path)} :: {scenario.name}"
-            print(f"  {label:14s} {name}  [{rc}]")
-            if not ok or xfail:
-                # Show the assertion, not the whole run log: the useful part is
-                # the deterministic FAIL the plugin threw.
-                detail = extract_failure(out)
-                if detail:
-                    for line in detail.splitlines():
-                        print(f"                 {line}")
-            if ok and not xfail:
-                passed += 1
-            elif xfail and ok:
-                passed += 1
-            else:
-                failed += 1
-                failures.append((name, out))
+            results.sort(key=lambda r: r[2])
+            passed = sum(1 for r in results if r[1])
+            failures: list[tuple[str, str]] = []
+            print()
+            for label, ok, name, rc, out, xfail, elapsed in results:
+                print(f"  {label:14s} {name}  [{rc}]  {elapsed:.2f}s")
+                if not ok or xfail:
+                    # Show the assertion, not the whole run log: the useful part is
+                    # the deterministic FAIL the plugin threw.
+                    detail = extract_failure(out)
+                    if detail:
+                        for line in detail.splitlines():
+                            print(f"                 {line}")
+                if not ok:
+                    failures.append((name, out))
 
-        print(f"\nbdd: {passed} passed, {failed} failed")
+            failed = len(failures)
+            slowest = sorted(results, key=lambda r: -r[6])[:3]
+            print("\nbdd: slowest scenarios (Chrome/CDP, not page work):")
+            for _, _, name, _, _, _, elapsed in slowest:
+                print(f"  {elapsed:5.2f}s  {name}")
+            print(f"\nbdd: {passed} passed, {failed} failed")
+    finally:
+        reap_chrome([prof for _, prof in endpoints])
+        dispose_profiles([prof for _, prof in endpoints])
 
     if failures:
         print("\n--- first failure, full output ---")
@@ -205,7 +323,6 @@ def main(argv: list[str] | None = None) -> int:
                 os.remove(os.path.join(args.out, f))
         with contextlib.suppress(OSError):
             os.rmdir(args.out)
-        shutil.rmtree(cdp_profile, ignore_errors=True)
 
     print("\nall green" if failed == 0 else "\nRED")
     return 1 if failed else 0
