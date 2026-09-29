@@ -86,6 +86,11 @@ if [ "$NPLUG" -gt 0 ]; then
   # check.sh additionally *runs* goofish to assert routing and the fold, which
   # compile.py cannot: those are behaviour, not syntax.
   "$ROOT/scripts/rhai/check.sh" 2>&1 | grep -E '^(ok:|   ok|   corpus|all green|error)' || rc=1
+  # Compiling a plugin says nothing about whether anyone can find it. The
+  # `## Bundled plugins` table is the registry, and it had drifted: three of
+  # the four directories under plugins/ were missing from one registry or the
+  # other. Wired into CI as well, because verify.sh is not what CI runs.
+  python3 "$ROOT/scripts/plugin_registry_check.py" || rc=1
   if [ -z "$BADPLUG" ]; then
     printf '   %d/%d plugins compiled [%ss]\n' "$NPLUG" "$NPLUG" "$((SECONDS-T0))"
   else

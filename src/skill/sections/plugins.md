@@ -229,6 +229,9 @@ owner.
 |--------|---------------|
 | `websites/alphaxiv` | the real thing: alphaXiv discovery (search / URL / trending), locale URL rewriting, feed-API paging, per-paper retry, `meta.json` provenance |
 | `plugins/textdigest` | a tiny, fully offline plugin (`dsl/capabilities/script_plugin.json`) |
+| `plugins/browser_base` | generic single-page browser primitives (open / evaluate / wait_htmx / assert) with deterministic navigation-wait + retry — the shared base for browser verification plugins (`dsl/browser/browser_base_probe.json`) |
+| `plugins/bdd` | the BDD step vocabulary as a plugin: `open` / `navigate` / `wait_for` / `evaluate` / `assert` / `release`, and the nine `Then` assertions (`title_contains`, `visible`, `equals`, …). The meaning of a step lives in Rhai rather than in whatever compiled the document, so `bdd/features/*.feature` and a hand-written spec get the same checks; the transpiler is optional, not required (`dsl/browser/bdd_assert_probe.json`, `bdd_release_probe.json`, `bdd_retry_probe.json`, `bdd_wait_probe.json` — three of the four are required to *fail*) |
+| `plugins/jev-planner` | one Jev decision per step over a real Chrome page: the plugin decides (`step`, `find`, `observe`, `sweep`, `guard`, `dismiss`, `reset`), an `agent_step` node executes it with real CDP input (`dsl/browser/jev_deep_dive.json`, `dsl/browser/taobao_jev_tour.json`) |
 | `websites/hf-trending` | a HuggingFace model monitor: rank + likes + downloads + card metadata per model, saved as snapshots / report / cards (`dsl/capabilities/hf_trending.json`) |
 | `websites/hackernews` | a Hacker News reader over Chrome/CDP: front pages (top/best/new/ask/show/jobs), full-text search, and a discussion + comment tree (`dsl/browser/hackernews.json`) |
 | `websites/arxiv` | an arXiv reader over Chrome/CDP: search papers, or read one paper into a Markdown digest (`dsl/browser/arxiv.json`) |

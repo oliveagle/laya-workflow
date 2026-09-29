@@ -43,7 +43,11 @@ points back at the document it came from.
 `plugins/bdd/` is a standard plugin — `plugin.json` + `main.rhai`, no
 registration step, and no checkout needed: it is also compiled into the binary
 as a built-in, so a spec that says `"plugin": "bdd"` resolves from a shipped
-executable as well as from a working tree. It is the reason the assertion
+executable as well as from a working tree. It is listed in the repo's own
+`## Bundled plugins` registry in both `docs/plugins.md` and
+`src/skill/sections/plugins.md`, and `scripts/plugin_registry_check.py` fails
+the build if a plugin under `plugins/` is missing from either — see "The
+registry is a gate" below. It is the reason the assertion
 vocabulary is reusable: the *meaning* of a `Then` lives in Rhai, not in the
 Python transpiler, so a hand-written spec gets the same checks a compiled
 `.feature` does:
@@ -199,6 +203,37 @@ A bare `@expected_failure` is a hard error, checked **without Chrome** by
   PASS           page_smoke.feature :: A page that loads is assertable  [0]
   xfail          page_smoke.feature :: Asserting a missing element fails the run  [1]
 ```
+
+## The registry is a gate
+
+"BDD is a standard plugin" was a claim in this file and nowhere else. The repo
+keeps a registry for exactly that claim — the `## Bundled plugins` table in
+`docs/plugins.md` and in `src/skill/sections/plugins.md` — and measured, that
+table was missing three of the four directories under `plugins/`:
+
+| plugin | docs/plugins.md | skill table |
+|---|---|---|
+| `plugins/bdd` | absent | absent |
+| `plugins/jev-planner` | absent | absent |
+| `plugins/browser_base` | listed | absent |
+
+So a plugin could be written, compiled, gated, run and shipped while being
+invisible to the one document whose job is to say what exists. `bdd` was the
+one this file is about.
+
+`scripts/plugin_registry_check.py` compares the directories under `plugins/`
+against both tables, in both directions — a plugin that ships and is not
+listed, and a row pointing at a directory that no longer exists. It runs in
+`scripts/verify.sh` *and* as its own CI step, because CI does not invoke
+`verify.sh`, and a check wired only into `verify.sh` is a check that runs on
+one machine and nowhere else.
+
+Scope is `plugins/` only, deliberately. Those four are the tool plugins, where
+"a standard plugin" is the actual question, and they are all stable. The
+`websites/` tree grows faster, some directories are named differently from the
+table (`websites/developer.mozilla.org` is listed as `websites/mdn`,
+`websites/huggingface.co` as `websites/hf-trending`), and some are mid-flight —
+requiring all of them would make this a nuisance rather than a gate.
 
 ## A test that has to fail
 

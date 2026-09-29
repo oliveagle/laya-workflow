@@ -58,6 +58,12 @@ jobs:
       - name: BDD documents compile and validate
         run: ./scripts/bdd/check.sh ./target/debug/laya-workflow
 
+      # scripts/verify.sh is not what CI runs, so anything that must hold in
+      # CI needs its own step. The registry is the table that says which
+      # plugins ship; it had drifted from plugins/ in both directions.
+      - name: Bundled plugins are in the registry
+        run: python3 ./scripts/plugin_registry_check.py
+
   integration:
     name: tests + DSL smoke (mock services)
     runs-on: ubuntu-latest
