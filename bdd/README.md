@@ -262,11 +262,22 @@ sequence past the 15s capability timeout.
 ## What is gated, and where
 
 **`scripts/bdd/check.sh`** is the one definition of "the BDD documents still
-build": compile every `.feature`, then `laya-workflow validate` each generated
-spec. No Chrome, no network, ~0.3s. Two callers, so they cannot drift:
+build": check the step table, check the hand-written probe specs, compile every
+`.feature`, then `laya-workflow validate` each generated spec. No Chrome, no
+network, ~0.3s. Two callers, so they cannot drift:
 
 * `scripts/verify.sh` — the pre-push gate.
 * `.github/workflows/ci.yml` — a step in the offline job.
+
+The probe specs get their own checker, `scripts/bdd/probe_check.py`, because
+`laya-workflow validate` is the wrong tool for them. Measured, a probe whose
+`edge` names a node that does not exist **passes** `validate` and then fails at
+run time with `error_node_missing` and a zero exit code — which is precisely
+how `bdd_release_probe.json` was born broken, and why the runner reported it as
+a pass. The checker verifies that every edge target is a real node, every node
+is reachable from the start, every `${state.X}` is kept by somebody, and every
+capability is declared. All four were confirmed to go red on a deliberately
+broken copy.
 
 ### Cost, and why it is serial
 

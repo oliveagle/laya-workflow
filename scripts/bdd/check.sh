@@ -42,6 +42,13 @@ fi
 # run green while the document stops meaning what it says.
 python3 "$HERE/vocabulary_check.py"
 
+# The hand-written probe specs are gated separately, because `validate` is the
+# wrong tool for them: measured, a probe whose edge names a node that does not
+# exist *passes* `validate` and fails at run time with error_node_missing and a
+# zero exit code. `laya-workflow validate` is still run over them below - it is
+# cheap - but probe_check.py is what actually holds them together.
+python3 "$HERE/probe_check.py"
+
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
@@ -64,4 +71,24 @@ if [ ${#bad[@]} -gt 0 ]; then
   done
   exit 1
 fi
-echo "$n/$n scenarios compile and validate"
+
+# The probes are not generated, so they are not in "$out" - but they are the
+# specs the runner actually executes, and a broken one used to look green.
+probes=0
+probe_bad=()
+for spec in "$ROOT"/dsl/browser/bdd_*probe*.json; do
+  probes=$((probes + 1))
+  if ! "$BIN" validate --spec "$spec" >/dev/null 2>&1; then
+    probe_bad+=("$(basename "$spec")")
+  fi
+done
+if [ ${#probe_bad[@]} -gt 0 ]; then
+  echo "bdd check: ${#probe_bad[@]}/$probes hand-written probe specs failed validation:" >&2
+  for b in "${probe_bad[@]}"; do
+    echo "  $b" >&2
+    "$BIN" validate --spec "$ROOT/dsl/browser/$b" 2>&1 | head -5 | sed 's/^/    /' >&2 || true
+  done
+  exit 1
+fi
+
+echo "$n/$n scenarios compile and validate, $probes/$probes probe specs validate"
