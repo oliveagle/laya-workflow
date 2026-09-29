@@ -11,8 +11,7 @@ Feature: Assertion vocabulary
   the vocabulary cannot quietly rot into "everything is true".
 
   Background:
-    Given the browser is ready
-    Given I am on "<base_url>/index.html"
+    include: setup/fixture-page.feature
 
   Scenario: Every assertion holds for a value that is actually there
     Then the page title contains "BDD Fixture"

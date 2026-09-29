@@ -4,8 +4,7 @@
 # Scenario Outline -> example rows expansion end to end.
 Feature: Greeting outline
   Background:
-    Given the browser is ready
-    Given I am on "<base_url>/index.html"
+    include: setup/fixture-page.feature
 
   Scenario Outline: Greet <person> in <colour>
     When I type "<person>" into the element "#name"

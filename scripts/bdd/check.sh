@@ -30,6 +30,11 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
 fi
 
 shopt -s nullglob
+# Non-recursive on purpose: bdd/features/setup/ holds the step lists pulled in
+# with `include:`, and those are a flat list of Given/When/Then with no
+# `Feature:` header. Compiling one as a feature fails with "no Feature: header
+# found", which reads like a broken feature rather than a directory that is not
+# one. Changing this to **/*.feature needs the setup/ exclusion too.
 features=("$ROOT"/bdd/features/*.feature)
 if [ ${#features[@]} -eq 0 ]; then
   echo "bdd check: no bdd/features/*.feature - skipped"

@@ -7,8 +7,7 @@
 # feature; this file is what makes them one.
 Feature: Navigation and script steps
   Background:
-    Given the browser is ready
-    Given I am on "<base_url>/index.html"
+    include: setup/fixture-page.feature
 
   Scenario: Navigating moves the same tab to a different document
     When I navigate to "<base_url>/second.html"

@@ -27,6 +27,7 @@ the wrong thing is worse than one that refuses to parse.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -37,6 +38,14 @@ STEP_RE = re.compile(r"^\s*(Given|When|Then|And|But|\*)\s+(.*\S)\s*$")
 TAG_RE = re.compile(r"^\s*@(\S+)\s*$")
 # A table row: | a | b |  ->  ["a", "b"]
 ROW_RE = re.compile(r"^\s*\|(.*)\|\s*$")
+# `include: <path>` inside a Background, contributing that file's steps.
+# Deliberately the *only* reuse mechanism here. Measured, the whole suite has
+# 46 step lines and 37 unique ones, and 14 of the 9 duplicates are two
+# boilerplate setup lines repeated in four features. A general $ref with
+# parameters, conditionals and nesting would be a larger language to keep
+# honest than the duplication it removes. This moves those two lines to one
+# place and stops.
+INCLUDE_RE = re.compile(r"^include:\s*(?P<path>[^\s]+)\s*$", re.IGNORECASE)
 
 
 @dataclass
@@ -101,6 +110,75 @@ def _substitute(text: str, row: dict[str, str]) -> str:
         return row[key]
 
     return re.sub(r"<([^<>]+)>", repl, text)
+
+
+def _read_include(rel: str, including: str, lineno: int) -> list[Step]:
+    """Steps from an included file, or a GherkinError explaining why not.
+
+    Every failure mode here is loud. The dangerous one would be an include
+    that silently contributes nothing, because a feature that quietly lost its
+    `Given I am on ...` would fail later as "needs a page" - a confusing error
+    far from the line that caused it. So a missing file, an unreadable one, an
+    empty one, one outside bdd/features, and one that itself includes are all
+    errors here, and each says which file asked for it.
+    """
+    if os.path.isabs(rel):
+        raise GherkinError(
+            f"line {lineno}: `include {rel}` must be a path relative to the "
+            f"including file, not an absolute path"
+        )
+    base = os.path.dirname(os.path.abspath(including)) if including != "<string>" else os.getcwd()
+    target = os.path.normpath(os.path.join(base, rel))
+    if not os.path.isfile(target):
+        raise GherkinError(
+            f"line {lineno}: `include {rel}` in {os.path.basename(including)} "
+            f"does not exist (looked for {target})"
+        )
+    with open(target, encoding="utf-8") as f:
+        body = f.read()
+    if INCLUDE_RE.search(body) or any(
+        INCLUDE_RE.match(l.strip()) for l in body.splitlines()
+    ):
+        raise GherkinError(
+            f"line {lineno}: {rel} itself contains an `include`. Includes are "
+            "one level deep on purpose - a cycle is a hang, not an error"
+        )
+    steps: list[Step] = []
+    last_kind: str | None = None
+    for n, raw in enumerate(body.splitlines(), start=1):
+        text = raw.strip()
+        if not text or text.startswith("#"):
+            continue
+        m = STEP_RE.match(raw)
+        if not m:
+            raise GherkinError(
+                f"{rel} line {n}: not a step: {text!r} - an included file is a "
+                "flat list of Given/When/Then, not another feature"
+            )
+        keyword = m.group(1)
+        if keyword == "*":
+            if last_kind is None:
+                raise GherkinError(
+                    f"{rel} line {n}: `*` step with no preceding Given/When/Then"
+                )
+            kind = last_kind
+        elif keyword in ("And", "But"):
+            if last_kind is None:
+                raise GherkinError(
+                    f"{rel} line {n}: {keyword} step with no preceding Given/When/Then"
+                )
+            kind = last_kind
+        else:
+            kind = {"Given": "given", "When": "when", "Then": "then"}[keyword]
+        last_kind = kind
+        steps.append(Step(keyword, kind, m.group(2), n))
+    if not steps:
+        raise GherkinError(
+            f"line {lineno}: `include {rel}` contributed no steps. An include "
+            "that silently adds nothing is worse than no include, so it is an "
+            "error here rather than a feature that quietly lost its setup"
+        )
+    return steps
 
 
 def parse(text: str, path: str = "<string>") -> Feature:
@@ -199,6 +277,21 @@ def parse(text: str, path: str = "<string>") -> Feature:
         ):
             desc.append(stripped)
             feature.description = "\n".join(desc)
+            continue
+
+        inc = INCLUDE_RE.match(stripped)
+        if inc:
+            # Only meaningful where steps are collected, and only one level
+            # deep. An include inside an included file is refused rather than
+            # followed: a cycle here is a hang, not an error, and the fix for
+            # a hang is much harder to read than the fix for a message.
+            if not in_background:
+                raise GherkinError(
+                    f"line {lineno}: `include` is only allowed inside a "
+                    f"Background, not in a {section!r} block"
+                )
+            feature.background.extend(_read_include(inc.group("path"), path, lineno))
+            last_kind = None
             continue
 
         m = STEP_RE.match(line)

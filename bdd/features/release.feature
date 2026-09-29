@@ -19,8 +19,7 @@
 # because the point of that probe is to reach the states the vocabulary forbids.
 Feature: Releasing a page
   Background:
-    Given the browser is ready
-    Given I am on "<base_url>/index.html"
+    include: setup/fixture-page.feature
 
   Scenario: Releasing closes the tab the scenario was using
     Then the element "#heading" is visible

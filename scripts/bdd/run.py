@@ -214,7 +214,13 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     paths = args.features or sorted(
-        os.path.join(FEATURE_DIR, f) for f in os.listdir(FEATURE_DIR) if f.endswith(".feature")
+        os.path.join(FEATURE_DIR, f) for f in os.listdir(FEATURE_DIR)
+        # Non-recursive on purpose. bdd/features/setup/ holds step lists pulled
+        # in with `include:`, and one of those is a flat list of Given/When/Then
+        # with no `Feature:` header - so a walk here would try to compile it as
+        # a feature and fail with "no Feature: header found", which reads like
+        # a broken feature rather than a directory that is not one.
+        if f.endswith(".feature") and os.path.isfile(os.path.join(FEATURE_DIR, f))
     )
     if args.filter:
         paths = [p for p in paths if args.filter in p]
