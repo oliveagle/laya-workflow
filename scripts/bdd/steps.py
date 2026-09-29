@@ -81,8 +81,15 @@ _THEN = [
     (re.compile(r'^the element (?P<v>.+?) is absent$'), "assert", "absent"),
     (re.compile(r'^javascript (?P<v>.+?) is true$'), "assert", "is_true"),
     (re.compile(r'^javascript (?P<v>.+?) is false$'), "assert", "is_false"),
+    # Order is load-bearing. `equals text "x"` also matches the `equals` rule
+    # (its `.+` happily eats `text "x"`), so the more specific pattern has to be
+    # tried first. With the loose one first, the step compiled *silently* to
+    # `equals` against the literal string `text "x"` - a step that quietly
+    # becomes the wrong assertion, which is worse than a hard error.
+    # Both spellings: prose reads better in a .feature, but the assertion is
+    # *named* equals_text in the plugin, so that is what people actually type.
+    (re.compile(r'^javascript (?P<v>.+?) equals[ _]text (?P<v2>.+)$'), "assert", "equals_text"),
     (re.compile(r'^javascript (?P<v>.+?) equals (?P<v2>.+)$'), "assert", "equals"),
-    (re.compile(r'^javascript (?P<v>.+?) equals text (?P<v2>.+)$'), "assert", "equals_text"),
     (re.compile(r'^javascript (?P<v>.+?) contains (?P<v2>.+)$'), "assert", "contains"),
 ]
 
@@ -94,6 +101,23 @@ def _unquote(tok: str) -> str:
     if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
         return tok[1:-1]
     return tok
+
+
+def _typed_operand(raw: str):
+    """A Gherkin operand as the JSON value it was *written* as.
+
+    Quoted means string, full stop. Unquoted means "try to be a number or a
+    bool, otherwise it is a bare string". `json.loads` on its own is wrong
+    here: it would read the quotes in "3" as JSON syntax and hand back an int,
+    which is precisely the type information the step was trying to preserve.
+    """
+    tok = raw.strip()
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+        return _unquote(tok)
+    try:
+        return json.loads(tok)
+    except json.JSONDecodeError:
+        return tok
 
 
 def _match(kind: str, text: str, step: Step):
@@ -155,19 +179,30 @@ def _args(op: str, extra: str, m: re.Match) -> tuple[dict, str, bool]:
     if op == "assert":
         args = {"assertion": extra, "value": v}
         if extra in ("equals", "equals_text", "contains"):
-            raw = _unquote(g["v2"])
+            # `equals` needs the token *with* its quotes, because the quotes are
+            # what say "this is a string". The other two want the bare text.
+            raw = g["v2"].strip()
+            text = _unquote(raw)
             if extra == "equals":
                 # `equals` compares for strict identity, so the operand has to
-                # survive as the JSON type it was written as: 42 must not
-                # become "42", and true must not become "true".
-                try:
-                    args["expected"] = json.loads(raw)
-                except json.JSONDecodeError:
-                    args["expected"] = raw
+                # keep the type the document gave it. What the author wrote is
+                # the whole signal:
+                #
+                #   equals 3      -> int 3       (bare token, parses as a number)
+                #   equals "3"    -> string "3"  (quoted, so it *is* a string)
+                #   equals true   -> bool true
+                #   equals "true" -> string "true"
+                #   equals hello  -> string "hello" (bare, but not valid JSON)
+                #
+                # The obvious `json.loads(raw)` gets this backwards: it parses
+                # the quoted "3" into int 3, so a step written to prove the
+                # comparison is strict silently stopped testing it. An
+                # @expected_failure scenario caught exactly that.
+                args["expected"] = _typed_operand(raw)
                 desc = f"({v}) === {json.dumps(args['expected'], ensure_ascii=False)}"
             else:
-                args["expected"] = raw
-                desc = f"{'String'}({v}) {'==' if extra == 'equals_text' else 'contains'} {json.dumps(raw, ensure_ascii=False)}"
+                args["expected"] = text
+                desc = f"{'String'}({v}) {'==' if extra == 'equals_text' else 'contains'} {json.dumps(text, ensure_ascii=False)}"
         else:
             desc = f"{extra}({json.dumps(v, ensure_ascii=False)})"
         return args, f"Did the assertion hold: {desc}?", True

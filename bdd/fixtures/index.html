@@ -8,6 +8,11 @@
 <body>
 <h1 id="heading">BDD fixture page</h1>
 
+<!-- Present in the DOM but not rendered: `visible` has to notice the
+     difference, otherwise it is really just `absent` with extra steps. -->
+<p id="hidden-note" style="display:none">You should not see me.</p>
+<p id="invisible-note" style="visibility:hidden">Nor me.</p>
+
 <form id="form" onsubmit="return false;">
   <label for="name">Name</label>
   <input id="name" name="name" type="text" value="" autocomplete="off">
@@ -24,6 +29,14 @@
 
 <p id="greeting">Not greeted yet.</p>
 <p id="echo" data-filled=""></p>
+
+<!-- Three items, so a document can assert on a *count*: the int-vs-string
+     question is the sharpest test of whether `equals` is really strict. -->
+<ul id="facts">
+  <li>alpha</li>
+  <li>beta</li>
+  <li>gamma</li>
+</ul>
 
 <script>
   var clicks = 0;

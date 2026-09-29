@@ -78,7 +78,25 @@ is an explicit `wait_for` before it, which is visible in the document. Pass
 ## Step vocabulary
 
 Anything not in this table is a compile error. A BDD step that quietly becomes
-a no-op is a test that always passes, which is worse than a hard error.
+a no-op is a test that always passes, which is worse than a hard error — and
+so is a step that quietly becomes the *wrong* step. `scripts/bdd/vocabulary_check.py`
+pins every step in the table to the op it is supposed to run, and runs in the
+default gate with no Chrome:
+
+```
+bdd vocabulary: 19 steps map correctly, 8 operand types survive,
+                 8 steps still refuse to run without a page
+```
+
+It exists because that failure is invisible otherwise. `Then javascript "a"
+equals text "x"` used to be swallowed by the `equals` rule — whose `.+` was
+happy to eat `text "x"` — so it compiled into a strict comparison against the
+literal string `text "x"`. Green run, meaningless document.
+
+`equals` is strict about types, and the operand keeps the type the document
+gave it: `equals 3` is a number, `equals "3"` is a string. That distinction is
+load-bearing enough to have its own `@expected_failure` scenario, because
+`json.loads` on the quoted `"3"` used to quietly turn it back into a number.
 
 **Given** — `the browser is ready` · `I am on "<url>"`
 
