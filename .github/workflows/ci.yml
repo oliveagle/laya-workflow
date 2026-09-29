@@ -50,6 +50,14 @@ jobs:
       - name: Tests (offline harness)
         run: ./target/debug/laya-workflow-tests
 
+      # bdd/features/*.feature is hand-written; every spec under it is
+      # generated. Catches a step that stopped parsing, or a scenario that
+      # compiles to a spec the engine rejects. Deliberately Chrome-free - the
+      # CDP run in scripts/bdd/run.py is the local gate, because this runner
+      # installs no browser.
+      - name: BDD documents compile and validate
+        run: ./scripts/bdd/check.sh ./target/debug/laya-workflow
+
   integration:
     name: tests + DSL smoke (mock services)
     runs-on: ubuntu-latest

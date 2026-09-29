@@ -122,14 +122,17 @@ sequence past the 15s capability timeout.
 
 ## What is gated, and where
 
-* `scripts/verify.sh` (default, also CI) — compiles every `.feature` and checks
-  each generated spec passes `laya-workflow validate`. No Chrome, no network,
-  ~0.3s. This catches a step that stopped parsing or a scenario that compiles to
-  a spec the engine rejects.
-* `python3 scripts/bdd/run.py` — the CDP run. Needs a local Chrome, so it is an
-  explicit local gate rather than part of the push gate. It is not wired into
-  CI, which is offline and has no browser installed; adding one is a separate
-  decision, not something to smuggle in here.
+**`scripts/bdd/check.sh`** is the one definition of "the BDD documents still
+build": compile every `.feature`, then `laya-workflow validate` each generated
+spec. No Chrome, no network, ~0.3s. Two callers, so they cannot drift:
+
+* `scripts/verify.sh` — the pre-push gate.
+* `.github/workflows/ci.yml` — a step in the offline job.
+
+**`python3 scripts/bdd/run.py`** is the CDP run. It needs a local Chrome, so it
+is an explicit local gate and deliberately *not* in CI: the runners install no
+browser, and adding one is a separate decision rather than something to smuggle
+in here.
 
 ## Known limits
 
