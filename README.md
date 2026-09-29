@@ -61,8 +61,13 @@ scripts/verify.sh --full     # ... and the timeout section        +170s
 Running the whole binary by reflex turns a sub-second question into a
 three-minute one, which is long enough that you stop doing it before every
 change. `verify.sh` runs the fast twenty-one by default, always runs the plugin
-gate (`scripts/rhai/check.sh` — the Rust suite never executes Rhai), and prints
-what it skipped so the cost is visible rather than surprising.
+gate, and prints what it skipped so the cost is visible rather than surprising.
+
+The plugin gate compiles **all 14** `websites/*/plugin/main.rhai`, not a sample:
+the Rust suite executes none of them, so a gate that compiled one would report
+a broken taobao plugin as green. It also runs `scripts/rhai/check.sh`, which
+executes goofish to assert routing and the price-model fold — behaviour, not
+syntax, which is why it stays a separate step.
 
 There is no baseline of known-failing tests, on purpose: a baseline is a fixture
 that rots. This repo shipped a test asserting a spec named `status_snapshot`;
@@ -72,6 +77,13 @@ for eight consecutive pushes. Red means red.
 Editing a plugin (`websites/*/plugin/main.rhai`)? Start at
 [`scripts/rhai/README.md`](./scripts/rhai/README.md) — the parse/route/probe
 loop there costs 0.33s.
+
+That loop compiles plugins by *running* them through the engine, which is why
+`compile.py` names a host that cannot resolve in `policy.allow_hosts`: an empty
+list means "allow everything" (`check_host`, `src/capability/mod.rs`), so
+huggingface's `run()` really did make 11 live HTTP calls — 4.9s of a 5.6s gate,
+and a red gate whenever the network was down. Syntax errors are raised by
+`build_engine()` before any op runs, so denying the network costs no detection.
 
 ## DSL
 

@@ -38,6 +38,8 @@ done
 
 stage() { printf '\n== %s\n' "$1"; }
 rc=0
+TMPERR="$(mktemp)"
+trap 'rm -f "$TMPERR"' EXIT
 
 # ── 1. does it build? ────────────────────────────────────────────────────────
 # Incremental when src/** is unchanged (~1s), a full rebuild when it is. Either
@@ -58,14 +60,42 @@ fi
 [ -x "$BIN" ] || { echo "no $BIN - run without --no-build first" >&2; exit 1; }
 
 # ── 2. do the plugins still compile and still route? ─────────────────────────
-# 0.32s, and it is the only stage that can catch a plugin edit: the Rust suite
-# never executes Rhai.
-PLUGINS="$(find "$ROOT/websites" -name '*.rhai' 2>/dev/null | head -1)"
-if [ -n "$PLUGINS" ]; then
+# It is the only stage that can catch a plugin edit: the Rust suite never
+# executes Rhai.
+#
+# Every plugin, not the first one found. There are 14 of them and the Rust
+# suite executes none of them, so a gate that compiles goofish alone would call
+# the repo green with a broken taobao plugin sitting in it - which is precisely
+# the shape of failure this file exists to prevent. With compile.py's allow_hosts
+# fix the whole set costs ~0.3s, so there is no reason to sample.
+T0=$SECONDS
+NPLUG=0
+BADPLUG=""
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  NPLUG=$((NPLUG+1))
+  if ! python3 "$ROOT/scripts/rhai/compile.py" "$p" >/dev/null 2>"$TMPERR"; then
+    BADPLUG="$BADPLUG ${p#"$ROOT"/}"
+    echo "   FAILED ${p#"$ROOT"/}"
+    sed 's/^/     /' "$TMPERR" | head -3
+  fi
+done < <(find "$ROOT/websites" -name '*.rhai' 2>/dev/null | sort)
+
+if [ "$NPLUG" -gt 0 ]; then
   stage "plugin gate"
-  T0=$SECONDS
+  # check.sh additionally *runs* goofish to assert routing and the fold, which
+  # compile.py cannot: those are behaviour, not syntax.
   "$ROOT/scripts/rhai/check.sh" 2>&1 | grep -E '^(ok:|   ok|   corpus|all green|error)' || rc=1
-  printf '   [%ss]\n' "$((SECONDS-T0))"
+  if [ -z "$BADPLUG" ]; then
+    printf '   %d/%d plugins compiled [%ss]\n' "$NPLUG" "$NPLUG" "$((SECONDS-T0))"
+  else
+    printf '   %d/%d plugins compiled; FAILED:%s [%ss]\n' \
+      "$((NPLUG - $(printf '%s' "$BADPLUG" | wc -w | tr -d ' ')))" "$NPLUG" "$BADPLUG" "$((SECONDS-T0))"
+    rc=1
+  fi
+else
+  stage "plugin gate"
+  echo "   no plugins under websites/ - skipped"
 fi
 
 # ── 3. the tests ─────────────────────────────────────────────────────────────

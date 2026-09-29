@@ -25,7 +25,16 @@ import tempfile
 
 SPEC = {
     "name": "compile", "dsl_version": 2, "start": "p", "max_iterations": 1,
-    "policy": {"allow_exec": False, "allow_hosts": [],
+    # allow_hosts is non-empty and matches nothing on purpose. The engine treats
+    # an empty list as "allow every host" (capability/mod.rs: check_host), and
+    # this spec actually *runs* the plugin, so a plugin whose run() opens with
+    # host.http_get() really did make the call: compiling all 14 plugins cost
+    # 5.6s and 11 live requests to huggingface.co, 4.9s of it one plugin, and a
+    # gate that fails when the network is down is not a gate. Naming a host
+    # that cannot resolve denies every real target before the first byte goes
+    # out. The compile error is raised by build_engine() long before any op
+    # runs, so syntax detection is untouched - only the network is gone.
+    "policy": {"allow_exec": False, "allow_hosts": ["compile.invalid"],
                "allow_paths": ["${env.HOME}/.laya-workflow", "${env.HOME}/tmp"],
                "max_timeout_ms": 120000, "max_output": 8388608, "retries": 0},
     "capabilities": {"p": {"kind": "plugin", "dir": "", "timeout_ms": 60000,
