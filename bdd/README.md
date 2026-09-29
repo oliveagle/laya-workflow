@@ -331,9 +331,10 @@ sequence past the 15s capability timeout.
 ## What is gated, and where
 
 **`scripts/bdd/check.sh`** is the one definition of "the BDD documents still
-build": check the step table, check the hand-written probe specs, compile every
-`.feature`, then `laya-workflow validate` each generated spec. No Chrome, no
-network, ~0.3s. Two callers, so they cannot drift:
+build": check the step table, check the hand-written probe specs, run the
+plugin's argument-error probes, compile every `.feature`, then
+`laya-workflow validate` each generated spec. No Chrome, no network, ~0.4s. Two
+callers, so they cannot drift:
 
 * `scripts/verify.sh` — the pre-push gate.
 * `.github/workflows/ci.yml` — a step in the offline job.
@@ -347,6 +348,85 @@ a pass. The checker verifies that every edge target is a real node, every node
 is reachable from the start, every `${state.X}` is kept by somebody, and every
 capability is declared. All four were confirmed to go red on a deliberately
 broken copy.
+
+### The gate that was passing nothing
+
+`scripts/verify.sh` handed `scripts/bdd/check.sh` the **test** binary
+(`laya-workflow-tests`) where the **CLI** belongs. Measured, that binary accepts
+
+```
+$ target/release/laya-workflow-tests validate --spec /tmp/definitely-not-a-spec.json
+0 passed, 0 failed
+$ echo $?
+0
+```
+
+so every `validate` in `check.sh` — all 22 transpiled scenarios and all 4 probe
+specs — returned 0 without reading a spec. The line `22/22 scenarios compile and
+validate` that `verify.sh` printed was true only in the sense that 22 things had
+been counted. `verify.sh` now passes `target/release/laya-workflow`, which errors
+on the same input, and `check.sh` refuses up front to run against a binary that
+accepts a nonexistent spec.
+
+CI was never affected: its step already passed `./target/debug/laya-workflow`.
+
+It surfaced only because the argument probes assert on an *expected failure*.
+Under `verify.sh` all 15 rows "succeeded"; on their own they all refuse
+correctly. A gate that only ever checks things pass cannot notice when the
+checker itself has been swapped for something that always passes.
+
+## The plugin's own error messages
+
+The four probe specs under `dsl/browser/` all need a real Chrome tab, so between
+them they cover the plugin's *browser* half. They cover none of its argument
+half — and that half is what a hand-written spec author hits first, because every
+one of those checks fires before the plugin touches CDP.
+
+Measured, of the 17 `throw` sites in `plugins/bdd/main.rhai`, 5 were reachable
+from a probe and **12 had never been executed by anything**. The messages
+included `bdd.navigate: with.url is required`, the shared
+`an earlier step must open a page first` guard, and the three `needs
+with.expected` variants.
+
+`bdd/args_probes.json` pins them, and `scripts/bdd/args_probe_check.py` runs it:
+
+```
+$ python3 scripts/bdd/args_probe_check.py
+bdd args probes: 15/15 argument errors refuse with the message they claim,
+and all 17 throw sites are accounted for (15 pinned here, 5 declared elsewhere)
+```
+
+It is a **table**, not 15 near-identical spec files, because the useful content
+of those specs is one `(with, message)` pair each and the rest is boilerplate.
+
+**The part that makes it a gate** is the second clause. Each row carries a
+`source` — a substring of the throw statement in `main.rhai` — and the checker
+requires every `throw` in the plugin to be claimed by a row or by an `elsewhere`
+entry that gives a reason. So this fails:
+
+| what someone does | what the checker says |
+|---|---|
+| adds an 18th error message | `the plugin throws '...' and nothing claims it` |
+| deletes a row | the throw it pinned is now unclaimed |
+| rewords a message | that row's `source` now matches 0 throw sites |
+| a row claims a message the plugin does not emit | `the run failed without saying ...` |
+
+All four were confirmed red on purpose, and the last two also confirm the rows
+are falsifiable rather than merely consistent.
+
+`elsewhere` is not an escape hatch — each entry has to say where the throw *is*
+covered, or why it cannot be:
+
+| throw | covered by |
+|---|---|
+| `bdd.wait_for: timed out after` | `dsl/browser/bdd_wait_probe.json` |
+| `bdd.release: no open target` | `dsl/browser/bdd_release_probe.json` |
+| `throw last` (the assert mismatch) | `bdd_assert_probe.json` + an `@expected_failure` scenario |
+| `bdd: target never reached` | **not covered** — needs a tab that never finishes loading |
+| `bdd.open: " + e` (the load-failure catch) | **not covered** — same reason |
+
+Those last two are the honest gap: the fixture server serves whatever is asked
+for, so there is no way to make a real tab hang.
 
 ### Cost, and why it is serial
 

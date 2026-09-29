@@ -1,0 +1,170 @@
+{
+  "_comment": [
+    "The plugin's argument-validation errors, as a table instead of 15 near-identical",
+    "spec files. Each row is a (with, message) pair the plugin must actually produce.",
+    "scripts/bdd/args_probe_check.py materialises a spec from each row, runs it, and",
+    "requires a non-zero exit whose output contains `must_contain`.",
+    "",
+    "Measured, every row here is rejected before the plugin touches CDP, so none of",
+    "them needs a browser, a page, or the fixture server: 15 runs in ~25ms total,",
+    "against 170-300ms per probe for the four specs that do need Chrome. That is why",
+    "this lives in check.sh (which CI runs) and not in run.py (which it does not).",
+    "",
+    "`source` is a substring of the throw statement in plugins/bdd/main.rhai. It is",
+    "what makes the table a gate and not a list: the checker requires every `throw` in",
+    "the plugin to be claimed by a row here or by an `elsewhere` entry with a reason,",
+    "so adding a thirteenth error message without pinning it fails the build. Delete a",
+    "row and it fails too."
+  ],
+  "spec_defaults": {
+    "dsl_version": 2,
+    "start": "act",
+    "max_iterations": 3,
+    "convergence_window": 2,
+    "convergence_eps": 0.001,
+    "policy": {
+      "allow_exec": false,
+      "allow_hosts": [],
+      "max_timeout_ms": 30000,
+      "max_output": 65536,
+      "retries": 0
+    }
+  },
+  "capabilities": {
+    "bdd": {"kind": "plugin", "plugin": "bdd", "timeout_ms": 5000}
+  },
+  "rows": [
+    {
+      "name": "unknown_op",
+      "source": "bdd: unknown op",
+      "with": {"op": "nope"},
+      "must_contain": "bdd: unknown op 'nope'",
+      "blurb": "an op nobody handles is listed back with the ops that are"
+    },
+    {
+      "name": "navigate_without_page",
+      "source": "with.target_id is required - an earlier step must open a page first",
+      "with": {"op": "navigate", "url": "http://127.0.0.1:1/"},
+      "must_contain": "bdd.navigate: with.target_id is required - an earlier step must open a page first",
+      "blurb": "a page-scoped op without a page says which op is missing it"
+    },
+    {
+      "name": "wait_for_without_page",
+      "source": "with.target_id is required - an earlier step must open a page first",
+      "with": {"op": "wait_for", "selector": "#x"},
+      "must_contain": "bdd.wait_for: with.target_id is required",
+      "blurb": "the same guard names wait_for, not navigate"
+    },
+    {
+      "name": "evaluate_without_page",
+      "source": "with.target_id is required - an earlier step must open a page first",
+      "with": {"op": "evaluate", "expression": "1+1"},
+      "must_contain": "bdd.evaluate: with.target_id is required",
+      "blurb": "the same guard names evaluate"
+    },
+    {
+      "name": "assert_without_page",
+      "source": "with.target_id is required - an earlier step must open a page first",
+      "with": {"op": "assert", "assertion": "visible", "value": "#x"},
+      "must_contain": "bdd.assert: with.target_id is required",
+      "blurb": "the same guard names assert, and runs before the assertion-name check"
+    },
+    {
+      "name": "open_without_url",
+      "source": "bdd.open: with.url is required",
+      "with": {"op": "open"},
+      "must_contain": "bdd.open: with.url is required",
+      "blurb": "open says which of its two arguments is missing"
+    },
+    {
+      "name": "navigate_without_url",
+      "source": "bdd.navigate: with.url is required",
+      "with": {"op": "navigate", "target_id": "no-such-target", "url": ""},
+      "must_contain": "bdd.navigate: with.url is required",
+      "blurb": "navigate checks the page before the url, so an empty url is only reported once there is a target"
+    },
+    {
+      "name": "wait_for_without_selector",
+      "source": "bdd.wait_for: with.selector is required",
+      "with": {"op": "wait_for", "target_id": "no-such-target"},
+      "must_contain": "bdd.wait_for: with.selector is required",
+      "blurb": "wait_for with no selector would poll for nothing and then blame the page"
+    },
+    {
+      "name": "evaluate_without_expression",
+      "source": "bdd.evaluate: with.expression is required",
+      "with": {"op": "evaluate", "target_id": "no-such-target"},
+      "must_contain": "bdd.evaluate: with.expression is required",
+      "blurb": "evaluate refuses rather than sending an empty expression to CDP"
+    },
+    {
+      "name": "release_without_target",
+      "source": "bdd.release: with.target_id is required",
+      "with": {"op": "release"},
+      "must_contain": "bdd.release: with.target_id is required",
+      "blurb": "release does NOT use the shared guard, so it has no 'open a page first' advice to give - that difference is deliberate and this pins it"
+    },
+    {
+      "name": "assert_without_assertion",
+      "source": "bdd.assert: with.assertion is required",
+      "with": {"op": "assert", "target_id": "no-such-target", "value": "#x"},
+      "must_contain": "bdd.assert: with.assertion is required",
+      "blurb": "assert without an assertion name cannot be checked"
+    },
+    {
+      "name": "assert_without_value",
+      "source": "bdd.assert: with.value is required for assertion",
+      "with": {"op": "assert", "target_id": "no-such-target", "assertion": "visible"},
+      "must_contain": "bdd.assert: with.value is required for assertion 'visible'",
+      "blurb": "every one of the nine assertions takes a value, and the message names which one wanted it"
+    },
+    {
+      "name": "equals_without_expected",
+      "source": "assertion 'equals' needs with.expected",
+      "with": {"op": "assert", "target_id": "no-such-target", "assertion": "equals", "value": "1+1"},
+      "must_contain": "bdd.assert: assertion 'equals' needs with.expected (a JSON literal)",
+      "blurb": "equals against nothing is not a check; it says the operand is a JSON literal"
+    },
+    {
+      "name": "contains_without_expected",
+      "source": "needs with.expected (a string)",
+      "with": {"op": "assert", "target_id": "no-such-target", "assertion": "contains", "value": "'abc'"},
+      "must_contain": "bdd.assert: assertion 'contains' needs with.expected (a string)",
+      "blurb": "contains shares its guard with equals_text and says the type it wanted"
+    },
+    {
+      "name": "unknown_assertion",
+      "source": "bdd.assert: unknown assertion",
+      "with": {"op": "assert", "target_id": "no-such-target", "assertion": "wat", "value": "x"},
+      "must_contain": "bdd.assert: unknown assertion 'wat'",
+      "blurb": "a misspelled assertion is listed back with the nine that exist"
+    }
+  ],
+  "elsewhere": [
+    {
+      "source": "bdd: target never reached",
+      "covered_by": "not covered",
+      "why": "needs a real Chrome tab that never finishes loading; there is no way to produce one from the fixture server, which serves what is asked for"
+    },
+    {
+      "source": "bdd.open: \" + e",
+      "covered_by": "not covered",
+      "why": "the load-failure catch in _op_open, same reason as the line above; it also wraps whatever the load wait threw, so it can only be reached with a browser"
+    },
+    {
+      "source": "bdd.wait_for: timed out after",
+      "covered_by": "dsl/browser/bdd_wait_probe.json",
+      "why": "a budget that expires needs a page that stays still; the wait probe asserts the budget, the selector and a poll count consistent with the budget"
+    },
+    {
+      "source": "bdd.release: no open target",
+      "covered_by": "dsl/browser/bdd_release_probe.json",
+      "why": "needs a real tab that was really closed, which is the whole point of that probe"
+    },
+    {
+      "source": "throw last",
+      "covered_by": "dsl/browser/bdd_assert_probe.json and the xfail scenario in bdd/features/page_smoke.feature",
+      "why": "the assertion-mismatch path, which is the plugin's ordinary success-with-a-verdict"
+    }
+  ]
+}

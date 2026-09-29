@@ -29,6 +29,25 @@ if [ -z "$BIN" ] || [ ! -x "$BIN" ]; then
   exit 1
 fi
 
+# ── is $BIN actually the CLI? ──
+# Not a nicety, and not paranoia: `laya-workflow-tests` accepts
+# `validate --spec` for a file that does not exist, prints "0 passed, 0 failed"
+# and exits 0. Hand it the test binary and every validation below passes without
+# reading a single spec - which is exactly what scripts/verify.sh did, for as
+# long as the bdd checks have existed. It surfaced only because
+# args_probe_check.py asserts on an expected *failure*: all fifteen of its rows
+# "succeeded" under verify.sh while refusing correctly on their own.
+#
+# So check the binary before trusting it, loudly, once.
+_absent="$(mktemp -d)/absent.json"
+if "$BIN" validate --spec "$_absent" >/dev/null 2>&1; then
+  echo "bdd check: $BIN is not the laya-workflow CLI" >&2
+  echo "  it accepted a spec that does not exist, so every validation in this" >&2
+  echo "  script would pass without reading anything. Pass target/release/laya-workflow," >&2
+  echo "  not laya-workflow-tests." >&2
+  exit 1
+fi
+
 shopt -s nullglob
 # Non-recursive on purpose: bdd/features/setup/ holds the step lists pulled in
 # with `include:`, and those are a flat list of Given/When/Then with no
@@ -53,6 +72,12 @@ python3 "$HERE/vocabulary_check.py"
 # zero exit code. `laya-workflow validate` is still run over them below - it is
 # cheap - but probe_check.py is what actually holds them together.
 python3 "$HERE/probe_check.py"
+
+# The plugin's argument-validation errors, which the four browser probes above
+# cannot reach. Needs no Chrome either, so it belongs in this file and not in
+# run.py. 15 binary invocations, ~25ms, and it fails if the plugin grows an
+# error message that nothing pins.
+python3 "$HERE/args_probe_check.py" "$BIN"
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT

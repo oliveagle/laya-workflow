@@ -22,6 +22,12 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/target/release/laya-workflow-tests"
+# The CLI, not the test binary. `laya-workflow-tests` was being handed to
+# scripts/bdd/check.sh for a long time, and it accepts `validate --spec` for a
+# file that does not exist - printing "0 passed, 0 failed" and exiting 0 - so
+# every validation in that script passed without reading a spec. Two names, one
+# job each, so the next reader cannot mix them up again.
+CLI="$ROOT/target/release/laya-workflow"
 SLOW="capability-timeouts"
 BUILD=1
 FULL=0
@@ -58,6 +64,7 @@ if [ "$BUILD" = 1 ]; then
 fi
 
 [ -x "$BIN" ] || { echo "no $BIN - run without --no-build first" >&2; exit 1; }
+[ -x "$CLI" ] || { echo "no $CLI - run without --no-build first" >&2; exit 1; }
 
 # ── 2. do the plugins still compile and still route? ─────────────────────────
 # It is the only stage that can catch a plugin edit: the Rust suite never
@@ -113,7 +120,7 @@ fi
 # (scripts/bdd/run.py).
 stage "bdd transpile"
 if [ -d "$ROOT/bdd/features" ] && compgen -G "$ROOT/bdd/features/*.feature" >/dev/null; then
-  if ! "$ROOT/scripts/bdd/check.sh" "$BIN" 2>"$TMPERR" | sed 's/^/   /'; then
+  if ! "$ROOT/scripts/bdd/check.sh" "$CLI" 2>"$TMPERR" | sed 's/^/   /'; then
     sed 's/^/   /' "$TMPERR" >&2
     rc=1
   fi
