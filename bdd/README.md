@@ -80,7 +80,17 @@ the same fixture as the scenarios. If the vocabulary ever stops being usable
 outside the compiler, that row goes red.
 
 Assertions: `title_contains`, `url_contains`, `visible`, `absent`, `is_true`,
-`is_false`, `equals`, `contains`, `equals_text`. A failure names the assertion
+`is_false`, `equals`, `contains`, `equals_text`.
+
+Those two lists — the ops and the assertions — are not only documentation, they
+are the *error messages*. `bdd: unknown op 'x' (open | navigate | …)` and
+`bdd.assert: unknown assertion 'x' (…)` are how someone finds out what exists
+after they have already got something wrong, so they drift silently when the
+vocabulary grows. `vocabulary_check.py` reads the dispatch out of
+`plugins/bdd/main.rhai` and compares it to both messages, in both directions:
+an op the plugin handles but the message omits, and an op the message
+advertises but the plugin does not handle. All three drift shapes were
+confirmed to go red. Chrome-free, so CI sees it. A failure names the assertion
 *and* the value it saw, e.g.
 
 ```

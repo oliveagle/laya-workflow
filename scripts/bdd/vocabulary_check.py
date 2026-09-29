@@ -16,6 +16,7 @@ CI. Each row is (kind, text, expected op, expected assertion-or-None).
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -158,6 +159,69 @@ def check_xfail_reasons(feature_dir: str) -> list[str]:
     return problems
 
 
+# The plugin's two "here is what you can say" error messages enumerate the whole
+# vocabulary, and they are the only place a user learns it. Nothing kept them in
+# step with the code: adding a seventh op or a tenth assertion leaves both
+# messages quietly wrong, and the message is what someone reads when they have
+# already got something wrong. Checked here because it needs only the plugin
+# source - no Chrome, so CI sees it.
+PLUGIN = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..",
+    "plugins", "bdd", "main.rhai")
+
+OP_DISPATCH_RE = re.compile(r'if op == "([a-z_]+)" \{ return _op_')
+ASSERTION_RE = re.compile(r'if name == "([a-z_]+)"')
+# The list inside `( ... )` at the end of each message.
+ENUM_RE = re.compile(r"\(([a-z_ |]+)\)")
+
+
+def check_plugin_messages() -> list[str]:
+    problems: list[str] = []
+    try:
+        with open(PLUGIN, encoding="utf-8") as f:
+            src = f.read()
+    except OSError as e:
+        return [f"cannot read {PLUGIN}: {e}"]
+
+    ops = set(OP_DISPATCH_RE.findall(src))
+    assertions = set(ASSERTION_RE.findall(src))
+    if not ops or not assertions:
+        return ["plugin dispatch not found - the patterns in "
+                "vocabulary_check.py no longer match plugins/bdd/main.rhai"]
+
+    for label, want, needle in (
+        ("unknown op", ops, "bdd: unknown op"),
+        ("unknown assertion", assertions, "bdd.assert: unknown assertion"),
+    ):
+        # The message is a `throw` spread over two source lines, because the
+        # list is long enough that rustfmt-style wrapping kicked in. Search the
+        # whole statement, not the line the needle is on, or a reformat silently
+        # turns this check into a false alarm.
+        at = src.find(needle)
+        if at < 0 or "throw" not in src[max(0, at - 40):at]:
+            problems.append(f"the {label} message is gone from {PLUGIN}")
+            continue
+        end = src.find(";", at)
+        statement = src[at:end if end > 0 else at + 400]
+        m = ENUM_RE.search(statement)
+        if not m:
+            problems.append(
+                f"the {label} message no longer lists the vocabulary, so it is "
+                f"no longer a way to learn it: {statement.strip()[:70]}")
+            continue
+        listed = {p.strip() for p in m.group(1).split("|") if p.strip()}
+        for missing in sorted(want - listed):
+            problems.append(
+                f"the {label} message does not mention {missing!r}, which the "
+                "plugin handles - someone hitting that error gets told it does "
+                "not exist")
+        for extra in sorted(listed - want):
+            problems.append(
+                f"the {label} message advertises {extra!r}, which the plugin "
+                "does not handle - someone will try it and get no such op")
+    return problems
+
+
 def _step(kind: str, text: str) -> gherkin.Step:
     return gherkin.Step(keyword=kind.capitalize() + " ", kind=kind, text=text, line=1)
 
@@ -238,6 +302,7 @@ def main() -> int:
             f"post-release {kind} {text!r}: compiled with no page, want a StepError"
         )
 
+    failures += check_plugin_messages()
     failures += check_xfail_reasons(
         os.path.join(os.path.dirname(os.path.abspath(__file__)),
                      "..", "..", "bdd", "features"))
@@ -262,7 +327,8 @@ def main() -> int:
           f"{len(OPERAND_CASES)} operand types survive, "
           f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page, "
           f"{len(POST_RELEASE_CASES)} stay refused after a release, "
-          f"every @{XFAIL} says what it disproves")
+          f"every @{XFAIL} says what it disproves, "
+          f"the plugin's own vocabulary messages are in sync")
     return 0
 
 
