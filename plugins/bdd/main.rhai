@@ -8,9 +8,11 @@
 //
 // Ops (pick one via the capability `op` or `with.op`):
 //   open       open `with.url` and wait until it is *actually* loaded, then
-//              return {target_id, url, title, ready}. USE ONLY INSIDE ONE CALL:
-//              the engine closes every tab a plugin opened as soon as that
-//              plugin call returns (src/capability/plugin.rs, "the engine
+//              return {target_id, url, title, ready}. `with.prefix` overrides
+//              what the load wait matches against, for a page that lands
+//              somewhere other than the URL asked for. USE ONLY INSIDE ONE
+//              CALL: the engine closes every tab a plugin opened as soon as
+//              that plugin call returns (src/capability/plugin.rs, "the engine
 //              closes what the plugin opened"), so a multi-step scenario must
 //              let the chrome_cdp capability own the page. `dsl/browser/
 //              browser_base_probe.json` shows the supported shape.
@@ -19,8 +21,20 @@
 //              15000) elapses. Reports what it waited for on failure.
 //   evaluate   run `with.expression` on `with.target_id`.
 //   assert     the Then family. `with.assertion` names the check and
-//              `with.value` the operand; a mismatch throws.
-//   release    close an owned target. Best effort, never masks a real error.
+//              `with.value` the operand; a mismatch throws. `with.attempts`
+//              (default 1) retries a failing check 300ms apart, for a page that
+//              is genuinely still settling. Leave it at 1 otherwise: a
+//              deterministic failure should say so immediately, and the visible
+//              way to absorb a settling page is a `wait_for` before the assert.
+//   release    close `with.target_id`, reporting how many tabs the engine
+//              really closed. It REFUSES when that number is zero instead of
+//              reporting a success it cannot check - by far the usual cause is
+//              a scenario releasing a page it already released, and that
+//              mistake should read as a mistake. This is the one op that
+//              deliberately does not go through _require_target, so its
+//              message carries no "open a page first" advice: there is no page
+//              that could have been opened. dsl/browser/bdd_release_probe.json
+//              requires the refusal.
 //
 // The assertion names, and the `with` each one takes:
 //   title_contains  value: substring   the page title contains it
@@ -157,8 +171,13 @@ fn _op_open(host, ctx) {
         _safe_release(host, target);
         throw "bdd.open: " + e;
     }
-    // A page that reports itself hidden will silently drop synthetic input, so
-    // say so here rather than letting a later click fail with no explanation.
+    // What the page reported, and nothing more. There is no visibility field
+    // here, and the comment that used to promise one was describing a feature
+    // that was never built: Chrome does drop synthetic input when
+    // document.visibilityState is "hidden", but the defence against that is the
+    // launcher (scripts/bdd/chrome-headless.sh, human: false), not a field on
+    // this return - a background tab reports hidden for reasons that have
+    // nothing to do with whether input will be delivered.
     #{
         target_id: target, url: info["url"], title: info["title"], ready: info["ready"]
     }

@@ -222,6 +222,92 @@ def check_plugin_messages() -> list[str]:
     return problems
 
 
+# The plugin's header is the plugin's public contract - it is what someone reads
+# before writing a spec against these ops - and nothing held it to the code. The
+# two error-message lists above are checked; the op table next to them is not.
+# It already drifted once: the header said of `release` "Best effort, never masks
+# a real error", which is the behaviour round 7 deleted. `_op_release` throws when
+# the engine closed nothing, and dsl/browser/bdd_release_probe.json exists
+# specifically to require that refusal - so the plugin documented the exact
+# behaviour its own probe forbids.
+#
+# Prose cannot be checked, but the shape of the table can: which ops it lists, and
+# the defaults it quotes. Both are things that go stale silently.
+HEADER_OPS_RE = re.compile(r"^//   ([a-z_]+)\s{2,}", re.M)
+HEADER_ASSERT_RE = re.compile(r"^//   ([a-z_]+)\s{2,}value:", re.M)
+NUM_DEFAULT_RE = re.compile(r"_num\(ctx, \"([a-z_]+)\", (\d+)\)")
+
+
+def _header_block(src: str, start: str, end: str) -> str:
+    a = src.find(start)
+    b = src.find(end, a + 1) if a >= 0 else -1
+    if a < 0 or b < 0:
+        return ""
+    return src[a:b]
+
+
+def check_plugin_header() -> list[str]:
+    problems: list[str] = []
+    try:
+        with open(PLUGIN, encoding="utf-8") as f:
+            src = f.read()
+    except OSError as e:
+        return [f"cannot read {PLUGIN}: {e}"]
+
+    ops_block = _header_block(src, "// Ops (pick one via", "// The assertion names")
+    assert_block = _header_block(src, "// The assertion names", "// Every assert")
+    if not ops_block or not assert_block:
+        return ["the plugin's header tables are gone from "
+                f"{PLUGIN} - the patterns in vocabulary_check.py no longer match"]
+
+    ops = set(OP_DISPATCH_RE.findall(src))
+    listed_ops = set(HEADER_OPS_RE.findall(ops_block))
+    for missing in sorted(ops - listed_ops):
+        problems.append(
+            f"the plugin handles op {missing!r} but its header does not document "
+            "it - the header is what someone reads before writing a spec")
+    for extra in sorted(listed_ops - ops):
+        problems.append(
+            f"the header documents op {extra!r}, which the dispatcher does not "
+            "handle - someone will try it and get 'unknown op'")
+
+    assertions = set(ASSERTION_RE.findall(src))
+    listed_assertions = set(HEADER_ASSERT_RE.findall(assert_block))
+    for missing in sorted(assertions - listed_assertions):
+        problems.append(
+            f"the plugin implements assertion {missing!r} but its header does not "
+            "document what `with` it takes")
+    for extra in sorted(listed_assertions - assertions):
+        problems.append(
+            f"the header documents assertion {extra!r}, which the plugin does not "
+            "implement - someone will try it and get 'unknown assertion'")
+
+    # A default the header quotes and the code does not use is a number someone
+    # will budget against. Both sides are literal, so this is a real comparison
+    # rather than a prose check: the header says `(default 15000)`, the code says
+    # `_num(ctx, "timeout_ms", 15000)`.
+    # Drop the `//` markers before joining the wrapped lines, or "(default" and
+    # its number end up separated by a comment marker that is not part of the
+    # sentence - which is exactly what happened the first time.
+    flat = " ".join(ln.lstrip().removeprefix("//").strip()
+                    for ln in ops_block.splitlines())
+    flat = re.sub(r"\s+", " ", flat)
+    documented = {m.group(1): int(m.group(2))
+                  for m in re.finditer(r"with\.([a-z_]+)`? \(default (\d+)\)", flat)}
+    actual = {m.group(1): int(m.group(2)) for m in NUM_DEFAULT_RE.finditer(src)}
+    for key, want in sorted(actual.items()):
+        got = documented.get(key)
+        if got is None:
+            problems.append(
+                f"the plugin has a default for with.{key} ({want}) that the header "
+                "does not quote")
+        elif got != want:
+            problems.append(
+                f"the header says with.{key} defaults to {got}, the code uses {want}")
+
+    return problems
+
+
 def _step(kind: str, text: str) -> gherkin.Step:
     return gherkin.Step(keyword=kind.capitalize() + " ", kind=kind, text=text, line=1)
 
@@ -317,6 +403,8 @@ def main() -> int:
             continue
         failures.append(f"needs-page {text!r}: compiled without a page, want a StepError")
 
+    failures.extend(check_plugin_header())
+
     if failures:
         print(f"bdd vocabulary: {len(failures)} problem(s):", file=sys.stderr)
         for f in failures:
@@ -328,7 +416,8 @@ def main() -> int:
           f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page, "
           f"{len(POST_RELEASE_CASES)} stay refused after a release, "
           f"every @{XFAIL} says what it disproves, "
-          f"the plugin's own vocabulary messages are in sync")
+          f"the plugin's own vocabulary messages are in sync, "
+          f"and its header documents every op, assertion and default it has")
     return 0
 
 

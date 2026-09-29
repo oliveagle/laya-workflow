@@ -375,6 +375,79 @@ Under `verify.sh` all 15 rows "succeeded"; on their own they all refuse
 correctly. A gate that only ever checks things pass cannot notice when the
 checker itself has been swapped for something that always passes.
 
+## The header is the contract, so it is checked
+
+`plugins/bdd/main.rhai` opens with a table of its six ops, its nine assertions and
+the defaults it takes. That header is what someone reads before writing a spec
+against the plugin, and **nothing held it to the code** — `vocabulary_check.py`
+checked the two "here is what you can say" *error messages* against the
+dispatcher, and the table right next to them was prose.
+
+It had already drifted. The header said of `release`:
+
+> close an owned target. Best effort, never masks a real error.
+
+That is the behaviour round 7 deleted. `_op_release` now throws when the engine
+closed nothing, and `dsl/browser/bdd_release_probe.json` exists specifically to
+*require* that refusal — so the plugin documented, in its own contract, the exact
+behaviour its own probe forbids. A second one sat in `_op_open`, whose comment
+promised to "say so here rather than letting a later click fail with no
+explanation" about a hidden page, above a return map that carries no visibility
+field and never did.
+
+`check_plugin_header()` now compares the header's tables to the code:
+
+* every op the dispatcher handles is documented, and every op documented is
+  handled;
+* same for the nine assertions;
+* every `_num(ctx, "x", N)` default is quoted in the header, with the same number.
+
+All three directions were confirmed red on purpose. Adding an op to the
+dispatcher fails; documenting an op that does not exist fails; changing the
+header's `15000` to `5000` fails; documenting an assertion the plugin lacks
+fails.
+
+What it found, on the first run against the real header: **`with.attempts` had a
+default the header never mentioned.** It is the opt-in retry knob, it is
+documented in this README, and the plugin's own contract omitted it.
+
+Prose is still not checkable, and the round does not pretend otherwise: the
+*wording* of each op is review-held, while the shape and the numbers are machine-
+checked. The refusal behaviour the old wording denied is pinned by the release
+probe; that pairing is the whole reason the drift was survivable for a while.
+
+## Is `release` allowed at all?
+
+`src/skill/sections/plugins.md` says, under the invariants the host enforces:
+**"Never put explicit cleanup in a workflow."** And `bdd.release` is a
+user-facing close op. That reads like a contradiction, so it is now resolved in
+the invariant itself rather than left for a reader to guess at.
+
+The distinction is `pinned`, and it is in the engine, not the plugin:
+
+```rust
+// Enforce a hard ceiling for Laya-owned pages. Stale auto-close pages are
+// reclaimed first; pinned pages are never reclaimed, but they still count
+// against the ceiling so a pin leak cannot grow without a policy error.
+```
+
+`keep_open` pins a tab; the idle-GC filter skips `pinned`; a pinned tab still
+counts against `max_owned_pages`; and when the ceiling is hit the engine's own
+error says *"close pinned tabs or raise max_owned_pages"*.
+
+So there are two different acts, and only one of them is the forbidden one:
+
+* **tidying up after yourself** — the sweep at plugin-call return and the idle GC
+  already do it. Writing a step for it is redundant and can fail for no useful
+  reason. That is what the invariant forbids.
+* **reclaiming a pinned tab mid-workflow** — the automatic mechanisms
+  deliberately do *not* do this, and it is the only in-band way to free a slot
+  against a hard ceiling. That is what `release` is.
+
+`release` also still goes through `host.browser_release`, so the engine performs
+the close — which is the invariant's actual normative content, and the one that
+matters for `keep_open` and the idle GC continuing to work.
+
 ## The plugin's own error messages
 
 The four probe specs under `dsl/browser/` all need a real Chrome tab, so between

@@ -200,6 +200,18 @@ owner.
   and the engine performs the close. Whatever is still open when the script
   returns is closed by the engine's sweep, so `keep_open`, `max_owned_pages` and
   the idle GC keep working. **Never** put explicit cleanup in a workflow.
+  The precise sense of "never": do not write a step whose only job is to tidy up
+  after yourself — the sweep and the idle GC already do that, and a cleanup step
+  is a step that can fail for no useful reason. Reclaiming a **pinned** tab
+  mid-workflow is the one thing those mechanisms deliberately do not do, and it
+  is not covered by that rule. A tab pinned with `keep_open` is never reclaimed
+  by the idle GC (`browser.rs`, the GC filter skips `pinned`) but still counts
+  against `max_owned_pages`, so a long workflow that pins pages hits
+  "Laya-owned page limit reached (N); close pinned tabs or raise
+  max_owned_pages". Closing one from a plugin is not tidying up after yourself —
+  it is the only in-band way to free a slot — and it still goes through
+  `host.browser_release`, so the engine performs the close. `plugins/bdd` exposes
+  exactly that as its `release` op, and refuses when the engine closed nothing.
 * Every navigation passes `policy.allow_hosts`; every write path passes
   `policy.allow_paths`; `host.http_get` is bounded by the same timeout/output
   caps as any other capability.
