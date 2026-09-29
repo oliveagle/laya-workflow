@@ -79,6 +79,13 @@ python3 "$HERE/probe_check.py"
 # error message that nothing pins.
 python3 "$HERE/args_probe_check.py" "$BIN"
 
+# The numbers bdd/README.md quotes, recomputed from the gates above. A count
+# nobody recomputes goes stale on the next edit - measured: the headline said
+# "5 scenarios" when bdd/features/ transpiles to 22, and the quoted vocabulary
+# block had lost four clauses to an edit. Same reason as the rest of this file:
+# no Chrome, no network, and CI runs it.
+python3 "$HERE/doc_check.py" "$BIN"
+
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 

@@ -14,8 +14,9 @@ python3 scripts/bdd/run.py --keep             # keep the generated specs
 python3 scripts/bdd/transpile.py bdd/features/*.feature --list
 ```
 
-Current state: **5 scenarios, all green in ~7s**, hermetic — the only HTTP
-traffic is a local fixture server on a random port.
+Current state: **22 scenarios, all green in ~8s**, hermetic — the only HTTP
+traffic is a local fixture server on a random port. `scripts/bdd/doc_check.py`
+keeps every count on this page recomputed from the gates themselves.
 
 ## How a Scenario becomes a spec
 
@@ -131,10 +132,11 @@ pins every step in the table to the op it is supposed to run, and runs in the
 default gate with no Chrome:
 
 ```
-bdd vocabulary: 21 steps map correctly, 17 step arguments survive,
-                 8 operand types survive,
-                 8 steps still refuse to run without a page,
-                 2 stay refused after a release
+bdd vocabulary: 21 steps map correctly, 17 step arguments survive, 8 operand types
+                 survive, 8 steps still refuse to run without a page, 2 stay refused
+                 after a release, every @expected_failure says what it disproves, the
+                 plugin's own vocabulary messages are in sync, and its header documents
+                 every op, assertion and default it has
 ```
 
 It exists because that failure is invisible otherwise. `Then javascript "a"
@@ -375,6 +377,49 @@ Under `verify.sh` all 15 rows "succeeded"; on their own they all refuse
 correctly. A gate that only ever checks things pass cannot notice when the
 checker itself has been swapped for something that always passes.
 
+## The numbers on this page are checked
+
+This README quotes its own gates: the scenario count up top, and the output of
+`vocabulary_check.py` and `args_probe_check.py`. Those quotes drift silently,
+because nothing recomputed them. Measured on the first run of
+`scripts/bdd/doc_check.py`:
+
+* the headline said **`Current state: 5 scenarios`** while
+  `bdd/features/*.feature` transpiles to **22** — the number was never wrong
+  when it was written, it just stopped being updated;
+* the quoted `bdd vocabulary:` block had lost four clauses to an edit and still
+  looked like a complete line of output.
+
+`doc_check.py` recomputes every labelled count from the gate that owns it and
+compares it with what the README says, and requires each quoted output block to
+be **exactly** what the gate prints today — not a prefix of it. That last
+distinction is the whole check: a truncated quote is a *prefix* of the real
+output, so containment would accept the exact failure that caused this round.
+Confirmed red on six deliberate edits — the truncated quote, a reworded quoted
+line, a stale scenario count, a stale `17 throw sites` number, a dropped label,
+and a quoted line the gate no longer prints — and green on the restored file.
+
+Two details that the first version got wrong, and that mattered:
+
+1. **keyed by label, not by source.** The first version collected every match
+   from one checker under one key, so each label compared itself against every
+   number on the checker's line: all nine labels reported
+   "the README says 21 where the truth is [21, 17, 8, 8, 2]". The single
+   genuinely stale count drowned in eight false alarms.
+2. **whitespace-insensitive in the right places only.** The page wraps output to
+   fit, so both the quoted block and the labels are matched with whitespace
+   collapsed — otherwise the next edit that wraps a line makes the check go
+   quiet rather than red.
+
+It runs in `check.sh`, so CI runs it: no Chrome, no network.
+
+### What this does not check
+
+The prose *around* the numbers is not machine-checked, and the counts it
+recomputes are only as trustworthy as the gates they come from. It also does not
+check `dsl/browser/browser_base_probe.json` — four documents point at it as the
+canonical "multi-step scenario" shape and no gate touches it. It passes when run
+by hand today, which is a different statement from "it is kept passing".
 ## The header is the contract, so it is checked
 
 `plugins/bdd/main.rhai` opens with a table of its six ops, its nine assertions and
