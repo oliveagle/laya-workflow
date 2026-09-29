@@ -172,6 +172,16 @@ Three problems a "click #N" driver hits on a real site, all solved generically i
   `<form target=_blank>` - so the tour keeps one tab (the click stays the engine's
   real CDP input; only the landing tab changes). See the sweep section below for
   why the form route needs its own handling.
+* **A number can move.** The extension's numbers are per-snapshot *labels*: it
+  re-snapshots when the DOM mutates, so a number `find` chose can resolve to a
+  different element by the time the engine clicks it - Taobao's home rewrites its
+  header while the tab is being focused, and that is how a click meant for `搜索`
+  landed on `收藏夹`. `find` therefore tags the node it validated with
+  `data-laya-pick="1"` and hands the engine *that selector*; the decision still
+  carries the number (the journal and the overlay stay numbered), but the click
+  reaches the tagged element - or fails loudly when the site replaced it - instead
+  of acting on whatever inherited the old number. `click` also focuses the tab
+  *before* it resolves and aims, so the aim is never older than the focus wait.
 * **Async pagination.** A pager click changes the URL a beat later, and a list
   still fetching renders a skeleton pager. `observe` with `prev_url` waits for
   the URL to actually change, and `find` with `retry_ms` re-scans while the list
@@ -203,7 +213,10 @@ the `销量` tab by number), **多页浏览** (scroll, then `下一页` twice: p
 walk: `page/cards.js` reads the result list, `page/item.js` reads each detail and
 returns one comparable row (title, price, 服务器/ECC/RDIMM flags, capacity, DDR5
 frequency, and a single 0-20 score), and the op ranks them, tie-breaking toward a
-32 GB single DIMM and then the lower price. The 20 rows land in
+32 GB single DIMM and then the lower price. A listing whose *title* spans several
+capacities (`32G64G96G128G`) is a **multi-SKU** page - its capacity is a "起" price,
+not a DIMM you can compare - so `item.js` gives it no capacity credit and a penalty
+instead, which keeps a clean single DIMM on top. The 20 rows land in
 `~/tmp/jev-deep/sweep.jsonl`; the conclusion in `~/tmp/jev-deep/sweep_tour.jsonl`:
 
 ```text
@@ -228,15 +241,36 @@ silently drops synthetic mouse events sent to an unfocused page while still
 reporting success, so a click that is not awaited behind focus is a click that never
 happened.
 
-### Anti-bot walls: wait them out
+The reach has a cost, and the first version paid it: a path from above-left to
+Taobao's `搜索` button sweeps across `我的淘宝`, whose hover menu unfolds its
+`我的足迹` row *exactly* over the button's centre - so the press, aimed correctly,
+landed on the menu and the tab opened 我的足迹 (`footMark`) instead of the results.
+`click` now re-checks the point after focusing, parks the pointer in a corner so a
+menu can retract, re-aims, and **refuses to press on anything that is not the
+target**; it also starts the reach from below when the target is near the top of the
+page, where sites keep their hover menus.
 
-Taobao answers a client it distrusts with a `J_MIDDLEWARE_FRAME_WIDGET` overlay
-(滑块 / click-the-image / drag-drop captcha, or "访问太频繁") or a whole-page
-`punish` deny. `page/wall.js` detects it and `planner.guard` waits it out the way a
-person backs off - escalating 6 s / 12 s / 18 s cooldowns, re-navigating to a clean
-URL unless the page is a `punish` / `x5sec` / `_____tmd_____` trap, up to
-`with.wait_ms`. The sweep runs the same wall check before it records a row, so a
-blocked detail page is retried with a cooldown, never scored as a bogus product.
+### Anti-bot walls: close what closes, wait out the rest
+
+Taobao answers a client it distrusts with one of several challenges: a
+`J_MIDDLEWARE_FRAME_WIDGET` overlay (滑块 / click-the-image / drag-drop captcha, or
+"访问太频繁"); or the Alibaba **baxia** shell - a *fixed, full-viewport* dialog
+whose opaque `.baxia-dialog-mask` covers the page while its content is an iframe at
+`.../_____tmd_____/punish?x5secdata=…&action=captchadrag`, i.e. the very
+"亲，请拖动下方滑块完成验证" box. That second shape is why `page/wall.js` reads the
+*frames* and the shell, not just `location`: the address bar stays on the friendly
+`www.taobao.com/` while the challenge sits in a child iframe, so nothing in the URL
+betrays it - and the dialog has no text of its own either.
+
+The box carries a tiny close button (`.baxia-dialog-close`), and it is a *sibling*
+of the mask rather than a child, so a mask-first search never reaches it. Clicking
+it clears the page at once, so the spec closes first and waits second:
+`planner.dismiss` on the way in - it is the "亲，请拖动下方滑块" box a person would
+click away - and `planner.guard` only for what is left, the way a person backs off
+(escalating 6 s / 12 s / 18 s cooldowns, re-navigating to a clean URL unless the
+page is a `punish` / `x5sec` / `_____tmd_____` trap, up to `with.wait_ms`). The
+sweep runs the same check before it records a row, so a blocked detail page is
+cooled down and retried, never scored as a bogus product.
 
 ### `stay_in_tab` is a form problem, not just a `window.open` problem
 
@@ -249,6 +283,17 @@ a form submit is a *browser-native* new-tab navigation that never runs
 `window.open`, so patching `window.open` alone let the results open in a second tab
 while the driven tab was left on a tracking page. `find` now also pins the owning
 form's `target` to `_self` and re-asserts it on `submit` for the click window.
+
+### Rank a DIMM, not a catalogue
+
+The 20 rows are scored for 单条服务器内存条, and one rule was worth more than the
+rest: a listing whose *title* spans several capacities (`32G64G96G128G`) is a
+**multi-SKU** page. Its capacity is a "起" price and "which DIMM is this" has no
+single answer, so `page/item.js` gives it no capacity credit and a penalty instead.
+Before that rule the sweep's winner was exactly such a grab-bag (score 16, ¥1000,
+capacity read as 128 GB); with it, the winner of the verified run is a clean single
+stick with a real part number - `SK海力士 16G 1RX8 4800 纯ECC UDIMM
+HMCG78AEBEA081N`, score 16, ¥2900.
 
 ## Files
 

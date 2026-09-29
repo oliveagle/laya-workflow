@@ -42,10 +42,15 @@
   var freqM = hay.match(/(4800|5000|5200|5400|5600|5800|6000|6200|6400|6600|6800|7000|7200)/);
   var freq = freqM ? Number(freqM[1]) : null;
 
-  // a listing that spans several capacities is a multi-SKU page, not one item
+  // A listing whose *title* spans several capacities (32G64G96G128G) is a
+  // multi-SKU page, not one item: the capacity shown is a "起" price and the
+  // "which DIMM is this" question has no single answer, so it must not be able to
+  // win the comparison on a capacity bonus it never actually names.
   var variants = {}, m3, re3 = /(\d{2,3})\s*G(?:B)?(?![HZ])/gi;
   while ((m3 = re3.exec(title)) !== null) variants[m3[1]] = 1;
-  var vcount = Object.keys(variants).length;
+  var vcaps = Object.keys(variants).map(Number).sort(function (a, b) { return a - b; });
+  var vcount = vcaps.length;
+  var multiSku = vcount >= 3;
 
   var score = 0;
   if (server) score += 5;        // 服务器 / RECC / ECC / RDIMM / 1Rx4 / 2Rx8
@@ -55,21 +60,45 @@
   var stick = single || (server && !kit);   // a server DIMM is a single stick
   if (server && !kit) score += 1;
   if (kit) score -= 8;           // 套条 / 套装 / 双条 = not a single stick
-  score += cap >= 64 ? 4 : cap >= 32 ? 3 : cap >= 16 ? 2 : cap >= 8 ? 1 : 0;
+  // The capacity credit belongs to a listing that names ONE capacity band. A
+  // multi-SKU page gets no credit and a penalty instead, so a clean single DIMM
+  // outranks a grab-bag that merely advertises a bigger number.
+  if (!multiSku) score += cap >= 64 ? 4 : cap >= 32 ? 3 : cap >= 16 ? 2 : cap >= 8 ? 1 : 0;
+  else score -= 3;
   if (freq && freq >= 5600) score += 1;
-  if (vcount >= 3) score -= 2;
 
-  // Taobao answers too-fast navigation with a *punish* wall: either a
-  // J_MIDDLEWARE_FRAME_WIDGET overlay (slider / click / drag-drop captcha) or a
-  // whole-page "验证码拦截". Report it so the sweep can cool down and retry
-  // instead of recording a bogus product.
-  var wall = !!document.querySelector(".J_MIDDLEWARE_FRAME_WIDGET")
+  // Taobao answers too-fast navigation with a *punish* wall. Report it so the
+  // sweep can cool down and retry instead of recording a bogus product. Three
+  // shapes, and the third is the trap: the top frame stays on the friendly
+  // `item.taobao.com` URL while the challenge iframe
+  // (`.../_____tmd_____/punish?x5secdata=…&action=captchadrag`) and its baxia
+  // shell — the "亲，请拖动下方滑块完成验证" box — cover the page. Check the frames
+  // and the shell, not just the address bar.
+  var punished = false;
+  var frames = document.querySelectorAll("iframe[src]");
+  for (var fi = 0; fi < frames.length; fi++) {
+    if (/punish|x5sec|captchadrag|_____tmd_____/i.test(frames[fi].getAttribute("src") || "")) {
+      punished = true;
+      break;
+    }
+  }
+  function up(sel) {
+    var e = document.querySelector(sel);
+    if (!e) return null;
+    var st = getComputedStyle(e);
+    if (st.display === "none" || st.visibility === "hidden") return null;
+    return e;
+  }
+  var shell = !!(up(".J_MIDDLEWARE_FRAME_WIDGET") || up(".baxia-dialog-content") || up(".baxia-dialog-mask"));
+  var wall = shell || punished
     || /验证码|拦截|访问过于频繁|访问太频繁/.test(document.title || "")
     || /punish|x5sec|captcha/i.test(location.href);
 
   return {
     url: location.href,
     wall: wall,
+    shell: shell,
+    punished: punished,
     title: title.slice(0, 140),
     price: price,
     price_text: priceText.slice(0, 30),
@@ -80,7 +109,9 @@
     stick: stick,
     kit: kit,
     variants: vcount,
+    multi_sku: multiSku,
     capacity_gb: cap || null,
+    capacity_min_gb: vcaps.length ? vcaps[0] : null,
     freq_mhz: freq,
     score: score,
     spec_excerpt: (specMatch ? specMatch[1] : "").replace(/\s+/g, " ").trim().slice(0, 240)

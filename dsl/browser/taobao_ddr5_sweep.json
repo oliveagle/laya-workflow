@@ -1,7 +1,7 @@
 {
  "name": "taobao_ddr5_sweep",
  "dsl_version": 2,
- "description": "Taobao (淘宝) DDR5-内存 comparison sweep, in the Jev style, in ONE tab: dismiss the promo, fill the search box, click 搜索, pick the 销量 filter and the 下一页 pager BY NUMBER (填选择框 / 弹出选择框的序号 / 筛选项选择 / 多页浏览), ride out any anti-bot wall with `planner guard`, then open 20 product details ONE BY ONE and read each (planner `sweep` -> page/cards.js + page/item.js), score them for 单条服务器内存条, and finally navigate to and observe the single most recommended product. Each action is one engine node; resolution is `planner`, execution is the real CDP `chrome` capability.",
+ "description": "Taobao (淘宝) DDR5-内存 comparison sweep, in the Jev style, in ONE tab: close the anti-bot challenge box / promo, fill the search box, click 搜索, pick the 销量 filter and the 下一页 pager BY NUMBER (填选择框 / 弹出选择框的序号 / 筛选项选择 / 多页浏览), close what is dismissable first (baxia 滑块 box / promo) and `planner guard` the rest, then open 20 product details ONE BY ONE and read each (planner `sweep` -> page/cards.js + page/item.js), score them for 单条服务器内存条, and finally navigate to and observe the single most recommended product. Each action is one engine node; resolution is `planner`, execution is the real CDP `chrome` capability.",
  "start": "open",
  "max_iterations": 126,
  "policy": {
@@ -86,7 +86,7 @@
    },
    "edge": {
     "condition": {
-     "A": "guard_home"
+     "A": "dismiss"
     },
     "default": "STOP"
    },
@@ -110,7 +110,7 @@
    "questions": {
     "go": {
      "type": "choice",
-     "instructions": "Wait out an anti-bot wall (滑块/验证码/访问太频繁) on https://www.taobao.com/ before acting?",
+     "instructions": "Wait out an anti-bot wall (滑块/验证码/访问太频繁/惩罚页) that the dismiss could not close?",
      "criteria": {
       "A": "yes",
       "B": "no"
@@ -119,7 +119,7 @@
    },
    "edge": {
     "condition": {
-     "A": "dismiss"
+     "A": "type_query"
     },
     "default": "STOP"
    },
@@ -145,7 +145,7 @@
    "questions": {
     "go": {
      "type": "choice",
-     "instructions": "Close any full-viewport promo/login modal that would swallow the next clicks?",
+     "instructions": "Close the anti-bot challenge box / a full-viewport promo or login modal so later clicks land?",
      "criteria": {
       "A": "yes",
       "B": "no"
@@ -154,7 +154,7 @@
    },
    "edge": {
     "condition": {
-     "A": "guard_list"
+     "A": "guard_home"
     },
     "default": "STOP"
    },
@@ -169,41 +169,6 @@
      "dismiss_overlays": "/overlays",
      "dismiss_closed": "/closed",
      "dismiss_blocking": "/still_blocking"
-    }
-   }
-  },
-  {
-   "name": "guard_list",
-   "primary_q": "go",
-   "questions": {
-    "go": {
-     "type": "choice",
-     "instructions": "Wait out an anti-bot wall (滑块/验证码/访问太频繁) on https://www.taobao.com/ before acting?",
-     "criteria": {
-      "A": "yes",
-      "B": "no"
-     }
-    }
-   },
-   "edge": {
-    "condition": {
-     "A": "type_query"
-    },
-    "default": "STOP"
-   },
-   "action": {
-    "kind": "call",
-    "capability": "planner",
-    "with": {
-     "op": "guard",
-     "target_id": "${state.browser_target}",
-     "url": "https://www.taobao.com/",
-     "wait_ms": 120000
-    },
-    "project": {
-     "wall": "/wall",
-     "guard_attempts": "/attempts",
-     "guard_waited_ms": "/waited_ms"
     }
    }
   },
@@ -372,7 +337,7 @@
    },
    "edge": {
     "condition": {
-     "A": "guard_results"
+     "A": "dismiss2"
     },
     "default": "STOP"
    },
@@ -403,7 +368,7 @@
    },
    "edge": {
     "condition": {
-     "A": "dismiss2"
+     "A": "sort_sales"
     },
     "default": "STOP"
    },
@@ -438,7 +403,7 @@
    },
    "edge": {
     "condition": {
-     "A": "sort_sales"
+     "A": "guard_results"
     },
     "default": "STOP"
    },

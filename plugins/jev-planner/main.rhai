@@ -279,8 +279,13 @@ fn _abs(x) {
     x
 }
 
+// A wall, however it announced itself. `wall.js` and `item.js` already fold the
+// baxia shell and the in-iframe `punish` frame into `wall`; the flags are repeated
+// here so a page script that only reports them is still understood.
 fn _wall(d) {
     if d["wall"] == true { return true; }
+    if d["shell"] == true { return true; }
+    if d["punished"] == true { return true; }
     let t = "" + d["title"];
     let u = "" + d["url"];
     if t.contains("验证码") || t.contains("拦截") || t.contains("访问过") || t.contains("访问太频繁") { return true; }
@@ -308,6 +313,12 @@ fn guard(host, ctx) {
     if target == "" { throw "jev-planner.guard: with.target_id is required"; }
     let budget_ms = _int(ctx, "wait_ms", 90000);
     let url = _arg(ctx, "url");
+    // Try to close a challenge we *can* close (the baxia dialog's X) before
+    // spending the wall budget on waiting: on Taobao the X clears the box and the
+    // page is usable again immediately, and only an un-dismissable challenge is
+    // worth backing off from.
+    let pre = #{};
+    try { pre = host.browser_evaluate(target, host.js("dismiss.js"), false); } catch (e) { pre = #{}; }
     let attempts = 0;
     let waited = 0;
     let wall = false;
@@ -330,7 +341,8 @@ fn guard(host, ctx) {
             _settle(host, target, _origin(url), 800);
         }
     }
-    #{ wall: wall, attempts: attempts, waited_ms: waited, url: url }
+    #{ wall: wall, attempts: attempts, waited_ms: waited, url: url,
+       pre_dismissed: pre["closed"], pre_blocking: pre["still_blocking"] }
 }
 
 fn sweep(host, ctx) {
@@ -384,7 +396,9 @@ fn sweep(host, ctx) {
             stick: false,
             kit: false,
             capacity_gb: 0,
+            capacity_min_gb: 0,
             freq_mhz: 0,
+            multi_sku: false,
             score: -100,
             wall: false
         };
@@ -393,8 +407,10 @@ fn sweep(host, ctx) {
         let attempt = 0;
         while attempt < 4 && !got {
             try {
-                // human-ish pace: ~1.6 s .. 3.0 s between page opens
-                sleep(1.6 + ((i + attempt) % 5) * 0.35);
+                // Human-ish pace: 2.2 s .. 4.5 s between page opens. A person
+                // comparing 20 listings does not machine-gun them, and the longer
+                // gap is what keeps "访问太频繁" from showing up mid-sweep.
+                sleep(2.2 + ((i + attempt) % 6) * 0.45);
                 host.browser_navigate(target, href);
                 _settle(host, target, _origin(href), 600);
                 d = host.browser_evaluate(target, host.js("item.js"), false);
@@ -420,6 +436,8 @@ fn sweep(host, ctx) {
             rec["stick"] = d["stick"];
             rec["kit"] = d["kit"];
             rec["capacity_gb"] = d["capacity_gb"];
+            rec["capacity_min_gb"] = d["capacity_min_gb"];
+            rec["multi_sku"] = d["multi_sku"];
             rec["freq_mhz"] = d["freq_mhz"];
             rec["score"] = d["score"];
             rec["spec"] = d["spec_excerpt"];
@@ -432,6 +450,7 @@ fn sweep(host, ctx) {
         lines += host.json_stringify(rec) + "\n";
         host.log("sweep[" + (i + 1) + "/" + want + "] score=" + rec["score"]
             + " server=" + rec["server"] + " stick=" + rec["stick"]
+            + " multi_sku=" + rec["multi_sku"]
             + " " + rec["title"]);
         i += 1;
     }

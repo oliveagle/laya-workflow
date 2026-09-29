@@ -140,6 +140,17 @@
   lb.highlight();                                // draw the numbered badges
   var el = chosenEl || lb.element(pick.index);
   if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
+  // Identity, not a label. The snapshot number is good only *this* round: the
+  // extension re-snapshots when the DOM mutates, so the number the engine
+  // resolves a beat later (after it brings the tab to the front) can point at a
+  // different element - that is how a click meant for 搜索 once landed on 收藏夹.
+  // Tag the node we just validated and hand the engine a selector for *it*: the
+  // click then reaches this element, or fails loudly when the site has replaced
+  // it, instead of acting on whatever inherited the old number. The decision
+  // still carries the number, so the journal and the overlay stay numbered.
+  if (!selUsed && el) {
+    try { el.setAttribute("data-laya-pick", "1"); selUsed = '[data-laya-pick="1"]'; } catch (e) { selUsed = null; }
+  }
   // A site may force a *new* tab. Three mechanisms, all normalized when the
   // spec sets `stay_in_tab`, so the *real* CDP click lands in the driven tab:
   //   1. a link carrying target=_blank;
@@ -201,7 +212,8 @@
     stayed_in_tab: stayed,
     nearby: nearby,
     candidates: pick.index === null ? 1 : pool.length,
-    resolved_by: selUsed ? "selector" : "snapshot"
+    resolved_by: pick.index === null ? "selector" : "snapshot",
+    identity: selUsed ? "tag" : "index"
   };
   if (operation === "TYPE_TEXT") out.text = text;
   if (operation === "SELECT") out.value = text;

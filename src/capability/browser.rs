@@ -741,8 +741,8 @@ pub(crate) fn ensure_runtime(
     ])
     .arg("--start-maximized")
     .arg("about:blank")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
     let child = cmd
         .spawn()
         .map_err(|e| anyhow!("spawn Chrome {binary:?} failed: {e}"))?;
@@ -1388,7 +1388,29 @@ fn js_escape(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// The JS expression that resolves an action's target.
+///
+/// A `selector` wins over a snapshot `element` on purpose. The element number is
+/// a *label* the laya-browser extension assigns in one snapshot, and it
+/// re-snapshots whenever the DOM mutates. A page that re-renders between the
+/// `find` that chose the number and the click that resolves it therefore resolves
+/// the same number to a *different* element - which is exactly how a click meant
+/// for Taobao's 搜索 button landed on 收藏夹 (the numbering shifted while the tab
+/// was still being brought to the front). A selector names the element itself, so
+/// `find` hands back `[data-laya-pick="1"]`, the tag it puts on the node it
+/// validated: the click then reaches that node or fails loudly, never the element
+/// that inherited its number.
 fn element_from_request(with: &Value) -> Result<String> {
+    if let Some(sel) = with
+        .get("selector")
+        .map(stringify)
+        .filter(|s| !s.is_empty() && s != "null")
+    {
+        return Ok(format!(
+            "document.querySelector({})",
+            js_escape(&Value::String(sel))
+        ));
+    }
     if let Some(i) = with
         .get("element")
         .or_else(|| with.get("index"))
@@ -1396,17 +1418,7 @@ fn element_from_request(with: &Value) -> Result<String> {
     {
         return Ok(format!("__layaBrowser.element({i})"));
     }
-    if let Some(sel) = with
-        .get("selector")
-        .map(stringify)
-        .filter(|s| !s.is_empty())
-    {
-        return Ok(format!(
-            "document.querySelector({})",
-            js_escape(&Value::String(sel))
-        ));
-    }
-    bail!("browser operation needs 'element' (snapshot index) or 'selector'");
+    bail!("browser operation needs 'selector' or 'element' (snapshot index)");
 }
 
 fn scroll_js(with: &Value) -> String {
@@ -1804,7 +1816,9 @@ fn wait_for_focus(endpoint: &str, target: &str, timeout: Duration) -> Result<boo
 /// Is human-shaped input on for this call? The per-call `with.human` wins over
 /// the capability's own `human` setting.
 fn human_on(c: &BrowserCap, with: &Value) -> bool {
-    with.get("human").and_then(Value::as_bool).unwrap_or(c.human)
+    with.get("human")
+        .and_then(Value::as_bool)
+        .unwrap_or(c.human)
 }
 
 /// Type one key at a time, with the uneven rhythm of a person at a keyboard:
@@ -3684,23 +3698,64 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
         "click" => {
             let target = resolve_target(&endpoint, with, timeout, policy)?;
             let id = target_id(&target)?;
-            let target_js = element_from_request(with)?;
-            let expression = format!(
-                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); const cx=r.left+r.width/2, cy=r.top+r.height/2; const h=document.elementFromPoint(cx,cy); return {{ok:true,x:cx,y:cy,vw:innerWidth,vh:innerHeight,hit:h?(h.tagName+'.'+String(h.className).slice(0,40)):null,same:!!(h&&(h===e||e.contains(h)||h.contains(e)))}};}})()"
-            );
-            let coords = evaluate(&endpoint, &id, &expression, timeout, false)?;
-            if coords.get("ok").and_then(Value::as_bool) != Some(true) {
-                bail!("browser click target was not found or is not visible");
-            }
-            let x = coords.get("x").and_then(Value::as_f64).unwrap_or_default();
-            let y = coords.get("y").and_then(Value::as_f64).unwrap_or_default();
             let human_on = human_on(c, with);
             // Chrome drops synthetic input to a page that is not both visible
             // and focused -- the CDP call still returns success, so a scripted
             // click appears to work while the site never sees it. Activate the
-            // tab, then wait until the page agrees it has focus before aiming.
+            // tab and wait until the page agrees it has focus FIRST, then resolve
+            // and aim: the page can keep re-rendering while we wait, so aiming
+            // before the wait is aiming at geometry that may already be gone.
             cdp_page_sequence(&endpoint, &id, &[("Page.bringToFront", json!({}))], timeout)?;
             let focused = wait_for_focus(&endpoint, &id, timeout)?;
+            let target_js = element_from_request(with)?;
+            let expression = format!(
+                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); const cx=r.left+r.width/2, cy=r.top+r.height/2; const h=document.elementFromPoint(cx,cy); return {{ok:true,x:cx,y:cy,vw:innerWidth,vh:innerHeight,hit:h?(h.tagName+'.'+String(h.className).slice(0,40)):null,same:!!(h&&(h===e||e.contains(h)||h.contains(e)))}};}})()"
+            );
+            // Aim, and re-aim if something is sitting on the point. The reach that
+            // makes a click human is also what opens a site's hover menus: the
+            // pointer travels over Taobao's 我的淘宝 and the menu it unfolds drops its
+            // 我的足迹 row exactly on top of the 搜索 button, so a press aimed at the
+            // button lands on the menu instead. A person notices the menu, moves off
+            // and clicks again - so this parks the pointer in a corner (letting the
+            // menu retract) and re-aims, and it never presses on a point that is not
+            // the target.
+            let mut coords = Value::Null;
+            let mut covered: Option<String> = None;
+            for attempt in 0..3 {
+                let probe = evaluate(&endpoint, &id, &expression, timeout, false)?;
+                if probe.get("ok").and_then(Value::as_bool) == Some(true)
+                    && probe.get("same").and_then(Value::as_bool) == Some(true)
+                {
+                    coords = probe;
+                    break;
+                }
+                if probe.get("ok").and_then(Value::as_bool) == Some(true) {
+                    covered = probe.get("hit").map(stringify);
+                }
+                if attempt == 2 {
+                    break;
+                }
+                cdp_page_sequence(
+                    &endpoint,
+                    &id,
+                    &[
+                        ("Input.dispatchMouseEvent", mouse_event("mouseMoved", 3.0, 3.0)),
+                        ("SLEEP", json!(400)),
+                    ],
+                    timeout,
+                )?;
+            }
+            if coords.get("ok").and_then(Value::as_bool) != Some(true) {
+                bail!("browser click target was not found or is not visible");
+            }
+            if coords.get("same").and_then(Value::as_bool) != Some(true) {
+                bail!(
+                    "browser click point is covered by {}; refusing to press on an element that is not the target",
+                    covered.unwrap_or_else(|| "something".to_string())
+                );
+            }
+            let x = coords.get("x").and_then(Value::as_f64).unwrap_or_default();
+            let y = coords.get("y").and_then(Value::as_f64).unwrap_or_default();
             let mut click_commands: Vec<(&str, Value)> = Vec::new();
             if human_on {
                 // Reach, don't teleport: react, travel the arc in small steps,
@@ -3711,7 +3766,10 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
                 let vw = coords.get("vw").and_then(Value::as_f64).unwrap_or(1095.0).max(4.0);
                 let vh = coords.get("vh").and_then(Value::as_f64).unwrap_or(780.0).max(4.0);
                 let clamp = |px: f64, py: f64| (px.clamp(2.0, vw - 2.0), py.clamp(2.0, vh - 2.0));
-                let fallback = clamp(x - 120.0, y - 70.0);
+                // Come in from below when the target sits near the top of the page:
+                // that is where a site keeps its hover menus, and a reach that
+                // sweeps across them opens one that can swallow the click.
+                let fallback = clamp(x - 140.0, if y < 120.0 { y + 90.0 } else { y - 80.0 });
                 let (raw_cx, raw_cy) = human::last_cursor(fallback);
                 let (cx, cy) = clamp(raw_cx, raw_cy);
                 let mut pts = human::mouse_track((cx, cy), (x, y), &mut rng);
