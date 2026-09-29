@@ -1,0 +1,108 @@
+{
+  "name": "feishu_unread_digest",
+  "dsl_version": 2,
+  "description": "飞书未读消息分类汇总 (Feishu unread digest): collect every unread message across your chats via the bundled `lark-cli`, bucket them by what they ask of you (mention / action / question / decision / info), and emit a short ranked digest. Two nodes: `collect` runs websites/feishu.com/plugin/collect.sh (exec, so policy.allow_exec is required), `classify` runs the Rhai plugin websites/feishu.com/plugin/classify.rhai which does the routing, and a choice node judges whether anything actually needs a reply. Reads only - it never sends, marks read, or reacts. Needs lark-cli on PATH plus `lark-cli auth login`; a stale user token makes the collector report ok:false rather than an empty digest. Both knobs are optional: an unset chats_limit/page_size expands to the empty string and collect.sh falls back to 15 chats / 20 messages.",
+  "start": "collect",
+  "max_iterations": 6,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}/tmp"
+    ],
+    "max_timeout_ms": 180000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "collect": {
+      "kind": "shell",
+      "command": "sh websites/feishu.com/plugin/collect.sh \"${state.chats_limit}\" \"${state.page_size}\"",
+      "timeout_ms": 170000
+    },
+    "classify": {
+      "kind": "plugin",
+      "dir": "websites/feishu.com/plugin/classify.rhai",
+      "timeout_ms": 60000,
+      "max_operations": 2000000
+    }
+  },
+  "nodes": [
+    {
+      "name": "collect",
+      "primary_q": "collected_ok",
+      "questions": {
+        "collected_ok": {
+          "type": "choice",
+          "instructions": "Did the Feishu unread collection succeed? Answer no if stdout carries ok:false, if exit_code is non-zero, or if stdout is not the collector's JSON - a stale lark-cli token and a network failure both look like this.",
+          "criteria": {
+            "A": "yes: stdout is the collector's JSON with ok:true",
+            "B": "no: the collection failed or returned nothing usable"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "classify"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "collect",
+        "with": {},
+        "project": {
+          "collected": "/stdout",
+          "collect_exit": "/exit_code"
+        }
+      }
+    },
+    {
+      "name": "classify",
+      "primary_q": "classified",
+      "questions": {
+        "classified": {
+          "type": "choice",
+          "instructions": "Did the unread messages classify into buckets without error?",
+          "criteria": {
+            "A": "yes: buckets and digest are present",
+            "B": "no: classification failed"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "triage"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "classify",
+        "with": {
+          "collected": "${state.collected}"
+        },
+        "project": {
+          "total": "/total",
+          "buckets": "/buckets",
+          "digest": "/digest",
+          "classify_error": "/error"
+        }
+      }
+    },
+    {
+      "name": "triage",
+      "primary_q": "needs_reply",
+      "questions": {
+        "needs_reply": {
+          "type": "choice",
+          "instructions": "Reading the classified unread digest above, does anything need the user's reply right now? Weight the buckets in this order: mention first, then action and question, then decision. 'info' alone is not worth interrupting anyone.",
+          "criteria": {
+            "A": "no: nothing in the digest needs a reply now",
+            "B": "yes: at least one message is waiting on the user"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      }
+    }
+  ]
+}

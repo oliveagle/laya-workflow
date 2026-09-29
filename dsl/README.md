@@ -61,6 +61,7 @@ Specs in this directory:
 | `capabilities/db_server_analytics.json` | `db` in **server** mode: the same HTAP ops POSTed to a `laya-workflow db serve` daemon (no `allow_exec`/`allow_paths` needed) |
 | `capabilities/notify_macos.json` | `notify`: a real macOS Notification Center banner (`osascript`, channel `auto` → banner on macOS, log file elsewhere) |
 | `capabilities/feishu_chat_history.json` | Feishu/Lark: read a conversation's history via `lark-cli` (`exec`, needs `policy.allow_exec` + auth) then judge it (validate-only in the smoke run) |
+| `capabilities/feishu_unread_digest.json` | Feishu unread triage: derive what is unread across every chat (`lark-cli`, `exec`), bucket it mention/action/question/decision/info with the `websites/feishu.com` Rhai plugin, and judge whether anything needs a reply — see [`docs/feishu.md`](../docs/feishu.md) |
 | `capabilities/dingtalk_chat_history.json` | DingTalk: **no API** — read the macOS app via the Accessibility API (`scripts/dingtalk-ax`, `exec`; needs Accessibility permission) then judge it (validate-only in the smoke run) |
 | `capabilities/integration_hub.json` | rpc + graphql + llm + mcp + vector + webhook + sse |
 | `capabilities/ticket_structuring.json` | csv + validate + hash + tokenize + metrics + chain |

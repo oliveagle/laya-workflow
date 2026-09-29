@@ -115,7 +115,19 @@ printf '   corpus %s -> %s items%s\n' "$BEFORE" "$AFTER" \
   "$( [ "$BEFORE" = "$AFTER" ] && echo ' (no browsing)' || echo '  <-- IT BROWSED' )"
 [ "$BEFORE" = "$AFTER" ] || exit 1
 
-# ── 3. did the engine change? ────────────────────────────────────────────────
+# ── 3. feishu unread routing ─────────────────────────────────────────────────
+# Separate from the goofish gate above and for a different reason: the goofish
+# plugin is a browser plugin, so `harness.py` can drive it. The feishu
+# classifier is driven through the full engine (a spec + a JSON payload), and it
+# has to be *executed* - a missing Rhai builtin is a runtime "Function not
+# found" that sails past compile.py, and the routing rules only mean anything
+# once they have seen real message shapes.
+if [ -x "$ROOT/target/release/laya-workflow" ]; then
+  stage "feishu unread routing"
+  python3 "$ROOT/scripts/rhai/check_feishu.py" || exit 1
+fi
+
+# ── 4. did the engine change? ────────────────────────────────────────────────
 # src/** untouched means cargo test is testing nothing you just wrote. Run it
 # once, here, at the end -- not four times spread across the edit.
 if [ "$CARGO" = 1 ]; then

@@ -1,0 +1,138 @@
+{
+ "ok": true,
+ "chats": [
+  {
+   "chat_id": "oc_test00",
+   "chat_name": "研发群",
+   "chat_type": "group",
+   "unread": [
+    {
+     "message_id": "om_test00",
+     "create_time": "2026-09-21 10:00",
+     "msg_type": "text",
+     "content": "@_all 这次Hackathon奖励直接拉满，各团队踊跃报名。",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x00"
+    }
+   ],
+   "_expect": "mention",
+   "_note": "@all in a group outranks everything"
+  },
+  {
+   "chat_id": "oc_test01",
+   "chat_name": "研发群",
+   "chat_type": "group",
+   "unread": [
+    {
+     "message_id": "om_test01",
+     "create_time": "2026-09-22 10:00",
+     "msg_type": "post",
+     "content": "<p>咨询下，两个 MOM 项目都引用了同一个 common mom，生成的两个 jar 内嵌了同类名，想问下有什么解决方法？</p>",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x01"
+    }
+   ],
+   "_expect": "question",
+   "_note": "real observed: rich text + 怎么"
+  },
+  {
+   "chat_id": "oc_test02",
+   "chat_name": "研发群",
+   "chat_type": "group",
+   "unread": [
+    {
+     "message_id": "om_test02",
+     "create_time": "2026-09-23 10:00",
+     "msg_type": "text",
+     "content": "[Invalid text JSON]",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x02"
+    }
+   ],
+   "_expect": "question",
+   "_note": "undecodable payload is surfaced, not dropped"
+  },
+  {
+   "chat_id": "oc_test03",
+   "chat_name": "同事",
+   "chat_type": "p2p",
+   "unread": [
+    {
+     "message_id": "om_test03",
+     "create_time": "2026-09-24 10:00",
+     "msg_type": "text",
+     "content": "麻烦帮忙确认下这个发布单，谢谢",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x03"
+    }
+   ],
+   "_expect": "action",
+   "_note": "DM with an action cue"
+  },
+  {
+   "chat_id": "oc_test04",
+   "chat_name": "研发群",
+   "chat_type": "group",
+   "unread": [
+    {
+     "message_id": "om_test04",
+     "create_time": "2026-09-25 10:00",
+     "msg_type": "text",
+     "content": "结论：这次发布通过了，周五上线",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x04"
+    }
+   ],
+   "_expect": "decision",
+   "_note": "decision cue"
+  },
+  {
+   "chat_id": "oc_test05",
+   "chat_name": "研发群",
+   "chat_type": "group",
+   "unread": [
+    {
+     "message_id": "om_test05",
+     "create_time": "2026-09-26 10:00",
+     "msg_type": "post",
+     "content": "<p>本周四下午 3 点全员大会，会议室 A。</p>",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x05"
+    }
+   ],
+   "_expect": "info",
+   "_note": "plain announcement, no cue"
+  },
+  {
+   "chat_id": "oc_test06",
+   "chat_name": "同事",
+   "chat_type": "p2p",
+   "unread": [
+    {
+     "message_id": "om_test06",
+     "create_time": "2026-09-27 10:00",
+     "msg_type": "text",
+     "content": "看了",
+     "sender": {
+      "name": "张三"
+     },
+     "app_link": "https://applink.feishu.cn/x06"
+    }
+   ],
+   "_expect": "action",
+   "_note": "a bare DM is still addressed to you"
+  }
+ ]
+}
