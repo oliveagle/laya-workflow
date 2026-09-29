@@ -174,7 +174,15 @@ def _args(op: str, extra: str, m: re.Match) -> tuple[dict, str, bool]:
                 f"Was {_unquote(g['value'])!r} selected in {_unquote(g['sel'])}?", True)
 
     if op == "evaluate":
-        return {"expression": v}, "Did the script run on the page?", True
+        # The capture group is `expr`, not `v`. Reading `v` handed the plugin an
+        # empty expression, so `I run javascript "..."` compiled to a call that
+        # could only ever throw - and nothing noticed for a whole release cycle
+        # because no scenario had ever used the step. See
+        # scripts/bdd/vocabulary_check.py, which now checks arguments, not just
+        # the op, so a step cannot compile to a call with nothing in it.
+        expr = _unquote(g["expr"])
+        return ({"expression": expr},
+                f"Did the script run on the page: {expr!r}?", True)
 
     if op == "assert":
         args = {"assertion": extra, "value": v}

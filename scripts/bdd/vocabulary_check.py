@@ -52,6 +52,34 @@ CASES: list[tuple[str, str, str, str | None, bool]] = [
     ('then', 'javascript "a" equals_text "x"', "assert", "equals_text", True),
 ]
 
+# The arguments a step produces, not just the op it names. Checking only the
+# op is what let `I run javascript "1+1"` sit in the table for a whole release
+# cycle compiling to `expression: ""` - the right call, carrying nothing, which
+# could only ever throw. No scenario used the step, so nothing went red.
+ARGUMENT_CASES: list[tuple[str, str, dict]] = [
+    ("given", 'I am on "http://x/"', {"url": "http://x/"}),
+    ("when", 'I navigate to "http://y/"', {"url": "http://y/"}),
+    ("when", 'I wait for the element "#a"', {"selector": "#a"}),
+    ("when", 'I click the element "#a"', {"selector": "#a"}),
+    ("when", 'I type "hi" into the element "#a"',
+     {"selector": "#a", "text": "hi"}),
+    ("when", 'I select "blue" in the element "#a"',
+     {"selector": "#a", "value": "blue"}),
+    # The one that shipped broken.
+    ("when", 'I run javascript "1+1"', {"expression": "1+1"}),
+    ("when", 'I run javascript "document.title = 1"', {"expression": "document.title = 1"}),
+    ("then", 'the page title contains "x"', {"assertion": "title_contains", "value": "x"}),
+    ("then", 'the page url contains "x"', {"assertion": "url_contains", "value": "x"}),
+    ("then", 'the element "#a" is visible', {"assertion": "visible", "value": "#a"}),
+    ("then", 'the element "#a" is absent', {"assertion": "absent", "value": "#a"}),
+    ('then', 'javascript "a" is true', {"assertion": "is_true", "value": "a"}),
+    ('then', 'javascript "a" is false', {"assertion": "is_false", "value": "a"}),
+    ('then', 'javascript "a" equals 3', {"assertion": "equals", "value": "a", "expected": 3}),
+    ('then', 'javascript "a" contains "x"', {"assertion": "contains", "expected": "x"}),
+    ('then', 'javascript "a" equals text "x"',
+     {"assertion": "equals_text", "expected": "x"}),
+]
+
 # The operand type is the author's signal, and getting it wrong makes a
 # strictness test silently test nothing.
 OPERAND_CASES: list[tuple[str, object]] = [
@@ -102,6 +130,26 @@ def main() -> int:
                 f"{kind} {text!r}: assertion {got_assertion!r}, want {want_assertion!r}"
             )
 
+    for kind, text, want_args in ARGUMENT_CASES:
+        try:
+            node, _ = stepdefs.compile_step(_step(kind, text), True)
+        except (stepdefs.UnknownStep, stepdefs.StepError) as e:
+            failures.append(f"{kind} {text!r}: {e}")
+            continue
+        with_args = (node.action or {}).get("with", {})
+        for key, want in want_args.items():
+            got = with_args.get(key)
+            if got != want:
+                failures.append(
+                    f"{kind} {text!r}: with.{key} is {got!r}, want {want!r}"
+                )
+        # A step must never compile to a call with an empty required argument:
+        # that is a call that can only throw, and it looks fine until someone
+        # finally writes the scenario that uses it.
+        for key in ("url", "selector", "text", "value", "expression", "assertion"):
+            if key in want_args and not with_args.get(key):
+                failures.append(f"{kind} {text!r}: with.{key} compiled empty")
+
     for text, want in OPERAND_CASES:
         try:
             node, _ = stepdefs.compile_step(_step("then", f'javascript "a" {text}'), True)
@@ -131,6 +179,7 @@ def main() -> int:
             print(f"  {f}", file=sys.stderr)
         return 1
     print(f"bdd vocabulary: {len(CASES)} steps map correctly, "
+          f"{len(ARGUMENT_CASES)} step arguments survive, "
           f"{len(OPERAND_CASES)} operand types survive, "
           f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page")
     return 0
