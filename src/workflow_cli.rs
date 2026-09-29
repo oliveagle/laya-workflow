@@ -84,6 +84,10 @@ enum Cmd {
         /// both are supplied (the --query value wins)
         #[arg(long)]
         query: Option<String>,
+        /// Stream live per-node progress to stderr while running (one line per
+        /// node as it completes). Stdout stays the final JSON verdict only.
+        #[arg(long, default_value_t = false)]
+        progress: bool,
     },
     /// Print every stored node record (per-iteration tracking)
     State {
@@ -510,11 +514,30 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&wf.describe())?);
             Ok(())
         }
-        Cmd::Run { spec, state, query } => {
+        Cmd::Run {
+            spec,
+            state,
+            query,
+            progress,
+        } => {
             let wf = laya_workflow::spec::load_file(spec)?;
             let st = run_state(state, query.as_deref())?;
             println!("backend: {label}");
-            let out = wf.run(backend.as_ref(), &st)?;
+            let out = if *progress {
+                let run_t0 = std::time::Instant::now();
+                wf.run_with_progress(backend.as_ref(), &st, &mut |r| {
+                    let next = r.next_node.as_deref().unwrap_or("STOP");
+                    eprintln!(
+                        "[laya-progress] {:>14}  {:8}  {:5.1}s  → {}",
+                        r.node_name,
+                        r.action.as_str(),
+                        run_t0.elapsed().as_secs_f64(),
+                        next
+                    );
+                })?
+            } else {
+                wf.run(backend.as_ref(), &st)?
+            };
             // redact before printing: a secret must never reach stdout
             let shown = laya_workflow::capability::secret::redact(&out.to_json());
             println!("{}", serde_json::to_string_pretty(&shown)?);

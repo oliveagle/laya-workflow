@@ -396,6 +396,18 @@ impl ResilientWorkflow {
 
     /// Run the graph to completion (or to a safety valve).
     pub fn run<B: Decide + ?Sized>(&self, backend: &B, state: &Value) -> Result<WorkflowOutcome> {
+        self.run_with_progress(backend, state, &mut |_| {})
+    }
+
+    /// Run the workflow, invoking `on_node` right after each node completes so
+    /// a caller can surface live progress (e.g. the CLI `--progress` flag).
+    /// The node name is available via `NodeResult::node_name`.
+    pub fn run_with_progress<B: Decide + ?Sized>(
+        &self,
+        backend: &B,
+        state: &Value,
+        on_node: &mut dyn FnMut(&NodeResult),
+    ) -> Result<WorkflowOutcome> {
         let mut trace = WorkflowTrace::default();
         let mut history: Vec<Value> = Vec::new();
         let mut state = state.clone();
@@ -422,6 +434,7 @@ impl ResilientWorkflow {
             *node_visits.entry(name.clone()).or_insert(0) += 1;
 
             let result = node.run(backend, &state)?;
+            on_node(&result);
             trace.add(&result);
 
             if let Some(s) = state.get("score").and_then(|v| v.as_f64()) {
