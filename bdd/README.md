@@ -161,6 +161,30 @@ A scenario tagged `@expected_failure` must fail. It is the guard against vacuous
 assertions: if a broken page ever made it pass, the checks above would report
 success no matter what the page did, and the suite reports that as a failure.
 
+It must also say **why**, in the tag:
+
+```
+@expected_failure(bdd.assert: FAIL equals)
+```
+
+Failing is not enough. The runner used to accept any non-zero exit, so a
+scenario that died on a typo'd `Given`, a Chrome that would not start, or a 404
+from the fixture counted exactly like one that failed for the reason it was
+written to demonstrate — the tag was then a comment rather than a contract. Now
+the declared text has to appear in the failure, or the scenario is reported
+`XFAIL-WRONG-REASON`:
+
+```
+  PASS      page_smoke.feature :: A page that loads is assertable  [0]
+  xfail     page_smoke.feature :: Asserting a missing element fails the run  [1]
+  XFAIL-WRONG-REASON  assertions.feature :: equals must reject the wrong value  [1]
+      it failed, but never said 'bdd.assert: FAIL title_contains', so it
+      failed for some other reason
+```
+
+A bare `@expected_failure` is a hard error, checked **without Chrome** by
+`vocabulary_check.py`, so it cannot be reintroduced in a commit that CI accepts.
+
 ```
   PASS           page_smoke.feature :: A page that loads is assertable  [0]
   xfail          page_smoke.feature :: Asserting a missing element fails the run  [1]

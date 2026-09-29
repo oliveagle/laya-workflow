@@ -35,7 +35,14 @@ from typing import Iterator
 # Given / When / Then / And / But. And/But inherit the previous keyword, which
 # is what Gherkin says they mean.
 STEP_RE = re.compile(r"^\s*(Given|When|Then|And|But|\*)\s+(.*\S)\s*$")
-TAG_RE = re.compile(r"^\s*@(\S+)\s*$")
+# A tag is a name with an optional parenthetical reason:
+#   @expected_failure
+#   @expected_failure(bdd.assert: FAIL equals)
+# The reason is load-bearing. The runner used to accept any non-zero exit as a
+# pass for an @expected_failure scenario, so a scenario that failed because a
+# Given had a typo, or Chrome would not start, or the fixture 404'd counted
+# exactly like one that failed for the reason it was written to demonstrate.
+TAG_RE = re.compile(r"^\s*@(?P<name>[^\s(]+)(?:\((?P<reason>[^)]*)\))?\s*$")
 # A table row: | a | b |  ->  ["a", "b"]
 ROW_RE = re.compile(r"^\s*\|(.*)\|\s*$")
 # `include: <path>` inside a Background, contributing that file's steps.
@@ -181,6 +188,21 @@ def _read_include(rel: str, including: str, lineno: int) -> list[Step]:
     return steps
 
 
+def tag_reason(scenario: "Scenario", tag: str) -> str | None:
+    """The parenthetical on a tag, or None if the tag carries no reason.
+
+    `@expected_failure(bdd.assert: FAIL equals)` -> "bdd.assert: FAIL equals".
+    Returns None both for an absent tag and for a bare one, so callers must
+    treat a bare @expected_failure as an error rather than as "no reason
+    needed" - that is the whole point of requiring one.
+    """
+    prefix = tag + "("
+    for t in scenario.tags or []:
+        if t.startswith(prefix) and t.endswith(")"):
+            return t[len(prefix):-1].strip() or None
+    return None
+
+
 def parse(text: str, path: str = "<string>") -> Feature:
     lines = text.splitlines()
     feature: Feature | None = None
@@ -202,7 +224,9 @@ def parse(text: str, path: str = "<string>") -> Feature:
 
         m = TAG_RE.match(line)
         if m:
-            pending_tags.append(m.group(1))
+            reason = (m.group("reason") or "").strip()
+            pending_tags.append(m.group(1) if not reason
+                                else f"{m.group(1)}({reason})")
             continue
 
         head = stripped.split(":", 1)[0].strip().lower()

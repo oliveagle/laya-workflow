@@ -120,6 +120,44 @@ NEEDS_PAGE_CASES = [
 ]
 
 
+# Every @expected_failure has to say what it is disproving, and this is the
+# Chrome-free half of that rule. The runtime half lives in run.py, which
+# requires the reason to appear in the failure. Neither alone is enough: a bare
+# tag satisfies nothing at parse time, and a reason nobody checks is a comment.
+# This one runs in the default gate and in CI, where there is no browser.
+XFAIL = "expected_failure"
+
+
+def check_xfail_reasons(feature_dir: str) -> list[str]:
+    import glob
+
+    problems: list[str] = []
+    paths = sorted(glob.glob(os.path.join(feature_dir, "*.feature")))
+    if not paths:
+        return [f"{feature_dir}: no .feature files found"]
+    for path in paths:
+        name = os.path.basename(path)
+        with open(path, encoding="utf-8") as f:
+            try:
+                feature = gherkin.parse(f.read(), path)
+            except gherkin.GherkinError as e:
+                problems.append(f"{name}: {e}")
+                continue
+        for scenario in feature.scenarios:
+            tagged = [t for t in (scenario.tags or [])
+                      if t == XFAIL or t.startswith(XFAIL + "(")]
+            if not tagged:
+                continue
+            if not gherkin.tag_reason(scenario, XFAIL):
+                problems.append(
+                    f"{name} :: {scenario.name}: @{XFAIL} declares no reason. "
+                    "Without one, any non-zero exit counts - including a typo'd "
+                    "Given, a Chrome that would not start, or a 404 from the "
+                    f"fixture. Write @{XFAIL}(<text the failure must contain>)."
+                )
+    return problems
+
+
 def _step(kind: str, text: str) -> gherkin.Step:
     return gherkin.Step(keyword=kind.capitalize() + " ", kind=kind, text=text, line=1)
 
@@ -200,6 +238,10 @@ def main() -> int:
             f"post-release {kind} {text!r}: compiled with no page, want a StepError"
         )
 
+    failures += check_xfail_reasons(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "..", "..", "bdd", "features"))
+
     for text in NEEDS_PAGE_CASES:
         try:
             stepdefs.compile_step(_step("then" if text.startswith(("the ", "javascript")) else "when", text), False)
@@ -219,7 +261,8 @@ def main() -> int:
           f"{len(ARGUMENT_CASES)} step arguments survive, "
           f"{len(OPERAND_CASES)} operand types survive, "
           f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page, "
-          f"{len(POST_RELEASE_CASES)} stay refused after a release")
+          f"{len(POST_RELEASE_CASES)} stay refused after a release, "
+          f"every @{XFAIL} says what it disproves")
     return 0
 
 

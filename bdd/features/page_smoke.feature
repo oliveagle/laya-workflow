@@ -19,7 +19,7 @@ Feature: Page smoke
   # vacuous - they would report success no matter what the page did. The runner
   # treats a pass here as a suite failure, so the checks cannot rot into
   # decoration.
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL visible)
   Scenario: Asserting a missing element fails the run
     Given I am on "<base_url>/index.html"
     Then the element "#definitely-not-here" is visible

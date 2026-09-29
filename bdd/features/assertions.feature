@@ -24,51 +24,51 @@ Feature: Assertion vocabulary
     Then javascript "document.body.textContent" contains "BDD fixture page"
     Then javascript "document.getElementById('greeting').textContent" equals text "Not greeted yet."
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL title_contains)
   Scenario: title_contains must reject a title it does not have
     Then the page title contains "A Title That Is Not There"
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL url_contains)
   Scenario: url_contains must reject a url it does not have
     Then the page url contains "not-in-this-url"
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL visible)
   Scenario: visible must reject an element that is not rendered
     Then the element "#definitely-not-here" is visible
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL visible)
   Scenario: visible must reject an element that exists but is hidden
     Then the element "#hidden-note" is visible
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL absent)
   Scenario: absent must reject an element that is present
     Then the element "#heading" is absent
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL is_true)
   Scenario: is_true must reject a falsy expression
     Then javascript "document.readyState === 'loading'" is true
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL is_false)
   Scenario: is_false must reject a truthy expression
     Then javascript "document.readyState === 'complete'" is false
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL equals)
   Scenario: equals must reject the wrong value
     Then javascript "document.querySelectorAll('#facts li').length" equals 4
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL equals)
   Scenario: equals must not coerce a number into a string
     Then javascript "document.querySelectorAll('#facts li').length" equals "3"
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL equals)
   Scenario: equals must not coerce a string into a number
     Then javascript "document.getElementById('heading').textContent" equals 0
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL contains)
   Scenario: contains must reject text that is not there
     Then javascript "document.getElementById('greeting').textContent" contains "Greeted"
 
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL equals_text)
   Scenario: equals_text must reject text that is merely a substring
     Then javascript "document.getElementById('greeting').textContent" equals text "greeted yet"
 
@@ -78,6 +78,6 @@ Feature: Assertion vocabulary
   # win. Neither half says anything on its own - a suite with only the passing
   # one cannot tell a working retry from a lucky page, and a suite with only
   # this one cannot tell a working retry from a missing knob.
-  @expected_failure
+  @expected_failure(bdd.assert: FAIL visible)
   Scenario: one attempt must lose the race against a late element
     Then the element "#slow-note" is visible

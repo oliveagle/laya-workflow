@@ -299,7 +299,8 @@ def main(argv: list[str] | None = None) -> int:
             def one(index: int, worker: int) -> None:
                 feature, scenario, spec, config = plan[index]
                 port, profile = endpoints[worker]
-                xfail = XFAIL_TAG in (scenario.tags or [])
+                xfail = any(t == XFAIL_TAG or t.startswith(XFAIL_TAG + "(")
+                            for t in (scenario.tags or []))
                 spec_path = os.path.join(args.out, spec["name"] + ".json")
                 with open(spec_path, "w", encoding="utf-8") as fh:
                     fh.write(json.dumps(transpile.public_spec(spec), indent=2, ensure_ascii=False))
@@ -314,8 +315,32 @@ def main(argv: list[str] | None = None) -> int:
                 rc, out = run_scenario(binary, spec_path, state, args.timeout)
                 elapsed = time.monotonic() - started
                 name = f"{os.path.basename(feature.path)} :: {scenario.name}"
-                ok = (rc != 0) if xfail else (rc == 0)
-                label = ("xfail" if ok else "XFAIL-BROKEN") if xfail else ("PASS" if ok else "FAIL")
+                if xfail:
+                    # Failing is not enough - the run has to fail *for the
+                    # stated reason*. Any non-zero exit used to count, so a
+                    # scenario that died on a typo'd Given, a Chrome that would
+                    # not start, or a 404 from the fixture was reported as a
+                    # passing demonstration of the thing it was written to
+                    # demonstrate. The reason lives in the tag:
+                    #   @expected_failure(bdd.assert: FAIL equals)
+                    want = gherkin.tag_reason(scenario, XFAIL_TAG)
+                    if rc == 0:
+                        ok, why = False, "the scenario passed, so the check it " \
+                                         "was written to disprove no longer fails"
+                    elif not want:
+                        ok, why = False, "the tag declares no reason, so any " \
+                                         "failure at all would count"
+                    elif want not in out:
+                        ok, why = False, f"it failed, but never said {want!r}, " \
+                                         "so it failed for some other reason"
+                    else:
+                        ok, why = True, ""
+                    label = "xfail" if ok else "XFAIL-WRONG-REASON"
+                    if not ok:
+                        print(f"  {name}: {why}", file=sys.stderr, flush=True)
+                else:
+                    ok = rc == 0
+                    label = "PASS" if ok else "FAIL"
                 with lock:
                     done = next(counter)
                     results.append((label, ok, name, rc, out, xfail, elapsed))
