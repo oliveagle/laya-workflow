@@ -111,9 +111,12 @@ fi
 
 # The probes are not generated, so they are not in "$out" - but they are the
 # specs the runner actually executes, and a broken one used to look green.
+# The glob is `*probe*`, not `bdd_*probe*`: browser_base_probe.json is cited by
+# four documents as the canonical multi-step shape and had no gate at all until
+# round 17, which is how a cited example goes stale unnoticed.
 probes=0
 probe_bad=()
-for spec in "$ROOT"/dsl/browser/bdd_*probe*.json; do
+for spec in "$ROOT"/dsl/browser/*probe*.json; do
   probes=$((probes + 1))
   if ! "$BIN" validate --spec "$spec" >/dev/null 2>&1; then
     probe_bad+=("$(basename "$spec")")

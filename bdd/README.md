@@ -377,6 +377,57 @@ Under `verify.sh` all 15 rows "succeeded"; on their own they all refuse
 correctly. A gate that only ever checks things pass cannot notice when the
 checker itself has been swapped for something that always passes.
 
+## A cited example that was never checked
+
+Four documents point at `dsl/browser/browser_base_probe.json` as the canonical
+"chrome_cdp owns the page across nodes" shape — it is the only spec
+`plugins/bdd/main.rhai`'s own header tells a reader to look at — and **no gate
+touched it**. Round 16 documented that as a known hole; round 17 closed it, and
+the spec did not survive being run.
+
+It did not fail an assertion. It did something worse: it passed while the wait it
+was written to demonstrate had timed out. Pointed at the shared
+`bdd/fixtures/index.html`, whose page has no htmx at all, `wait_htmx` burned its
+full 15000ms budget and reported `"htmx_loaded": false` — and nothing looked at
+the result, so the workflow routed on to `done` and exited 0. Measured across
+three runs: **16.38 / 15.80 / 16.52s**, with `htmx_loaded: false` in all three.
+The demo cost more than the other five hand-written probes combined, to show
+nothing.
+
+Two changes, one per half of the problem:
+
+* **the spec checks its own wait.** The `assert` node now requires
+  `htmx_ok: typeof window.htmx === "object"`. Against the htmx-less fixture the
+  run fails with
+  `htmx_ok: expected true, got false` — the exact mismatch, by name.
+* **the fixture has what the wait looks for.** `bdd/fixtures/htmx.html` defines
+  `window.htmx`, so the wait succeeds on its first poll. It is a stand-in, not
+  the library: the plugin only tests `typeof window.htmx === "object"`, and
+  vendoring real htmx to satisfy a `typeof` would be a dependency with no
+  behaviour under test.
+
+`run.py` points it at that fixture and requires all three — exit 0, four nodes
+reached, and `"htmx_loaded": true` in the report — so the runner cannot be
+satisfied by a run where the wait quietly failed.
+
+Measured after: the probe went **16.4s → 0.43s** (38×) and the whole
+`run.py` suite **24.5s → ~9s**. Falsified both ways: against `index.html` the
+run exits 1 with `htmx_ok: expected true, got false`; against `htmx.html` it
+exits 0 with `htmx_loaded: true`, `htmx_ok: true` and all four nodes.
+
+The spec also joins the Chrome-free gates — `probe_check.py` now lints it
+(5 hand-written specs) and `check.sh`'s validate glob is `*probe*` rather than
+`bdd_*probe*` (6/6 validate).
+
+### And it caught a blind spot in the doc check
+
+Two counts in this file went stale the instant the probe set widened, and
+`doc_check.py` did not notice, because it matches labelled numbers in the gates'
+own output and counts written as *words* — "all 4 probe specs", "the four probe
+specs" — are prose. One of them was also past tense, describing the old
+behaviour as if current. Both corrected by hand, and the lesson is written down
+here rather than pretended away: a number-checker that only knows its own labels
+will go quiet about every other number on the page.
 ## The numbers on this page are checked
 
 This README quotes its own gates: the scenario count up top, and the output of
@@ -416,10 +467,9 @@ It runs in `check.sh`, so CI runs it: no Chrome, no network.
 ### What this does not check
 
 The prose *around* the numbers is not machine-checked, and the counts it
-recomputes are only as trustworthy as the gates they come from. It also does not
-check `dsl/browser/browser_base_probe.json` — four documents point at it as the
-canonical "multi-step scenario" shape and no gate touches it. It passes when run
-by hand today, which is a different statement from "it is kept passing".
+recomputes are only as trustworthy as the gates they come from. Counts written as
+words ("four probe specs") are not labels it recognises either, which is how two
+of them went stale the moment round 17 widened the probe set — see below.
 ## The header is the contract, so it is checked
 
 `plugins/bdd/main.rhai` opens with a table of its six ops, its nine assertions and
@@ -495,10 +545,10 @@ matters for `keep_open` and the idle GC continuing to work.
 
 ## The plugin's own error messages
 
-The four probe specs under `dsl/browser/` all need a real Chrome tab, so between
-them they cover the plugin's *browser* half. They cover none of its argument
-half — and that half is what a hand-written spec author hits first, because every
-one of those checks fires before the plugin touches CDP.
+The four **`bdd_*`** probe specs under `dsl/browser/` all need a real Chrome tab,
+so between them they cover the plugin's *browser* half. They cover none of its
+argument half — and that half is what a hand-written spec author hits first,
+because every one of those checks fires before the plugin touches CDP.
 
 Measured, of the 17 `throw` sites in `plugins/bdd/main.rhai`, 5 were reachable
 from a probe and **12 had never been executed by anything**. The messages

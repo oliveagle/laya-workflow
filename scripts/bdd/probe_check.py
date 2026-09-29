@@ -48,7 +48,8 @@ RUNNER_STATE = {"url", "cdp_port", "cdp_profile"}
 
 def probes() -> list[str]:
     paths = [runner.HANDWRITTEN_SPEC, runner.RELEASE_PROBE,
-             runner.WAIT_PROBE, runner.RETRY_PROBE]
+             runner.WAIT_PROBE, runner.RETRY_PROBE,
+             runner.BROWSER_BASE_PROBE]
     return [p for p in paths if os.path.isfile(p)]
 
 

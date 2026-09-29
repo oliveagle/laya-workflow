@@ -1,7 +1,7 @@
 {
   "name": "browser_base_probe",
   "dsl_version": 2,
-  "description": "Generic localhost-page smoke probe driving the bundled `browser_base` plugin (embedded in the binary, so it works from any checkout): open the URL and deterministically wait until it is actually loaded (URL-polling `_wait_loaded`, not the pre-navigation about:blank trap), report whether htmx loads, then assert the page really rendered (non-empty title + body). No site-specific logic — point state.url at any local server. Run with the offline heuristic: a plugin op that throws (page never reached / assert failed) fails the whole run (rc=1); otherwise the graph just routes to the terminal node.",
+  "description": "A hand-written multi-step spec - open -> wait_htmx -> assert -> done - that four documents point at as the canonical \"chrome_cdp owns the page across nodes\" shape. The assert node requires htmx_ok: true, so the wait it sits behind is actually checked: this used to run against the htmx-less index.html, spend the whole 15000ms wait_htmx budget, report htmx_loaded: false and still pass, because nothing looked at the result. scripts/bdd/run.py points it at bdd/fixtures/htmx.html and requires all four nodes.",
   "start": "open",
   "max_iterations": 5,
   "convergence_window": 5,
@@ -19,13 +19,15 @@
   "capabilities": {
     "chrome": {
       "kind": "chrome_cdp",
-      "endpoint": "http://127.0.0.1:9222",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
       "launch": true,
       "startup_timeout_ms": 20000,
       "timeout_ms": 15000,
       "max_text": 6000,
       "max_owned_pages": 32,
-      "owned_idle_ms": 300000
+      "owned_idle_ms": 300000,
+      "profile_dir": "${state.cdp_profile}",
+      "chrome_binary": "scripts/bdd/chrome-headless.sh"
     },
     "page_open": {
       "kind": "plugin",
@@ -147,10 +149,11 @@
         "capability": "page_assert",
         "with": {
           "url": "${state.url}",
-          "expression": "({ title_ok: (document.title || \"\").length > 0, text_ok: !!(document.body && document.body.innerText.length > 0), url: location.href, sample: document.body ? document.body.innerText.slice(0, 200) : \"\" })",
+          "expression": "({ title_ok: (document.title || \"\").length > 0, text_ok: !!(document.body && document.body.innerText.length > 0), htmx_ok: typeof window.htmx === \"object\", url: location.href, sample: document.body ? document.body.innerText.slice(0,200) : \"\" })",
           "checks": {
             "title_ok": true,
-            "text_ok": true
+            "text_ok": true,
+            "htmx_ok": true
           }
         },
         "project": {

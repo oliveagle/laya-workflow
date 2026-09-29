@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BDD Fixture &mdash; Laya (htmx)</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:40rem}</style>
+</head>
+<body>
+<h1 id="heading">BDD fixture page with htmx</h1>
+
+<!-- `window.htmx` is a stand-in, not the htmx library. The plugin's wait only
+     checks `typeof window.htmx === "object"`, and vendoring the real library to
+     satisfy a `typeof` would be a dependency with no behaviour under test. What
+     this fixture is for is the opposite failure: dsl/browser/browser_base_probe
+     ran against the htmx-less index.html, burned the full 15000ms budget in
+     `wait_htmx`, reported htmx_loaded: false - and then passed, because no node
+     checked the result. A fixture page that *has* the symbol makes the wait
+     succeed in one poll, which is what the demo is supposed to show. -->
+<p id="body-note">A page that already has htmx defined.</p>
+<script>
+  window.htmx = { version: "fixture-stand-in" };
+</script>
+</body>
+</html>

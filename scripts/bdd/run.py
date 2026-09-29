@@ -109,6 +109,13 @@ WAIT_PROBE_MUST_CONTAIN = (
 RETRY_PROBE = os.path.join(ROOT, "dsl", "browser", "bdd_retry_probe.json")
 RETRY_PROBE_ATTEMPTS = 8
 
+# The multi-step shape, not a BDD assertion: four documents point at this spec
+# as the canonical "chrome_cdp owns the page across nodes" example (it is the
+# only spec bdd's own header tells a reader to look at), and no gate touched it.
+# Passing when someone ran it by hand is a different statement from being kept
+# passing, so it is a runner entry like the rest.
+BROWSER_BASE_PROBE = os.path.join(ROOT, "dsl", "browser", "browser_base_probe.json")
+
 
 def free_port() -> int:
     with contextlib.closing(socket.socket()) as s:
@@ -365,6 +372,39 @@ def main(argv: list[str] | None = None) -> int:
                 # The hand-written spec runs on the same endpoint and the same fixture,
             # so it costs one scenario's worth of Chrome and proves the plugin is
             # usable without the transpiler.
+            # The same shape, but driven through the multi-step plugin instead of
+            # the BDD one. Checked as an expectation, not just "did not crash":
+            # the report has to contain the stop of the workflow, or a spec that
+            # exits 0 after doing nothing would read the same as one that went
+            # open -> wait_htmx -> assert -> done.
+            if os.path.isfile(BROWSER_BASE_PROBE):
+                # `htmx.html`, not `index.html`: the fixture index has no htmx,
+                # so wait_htmx burns its full 15000ms and reports htmx_loaded:
+                # false - which the spec did not check, so it passed anyway and
+                # took ~16s of every run to do it. Measured before this change:
+                # 16.38 / 15.80 / 16.52s, with htmx_loaded: false in all three.
+                started = time.monotonic()
+                rc, out = run_scenario(
+                    binary, BROWSER_BASE_PROBE,
+                    {"url": f"{base_url}/htmx.html",
+                     "cdp_port": endpoints[0][0],
+                     "cdp_profile": endpoints[0][1]},
+                    args.timeout,
+                )
+                elapsed = time.monotonic() - started
+                reached_done = '"iterations": 4' in out
+                waited_ok = '"htmx_loaded": true' in out
+                ok = rc == 0 and reached_done and waited_ok
+                results.append(("PASS" if ok else "FAIL", ok,
+                                "hand-written dsl/browser/browser_base_probe.json "
+                                "(multi-step browser_base, no transpiler)",
+                                rc, out, False, elapsed))
+                if not ok:
+                    print(f"  browser_base_probe: rc={rc}, reached_done="
+                          f"{reached_done}, waited_ok={waited_ok} - the spec "
+                          "must run all four nodes AND get htmx_loaded: true "
+                          "from the wait it demonstrates", file=sys.stderr)
+
             if os.path.isfile(HANDWRITTEN_SPEC):
                 started = time.monotonic()
                 rc, out = run_scenario(
