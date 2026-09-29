@@ -320,6 +320,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(5 * 60_000)
                 .clamp(1_000, 24 * 60 * 60_000),
+            human: def.get("human").and_then(|v| v.as_bool()).unwrap_or(true),
         })),
         "web_search" | "search" => Ok(Capability::WebSearch(web::WebSearchCap {
             endpoint: def.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),

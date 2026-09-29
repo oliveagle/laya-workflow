@@ -29,6 +29,7 @@ pub mod browser;
 pub mod data;
 pub mod db;
 pub mod goal;
+pub mod human;
 pub mod local;
 pub mod math;
 pub mod net;

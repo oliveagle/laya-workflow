@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use super::human;
 use super::util::{stamp_downloaded, urlencoding_utf8};
 use super::{bounded_timeout, check_host, expand, host_of, stringify, truncate, Policy};
 
@@ -46,6 +47,10 @@ pub struct BrowserCap {
     pub max_owned_pages: usize,
     /// Idle age after which an auto-close page is eligible for GC.
     pub owned_idle_ms: u64,
+    /// Shape input like a person's: curved pointer paths, reaction/hover
+    /// pauses, per-key typing. Defaults to on because the capability drives a
+    /// real user's browser; set `"human": false` for a raw-speed probe.
+    pub human: bool,
 }
 
 /// Guard for a singleton lock file. The process cannot hold a Chrome profile
@@ -736,8 +741,8 @@ pub(crate) fn ensure_runtime(
     ])
     .arg("--start-maximized")
     .arg("about:blank")
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
     let child = cmd
         .spawn()
         .map_err(|e| anyhow!("spawn Chrome {binary:?} failed: {e}"))?;
@@ -1727,6 +1732,15 @@ fn cdp_page_sequence(
             println!("CDP SEND: {frame}");
         }
         ws.send(tungstenite::Message::Text(frame))?;
+        // Pointer *motion* and wheel acks carry no information we use, and
+        // Chrome defers them by seconds on a throttled (background) tab: one
+        // real run spent 5.0 s per `mouseMoved`. Send them and move on. The
+        // stream stays ordered, so a following waited command (the press) is
+        // processed after every move, and the click still lands where the path
+        // ended.
+        if fire_and_forget(method, params) {
+            continue;
+        }
         loop {
             if Instant::now() >= deadline {
                 bail!(
@@ -1742,7 +1756,12 @@ fn cdp_page_sequence(
                 {
                     continue;
                 }
-                Err(e) => return Err(anyhow!("Chrome websocket read failed: {e}")),
+                Err(e) => {
+                    if std::env::var("LAYA_CDP_DEBUG").is_ok() {
+                        eprintln!("CDP RECV error while waiting for {method} id={id}: {e}");
+                    }
+                    return Err(anyhow!("Chrome websocket read failed: {e}"));
+                }
             };
             let value = match message {
                 tungstenite::Message::Text(s) => serde_json::from_str::<Value>(&s)?,
@@ -1754,7 +1773,11 @@ fn cdp_page_sequence(
                 tungstenite::Message::Close(c) => bail!("Chrome closed page websocket: {c:?}"),
                 _ => continue,
             };
-            if value.get("id").and_then(Value::as_u64) != Some(id) {
+            let got = value.get("id").and_then(Value::as_u64);
+            if got != Some(id) {
+                if std::env::var("LAYA_CDP_DEBUG").is_ok() {
+                    eprintln!("CDP RECV foreign id={got:?} waiting for {id}");
+                }
                 continue;
             }
             if let Some(err) = value.get("error") {
@@ -1765,6 +1788,62 @@ fn cdp_page_sequence(
         }
     }
     Ok(results)
+}
+
+/// Is human-shaped input on for this call? The per-call `with.human` wins over
+/// the capability's own `human` setting.
+fn human_on(c: &BrowserCap, with: &Value) -> bool {
+    with.get("human").and_then(Value::as_bool).unwrap_or(c.human)
+}
+
+/// Type one key at a time, with the uneven rhythm of a person at a keyboard:
+/// a beat of reaction first, then per-character gaps that widen at a space or
+/// punctuation and occasionally pause to think.
+fn type_text_human(endpoint: &str, target: &str, text: &str, timeout: Duration) -> Result<()> {
+    let mut rng = human::Rng::from_clock();
+    let mut commands: Vec<(&str, Value)> = vec![("SLEEP", json!(human::reaction_ms(&mut rng)))];
+    for (i, ch) in text.chars().enumerate() {
+        commands.push(("Input.insertText", json!({ "text": ch.to_string() })));
+        commands.push(("SLEEP", json!(human::key_delay_ms(&mut rng, ch, i))));
+    }
+    cdp_page_sequence(endpoint, target, &commands, timeout)?;
+    Ok(())
+}
+
+/// Wheel the page in a few human notches (negative `amount` scrolls up). The
+/// pointer stays where the last click left it, as a real hand would.
+fn wheel_scroll(endpoint: &str, target: &str, amount: i64, timeout: Duration) -> Result<bool> {
+    let (x, y) = human::last_cursor((480.0, 360.0));
+    let mut rng = human::Rng::from_clock();
+    let notches = 4 + (amount.unsigned_abs() / 400).min(6);
+    let per = amount as f64 / notches as f64;
+    let mut sent = 0.0;
+    let mut commands: Vec<(&str, Value)> = Vec::new();
+    for i in 0..notches {
+        let dy = if i + 1 == notches {
+            amount as f64 - sent
+        } else {
+            per * rng.range(0.7, 1.3)
+        };
+        sent += dy;
+        commands.push((
+            "Input.dispatchMouseEvent",
+            json!({"type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy,
+                   "button": "none", "buttons": 0, "pointerType": "mouse"}),
+        ));
+        commands.push(("SLEEP", json!(human::wheel_gap_ms(&mut rng))));
+    }
+    cdp_page_sequence(endpoint, target, &commands, timeout)?;
+    Ok(true)
+}
+
+/// Pointer motion carries no reply worth waiting for; see the call site.
+fn fire_and_forget(method: &str, params: &Value) -> bool {
+    method == "Input.dispatchMouseEvent"
+        && matches!(
+            params.get("type").and_then(Value::as_str),
+            Some("mouseMoved") | Some("mouseWheel")
+        )
 }
 
 fn mouse_event(kind: &str, x: f64, y: f64) -> Value {
@@ -3596,7 +3675,7 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             let id = target_id(&target)?;
             let target_js = element_from_request(with)?;
             let expression = format!(
-                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); return {{ok:true,x:r.left+r.width/2,y:r.top+r.height/2}};}})()"
+                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); return {{ok:true,x:r.left+r.width/2,y:r.top+r.height/2,vw:innerWidth,vh:innerHeight}};}})()"
             );
             let coords = evaluate(&endpoint, &id, &expression, timeout, false)?;
             if coords.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -3604,14 +3683,51 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             }
             let x = coords.get("x").and_then(Value::as_f64).unwrap_or_default();
             let y = coords.get("y").and_then(Value::as_f64).unwrap_or_default();
-            let click_commands = [
-                ("Page.bringToFront", json!({})),
-                ("Input.dispatchMouseEvent", mouse_event("mouseMoved", x, y)),
-                ("Input.dispatchMouseEvent", mouse_event("mousePressed", x, y)),
-                ("SLEEP", json!(100)),
-                ("Input.dispatchMouseEvent", mouse_event("mouseReleased", x, y)),
-            ];
+            let human_on = human_on(c, with);
+            let mut click_commands: Vec<(&str, Value)> = vec![("Page.bringToFront", json!({}))];
+            if human_on {
+                // Reach, don't teleport: react, travel the arc in small steps,
+                // settle on the target, then press. Every point is clamped into
+                // the viewport -- a real cursor cannot leave the window, and
+                // off-screen coordinates are not something Chrome should see.
+                let mut rng = human::Rng::from_clock();
+                let vw = coords.get("vw").and_then(Value::as_f64).unwrap_or(1095.0).max(4.0);
+                let vh = coords.get("vh").and_then(Value::as_f64).unwrap_or(780.0).max(4.0);
+                let clamp = |px: f64, py: f64| (px.clamp(2.0, vw - 2.0), py.clamp(2.0, vh - 2.0));
+                let fallback = clamp(x - 120.0, y - 70.0);
+                let (raw_cx, raw_cy) = human::last_cursor(fallback);
+                let (cx, cy) = clamp(raw_cx, raw_cy);
+                let mut pts = human::mouse_track((cx, cy), (x, y), &mut rng);
+                if let Ok(cap) = std::env::var("LAYA_HUMAN_POINTS") {
+                    if let Ok(cap) = cap.parse::<usize>() {
+                        pts.truncate(cap);
+                    }
+                }
+                click_commands.push(("SLEEP", json!(human::reaction_ms(&mut rng))));
+                for (px, py) in pts {
+                    let (px, py) = clamp(px, py);
+                    click_commands
+                        .push(("Input.dispatchMouseEvent", mouse_event("mouseMoved", px, py)));
+                    click_commands.push(("SLEEP", json!(human::move_gap_ms(&mut rng))));
+                }
+                click_commands
+                    .push(("Input.dispatchMouseEvent", mouse_event("mouseMoved", x, y)));
+                click_commands.push(("SLEEP", json!(human::hover_ms(&mut rng))));
+                click_commands
+                    .push(("Input.dispatchMouseEvent", mouse_event("mousePressed", x, y)));
+                click_commands.push(("SLEEP", json!(human::hold_ms(&mut rng))));
+                click_commands
+                    .push(("Input.dispatchMouseEvent", mouse_event("mouseReleased", x, y)));
+            } else {
+                click_commands.extend([
+                    ("Input.dispatchMouseEvent", mouse_event("mouseMoved", x, y)),
+                    ("Input.dispatchMouseEvent", mouse_event("mousePressed", x, y)),
+                    ("SLEEP", json!(100)),
+                    ("Input.dispatchMouseEvent", mouse_event("mouseReleased", x, y)),
+                ]);
+            }
             cdp_page_sequence(&endpoint, &id, &click_commands, timeout)?;
+            human::set_cursor(x, y);
             out["target_id"] = json!(id);
             out["clicked"] = json!(true);
         }
@@ -3629,7 +3745,11 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             if evaluate(&endpoint, &id, &expression, timeout, false)?.as_bool() != Some(true) {
                 bail!("browser type target was not found");
             }
-            type_text(&endpoint, &id, &text, timeout)?;
+            if human_on(c, with) {
+                type_text_human(&endpoint, &id, &text, timeout)?;
+            } else {
+                type_text(&endpoint, &id, &text, timeout)?;
+            }
             out["target_id"] = json!(id);
             out["typed"] = json!(text.chars().count());
         }
@@ -3654,7 +3774,14 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
         "scroll" => {
             let target = resolve_target(&endpoint, with, timeout, policy)?;
             let id = target_id(&target)?;
-            out["ok"] = evaluate(&endpoint, &id, &scroll_js(with), timeout, false)?;
+            let selector = with.get("selector").map(stringify).unwrap_or_default();
+            if human_on(c, with) && selector.is_empty() {
+                // A person wheels the page in a few notches, not one jump.
+                let amount = with.get("amount").and_then(Value::as_i64).unwrap_or(600);
+                out["ok"] = json!(wheel_scroll(&endpoint, &id, amount, timeout)?);
+            } else {
+                out["ok"] = evaluate(&endpoint, &id, &scroll_js(with), timeout, false)?;
+            }
             out["target_id"] = json!(id);
         }
         "key" | "press" => {
@@ -3927,6 +4054,7 @@ mod tests {
             max_text: 1_000,
             max_owned_pages: 32,
             owned_idle_ms: 60_000,
+            human: false,
         }
     }
 
@@ -4319,6 +4447,7 @@ mod real_browser_tests {
             max_text: 6_000,
             max_owned_pages: 32,
             owned_idle_ms: 5 * 60_000,
+            human: false,
         };
         // Ensure a concurrent unit-test did not leave a different singleton.
         *runtime_cell().lock().unwrap() = None;
