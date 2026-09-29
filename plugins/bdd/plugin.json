@@ -1,0 +1,10 @@
+{
+  "name": "bdd",
+  "group": "plugins",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "description": "BDD step primitives for Laya workflows: the Given/When/Then vocabulary a `.feature` document compiles into, expressed as deterministic ops. Owns assertion semantics - `with.assertion` names a check (title_contains, url_contains, visible, is_true, is_false, equals, contains) and `with.value` supplies the operand, and a mismatch throws with the page's actual value. Nothing here is judged by a language model: the expression runs in the page and the result is compared key by key. `assert` is also usable directly by any hand-written spec that wants typed, self-diagnosing assertions without writing the JavaScript itself."
+}

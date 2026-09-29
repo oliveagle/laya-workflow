@@ -8,7 +8,7 @@ run can execute and pass or fail. The mapping is one node per step:
 
     Given  -> arrange node   (open a page, or just declare the browser ready)
     When   -> act node       (one chrome_cdp op: open/navigate/click/type/select/evaluate)
-    Then   -> assert node    (browser_base.assert with a `checks` map)
+    Then   -> assert node    (bdd plugin op `assert` with a named assertion)
 
 Each node keeps the page's `target_id` in state, so a When/Then pair operates
 on the same tab: the `Given` opens it, and every later step in the scenario
@@ -200,10 +200,16 @@ def compile_scenario(
         "policy": policy,
         "capabilities": {
             "chrome": chrome,
-            "bd_assert": {
+            # Every non-input step is a `bdd` plugin op - including the asserts.
+            # The plugin owns what an assertion means (scripts/bdd/steps.py only
+            # picks the name), so the same vocabulary is usable from a
+            # hand-written spec with no transpiler involved. `op` is left unset
+            # on purpose: the engine prefers `with.op` when the script defines
+            # a function of that name, which is what lets one capability cover
+            # open/navigate/wait_for/evaluate/assert.
+            "bdd": {
                 "kind": "plugin",
-                "plugin": "browser_base",
-                "op": "assert",
+                "plugin": "bdd",
                 "browser": "chrome",
                 "timeout_ms": 60000,
             },
