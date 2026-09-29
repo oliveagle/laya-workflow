@@ -1790,6 +1790,17 @@ fn cdp_page_sequence(
     Ok(results)
 }
 
+/// Wait until the tab is really focused, the precondition for Chrome to
+/// deliver synthetic input. `Page.bringToFront` activates it; this then polls
+/// `document.hasFocus()` so the aim below is not silently dropped. Returns
+/// whether focus arrived within the budget.
+fn wait_for_focus(endpoint: &str, target: &str, timeout: Duration) -> Result<bool> {
+    let js = "new Promise(function(res){var t0=Date.now();(function chk(){if(document.visibilityState==='visible'&&document.hasFocus())return res(true);if(Date.now()-t0>3000)return res(false);setTimeout(chk,50);})();})";
+    Ok(evaluate(endpoint, target, js, timeout, true)?
+        .as_bool()
+        .unwrap_or(false))
+}
+
 /// Is human-shaped input on for this call? The per-call `with.human` wins over
 /// the capability's own `human` setting.
 fn human_on(c: &BrowserCap, with: &Value) -> bool {
@@ -3675,7 +3686,7 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             let id = target_id(&target)?;
             let target_js = element_from_request(with)?;
             let expression = format!(
-                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); return {{ok:true,x:r.left+r.width/2,y:r.top+r.height/2,vw:innerWidth,vh:innerHeight}};}})()"
+                "(()=>{{const e={target_js}; if(!e) return {{ok:false}}; e.scrollIntoView({{block:'center',behavior:'instant'}}); const r=e.getBoundingClientRect(); const cx=r.left+r.width/2, cy=r.top+r.height/2; const h=document.elementFromPoint(cx,cy); return {{ok:true,x:cx,y:cy,vw:innerWidth,vh:innerHeight,hit:h?(h.tagName+'.'+String(h.className).slice(0,40)):null,same:!!(h&&(h===e||e.contains(h)||h.contains(e)))}};}})()"
             );
             let coords = evaluate(&endpoint, &id, &expression, timeout, false)?;
             if coords.get("ok").and_then(Value::as_bool) != Some(true) {
@@ -3684,7 +3695,13 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             let x = coords.get("x").and_then(Value::as_f64).unwrap_or_default();
             let y = coords.get("y").and_then(Value::as_f64).unwrap_or_default();
             let human_on = human_on(c, with);
-            let mut click_commands: Vec<(&str, Value)> = vec![("Page.bringToFront", json!({}))];
+            // Chrome drops synthetic input to a page that is not both visible
+            // and focused -- the CDP call still returns success, so a scripted
+            // click appears to work while the site never sees it. Activate the
+            // tab, then wait until the page agrees it has focus before aiming.
+            cdp_page_sequence(&endpoint, &id, &[("Page.bringToFront", json!({}))], timeout)?;
+            let focused = wait_for_focus(&endpoint, &id, timeout)?;
+            let mut click_commands: Vec<(&str, Value)> = Vec::new();
             if human_on {
                 // Reach, don't teleport: react, travel the arc in small steps,
                 // settle on the target, then press. Every point is clamped into
@@ -3730,6 +3747,9 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
             human::set_cursor(x, y);
             out["target_id"] = json!(id);
             out["clicked"] = json!(true);
+            out["focused"] = json!(focused);
+            out["hit"] = coords.get("hit").cloned().unwrap_or(Value::Null);
+            out["hit_is_target"] = coords.get("same").cloned().unwrap_or(Value::Null);
         }
         "type" | "type_text" => {
             let target = resolve_target(&endpoint, with, timeout, policy)?;
