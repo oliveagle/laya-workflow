@@ -70,6 +70,10 @@ _WHEN = [
     (re.compile(r'^I type (?P<text>.+?) into the element (?P<sel>.+)$'), "type", "chrome"),
     (re.compile(r'^I select (?P<value>.+?) in the element (?P<sel>.+)$'), "select", "chrome"),
     (re.compile(r'^I run javascript (?P<expr>.+)$'), "evaluate", "bdd"),
+    # `release` was the one op a .feature could not say. It shipped, was
+    # documented, and no scenario ever ran it - the same hole `I run javascript`
+    # was in, one level down: a step nobody writes is a step nobody debugged.
+    (re.compile(r'^I release the page$'), "release", "bdd"),
 ]
 
 # (regex, op, assertion-name). `assertion` goes to the plugin, which owns what
@@ -156,6 +160,9 @@ def _args(op: str, extra: str, m: re.Match) -> tuple[dict, str, bool]:
     if op == "navigate":
         url = _unquote(g["url"])
         return ({"url": url}, f"Did the page navigate to {url}?", True)
+
+    if op == "release":
+        return {}, "Was the page closed?", True
 
     if op == "wait_for":
         sel = _unquote(g["sel"])
@@ -250,6 +257,11 @@ def compile_step(step: Step, has_page: bool) -> tuple[CompiledNode, bool]:
 
     action = None
     now_has_page = has_page
+    if op == "release":
+        # After a release there is no page, and a later step that assumed one
+        # should be a compile error, not a CDP 500 at run time. `has_page` is
+        # already threaded through compile_step for exactly this.
+        now_has_page = False
     if op == "open" and "url" in args:
         # The page is opened by the chrome_cdp *capability*, not by the plugin.
         # The engine closes every tab a plugin opened when that plugin call

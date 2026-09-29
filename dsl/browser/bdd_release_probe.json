@@ -1,0 +1,152 @@
+{
+  "name": "bdd_release_probe",
+  "dsl_version": 2,
+  "description": "A hand-written spec that releases the same page twice, and is required to FAIL. The first release closes a real tab. The second has nothing to close, which is the state the Gherkin vocabulary cannot reach: `I release the page` sets the compiler's has-no-page state, so a second release there is a compile error, not a run. This spec exists so the plugin's honesty is tested and not merely asserted - `bdd.release` used to return `released: true` unconditionally, which meant a release of a target that never existed looked exactly like one that worked. scripts/bdd/run.py runs this and requires a non-zero exit naming the target.",
+  "start": "open",
+  "max_iterations": 9,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
+      "profile_dir": "${state.cdp_profile}",
+      "launch": true,
+      "startup_timeout_ms": 30000,
+      "timeout_ms": 15000,
+      "max_text": 8000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000,
+      "chrome_binary": "scripts/bdd/chrome-headless.sh"
+    },
+    "bdd": {
+      "kind": "plugin",
+      "plugin": "bdd",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open ${state.url} in a real Chrome tab and wait until it is actually loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "release_once"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "${state.url}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "release_once",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Was the page closed by the first release?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "release_again"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "op": "release",
+          "target_id": "${state.target_id}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "release_again",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Did the second release refuse, naming the target?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "STOP"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "op": "release",
+          "target_id": "${state.target_id}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    }
+  ]
+}

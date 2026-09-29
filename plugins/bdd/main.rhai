@@ -119,12 +119,16 @@ fn _wait_loaded(host, target, prefix) {
     throw "bdd: target never reached " + prefix + " (tries=" + tries + ")";
 }
 
+// Returns how many tabs the engine actually closed. Cleanup callers ignore it
+// (they are on an error path, and a 0 there must not mask the real failure);
+// `release` as an op does not ignore it, see _op_release.
 fn _safe_release(host, target) {
-    if target == "" { return; }
+    if target == "" { return 0; }
     try {
         host.browser_release(target);
     } catch (e) {
         host.log("bdd: release best-effort: " + e);
+        return 0;
     }
 }
 
@@ -206,8 +210,18 @@ fn _op_evaluate(host, ctx) {
 // ── op: release ─────────────────────────────────────────────────────────────
 fn _op_release(host, ctx) {
     let target = _arg(ctx, "target_id");
-    _safe_release(host, target);
-    #{ released: true, target_id: target }
+    if target == "" { throw "bdd.release: with.target_id is required"; }
+    // An op that cannot fail is an op nothing tests, and `released: true` for
+    // a target that was already gone is a claim the caller cannot check. The
+    // engine reports how many tabs it really closed, so report that instead,
+    // and treat "nothing to close" as the failure it is - by far the usual
+    // cause is a scenario that released a page it had already released, and
+    // that mistake should read as a mistake.
+    let closed = _safe_release(host, target);
+    if closed == 0 {
+        throw "bdd.release: no open target " + target + " to close (already released, or never opened)";
+    }
+    #{ released: true, closed: closed, target_id: target }
 }
 
 // ── the Then family ─────────────────────────────────────────────────────────

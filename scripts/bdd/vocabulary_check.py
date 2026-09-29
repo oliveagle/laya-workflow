@@ -38,6 +38,7 @@ CASES: list[tuple[str, str, str, str | None, bool]] = [
     ("when", 'I type "hi" into the element "#a"', "type", None, True),
     ("when", 'I select "blue" in the element "#a"', "select", None, True),
     ("when", 'I run javascript "1+1"', "evaluate", None, True),
+    ("when", "I release the page", "release", None, True),
     ("then", 'the page title contains "x"', "assert", "title_contains", True),
     ("then", 'the page url contains "x"', "assert", "url_contains", True),
     ("then", 'the element "#a" is visible', "assert", "visible", True),
@@ -50,6 +51,10 @@ CASES: list[tuple[str, str, str, str | None, bool]] = [
     # neither may fall through to `equals`. This row is the regression guard.
     ('then', 'javascript "a" equals text "x"', "assert", "equals_text", True),
     ('then', 'javascript "a" equals_text "x"', "assert", "equals_text", True),
+    # The last op to get a step. It is also the only one whose *result* the
+    # vocabulary throws away, so pin what it must carry - a release with no
+    # target_id is a no-op that compiles clean.
+    ("when", "I release the page", "release", None, True),
 ]
 
 # The arguments a step produces, not just the op it names. Checking only the
@@ -78,6 +83,15 @@ ARGUMENT_CASES: list[tuple[str, str, dict]] = [
     ('then', 'javascript "a" contains "x"', {"assertion": "contains", "expected": "x"}),
     ('then', 'javascript "a" equals text "x"',
      {"assertion": "equals_text", "expected": "x"}),
+]
+
+# `release` changes the compile state: after it there is no page, so a later
+# step must be a compile error rather than a CDP failure at run time. Without
+# this the step is a silent no-op in any document that releases first and
+# asserts second - which is exactly the document where a wrong `release` hurts.
+POST_RELEASE_CASES: list[tuple[str, str]] = [
+    ('when', "I release the page"),
+    ('then', 'the element "#a" is visible'),
 ]
 
 # The operand type is the author's signal, and getting it wrong makes a
@@ -163,6 +177,29 @@ def main() -> int:
                 f"got {got!r} ({type(got).__name__})"
             )
 
+    # The `release` step must leave the compiler in the has-no-page state.
+    try:
+        _, still_has_page = stepdefs.compile_step(_step("when", "I release the page"), True)
+        if still_has_page:
+            failures.append(
+                'when "I release the page": the compiler still believes a page is open, '
+                "so any later step would run against a closed target"
+            )
+    except (stepdefs.UnknownStep, stepdefs.StepError) as e:
+        failures.append(f'when "I release the page": {e}')
+
+    for kind, text in POST_RELEASE_CASES:
+        try:
+            stepdefs.compile_step(_step(kind, text), False)
+        except stepdefs.StepError:
+            continue
+        except stepdefs.UnknownStep as e:
+            failures.append(f"post-release {kind} {text!r}: {e}")
+            continue
+        failures.append(
+            f"post-release {kind} {text!r}: compiled with no page, want a StepError"
+        )
+
     for text in NEEDS_PAGE_CASES:
         try:
             stepdefs.compile_step(_step("then" if text.startswith(("the ", "javascript")) else "when", text), False)
@@ -181,7 +218,8 @@ def main() -> int:
     print(f"bdd vocabulary: {len(CASES)} steps map correctly, "
           f"{len(ARGUMENT_CASES)} step arguments survive, "
           f"{len(OPERAND_CASES)} operand types survive, "
-          f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page")
+          f"{len(NEEDS_PAGE_CASES)} steps still refuse to run without a page, "
+          f"{len(POST_RELEASE_CASES)} stay refused after a release")
     return 0
 
 

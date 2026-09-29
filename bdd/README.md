@@ -64,6 +64,15 @@ Python transpiler, so a hand-written spec gets the same checks a compiled
 Ops: `open`, `navigate`, `wait_for`, `evaluate`, `assert`, `release`. The
 capability leaves `op` unset so the engine prefers `with.op` per call.
 
+`release` reports the number of tabs the engine actually closed and **throws if
+that is zero**, so releasing a target that was already closed — or that never
+existed — reads as the mistake it is. It used to return `released: true`
+unconditionally, which made it the one op in the set that could not fail, and
+therefore had nothing in it worth testing.
+`dsl/browser/bdd_release_probe.json` is the hand-written spec that holds it to
+that, and `run.py` runs it as a *required failure* — see "A test that has to
+fail" below.
+
 That it is a *standard* plugin is checked, not asserted:
 `dsl/browser/bdd_assert_probe.json` is a hand-written spec — no Gherkin, no
 transpiler — that drives the same ops, and `scripts/bdd/run.py` runs it against
@@ -92,8 +101,10 @@ pins every step in the table to the op it is supposed to run, and runs in the
 default gate with no Chrome:
 
 ```
-bdd vocabulary: 19 steps map correctly, 8 operand types survive,
-                 8 steps still refuse to run without a page
+bdd vocabulary: 21 steps map correctly, 17 step arguments survive,
+                 8 operand types survive,
+                 8 steps still refuse to run without a page,
+                 2 stay refused after a release
 ```
 
 It exists because that failure is invisible otherwise. `Then javascript "a"
@@ -112,7 +123,12 @@ load-bearing enough to have its own `@expected_failure` scenario, because
 `I wait for the element "<selector>"` · `I click the element "<selector>"` ·
 `I type "<text>" into the element "<selector>"` ·
 `I select "<value>" in the element "<selector>"` ·
-`I run javascript "<expression>"`
+`I run javascript "<expression>"` · `I release the page`
+
+`I release the page` is the one step that changes what a *later* step may do:
+it closes the tab, so the compiler moves to its has-no-page state and any
+following step is a compile error rather than a CDP failure at run time. Both
+halves of that are pinned in `vocabulary_check.py`.
 
 **Then** — `the page title contains "<text>"` · `the page url contains "<text>"` ·
 `the element "<selector>" is visible` ·
@@ -133,6 +149,31 @@ success no matter what the page did, and the suite reports that as a failure.
   PASS           page_smoke.feature :: A page that loads is assertable  [0]
   xfail          page_smoke.feature :: Asserting a missing element fails the run  [1]
 ```
+
+## A test that has to fail
+
+`@expected_failure` covers *assertions*. It cannot cover an *op*, because an op
+is not a document: to prove `release` refuses a target that is not open you have
+to write a spec that releases twice, and the Gherkin vocabulary deliberately
+refuses to compile that — after a release the compiler knows there is no page,
+so the second release is a compile error, not a run.
+
+So the probe is hand-written (`dsl/browser/bdd_release_probe.json`) and
+`run.py` inverts the verdict for it: `rc == 0` is the *failure*, and the run
+has to name the target it could not close or it does not count. A green-only
+suite cannot express that, and here it is not hypothetical — measured with the
+pre-fix `release` compiled in:
+
+```
+  PASS           release.feature :: Releasing closes the tab the scenario was using  [0]
+  FAIL           hand-written dsl/browser/bdd_release_probe.json  [0]
+      the second release was reported as success - bdd.release is claiming
+      it closed a page that was already closed
+```
+
+The Gherkin scenario **passed in both builds**. It is the required failure that
+carries this, and it cost one extra spec against a Chrome that was already
+running.
 
 ## Scenario Outlines
 

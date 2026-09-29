@@ -71,6 +71,19 @@ XFAIL_TAG = "expected_failure"
 # claim in a README.
 HANDWRITTEN_SPEC = os.path.join(ROOT, "dsl", "browser", "bdd_assert_probe.json")
 
+# A hand-written spec that is required to FAIL, and to name the thing it could
+# not close. It exists because a green test proves a feature works, and says
+# nothing about whether the feature can fail - and `bdd.release` used to return
+# `released: true` for a target that never existed, so it could not. The
+# Gherkin vocabulary cannot reach this state on purpose: `I release the page`
+# clears the compiler's has-no-page flag, so a second release is a compile
+# error rather than a run. Which is exactly the argument for having at least
+# one spec written by hand.
+RELEASE_PROBE = os.path.join(ROOT, "dsl", "browser", "bdd_release_probe.json")
+# The message has to carry the target, or "no open target" is a shrug: the
+# reader has no way to tell a typo'd id from a page that was already gone.
+RELEASE_PROBE_MUST_CONTAIN = "no open target"
+
 
 def free_port() -> int:
     with contextlib.closing(socket.socket()) as s:
@@ -311,6 +324,41 @@ def main(argv: list[str] | None = None) -> int:
                                 "hand-written dsl/browser/bdd_assert_probe.json "
                                 "(no transpiler)",
                                 rc, out, False, elapsed))
+
+            # The opposite shape: this spec must NOT pass. Two exit codes mean
+            # "the assertion did not hold" here, so `rc == 0` is the failure
+            # being reported as a pass - the exact inversion a green-only
+            # suite cannot express.
+            if os.path.isfile(RELEASE_PROBE):
+                started = time.monotonic()
+                rc, out = run_scenario(
+                    binary, RELEASE_PROBE,
+                    {"url": f"{base_url}/index.html",
+                     "cdp_port": endpoints[0][0],
+                     "cdp_profile": endpoints[0][1]},
+                    args.timeout,
+                )
+                elapsed = time.monotonic() - started
+                names_target = RELEASE_PROBE_MUST_CONTAIN in out
+                ok = rc != 0 and names_target
+                results.append(("PASS" if ok else "FAIL", ok,
+                                "hand-written dsl/browser/bdd_release_probe.json "
+                                "(must refuse to release twice)",
+                                rc, out, not ok, elapsed))
+                if rc == 0:
+                    detail = ("the second release was reported as success - "
+                              "bdd.release is claiming it closed a page that "
+                              "was already closed")
+                elif not names_target:
+                    detail = (f"the run failed but never said {RELEASE_PROBE_MUST_CONTAIN!r}, "
+                              "so the reader cannot tell a typo'd target from an "
+                              "already-closed one")
+                else:
+                    detail = ""
+                if detail:
+                    print(f"  bdd_release_probe: {detail}", file=sys.stderr)
+                    for line in extract_failure(out).splitlines():
+                        print(f"                 {line}", file=sys.stderr)
 
             results.sort(key=lambda r: r[2])
             passed = sum(1 for r in results if r[1])
