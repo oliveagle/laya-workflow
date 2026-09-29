@@ -74,9 +74,20 @@ fn _flag(ctx, key) {
 
 fn _num(ctx, key, dflt) {
     let v = _arg_opt(ctx, key);
-    if type_of(v) == "int" { return v; }
-    if type_of(v) == "float" { return v; }
+    // `type_of` reports "i64" and "f64", never "int" and "float". So the two
+    // branches below never matched, and *every* numeric argument silently fell
+    // back to its default. Measured: `with.timeout_ms: 600` produced
+    // "timed out after 15000ms (150 polls)" and a 16.5s run. `with.attempts`,
+    // which the README documents as the opt-in for retries, was dead for the
+    // same reason. Every other plugin in the tree already checks "i64"/"f64";
+    // both spellings are kept here so the alias cannot be the failure again.
+    if type_of(v) == "i64" || type_of(v) == "int" { return v; }
+    if type_of(v) == "f64" || type_of(v) == "float" { return v; }
     dflt
+}
+
+fn _elapsed_ms(host, started) {
+    host.now()["unix_ms"] - started
 }
 
 // A JS string literal for an arbitrary string, quotes and newlines included.
@@ -174,13 +185,18 @@ fn _op_wait_for(host, ctx) {
     // timeout. A wait that lies about how long it waited is worse than no wait.
     let budget = _num(ctx, "timeout_ms", 15000);
     let js = "!!document.querySelector(" + _js_str(host, selector) + ")";
-    let waited = 0;
+    // Real elapsed milliseconds, not a counter. `waited += 100` after
+    // `sleep(0.1)` assumed the sleep cost exactly 100ms, and the probe round
+    // trip costs time too, so every number this op reported was a fiction -
+    // and one that always under-reports, which is the direction that makes a
+    // timeout look like it gave up early. The host clock settles it.
+    let started = host.now()["unix_ms"];
     // Keep the last probe error. "timed out" alone is a dead end: the usual
     // cause is not a slow page but an unreachable one (a closed tab, a dead
     // target), and that is visible only in the error the probe threw.
     let last = "";
     let polls = 0;
-    while waited < budget {
+    loop {
         polls += 1;
         let found = false;
         try {
@@ -188,14 +204,20 @@ fn _op_wait_for(host, ctx) {
         } catch (e) {
             last = "" + e;
         }
+        let spent = _elapsed_ms(host, started);
         if found {
-            return #{ target_id: target, ready: true, selector: selector, waited_ms: waited, polls: polls };
+            return #{ target_id: target, ready: true, selector: selector,
+                      waited_ms: spent, polls: polls };
         }
+        // Checked after the first probe, so a budget of 0 means "look once"
+        // rather than "never look" - the op is called wait_for, and a caller
+        // that passes 0 is asking for an immediate check, not a no-op.
+        if spent >= budget { break; }
         sleep(0.1);
-        waited += 100;
     }
     let why = if last == "" { "" } else { "; last probe error: " + last };
-    throw "bdd.wait_for: timed out after " + budget + "ms (" + polls + " polls) waiting for " + selector + why;
+    throw "bdd.wait_for: timed out after " + budget + "ms (" + polls + " polls, "
+        + _elapsed_ms(host, started) + "ms elapsed) waiting for " + selector + why;
 }
 
 // ── op: evaluate ────────────────────────────────────────────────────────────

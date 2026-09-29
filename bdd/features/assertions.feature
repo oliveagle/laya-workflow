@@ -72,3 +72,13 @@ Feature: Assertion vocabulary
   @expected_failure
   Scenario: equals_text must reject text that is merely a substring
     Then javascript "document.getElementById('greeting').textContent" equals text "greeted yet"
+
+  # The control half of `with.attempts`. The fixture appends #slow-note at
+  # 1000ms, so a single attempt probes at ~0ms and must lose; the other half
+  # is dsl/browser/bdd_retry_probe.json, which asks for five attempts and must
+  # win. Neither half says anything on its own - a suite with only the passing
+  # one cannot tell a working retry from a lucky page, and a suite with only
+  # this one cannot tell a working retry from a missing knob.
+  @expected_failure
+  Scenario: one attempt must lose the race against a late element
+    Then the element "#slow-note" is visible

@@ -38,7 +38,34 @@
   <li>gamma</li>
 </ul>
 
+<!-- A container that starts empty; the note is appended a second later, so
+     `#slow-note` does not merely exist - it is genuinely absent until then.
+     This is what gives `with.attempts` something to retry: at 1000ms and a
+     300ms retry interval, one attempt always loses (probe at ~0ms) and five
+     always win (probes at ~0/300/600/900/1200ms), with a clear margin either
+     side. An element that was merely empty would not do: an empty <p> still
+     has a bounding box, so `visible` would pass on the first probe and the
+     knob would be untestable.
+
+     The 1000ms is a floor, not a promise. This page is a background tab in
+     headless Chrome, and background tabs get their timers throttled into
+     roughly 1s buckets - measured here, the same 5s `wait_for` saw the note
+     arrive at 944ms, 840ms and 998ms for timer delays of 300ms, 600ms and
+     1000ms, and at 1674ms on another run. A sub-second delay is therefore
+     indistinguishable from a 1s one, which is why this uses 1000ms and why
+     bdd_retry_probe.json asks for eight attempts (2.1s of polling) instead of
+     the five the arithmetic suggests. Do not "tidy" that margin down to the
+     nominal numbers. -->
+<div id="late"></div>
+
 <script>
+  setTimeout(function () {
+    var note = document.createElement('p');
+    note.id = 'slow-note';
+    note.textContent = 'arrived late';
+    document.getElementById('late').appendChild(note);
+  }, 1000);
+
   var clicks = 0;
   document.getElementById('greet').addEventListener('click', function () {
     clicks += 1;

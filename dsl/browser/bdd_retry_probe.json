@@ -1,0 +1,118 @@
+{
+  "name": "bdd_retry_probe",
+  "dsl_version": 2,
+  "description": "A hand-written spec that asserts an element which does not exist yet, with `with.attempts`, and is required to SUCCEED. It exists because `with.attempts` was dead: `_num` compared `type_of(v)` against \"int\" and \"float\", and Rhai reports \"i64\" and \"f64\", so the comparison never matched and every numeric argument silently fell back to its default. The README documented this knob as the way to opt into retries; it retried once, always. The matching control - that a single attempt loses the same race - is the @expected_failure scenario at the end of bdd/features/assertions.feature.",
+  "start": "open",
+  "max_iterations": 9,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
+      "profile_dir": "${state.cdp_profile}",
+      "launch": true,
+      "startup_timeout_ms": 30000,
+      "timeout_ms": 15000,
+      "max_text": 8000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000,
+      "chrome_binary": "scripts/bdd/chrome-headless.sh"
+    },
+    "bdd": {
+      "kind": "plugin",
+      "plugin": "bdd",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open ${state.url} in a real Chrome tab and wait until it is actually loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "retry"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "${state.url}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "retry",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Did the late element turn up within eight attempts?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "STOP"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "op": "assert",
+          "assertion": "visible",
+          "value": "#slow-note",
+          "attempts": 8,
+          "target_id": "${state.target_id}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    }
+  ]
+}

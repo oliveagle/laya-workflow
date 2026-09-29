@@ -92,6 +92,22 @@ fail should say so immediately; the way to absorb a page that is still settling
 is an explicit `wait_for` before it, which is visible in the document. Pass
 `with.attempts` to opt into retries.
 
+`wait_for` takes `with.timeout_ms` (default 15000). Both knobs were dead until
+Round 8, for one reason: `_num` tested `type_of(v) == "int"` and `"float"`, and
+Rhai reports `"i64"` and `"f64"`, so *every* numeric argument silently became
+its default. Measured with the broken `_num` compiled in, asking for 600ms:
+
+```
+bdd.wait_for: timed out after 15000ms (150 polls) waiting for #never-going-to-appear
+```
+
+25× the budget, and 16.5s instead of 1.8s. Every other plugin in the tree
+already checks `"i64"`/`"f64"`; the alias is kept alongside so it cannot be the
+failure again. `wait_for` also measures real elapsed milliseconds now — it used
+to add a hardcoded 100 per iteration, ignoring both the sleep and the probe
+round trip, so every number it reported under-counted, which is the direction
+that makes a timeout look like it gave up early.
+
 ## Step vocabulary
 
 Anything not in this table is a compile error. A BDD step that quietly becomes
@@ -174,6 +190,24 @@ pre-fix `release` compiled in:
 The Gherkin scenario **passed in both builds**. It is the required failure that
 carries this, and it cost one extra spec against a Chrome that was already
 running.
+
+Three of the four hand-written probes work this way. `dsl/browser/bdd_wait_probe.json`
+waits for an element that never appears and must fail *and* name the budget, the
+selector and the real elapsed time; `dsl/browser/bdd_retry_probe.json` asserts a
+late element with `with.attempts` and must **succeed**, with the losing half of
+that race as an `@expected_failure` scenario in `assertions.feature` (one attempt
+probes at ~0ms and cannot win; eight attempts reach 2.1s and can). Neither half
+means anything alone: a suite with only the winner cannot tell a working retry
+from a lucky page, and one with only the loser cannot tell a working retry from
+a missing knob.
+
+The fixture's late element is a `setTimeout`, and this page is a background tab,
+so Chrome throttles its timers into ~1s buckets. Measured, the note arrived at
+944ms / 840ms / 998ms for timer delays of 300 / 600 / 1000ms, and 1674ms on
+another run. **A sub-second timer delay in this fixture is indistinguishable
+from a 1s one**, which is why the delay is 1000ms and the probe asks for eight
+attempts rather than the five the arithmetic suggests. Don't tidy that margin
+down to the nominal numbers.
 
 ## Scenario Outlines
 

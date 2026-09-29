@@ -84,6 +84,31 @@ RELEASE_PROBE = os.path.join(ROOT, "dsl", "browser", "bdd_release_probe.json")
 # reader has no way to tell a typo'd id from a page that was already gone.
 RELEASE_PROBE_MUST_CONTAIN = "no open target"
 
+# A hand-written spec that waits for an element that never appears, required to
+# FAIL *and* to say what it waited for. `bdd.wait_for` has two claims no other
+# test could reach: that its budget is milliseconds on both sides of the
+# comparison, and that it does not under-report how long it ran. Both were
+# false - the budget was in seconds against a millisecond counter, and the
+# elapsed time was a hardcoded `waited += 100` that ignored both the sleep and
+# the probe round trip.
+WAIT_PROBE = os.path.join(ROOT, "dsl", "browser", "bdd_wait_probe.json")
+# A budget this small is what makes the probe cheap: the default is 15000ms, so
+# a spec that relied on it would add 15s to every run. It is also what proves
+# `with.timeout_ms` arrives - see RETRY_PROBE for the sibling case.
+WAIT_PROBE_BUDGET_MS = 600
+WAIT_PROBE_MUST_CONTAIN = (
+    f"timed out after {WAIT_PROBE_BUDGET_MS}ms",
+    "#never-going-to-appear",
+    "ms elapsed",
+)
+
+# A hand-written spec that must SUCCEED, and only does if `with.attempts`
+# reaches the plugin. Its control - that one attempt loses the same race - is
+# the @expected_failure scenario at the end of bdd/features/assertions.feature.
+# Two specs, because one proves nothing on its own.
+RETRY_PROBE = os.path.join(ROOT, "dsl", "browser", "bdd_retry_probe.json")
+RETRY_PROBE_ATTEMPTS = 8
+
 
 def free_port() -> int:
     with contextlib.closing(socket.socket()) as s:
@@ -357,6 +382,46 @@ def main(argv: list[str] | None = None) -> int:
                     detail = ""
                 if detail:
                     print(f"  bdd_release_probe: {detail}", file=sys.stderr)
+                    for line in extract_failure(out).splitlines():
+                        print(f"                 {line}", file=sys.stderr)
+
+            for probe, required_rc_zero, must_contain, blurb in (
+                (WAIT_PROBE, False, WAIT_PROBE_MUST_CONTAIN,
+                 "must time out and say what it waited for"),
+                (RETRY_PROBE, True, (),
+                 "must win a race it cannot win in one attempt"),
+            ):
+                if not os.path.isfile(probe):
+                    continue
+                started = time.monotonic()
+                rc, out = run_scenario(
+                    binary, probe,
+                    {"url": f"{base_url}/index.html",
+                     "cdp_port": endpoints[0][0],
+                     "cdp_profile": endpoints[0][1]},
+                    args.timeout,
+                )
+                elapsed = time.monotonic() - started
+                problems: list[str] = []
+                if required_rc_zero and rc != 0:
+                    problems.append("the spec failed, but a working "
+                                    f"{os.path.basename(probe)} must succeed")
+                if not required_rc_zero and rc == 0:
+                    problems.append("the spec succeeded, but it exists because "
+                                    "the op is supposed to refuse")
+                if not required_rc_zero:
+                    missing = [t for t in must_contain if t not in out]
+                    if missing:
+                        problems.append(
+                            "the run failed without saying "
+                            + ", ".join(repr(m) for m in missing)
+                            + " - a reader cannot tell a mistyped selector from "
+                              "a budget that was never applied")
+                results.append(("PASS" if not problems else "FAIL", not problems,
+                                f"hand-written {os.path.relpath(probe, ROOT)} ({blurb})",
+                                rc, out, bool(problems), elapsed))
+                for problem in problems:
+                    print(f"  {os.path.basename(probe)}: {problem}", file=sys.stderr)
                     for line in extract_failure(out).splitlines():
                         print(f"                 {line}", file=sys.stderr)
 
