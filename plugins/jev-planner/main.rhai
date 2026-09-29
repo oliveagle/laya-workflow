@@ -16,6 +16,10 @@
 //   observe  numbered snapshot: url, title, N elements, first screen, prices (page/observe.js)
 //   dismiss  close a full-viewport modal overlay so later clicks land        (page/dismiss.js)
 //   find     turn an intent into ONE numbered decision                  (page/find.js)
+//   sweep    open N product cards one by one, read each detail, rank them
+//            (page/cards.js + page/item.js) and return the best one
+//   guard    wait out an anti-bot wall (滑块 / 验证码 / 访问太频繁) before acting
+//            (page/wall.js)
 //   reset   clear this origin's round counter and "already followed" memory
 //
 // `observe` / `find` are the *directed* half: where `step` lets the page-side
@@ -26,7 +30,7 @@
 // in the decision is the number the extension drew on the page.
 
 fn run(host, ctx) {
-    throw "jev-planner: pick an op (visit | step | observe | find | dismiss | reset)";
+    throw "jev-planner: pick an op (visit | step | observe | find | dismiss | sweep | pause | guard | reset)";
 }
 
 fn _arg(ctx, key) {
@@ -68,7 +72,14 @@ fn _settle(host, target, prefix, quiet_ms) {
             last_info = info;
             let url = info["url"];
             let wanted = prefix == "" || url.starts_with(prefix);
-            if wanted && url != "about:blank" && info["ready"] == "complete" {
+            // "complete" is the clean signal. Some sites (Taobao's home and search
+            // pages) hold a long-lived resource open, so readyState sits at
+            // "interactive" for tens of seconds even though the page is painted and
+            // usable. After a short grace, trust a rendered body the way a person
+            // reads a page that has visibly drawn.
+            let drawn = info["ready"] == "complete"
+                || (tries > 25 && info["ready"] != "loading" && _num(info["len"]) > 0);
+            if wanted && url != "about:blank" && drawn {
                 if url == last {
                     stable += 200;
                     if stable >= quiet_ms { return info; }
@@ -231,6 +242,235 @@ fn find(host, ctx) {
             if n > tries { throw e; }
             sleep(0.4);
         }
+    }
+}
+
+// ── op: sweep ───────────────────────────────────────────────────────────────
+// The comparison pass: read the product cards on the current search-results
+// page (page/cards.js), then open them ONE AT A TIME — navigate the owned tab to
+// each card's detail page, settle, read it (page/item.js) — for up to `with.n`
+// products. Every product is journalled as one line and the op returns the whole
+// table plus the single best row, so the workflow can end by navigating to that
+// winner and observing it. Nothing here clicks: the tab is the same one the run
+// owns, only its URL changes.
+//
+// Taobao rate-limits a burst of navigations with a *punish* wall (a slider, a
+// click-image, a drag-drop, or a bare "验证码拦截"/deny page). So the sweep paces
+// itself like a person (1.6–3.0 s between page opens) and, when a read-back is a
+// wall, cools down and re-opens the same URL a few times before writing it off.
+fn _int(ctx, key, dflt) {
+    let v = _arg(ctx, key);
+    if type_of(v) == "int" || type_of(v) == "i64" { return v; }
+    if v == "" { return dflt; }
+    let s = "" + v;
+    try { return parse_int(s); } catch (e) { return dflt; }
+}
+
+fn _num(v) {
+    if type_of(v) == "int" || type_of(v) == "i64" { return v.to_float(); }
+    if type_of(v) == "f64" || type_of(v) == "float" { return v; }
+    if v == () { return -1.0e9; }
+    if v == "" { return -1.0e9; }
+    try { return parse_float("" + v); } catch (e) { return -1.0e9; }
+}
+
+fn _abs(x) {
+    if x < 0.0 { return -x; }
+    x
+}
+
+fn _wall(d) {
+    if d["wall"] == true { return true; }
+    let t = "" + d["title"];
+    let u = "" + d["url"];
+    if t.contains("验证码") || t.contains("拦截") || t.contains("访问过") || t.contains("访问太频繁") { return true; }
+    if u.contains("punish") || u.contains("captcha") || u.contains("x5sec") { return true; }
+    false
+}
+
+// ── op: pause ───────────────────────────────────────────────────────────────
+// A human-scale delay the workflow can put between two clicks (`with.ms`), so a
+// directed tour does not machine-gun a site into its anti-bot wall.
+fn pause(host, ctx) {
+    let ms = _int(ctx, "ms", 1200);
+    sleep(ms.to_float() / 1000.0);
+    #{ paused_ms: ms }
+}
+
+// ── op: guard ───────────────────────────────────────────────────────────────
+// Human patience in front of an anti-bot wall. Taobao answers a too-fast client
+// with a 滑块 / 验证码 overlay ("访问太频繁"); the fix is not to solve it but to
+// stop and wait the way a person would, then try the page again. Loops until the
+// page is clean or `with.wait_ms` (default 90s) runs out and returns whether a
+// wall is still up, so the workflow can keep waiting or give up out loud.
+fn guard(host, ctx) {
+    let target = _arg(ctx, "target_id");
+    if target == "" { throw "jev-planner.guard: with.target_id is required"; }
+    let budget_ms = _int(ctx, "wait_ms", 90000);
+    let url = _arg(ctx, "url");
+    let attempts = 0;
+    let waited = 0;
+    let wall = false;
+    loop {
+        let d = host.browser_evaluate(target, host.js("wall.js"), false);
+        wall = d["wall"] == true;
+        if !wall { break; }
+        if url == "" { url = "" + d["url"]; }
+        if waited >= budget_ms { break; }
+        // each retry waits longer, the way a person who keeps seeing the wall
+        // backs further off instead of hammering it
+        let cool = 6000 + attempts * 6000;
+        host.log("guard: wall up (attempt " + (attempts + 1) + "), cooling down " + cool + "ms");
+        sleep(cool.to_float() / 1000.0);
+        waited += cool;
+        attempts += 1;
+        let stuck_url = url.contains("punish") || url.contains("x5sec") || url.contains("_____tmd_____");
+        if url != "" && !stuck_url {
+            host.browser_navigate(target, url);
+            _settle(host, target, _origin(url), 800);
+        }
+    }
+    #{ wall: wall, attempts: attempts, waited_ms: waited, url: url }
+}
+
+fn sweep(host, ctx) {
+    let target = _arg(ctx, "target_id");
+    if target == "" { throw "jev-planner.sweep: with.target_id is required"; }
+    let list_url = _arg(ctx, "list_url");
+    if list_url == "" { list_url = _arg(ctx, "url"); }
+    let n = _int(ctx, "n", 20);
+    let results = _arg(ctx, "results");
+    if results == "" { results = "sweep.jsonl"; }
+
+    // Read the list first; if Taobao answers with a wall (no cards), cool down
+    // and re-open the list a few times rather than sweeping an empty page.
+    let list = [];
+    let total = 0;
+    let la = 0;
+    while la < 4 && total == 0 {
+        if list_url != "" {
+            host.browser_navigate(target, list_url);
+            _settle(host, target, _origin(list_url), 600);
+        }
+        let cards = host.browser_evaluate(target, host.js("cards.js"), false);
+        list = cards["cards"];
+        if type_of(list) != "array" { list = []; }
+        total = list.len();
+        if total == 0 {
+            host.log("sweep: 0 cards (wall?), cooldown " + (la + 1));
+            sleep(6.0 + la * 2.5);
+            la += 1;
+        }
+    }
+    let want = if n < total { n } else { total };
+    host.log("sweep: " + total + " cards on the list, opening " + want);
+
+    let items = [];
+    let lines = "";
+    let i = 0;
+    while i < want {
+        let card = list[i];
+        let href = card["href"];
+        let rec = #{
+            i: i,
+            href: href,
+            list_title: card["title"],
+            list_price: card["price"],
+            title: card["title"],
+            price: card["price"],
+            server: false,
+            ecc_reg: false,
+            single: false,
+            stick: false,
+            kit: false,
+            capacity_gb: 0,
+            freq_mhz: 0,
+            score: -100,
+            wall: false
+        };
+        let d = #{};
+        let got = false;
+        let attempt = 0;
+        while attempt < 4 && !got {
+            try {
+                // human-ish pace: ~1.6 s .. 3.0 s between page opens
+                sleep(1.6 + ((i + attempt) % 5) * 0.35);
+                host.browser_navigate(target, href);
+                _settle(host, target, _origin(href), 600);
+                d = host.browser_evaluate(target, host.js("item.js"), false);
+                if _wall(d) {
+                    host.log("sweep: wall on item " + (i + 1) + ", cooldown " + (attempt + 1));
+                    sleep(6.0 + attempt * 2.5);
+                    attempt += 1;
+                } else {
+                    got = true;
+                }
+            } catch (e) {
+                rec["error"] = "" + e;
+                attempt += 1;
+                sleep(2.0);
+            }
+        }
+        if got {
+            rec["title"] = d["title"];
+            rec["price"] = d["price"];
+            rec["server"] = d["server"];
+            rec["ecc_reg"] = d["ecc_reg"];
+            rec["single"] = d["single"];
+            rec["stick"] = d["stick"];
+            rec["kit"] = d["kit"];
+            rec["capacity_gb"] = d["capacity_gb"];
+            rec["freq_mhz"] = d["freq_mhz"];
+            rec["score"] = d["score"];
+            rec["spec"] = d["spec_excerpt"];
+            rec["detail_url"] = d["url"];
+        } else {
+            rec["wall"] = true;
+            rec["score"] = -100;
+        }
+        items.push(rec);
+        lines += host.json_stringify(rec) + "\n";
+        host.log("sweep[" + (i + 1) + "/" + want + "] score=" + rec["score"]
+            + " server=" + rec["server"] + " stick=" + rec["stick"]
+            + " " + rec["title"]);
+        i += 1;
+    }
+    if lines != "" { try { host.write_file(results, lines); } catch (e) { host.log("sweep: journal write failed: " + e); } }
+
+    // Rank: highest score wins; ties prefer the capacity closest to a 32 GB
+    // single DIMM, then the lower price. A walled/errored row is -100, so it can
+    // never win.
+    let best_i = 0;
+    let k = 1;
+    while k < items.len() {
+        let s = _num(items[k]["score"]);
+        let bs = _num(items[best_i]["score"]);
+        let better = s > bs;
+        if s == bs {
+            let dk = _abs(_num(items[k]["capacity_gb"]) - 32.0);
+            let db = _abs(_num(items[best_i]["capacity_gb"]) - 32.0);
+            if dk < db { better = true; }
+            else if dk == db {
+                let p = _num(items[k]["price"]);
+                let bp = _num(items[best_i]["price"]);
+                if p >= 0.0 && bp >= 0.0 && p < bp { better = true; }
+            }
+        }
+        if better { best_i = k; }
+        k += 1;
+    }
+    let winner = if items.len() > 0 { items[best_i] } else { #{} };
+    host.log("sweep: best = " + winner["title"] + " (score=" + winner["score"] + ")");
+    #{
+        total_cards: total,
+        opened: items.len(),
+        best_index: best_i,
+        best_href: winner["href"],
+        best_title: winner["title"],
+        best_price: winner["price"],
+        best_score: winner["score"],
+        best_spec: winner["spec"],
+        items: items
     }
 }
 

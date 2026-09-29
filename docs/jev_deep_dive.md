@@ -166,9 +166,12 @@ Three problems a "click #N" driver hits on a real site, all solved generically i
   match into view and requires its centre to hit the element itself (or a child),
   so a stale number turns into "pick the next match", never into a stalled run.
 * **Some sites force a new tab.** Taobao's product cards *and* its `搜索` button
-  call `window.open`. With `stay_in_tab: true`, `find` drops `target` and routes
-  that one `window.open(url)` back into the driven tab, so the tour keeps one tab
-  (the click stays the engine's real CDP input - only the landing tab changes).
+  push the navigation out of the driven tab. With `stay_in_tab: true`, `find`
+  normalizes all three routes back into this tab - a `target=_blank` link, a
+  `window.open(url)` call, and a `<button type=submit>` inside a
+  `<form target=_blank>` - so the tour keeps one tab (the click stays the engine's
+  real CDP input; only the landing tab changes). See the sweep section below for
+  why the form route needs its own handling.
 * **Async pagination.** A pager click changes the URL a beat later, and a list
   still fetching renders a skeleton pager. `observe` with `prev_url` waits for
   the URL to actually change, and `find` with `retry_ms` re-scans while the list
@@ -181,11 +184,79 @@ journal line is `"- ${state.step_rationale}\n"` - the leading `- ` keeps the
 trailing newline alive.
 
 
+## The comparison sweep: `taobao_ddr5_sweep`
+
+`taobao_jev_tour` opens *one* product. `dsl/browser/taobao_ddr5_sweep.json` is its
+**comparison** twin: fill the box, search, sort by 销量, walk three result pages,
+then open **20 product details one by one in the same tab**, read each, score it
+for 单条服务器内存条, and finally navigate to - and stay on - the single most
+recommended listing.
+
+```bash
+laya-workflow run --spec dsl/browser/taobao_ddr5_sweep.json --progress
+```
+
+Every demo element is an engine node: **填选择框** (`TYPE_TEXT` into the search box,
+addressed by number), 点 `搜索`, **弹出选择框的序号 / 筛选项选择** (`observe` then click
+the `销量` tab by number), **多页浏览** (scroll, then `下一页` twice: page 1 → 2 → 3),
+**打开商品详情** (20 × card → detail → re-observe). The `planner.sweep` op drives the
+walk: `page/cards.js` reads the result list, `page/item.js` reads each detail and
+returns one comparable row (title, price, 服务器/ECC/RDIMM flags, capacity, DDR5
+frequency, and a single 0-20 score), and the op ranks them, tie-breaking toward a
+32 GB single DIMM and then the lower price. The 20 rows land in
+`~/tmp/jev-deep/sweep.jsonl`; the conclusion in `~/tmp/jev-deep/sweep_tour.jsonl`:
+
+```text
+- 比较了 20 个商品；最推荐：三星SK海力士镁光DDR5服务器内存4800B 5600REGECC 32G64G96G128G（score 16, ¥1000）
+```
+
+The scratch tab is opened with `keep_open: true`, so the run ends with that product
+page still on screen instead of closing the tab it owned.
+
+### Input that moves like a person
+
+A real CDP click is a burst of `Input.dispatchMouseEvent`; raw, that burst is the
+signature of a bot, and Taobao answers it with a wall. `src/capability/human.rs`
+shapes every action the `chrome_cdp` capability issues (`"human": true` is the
+default; a per-call `with.human` overrides it): a click is a bowed, eased mouse path
+(9-24 points) with a hover beat and a press-hold, typed text arrives key by key with
+longer pauses at spaces and punctuation, and a scroll is a run of 4-10 wheel notches
+at the remembered cursor. Reaction (140-420 ms), hover (90-260 ms), hold (55-150 ms)
+and inter-key gaps are all jittered by a small xorshift RNG. The click also brings
+the page to the front first and then waits for `document.hasFocus()` - Chrome
+silently drops synthetic mouse events sent to an unfocused page while still
+reporting success, so a click that is not awaited behind focus is a click that never
+happened.
+
+### Anti-bot walls: wait them out
+
+Taobao answers a client it distrusts with a `J_MIDDLEWARE_FRAME_WIDGET` overlay
+(滑块 / click-the-image / drag-drop captcha, or "访问太频繁") or a whole-page
+`punish` deny. `page/wall.js` detects it and `planner.guard` waits it out the way a
+person backs off - escalating 6 s / 12 s / 18 s cooldowns, re-navigating to a clean
+URL unless the page is a `punish` / `x5sec` / `_____tmd_____` trap, up to
+`with.wait_ms`. The sweep runs the same wall check before it records a row, so a
+blocked detail page is retried with a cooldown, never scored as a bogus product.
+
+### `stay_in_tab` is a form problem, not just a `window.open` problem
+
+`find`'s `stay_in_tab` normalizes the three ways a site can push the navigation out
+of the driven tab: a link carrying `target=_blank`; a JS handler calling
+`window.open` (Taobao's product cards); and - the one that actually bit us - a
+`<button type=submit>` inside a `<form target=_blank>`, which is exactly what 搜索
+is. The site's own JS rewrites that form's target to `_blank` after hydration, and
+a form submit is a *browser-native* new-tab navigation that never runs
+`window.open`, so patching `window.open` alone let the results open in a second tab
+while the driven tab was left on a tracking page. `find` now also pins the owning
+form's `target` to `_self` and re-asserts it on `submit` for the click window.
+
 ## Files
 
 - `dsl/browser/jev_deep_dive.json` — the workflow.
 - `plugins/jev-planner/` — the planner: `plugin.json`, `main.rhai`, `page/plan.js` (roam),
   `page/find.js` + `page/observe.js` + `page/dismiss.js` (the directed tour).
 - `dsl/browser/taobao_jev_tour.json` — the directed Taobao tour.
+- `dsl/browser/taobao_ddr5_sweep.json` — the directed Taobao **comparison sweep**
+  (20 product details, ranked; `plugins/jev-planner/page/{cards,item,wall}.js`).
 - `docs/browser_singleton.md` — the `chrome_cdp` operations and the singleton rules.
 - `docs/plugins.md` — the plugin host API and layout.

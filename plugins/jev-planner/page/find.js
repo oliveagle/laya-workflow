@@ -140,15 +140,31 @@
   lb.highlight();                                // draw the numbered badges
   var el = chosenEl || lb.element(pick.index);
   if (el && el.scrollIntoView) el.scrollIntoView({ block: "center" });
-  // A site may force a *new* tab: `target=_blank`, or a JS handler that calls
-  // window.open (Taobao does the latter for both product cards and the 搜索
-  // button). That would take the driven tab out of the loop. When the spec asks
-  // for `stay_in_tab`, normalize both mechanisms so the *real* CDP click lands
-  // here: drop `target`, and route any window.open(url) during the click into
-  // this tab. The click is unchanged — only where the navigation lands.
+  // A site may force a *new* tab. Three mechanisms, all normalized when the
+  // spec sets `stay_in_tab`, so the *real* CDP click lands in the driven tab:
+  //   1. a link carrying target=_blank;
+  //   2. a <button type=submit> inside a <form target=_blank> - Taobao's 搜索 is
+  //      exactly this, and the site's own JS rewrites the form target to _blank
+  //      after hydration. A form submit is a *browser-native* new-tab navigation,
+  //      so it never runs window.open and patching that alone misses it;
+  //   3. a JS handler that calls window.open (Taobao product cards, some buttons).
+  // The click itself is unchanged - only where the navigation lands.
   var stayed = false;
   if (operation === "CLICK" && O.stay_in_tab) {
     if (el && el.tagName === "A" && el.getAttribute("href")) el.setAttribute("target", "_self");
+    (function () {
+      var form = el && (el.form || (el.closest ? el.closest("form") : null));
+      if (form) form.setAttribute("target", "_self");
+      // A site handler can reset target=_blank on submit; reassert it for the
+      // click window so the navigation cannot escape this tab.
+      var onsubmit = function (ev) {
+        var f = ev.target;
+        if (f && f.tagName === "FORM") f.setAttribute("target", "_self");
+      };
+      document.addEventListener("submit", onsubmit, true);
+      window.setTimeout(function () { document.removeEventListener("submit", onsubmit, true); }, 8000);
+      if (form) stayed = true;
+    })();
     (function () {
       var original = window.open;
       var restore = function () { if (window.open === patched) window.open = original; };
@@ -160,7 +176,7 @@
         return original.apply(window, arguments);
       }
       window.open = patched;
-      window.setTimeout(restore, 3000);
+      window.setTimeout(restore, 8000);
       stayed = true;
     })();
   }

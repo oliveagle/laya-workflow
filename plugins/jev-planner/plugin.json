@@ -1,10 +1,10 @@
 {
   "name": "jev-planner",
   "group": "plugins",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api": 1,
   "entry": "main.rhai",
   "entry_op": "run",
   "max_operations": 8000000,
-  "description": "One Jev step over a real Chrome page, in both flavours. `step` lets the page-side policy roam (wait for the tab to settle, observe it, return the {operation, element/selector, goal_probability, stuck_probability} decision a chrome_cdp agent_step node executes); `find` resolves a directed *intent* (role/label/href/selector) against the laya-browser extension's numbered snapshot, validates that the element is really clickable, and returns the same decision shape; `observe` draws the numbered overlay and returns a bounded numbered table; `dismiss` closes a full-viewport modal that would swallow clicks. All page logic lives in page/*.js, so the Rust engine keeps the CDP transport, policy and tab lifecycle."
+  "description": "One Jev step over a real Chrome page, in both flavours, plus the ops a directed tour needs. `step` lets the page-side policy roam (wait for the tab to settle, observe it, return the {operation, element/selector, goal_probability, stuck_probability} decision a chrome_cdp agent_step node executes); `find` resolves a directed *intent* (role/label/href/selector, optional nth) against the laya-browser extension's numbered snapshot, validates that the element is really clickable, and returns the same decision shape - `stay_in_tab` also normalizes a target=_blank link, a window.open() call and a <form target=_blank> submit so the navigation lands in the driven tab; `observe` draws the numbered overlay and returns a bounded numbered table; `dismiss` closes a full-viewport modal that would swallow clicks; `sweep` opens N product cards ONE BY ONE in the same tab (page/cards.js reads the search list, page/item.js reads each detail), ranks them for 单条服务器内存条, and returns the best; `visit` drives the tab to a URL and waits for the commit; `pause` is a human-scale delay between actions; `guard` waits out an anti-bot wall (滑块 / 验证码 / 访问太频繁, page/wall.js) with escalating cooldowns instead of solving it; `reset` clears the round counter. All page logic lives in page/*.js, so the Rust engine keeps the CDP transport, policy and tab lifecycle."
 }
