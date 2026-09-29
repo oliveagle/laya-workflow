@@ -1,0 +1,300 @@
+{
+  "name": "bdd_assert_probe",
+  "dsl_version": 2,
+  "description": "A hand-written spec that uses the `bdd` plugin directly - no Gherkin, no transpiler, no .feature file. It exists to keep that claim honest: the assertion vocabulary is a standard plugin, so anything the BDD suite can say, a spec written by hand can say too. scripts/bdd/run.py executes this against the same fixture the scenarios use, so if the plugin ever stops being usable outside the transpiler, this goes red.",
+  "start": "open",
+  "max_iterations": 9,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
+      "profile_dir": "${state.cdp_profile}",
+      "launch": true,
+      "startup_timeout_ms": 30000,
+      "timeout_ms": 15000,
+      "max_text": 8000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000,
+      "chrome_binary": "scripts/bdd/chrome-headless.sh"
+    },
+    "bdd": {
+      "kind": "plugin",
+      "plugin": "bdd",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open ${state.url} in a real Chrome tab and wait until it is actually loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "title"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "${state.url}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "title",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Does the page title contain \"BDD Fixture\"?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "heading"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "assertion": "title_contains",
+          "value": "BDD Fixture",
+          "target_id": "${state.target_id}",
+          "op": "assert"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "heading",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Is #heading rendered?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "count"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "assertion": "visible",
+          "value": "#heading",
+          "target_id": "${state.target_id}",
+          "op": "assert"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "count",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Does the fact list hold exactly 3 items?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "absent"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "assertion": "equals",
+          "value": "document.querySelectorAll('#facts li').length",
+          "expected": 3,
+          "target_id": "${state.target_id}",
+          "op": "assert"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "absent",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Is #definitely-not-here really absent?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "ready"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "assertion": "absent",
+          "value": "#definitely-not-here",
+          "target_id": "${state.target_id}",
+          "op": "assert"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "ready",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Has the document finished loading?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "done"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "assertion": "is_true",
+          "value": "document.readyState === 'complete'",
+          "target_id": "${state.target_id}",
+          "op": "assert"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "done",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Did every hand-written assertion hold?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "STOP"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      }
+    }
+  ]
+}

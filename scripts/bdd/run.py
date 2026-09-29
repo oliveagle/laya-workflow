@@ -65,6 +65,12 @@ CHROME_WRAPPER = os.path.join(HERE, "chrome-headless.sh")
 
 XFAIL_TAG = "expected_failure"
 
+# A hand-written spec that drives the same plugin, with no Gherkin and no
+# transpiler anywhere in it. Running it is what makes "the vocabulary is a
+# standard plugin, not a transpiler accessory" a checked fact rather than a
+# claim in a README.
+HANDWRITTEN_SPEC = os.path.join(ROOT, "dsl", "browser", "bdd_assert_probe.json")
+
 
 def free_port() -> int:
     with contextlib.closing(socket.socket()) as s:
@@ -286,6 +292,25 @@ def main(argv: list[str] | None = None) -> int:
                     t.start()
                 for t in threads:
                     t.join()
+
+                # The hand-written spec runs on the same endpoint and the same fixture,
+            # so it costs one scenario's worth of Chrome and proves the plugin is
+            # usable without the transpiler.
+            if os.path.isfile(HANDWRITTEN_SPEC):
+                started = time.monotonic()
+                rc, out = run_scenario(
+                    binary, HANDWRITTEN_SPEC,
+                    {"url": f"{base_url}/index.html",
+                     "cdp_port": endpoints[0][0],
+                     "cdp_profile": endpoints[0][1]},
+                    args.timeout,
+                )
+                elapsed = time.monotonic() - started
+                ok = rc == 0
+                results.append(("PASS" if ok else "FAIL", ok,
+                                "hand-written dsl/browser/bdd_assert_probe.json "
+                                "(no transpiler)",
+                                rc, out, False, elapsed))
 
             results.sort(key=lambda r: r[2])
             passed = sum(1 for r in results if r[1])

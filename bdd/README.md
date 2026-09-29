@@ -62,6 +62,12 @@ does:
 Ops: `open`, `navigate`, `wait_for`, `evaluate`, `assert`, `release`. The
 capability leaves `op` unset so the engine prefers `with.op` per call.
 
+That it is a *standard* plugin is checked, not asserted:
+`dsl/browser/bdd_assert_probe.json` is a hand-written spec — no Gherkin, no
+transpiler — that drives the same ops, and `scripts/bdd/run.py` runs it against
+the same fixture as the scenarios. If the vocabulary ever stops being usable
+outside the compiler, that row goes red.
+
 Assertions: `title_contains`, `url_contains`, `visible`, `absent`, `is_true`,
 `is_false`, `equals`, `contains`, `equals_text`. A failure names the assertion
 *and* the value it saw, e.g.
