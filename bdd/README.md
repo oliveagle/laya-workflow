@@ -40,11 +40,13 @@ points back at the document it came from.
 
 ## The `bdd` plugin
 
-`plugins/bdd/` is a standard plugin — `plugin.json` + `main.rhai`, discovered
-on disk, no registration step. It is the reason the assertion vocabulary is
-reusable: the *meaning* of a `Then` lives in Rhai, not in the Python
-transpiler, so a hand-written spec gets the same checks a compiled `.feature`
-does:
+`plugins/bdd/` is a standard plugin — `plugin.json` + `main.rhai`, no
+registration step, and no checkout needed: it is also compiled into the binary
+as a built-in, so a spec that says `"plugin": "bdd"` resolves from a shipped
+executable as well as from a working tree. It is the reason the assertion
+vocabulary is reusable: the *meaning* of a `Then` lives in Rhai, not in the
+Python transpiler, so a hand-written spec gets the same checks a compiled
+`.feature` does:
 
 ```json
 "capabilities": {

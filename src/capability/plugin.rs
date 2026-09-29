@@ -245,6 +245,16 @@ fn builtin(name: &str) -> Option<Sources> {
             include_str!("../../plugins/browser_base/main.rhai"),
             Vec::new(),
         ),
+        // The BDD step vocabulary, bundled for the same reason browser_base is:
+        // on-disk discovery finds plugins/<name> only by walking up from the
+        // cwd, so without this an installed binary - run from anywhere but a
+        // checkout - reports `plugin "bdd" not found` for a plugin the repo
+        // documents as standard.
+        "bdd" => (
+            include_str!("../../plugins/bdd/plugin.json"),
+            include_str!("../../plugins/bdd/main.rhai"),
+            Vec::new(),
+        ),
         "hf-trending" => (
             include_str!("../../websites/huggingface.co/plugin/plugin.json"),
             include_str!("../../websites/huggingface.co/plugin/main.rhai"),
