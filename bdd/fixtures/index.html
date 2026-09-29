@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BDD Fixture &mdash; Laya</title>
+<style>body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:40rem}</style>
+</head>
+<body>
+<h1 id="heading">BDD fixture page</h1>
+
+<form id="form" onsubmit="return false;">
+  <label for="name">Name</label>
+  <input id="name" name="name" type="text" value="" autocomplete="off">
+
+  <label for="color">Colour</label>
+  <select id="color" name="color">
+    <option value="red">Red</option>
+    <option value="blue">Blue</option>
+    <option value="green">Green</option>
+  </select>
+
+  <button id="greet" type="button">Greet</button>
+</form>
+
+<p id="greeting">Not greeted yet.</p>
+<p id="echo" data-filled=""></p>
+
+<script>
+  var clicks = 0;
+  document.getElementById('greet').addEventListener('click', function () {
+    clicks += 1;
+    var name = document.getElementById('name').value;
+    var color = document.getElementById('color').value;
+    var echo = document.getElementById('echo');
+    // The data-filled attribute is what the BDD scenario waits on, so a slow
+    // handler cannot make the assertions read a half-updated page.
+    echo.setAttribute('data-filled', String(clicks));
+    echo.textContent = 'Hello ' + (name || 'stranger') + ', your colour is ' + color + '.';
+    document.getElementById('greeting').textContent = 'Greeted ' + clicks + ' time(s).';
+  });
+</script>
+</body>
+</html>

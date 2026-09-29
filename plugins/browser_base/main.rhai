@@ -254,16 +254,27 @@ fn _attempt_assert(host, ctx) {
         throw "browser_base.assert: with.checks must be a map of key -> expected value";
     }
     let failed = [];
+    // Report what the page actually returned, not just which key disagreed.
+    // "ok: expected true, got false" tells you what to go look at; a bare
+    // "mismatched: [ok]" does not.
+    let detail = "";
     for key in checks.keys() {
         let expected = checks[key];
         let actual = if type_of(res) == "map" && res.contains(key) { res[key] } else { () };
         if actual != expected {
             failed.push(key);
+            if detail != "" { detail += "; "; }
+            detail += key + ": expected " + host.json_stringify(expected)
+                + ", got " + host.json_stringify(actual);
         }
     }
     if failed.len() > 0 {
+        // Dump the whole result too. Callers routinely return extra keys
+        // (`actual`, `title`, `url`, ...) precisely so a failure explains
+        // itself; without them the message only ever says "ok was false".
         throw "browser_base.assert: FAIL — " + host.json_stringify(checks)
-            + " (missing/mismatched: " + host.json_stringify(failed) + ")";
+            + " (missing/mismatched: " + host.json_stringify(failed) + ") — " + detail
+            + " | result: " + host.json_stringify(res);
     }
     if type_of(res) == "map" {
         res["pass"] = true;

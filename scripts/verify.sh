@@ -98,7 +98,48 @@ else
   echo "   no plugins under websites/ - skipped"
 fi
 
-# ── 3. the tests ─────────────────────────────────────────────────────────────
+# ── 3. do the BDD documents still compile into runnable specs? ───────────────
+# bdd/features/*.feature is hand-written; everything under it is generated.
+# This stage catches the failure mode that would otherwise only show up as a
+# red browser test minutes later: a step that no longer parses, or a scenario
+# that compiles to a spec the engine rejects. It needs no Chrome and no
+# network, so it is cheap enough to belong in the default gate - the CDP run
+# itself is a separate, explicit gate (scripts/bdd/run.py).
+if [ -d "$ROOT/bdd/features" ] && compgen -G "$ROOT/bdd/features/*.feature" >/dev/null; then
+  stage "bdd transpile"
+  T0=$SECONDS
+  BDDOUT="$(mktemp -d)"
+  # Quiet on success, loud on failure: this stage should read as one summary
+  # line, not as a list of generated filenames nobody asked for.
+  if python3 "$ROOT/scripts/bdd/transpile.py" "$ROOT"/bdd/features/*.feature \
+       --out "$BDDOUT" >"$TMPERR" 2>&1; then
+    NBDD=0
+    BADBDD=""
+    while IFS= read -r s; do
+      [ -n "$s" ] || continue
+      NBDD=$((NBDD+1))
+      if ! "$BIN" validate --spec "$s" >/dev/null 2>&1; then
+        BADBDD="$BADBDD $(basename "$s")"
+      fi
+    done < <(find "$BDDOUT" -name '*.json' 2>/dev/null | sort)
+    if [ -n "$BADBDD" ]; then
+      echo "   generated but invalid:$BADBDD" >&2
+      rc=1
+    else
+      printf '   %d/%d scenarios compile and validate [%ss]\n' \
+        "$NBDD" "$NBDD" "$((SECONDS-T0))"
+    fi
+  else
+    sed 's/^/   /' "$TMPERR"
+    rc=1
+  fi
+  rm -rf "$BDDOUT"
+else
+  stage "bdd transpile"
+  echo "   no bdd/features/*.feature - skipped"
+fi
+
+# ── 4. the tests ─────────────────────────────────────────────────────────────
 # One section per line: read it as lines, not as one multi-line word.
 ALL=()
 while IFS= read -r line; do
