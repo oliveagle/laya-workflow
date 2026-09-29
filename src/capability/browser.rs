@@ -424,6 +424,25 @@ fn debug_extension_loaded(extension_id: &str) {
     }
 }
 
+/// A *reused* Laya Chrome has no extensions: an unpacked extension loaded over
+/// CDP does not survive a Chrome restart, and Chrome 137+ ignores
+/// `--load-extension` in branded builds. Re-issue `Extensions.loadUnpacked`
+/// whenever we adopt an already-running instance, so a reused singleton still
+/// carries the observation extension. Loading the same path twice is
+/// idempotent (Chrome returns the same id), so doing it on every reuse is
+/// harmless. A failure is logged, not fatal: a flow that does not need the
+/// extension still runs, where the old behaviour silently produced a browser
+/// with zero extensions and a workflow that failed much later with a confusing
+/// "extension is not loaded" error.
+fn ensure_extension_loaded(endpoint: &str, extension: &str, timeout: Duration) {
+    match load_unpacked_extension(endpoint, extension, timeout) {
+        Ok(id) => debug_extension_loaded(&id),
+        Err(e) => eprintln!(
+            "[browser] warning: could not load the observation extension at {extension}: {e}"
+        ),
+    }
+}
+
 fn normalized_endpoint(c: &BrowserCap, with: &Value, state: &Value) -> Result<String> {
     let raw = if c.endpoint.is_empty() {
         std::env::var("LAYA_BROWSER_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_string())
@@ -591,6 +610,18 @@ pub(crate) fn ensure_runtime(
         }
     }
 
+    // The observation extension is (re)loaded over CDP below. Chrome 137+
+    // ignores `--load-extension`, so the only supported path is
+    // `Extensions.loadUnpacked` against a *running* browser, which means it
+    // must be re-issued every time we adopt a reused instance as well as after
+    // a fresh launch. Resolve the path here so both branches share it.
+    let extension_source = if c.extension_path.is_empty() {
+        repo_extension_path()
+    } else {
+        c.extension_path.clone()
+    };
+    let extension = stringify(&expand(&Value::String(extension_source), state, with));
+
     // Reuse only an instance that Laya launched and marked in its own profile.
     if http_json(
         &endpoint,
@@ -605,6 +636,12 @@ pub(crate) fn ensure_runtime(
             &profile_path,
             bounded_timeout(c.timeout_ms, policy),
         )?;
+        if std::path::Path::new(&extension)
+            .join("manifest.json")
+            .is_file()
+        {
+            ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
+        }
         initialize_owned_targets(&profile_path, &endpoint);
         *guard = Some(BrowserRuntime {
             endpoint: endpoint.clone(),
@@ -620,12 +657,6 @@ pub(crate) fn ensure_runtime(
         bail!("browser launch spawns Chrome; set policy.allow_exec = true to enable");
     }
 
-    let extension_source = if c.extension_path.is_empty() {
-        repo_extension_path()
-    } else {
-        c.extension_path.clone()
-    };
-    let extension = stringify(&expand(&Value::String(extension_source), state, with));
     if extension.is_empty()
         || !std::path::Path::new(&extension)
             .join("manifest.json")
@@ -653,6 +684,16 @@ pub(crate) fn ensure_runtime(
                         &profile_path,
                         bounded_timeout(c.timeout_ms, policy),
                     )?;
+                    if std::path::Path::new(&extension)
+                        .join("manifest.json")
+                        .is_file()
+                    {
+                        ensure_extension_loaded(
+                            &endpoint,
+                            &extension,
+                            bounded_timeout(c.timeout_ms, policy),
+                        );
+                    }
                     initialize_owned_targets(&profile_path, &endpoint);
                     *guard = Some(BrowserRuntime {
                         endpoint: endpoint.clone(),

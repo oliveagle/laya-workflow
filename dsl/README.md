@@ -71,6 +71,8 @@ Specs in this directory:
 | `capabilities/script_plugin.json` | `kind: "plugin"` — a workflow calling a Rhai plugin (offline) |
 | `capabilities/hf_trending.json` | HuggingFace model monitor via the `websites/huggingface.co` Rhai plugin (network: `huggingface.co`) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
+| `browser/jev_deep_dive.json` | the Jev loop on one tab: observe → decide `{operation, element/selector, goal_probability, stuck_probability}` → execute with real CDP input → journal, round after round (planner: `plugins/jev-planner`; see `docs/jev_deep_dive.md`) |
+| `browser/taobao_jev_tour.json` | the **directed** twin of the Jev loop: each round an *intent* (`find`) resolved to a numbered element and executed with real CDP input — 填选择框, 序号/筛选项选择, 多页浏览, 打开单个商品详情 on Taobao (`plugins/jev-planner`; see `docs/jev_deep_dive.md`) |
 | `browser/browser_base_probe.json` | generic localhost-page smoke probe via the bundled `plugins/browser_base` plugin (open → wait_htmx → assert → done), no site logic |
 | `browser/browser_orchestrate_probe.json` | end-to-end local orchestration: runs `laya-workflow browser ensure --backend chrome` + `laya-workflow server ensure` (idempotent, cold-starts `state.server_cmd` if the port is dead) via `exec`, then probes the ensured URL with `plugins/browser_base` |
 | `browser/alphaxiv_paper.json` | the alphaXiv downloader, driven by the `websites/alphaxiv.org` Rhai plugin |

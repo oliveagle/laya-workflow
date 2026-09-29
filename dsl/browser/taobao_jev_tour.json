@@ -1,0 +1,864 @@
+{
+  "name": "taobao_jev_tour",
+  "dsl_version": 2,
+  "description": "Taobao (淘宝) directed tour of ONE tab, in the Jev style: instead of roaming, each round turns an *intent* into a numbered decision (`plugins/jev-planner` op `find`, which matches the laya-browser extension's numbered snapshot and validates that the element is really clickable), executes it with real CDP input via `agent_step`, and journals the round. It demonstrates 填选择框 (type the query), 序号选择/筛选项 选择 (click the 销量 tab and the 下一页 pager by number), 多页浏览 (page 2 then page 3), and 打开单个商品详情 (click a numbered product card, kept in the driven tab). Each action is one engine node whose `chain` runs `planner.find` first and feeds `${with.dec}` to `chrome.agent_step`; `observe` draws the numbered overlay (`page/observe.js`) and `dismiss` closes any full-viewport promo modal (`page/dismiss.js`). It never leaves the tab it opened.",
+  "start": "open",
+  "max_iterations": 80,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "max_timeout_ms": 30000,
+    "max_output": 2097152,
+    "retries": 0,
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/jev-deep"
+    ]
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 25000,
+      "max_text": 12000
+    },
+    "planner": {
+      "kind": "plugin",
+      "dir": "plugins/jev-planner",
+      "browser": "chrome",
+      "max_operations": 8000000,
+      "timeout_ms": 25000
+    },
+    "journal": {
+      "kind": "file",
+      "op": "append",
+      "max_bytes": 524288
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Open one scratch tab in the shared singleton browser and drive the whole tour in it?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "home"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "about:blank"
+        },
+        "project": {
+          "browser_target": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "home",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Navigate the owned tab to the Taobao home page and wait for the real commit?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "dismiss"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "visit",
+          "target_id": "${state.browser_target}",
+          "url": "https://www.taobao.com/"
+        },
+        "project": {
+          "landing_url": "/url",
+          "landing_title": "/title"
+        }
+      }
+    },
+    {
+      "name": "dismiss",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Close any full-viewport promo/login modal that would swallow the next clicks?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "type_query"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "dismiss",
+          "target_id": "${state.browser_target}"
+        },
+        "project": {
+          "dismiss_overlays": "/overlays",
+          "dismiss_closed": "/closed",
+          "dismiss_blocking": "/still_blocking"
+        }
+      }
+    },
+    {
+      "name": "type_query",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Fill the search box (a choice box) by number, with real CDP input?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "j_type"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "chain": [
+          {
+            "as": "dec",
+            "capability": "planner",
+            "with": {
+              "operation": "TYPE_TEXT",
+              "roles": [
+                "combobox",
+                "textbox"
+              ],
+              "match": [
+                "请输入搜索文字"
+              ],
+              "text": "DDR5 内存 16G",
+              "note": "填选择框：把关键词打进搜索框",
+              "op": "find",
+              "target_id": "${state.browser_target}"
+            }
+          }
+        ],
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${with.dec}"
+        },
+        "project": {
+          "decision": "/dec",
+          "step_action": "/dec/operation",
+          "step_index": "/dec/element",
+          "step_name": "/dec/name",
+          "step_note": "/dec/note",
+          "step_rationale": "/dec/rationale",
+          "step_href": "/dec/href",
+          "step_stayed": "/dec/stayed_in_tab",
+          "act": "/result"
+        }
+      }
+    },
+    {
+      "name": "j_type",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Record this round in the tour journal and continue?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "click_search"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/tour.jsonl",
+          "text": "- ${state.step_rationale}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    },
+    {
+      "name": "click_search",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Click the 搜索 button to run the search?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "j_search"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "chain": [
+          {
+            "as": "dec",
+            "capability": "planner",
+            "with": {
+              "operation": "CLICK",
+              "roles": [
+                "button"
+              ],
+              "match": [
+                "搜索"
+              ],
+              "note": "点搜索（站点会另开新页；stay_in_tab 让它落在本标签页）",
+              "op": "find",
+              "target_id": "${state.browser_target}",
+              "stay_in_tab": true
+            }
+          }
+        ],
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${with.dec}"
+        },
+        "project": {
+          "decision": "/dec",
+          "step_action": "/dec/operation",
+          "step_index": "/dec/element",
+          "step_name": "/dec/name",
+          "step_note": "/dec/note",
+          "step_rationale": "/dec/rationale",
+          "step_href": "/dec/href",
+          "step_stayed": "/dec/stayed_in_tab",
+          "act": "/result"
+        }
+      }
+    },
+    {
+      "name": "j_search",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Record this round in the tour journal and continue?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe_p1"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/tour.jsonl",
+          "text": "- ${state.step_rationale}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    },
+    {
+      "name": "observe_p1",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Draw the numbered overlay on the results page and read it as a numbered table?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "scroll_p1"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "observe",
+          "target_id": "${state.browser_target}"
+        },
+        "project": {
+          "p1_url": "/url",
+          "p1_title": "/title",
+          "p1_elements": "/elements",
+          "p1_badges": "/badges",
+          "p1_sample": "/sample",
+          "p1_money": "/money"
+        }
+      }
+    },
+    {
+      "name": "scroll_p1",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Read down the first results page (so the numbered pager enters the viewport), then paginate?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "next_p2"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "scroll",
+          "target_id": "${state.browser_target}",
+          "amount": 4000
+        },
+        "project": {
+          "scrolled_to": "/ok"
+        }
+      }
+    },
+    {
+      "name": "next_p2",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Turn to the next page of results?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "j_next2"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "chain": [
+          {
+            "as": "dec",
+            "capability": "planner",
+            "with": {
+              "operation": "CLICK",
+              "roles": [
+                "button"
+              ],
+              "match": [
+                "下一页"
+              ],
+              "note": "多页浏览：翻到第 2 页",
+              "op": "find",
+              "target_id": "${state.browser_target}",
+              "retry_ms": 6000,
+              "selector": "button[aria-label*=\"下一页\"]"
+            }
+          }
+        ],
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${with.dec}"
+        },
+        "project": {
+          "decision": "/dec",
+          "step_action": "/dec/operation",
+          "step_index": "/dec/element",
+          "step_name": "/dec/name",
+          "step_note": "/dec/note",
+          "step_rationale": "/dec/rationale",
+          "step_href": "/dec/href",
+          "step_stayed": "/dec/stayed_in_tab",
+          "act": "/result"
+        }
+      }
+    },
+    {
+      "name": "j_next2",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Record this round in the tour journal and continue?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe_p2"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/tour.jsonl",
+          "text": "- ${state.step_rationale}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    },
+    {
+      "name": "observe_p2",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Number the second page and read it?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "scroll_p2"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "observe",
+          "target_id": "${state.browser_target}",
+          "prev_url": "${state.p1_url}"
+        },
+        "project": {
+          "p2_url": "/url",
+          "p2_title": "/title",
+          "p2_elements": "/elements",
+          "p2_sample": "/sample"
+        }
+      }
+    },
+    {
+      "name": "scroll_p2",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Read down the second results page, then paginate again?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "next_p3"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "scroll",
+          "target_id": "${state.browser_target}",
+          "amount": 4000
+        },
+        "project": {
+          "scrolled_to": "/ok"
+        }
+      }
+    },
+    {
+      "name": "next_p3",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Turn to the next page of results again?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "j_next3"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "chain": [
+          {
+            "as": "dec",
+            "capability": "planner",
+            "with": {
+              "operation": "CLICK",
+              "roles": [
+                "button"
+              ],
+              "match": [
+                "下一页"
+              ],
+              "note": "多页浏览：翻到第 3 页",
+              "op": "find",
+              "target_id": "${state.browser_target}",
+              "retry_ms": 6000,
+              "selector": "button[aria-label*=\"下一页\"]"
+            }
+          }
+        ],
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${with.dec}"
+        },
+        "project": {
+          "decision": "/dec",
+          "step_action": "/dec/operation",
+          "step_index": "/dec/element",
+          "step_name": "/dec/name",
+          "step_note": "/dec/note",
+          "step_rationale": "/dec/rationale",
+          "step_href": "/dec/href",
+          "step_stayed": "/dec/stayed_in_tab",
+          "act": "/result"
+        }
+      }
+    },
+    {
+      "name": "j_next3",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Record this round in the tour journal and continue?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe_p3"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/tour.jsonl",
+          "text": "- ${state.step_rationale}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    },
+    {
+      "name": "observe_p3",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Number the third page and read it?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "open_item"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "observe",
+          "target_id": "${state.browser_target}",
+          "prev_url": "${state.p2_url}"
+        },
+        "project": {
+          "p3_url": "/url",
+          "p3_title": "/title",
+          "p3_elements": "/elements",
+          "p3_sample": "/sample"
+        }
+      }
+    },
+    {
+      "name": "open_item",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Open one product detail by clicking the numbered card (kept in this tab)?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "j_item"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "chain": [
+          {
+            "as": "dec",
+            "capability": "planner",
+            "with": {
+              "operation": "CLICK",
+              "roles": [
+                "link"
+              ],
+              "href": [
+                "item.taobao.com",
+                "detail.tmall.com"
+              ],
+              "stay_in_tab": true,
+              "note": "序号选商品：打开第一个商品详情",
+              "op": "find",
+              "target_id": "${state.browser_target}"
+            }
+          }
+        ],
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${with.dec}"
+        },
+        "project": {
+          "decision": "/dec",
+          "step_action": "/dec/operation",
+          "step_index": "/dec/element",
+          "step_name": "/dec/name",
+          "step_note": "/dec/note",
+          "step_rationale": "/dec/rationale",
+          "step_href": "/dec/href",
+          "step_stayed": "/dec/stayed_in_tab",
+          "act": "/result"
+        }
+      }
+    },
+    {
+      "name": "j_item",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Record this round in the tour journal and continue?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe_item"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/tour.jsonl",
+          "text": "- ${state.step_rationale}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    },
+    {
+      "name": "observe_item",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Number the product detail page and read its price/attributes?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "scroll_item"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "observe",
+          "target_id": "${state.browser_target}"
+        },
+        "project": {
+          "item_url": "/url",
+          "item_title": "/title",
+          "item_elements": "/elements",
+          "item_sample": "/sample",
+          "item_money": "/money",
+          "item_price_hint": "/price_hint"
+        }
+      }
+    },
+    {
+      "name": "scroll_item",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Scroll the detail page down to keep reading?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "observe_item2"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "scroll",
+          "target_id": "${state.browser_target}",
+          "amount": 900
+        },
+        "project": {
+          "scrolled": "/ok"
+        }
+      }
+    },
+    {
+      "name": "observe_item2",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Number the next screen of the detail page and stop?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "observe",
+          "target_id": "${state.browser_target}"
+        },
+        "project": {
+          "item2_url": "/url",
+          "item2_title": "/title",
+          "item2_elements": "/elements",
+          "item2_sample": "/sample",
+          "item2_money": "/money"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "jev-planner",
+  "group": "plugins",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 8000000,
+  "description": "One Jev step over a real Chrome page, in both flavours. `step` lets the page-side policy roam (wait for the tab to settle, observe it, return the {operation, element/selector, goal_probability, stuck_probability} decision a chrome_cdp agent_step node executes); `find` resolves a directed *intent* (role/label/href/selector) against the laya-browser extension's numbered snapshot, validates that the element is really clickable, and returns the same decision shape; `observe` draws the numbered overlay and returns a bounded numbered table; `dismiss` closes a full-viewport modal that would swallow clicks. All page logic lives in page/*.js, so the Rust engine keeps the CDP transport, policy and tab lifecycle."
+}

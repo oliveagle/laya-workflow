@@ -1,0 +1,238 @@
+{
+  "name": "jev_deep_dive",
+  "dsl_version": 2,
+  "description": "Jev-style continuous deep use of ONE browser tab. Every round: observe the tab, decide one {operation, element/selector, goal_probability, stuck_probability} step, execute it with real CDP input, journal it, repeat. The loop reads the page you are on (scroll) and, once that page is read through, follows one in-content link to go deeper — always in the same tab. Decisions come from the Rhai plugin `plugins/jev-planner` (page policy in `page/plan.js`); swap it for an `llm` capability to let a model make the decisions. Seed it with --state '{\"url\":\"https://…\"}' or the friendlier --query \"https://…\".",
+  "start": "open",
+  "max_iterations": 200,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "max_timeout_ms": 30000,
+    "max_output": 1048576,
+    "retries": 0,
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/jev-deep"
+    ]
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 20000,
+      "max_text": 8000
+    },
+    "planner": {
+      "kind": "plugin",
+      "dir": "plugins/jev-planner",
+      "browser": "chrome",
+      "max_operations": 8000000,
+      "timeout_ms": 20000
+    },
+    "journal": {
+      "kind": "file",
+      "op": "append",
+      "max_bytes": 262144
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Open one scratch tab in the shared singleton browser and drive it for the whole run?",
+          "criteria": {
+            "A": "yes, open the tab",
+            "B": "no, stop"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "goto"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "about:blank"
+        },
+        "project": {
+          "browser_target": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "goto",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Navigate the owned tab to the seed URL and wait for the real navigation commit?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "step"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "visit",
+          "target_id": "${state.browser_target}",
+          "url": "${state.url}",
+          "query": "${state.query}"
+        },
+        "project": {
+          "landing_url": "/url",
+          "landing_title": "/title"
+        }
+      }
+    },
+    {
+      "name": "step",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Observe the tab and produce the next Jev decision?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "route"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "planner",
+        "with": {
+          "op": "step",
+          "target_id": "${state.browser_target}",
+          "goal": "${state.goal}"
+        },
+        "project": {
+          "decision": "/",
+          "step_action": "/operation",
+          "step_round": "/round",
+          "step_url": "/url",
+          "step_rationale": "/rationale",
+          "step_goal_p": "/goal_probability",
+          "step_stuck_p": "/stuck_probability"
+        }
+      }
+    },
+    {
+      "name": "route",
+      "primary_q": "keep_going",
+      "questions": {
+        "keep_going": {
+          "type": "choice",
+          "instructions": "The planner just returned an operation. Is there anything left to do on this page, or is the page exhausted?",
+          "criteria": {
+            "A": "keep working the page",
+            "B": "the page is exhausted — stop"
+          },
+          "heuristic": {
+            "field": "step_action",
+            "match_any": [
+              "DONE",
+              "BLOCKED"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "act",
+          "B": "STOP"
+        },
+        "default": "STOP"
+      }
+    },
+    {
+      "name": "act",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Execute the typed decision with real CDP input (no synthetic DOM events)?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "journal"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "agent_step",
+          "target_id": "${state.browser_target}",
+          "decision": "${state.decision}"
+        },
+        "project": {
+          "act_payload": "/"
+        }
+      }
+    },
+    {
+      "name": "journal",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Append this round to the journal and take another step?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "step"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "journal",
+        "with": {
+          "path": "${env.HOME}/tmp/jev-deep/rounds.jsonl",
+          "text": "${state.decision.line}\n${state.act_payload}\n"
+        },
+        "project": {
+          "journal_bytes": "/bytes"
+        }
+      }
+    }
+  ]
+}
