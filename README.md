@@ -7,7 +7,6 @@ containing everything the workflow engine needs:
 - `.` — **`laya-workflow`** crate (workflow DSL / engine / CLI)
   - `laya-workflow` — CLI: `validate`, `run`, `list`, `apps`, `describe`,
     `demo`, `optimize`, `improve`, `export`, `secrets`, `skill`.
-  - `laya-workflow-tests` — the embedded test harness (500 cases with the local mocks; 445 offline).
 - [`laya-tch/`](./laya-tch) — **`laya-tch`** inference engine crate
   (`tch-rs` / PyTorch bindings). Serves the Laya model over
   `POST /v1/systemone` for real decisions; `laya-workflow --base-url`
@@ -22,8 +21,7 @@ containing everything the workflow engine needs:
 ## Install
 
 Download the latest release for your platform. The workflow CLI is the only
-runtime binary most users need; `laya-workflow-tests` is an optional offline
-test harness.
+runtime binary most users need.
 
 ```bash
 # macOS arm64
@@ -31,8 +29,6 @@ curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya
 # Linux amd64
 curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya-workflow-x86_64-unknown-linux-gnu.tar.gz | tar -xz
 sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
-# Optional repository regression harness:
-# sudo install -m 0755 laya-workflow-tests /usr/local/bin/laya-workflow-tests
 ```
 
 ## Build from source
@@ -41,7 +37,6 @@ sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
 # workflow engine only (fast; no libtorch needed)
 cargo build --release --locked -p laya-workflow
 ./target/release/laya-workflow --help
-# Optional: ./target/release/laya-workflow-tests
 
 # inference engine too (downloads libtorch on first build; heavy)
 cargo build --release --locked -p laya-tch
