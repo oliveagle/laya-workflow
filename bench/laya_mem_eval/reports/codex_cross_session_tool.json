@@ -1,0 +1,50 @@
+{
+  "mode": "tool",
+  "s1": {
+    "persist": 5,
+    "recall": 0
+  },
+  "s2": {
+    "persist": 0,
+    "recall": 1
+  },
+  "rows": [
+    {
+      "question": "What CI system does the deployment pipeline for repo A use?",
+      "expected": "jenkins",
+      "hit": true,
+      "answer": "\n\nThe deployment pipeline for repo A uses **Jenkins** (on the staging box)."
+    },
+    {
+      "question": "Who is on call this week?",
+      "expected": "priya",
+      "hit": true,
+      "answer": "\n\n**Priya** and **Marcus** are on call this week."
+    },
+    {
+      "question": "What database does production use?",
+      "expected": "postgres",
+      "hit": true,
+      "answer": "\n\nProduction uses **Postgres 16** on the shared cluster, with a read replica on port 5433."
+    },
+    {
+      "question": "What API gateway is in front of the services?",
+      "expected": "kong",
+      "hit": true,
+      "answer": "\n\nThe API gateway in front of the services is **Kong** (switched to it last sprint)."
+    },
+    {
+      "question": "What does the release process require before merging?",
+      "expected": "jira",
+      "hit": true,
+      "answer": "\n\nThe release process requires a **signed commit** and a **JIRA ticket** before merging."
+    }
+  ],
+  "answers": {
+    "What CI system does the deployment pipeline for repo A use?": "\n\nThe deployment pipeline for repo A uses **Jenkins** (on the staging box).",
+    "Who is on call this week?": "\n\n**Priya** and **Marcus** are on call this week.",
+    "What database does production use?": "\n\nProduction uses **Postgres 16** on the shared cluster, with a read replica on port 5433.",
+    "What API gateway is in front of the services?": "\n\nThe API gateway in front of the services is **Kong** (switched to it last sprint).",
+    "What does the release process require before merging?": "\n\nThe release process requires a **signed commit** and a **JIRA ticket** before merging."
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "mode": "no_tools",
+  "s1": {
+    "persist": 0,
+    "recall": 0
+  },
+  "s2": {
+    "persist": 0,
+    "recall": 0
+  },
+  "rows": [
+    {
+      "question": "What CI system does the deployment pipeline for repo A use?",
+      "expected": "jenkins",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine which CI system the deployment pipeline for repo A uses."
+    },
+    {
+      "question": "Who is on call this week?",
+      "expected": "priya",
+      "hit": false,
+      "answer": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant schedule or document?"
+    },
+    {
+      "question": "What database does production use?",
+      "expected": "postgres",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what database production uses."
+    },
+    {
+      "question": "What API gateway is in front of the services?",
+      "expected": "kong",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine which API gateway is in front of the services."
+    },
+    {
+      "question": "What does the release process require before merging?",
+      "expected": "jira",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what the release process requires before merging."
+    }
+  ],
+  "answers": {
+    "What CI system does the deployment pipeline for repo A use?": "\n\nI don’t have enough context to determine which CI system the deployment pipeline for repo A uses.",
+    "Who is on call this week?": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant schedule or document?",
+    "What database does production use?": "\n\nI don’t have enough context to determine what database production uses.",
+    "What API gateway is in front of the services?": "\n\nI don’t have enough context to determine which API gateway is in front of the services.",
+    "What does the release process require before merging?": "\n\nI don’t have enough context to determine what the release process requires before merging."
+  }
+}
