@@ -297,6 +297,44 @@ STATES: dict[str, dict] = {
         "sufficient": {"query": "What does Alice prefer?", "evidence": ["Alice prefers concise."], "evidence_status": "sufficient", "route_semantic": "high"},
         "insufficient": {"query": "Who helped Mary?", "evidence": ["Alice was there."], "route_semantic": "high"},
     },
+    "traversal": {
+        "relevant": {
+            "query": "What does Alice prefer?",
+            "evidence": ["Alice prefers concise explanations."],
+            "candidates": [
+                {"content": "Alice prefers short answers.", "relation": "SEMANTIC", "graph": "semantic"},
+                {"content": "Alice planted basil on Friday.", "relation": "TEMPORAL", "graph": "temporal"}
+            ],
+            "cand_0_relevance": "yes", "cand_0_relation_usefulness": "yes",
+            "cand_0_new_information": "yes", "cand_0_supports_current_evidence": "yes",
+            "cand_1_relevance": "yes", "cand_1_relation_usefulness": "no",
+            "cand_1_new_information": "yes", "cand_1_supports_current_evidence": "no",
+        },
+        "irrelevant": {
+            "query": "What does Alice prefer?",
+            "evidence": ["Alice prefers concise explanations."],
+            "candidates": [
+                {"content": "Bob likes tea.", "relation": "ENTITY", "graph": "entity"},
+                {"content": "The weather is nice.", "relation": "ENTITY", "graph": "entity"}
+            ],
+            "cand_0_relevance": "no", "cand_0_relation_usefulness": "no",
+            "cand_0_new_information": "no", "cand_0_supports_current_evidence": "no",
+            "cand_1_relevance": "no", "cand_1_relation_usefulness": "no",
+            "cand_1_new_information": "no", "cand_1_supports_current_evidence": "no",
+        },
+        "mixed": {
+            "query": "When did Alice plant basil?",
+            "evidence": ["Alice planted basil on Friday."],
+            "candidates": [
+                {"content": "Alice planted basil on Friday.", "relation": "TEMPORAL", "graph": "temporal"},
+                {"content": "Bob likes tea.", "relation": "ENTITY", "graph": "entity"}
+            ],
+            "cand_0_relevance": "yes", "cand_0_relation_usefulness": "yes",
+            "cand_0_new_information": "no", "cand_0_supports_current_evidence": "yes",
+            "cand_1_relevance": "no", "cand_1_relation_usefulness": "no",
+            "cand_1_new_information": "no", "cand_1_supports_current_evidence": "no",
+        },
+    },
 }
 
 

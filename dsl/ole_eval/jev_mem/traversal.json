@@ -1,0 +1,129 @@
+{
+  "name": "jev_mem_traversal",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One read-side traversal. Port of memory/jev_questions.traversal_questions (4 noul per candidate) over up to 2 frontier candidates per call — Jev-Mem batches these inside a Python loop; the DSL port expands 2 candidates inline (8 noul) so callers that walk a 2-deep frontier can run the same scoring without writing Rust. If you need more than 2 candidates, run this spec once per candidate pair, or hand-roll a `heuristic.extract_numeric` version per edge weight. `copy_keys` emits all 8 calibrated probabilities into state; the caller applies Jev-Mem's weighted `transition_weights` scoring externally. The primary_q is the first candidate's relevance signal.",
+  "start": "traverse",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "traverse",
+      "primary_q": "cand_0_relevance",
+      "questions": {
+        "cand_0_relevance": {
+          "type": "noul",
+          "instructions": "Does `candidates[0].content` contain a fact needed to answer `query`?",
+          "truthy": "Direct answer evidence or a necessary intermediate fact.",
+          "falsy": "Only topic overlap or unrelated content.",
+          "heuristic": {
+            "field": "cand_0_relevance",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "cand_0_relation_usefulness": {
+          "type": "noul",
+          "instructions": "Does the stated graph relation of `candidates[0]` connect `evidence` to information useful for `query`?",
+          "truthy": "The relation and its direction support an answer-relevant connection.",
+          "falsy": "A graph edge exists but has no demonstrated usefulness for this question.",
+          "heuristic": {
+            "field": "cand_0_relation_usefulness",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "cand_0_new_information": {
+          "type": "noul",
+          "instructions": "Does `candidates[0].content` add an answer-relevant detail absent from `evidence`?",
+          "truthy": "A distinct relevant detail or missing reasoning link.",
+          "falsy": "Only duplicated evidence or irrelevant new details.",
+          "heuristic": {
+            "field": "cand_0_new_information",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "cand_0_supports_current_evidence": {
+          "type": "noul",
+          "instructions": "Does `candidates[0].content` independently corroborate a claim in `evidence` relevant to `query`?",
+          "truthy": "Provides compatible corroborating evidence for a specific claim.",
+          "falsy": "No specific corroboration, or contradicts that claim.",
+          "heuristic": {
+            "field": "cand_0_supports_current_evidence",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "cand_1_relevance": {
+          "type": "noul",
+          "instructions": "Does `candidates[1].content` contain a fact needed to answer `query`?",
+          "truthy": "Direct answer evidence or a necessary intermediate fact.",
+          "falsy": "Only topic overlap or unrelated content.",
+          "heuristic": {
+            "field": "cand_1_relevance",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "cand_1_relation_usefulness": {
+          "type": "noul",
+          "instructions": "Does the stated graph relation of `candidates[1]` connect `evidence` to information useful for `query`?",
+          "truthy": "The relation and its direction support an answer-relevant connection.",
+          "falsy": "A graph edge exists but has no demonstrated usefulness for this question.",
+          "heuristic": {
+            "field": "cand_1_relation_usefulness",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "cand_1_new_information": {
+          "type": "noul",
+          "instructions": "Does `candidates[1].content` add an answer-relevant detail absent from `evidence`?",
+          "truthy": "A distinct relevant detail or missing reasoning link.",
+          "falsy": "Only duplicated evidence or irrelevant new details.",
+          "heuristic": {
+            "field": "cand_1_new_information",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        },
+        "cand_1_supports_current_evidence": {
+          "type": "noul",
+          "instructions": "Does `candidates[1].content` independently corroborate a claim in `evidence` relevant to `query`?",
+          "truthy": "Provides compatible corroborating evidence for a specific claim.",
+          "falsy": "No specific corroboration, or contradicts that claim.",
+          "heuristic": {
+            "field": "cand_1_supports_current_evidence",
+            "match_any": ["high", "yes"],
+            "p_hit": 0.85,
+            "p_miss": 0.15
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "cand_0_relevance",
+          "cand_0_relation_usefulness",
+          "cand_0_new_information",
+          "cand_0_supports_current_evidence",
+          "cand_1_relevance",
+          "cand_1_relation_usefulness",
+          "cand_1_new_information",
+          "cand_1_supports_current_evidence"
+        ]
+      }
+    }
+  ]
+}

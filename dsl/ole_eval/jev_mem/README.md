@@ -8,24 +8,25 @@
 
 | spec | 对应 Jev-Mem 决策集 | 说明 |
 |---|---|---|
-| `memory_type.json` | `jev_mem_policies.WritePolicy.memory_type` + `jev_questions.memory_type_questions` | 4 个 noul（episodic / semantic / procedural / preference）→ `threshold` 多语义 label |
-| `admission.json` | `WritePolicy.assess_observation` + `jev_questions.observation_questions` (admission 部分) | 5 个 noul (should_store / future_utility / importance / novelty / redundancy) → `gate` 3 段 (STORE/REVIEW/DROP) |
+| `memory_type.json` | `jev_mem_policies.WritePolicy.memory_type` + `jev_questions.memory_type_questions` | 4 个 noul → `type` 节点 `copy_keys` 输出 4 分数（= MemoryTypeScores）+ `classify` 节点 `threshold` 派生主类型 TYPE_* label |
+| `admission.json` | `WritePolicy.assess_observation` + `jev_questions.observation_questions` (admission 部分) | should_store(choice) + future_utility/importance(score) + novelty/redundancy(noul) + `borderline`(noul, port 加) → `threshold` 输出 BLOCK/CONFIRM/ALLOW（Jev-Mem 原始 2 态 store/drop；CONFIRM 为 DSL 微扩展） |
 | `relation_pair.json` | `WritePolicy.relations` + `jev_questions.relation_questions` | 3-4 个 noul（semantic / causes / caused_by / [entity]）→ per-link-type threshold rules |
 | `routing.json` | `RetrievalController._query` + `jev_questions.routing_questions` | 6 个 noul → `threshold` 输出 `graph_budgets`（semantic/temporal/causal/entity/multi_hop_need/recency_importance 的 weight） |
 | `stopping.json` | `RetrievalController._query` stopping loop + `jev_questions.stopping_questions` | 4 个 noul → `threshold` first-fail-on-CONTINUE 等价编码 AND-of-STOP |
 | `retrieve_loop.json` | `RetrievalController` 顶层 | 把 routing → stopping → (continue) → stopping … 串成决策图 |
+| `traversal.json` | `RetrievalController` traversal loop + `jev_questions.traversal_questions` | 4 个 noul × 2 候选（relevance / relation_usefulness / new_information / supports_current_evidence）→ `copy_keys` 输出 8 分数；caller 应用 `transition_weights` 加权评分 |
 | `persist_memory.json` | `MemoryBuilder` persistence | `kind: "db"` SQLite 写 `memories` / `relations` 表 |
 
 ## DSL ↔ Jev-Mem 决策集映射
 
 | Jev-Mem 函数 | Jev-Mem 决策集 (noul/choice) | DSL 节点 | DSL action |
 |---|---|---|---|
-| `WritePolicy.memory_type` | 4 noul | single node | `threshold` rules → sorted list |
-| `WritePolicy.assess_observation` admission | 5 noul | single node | `gate` 3 段 (STORE / REVIEW / DROP) |
+| `WritePolicy.memory_type` | 4 noul | type→classify 两节点 | `copy_keys` 4 分数 + `threshold` 主类型 label |
+| `WritePolicy.assess_observation` admission | 5 noul | single node | `threshold` 3 段（BLOCK=drop / CONFIRM=review / ALLOW=store）+ `borderline` noul |
 | `WritePolicy.relations` | 3-4 noul × N pair | single node (候选数受 model context 限制 ≤5) | `threshold` per-link-type rules |
 | `RetrievalController` routing | 6 noul | single node `routing` | `threshold` rules 按 weight 分配 budget |
 | `RetrievalController` stopping | 4 noul | single node `stopping` | `threshold` first-fail-on-CONTINUE |
-| `RetrievalController` traversal | 4 noul × N candidate | single node `traversal` | `threshold` rules per-graph |
+| `RetrievalController` traversal | 4 noul × N candidate | single node `traversal`（展开 2 候选，N>2 时 caller 每对跑一次） | `copy_keys` 输出每候选 4 分数；caller 应用 `transition_weights` 加权 |
 | `MemoryBuilder` persistence | SQL `exec` | single node `persist` | `kind: "db"` capability |
 
 ## 关键 DSL 表达（AND-of-STOP ↔ first-fail-on-CONTINUE）
@@ -48,10 +49,9 @@ DSL `threshold` 规则每条只能引用一个 `when.question`（单条件），
   "kind": "threshold",
   "question": "evidence_sufficient",     // primary q 只是注册项；rules 按 question 字段独立匹配
   "rules": [
+    { "when": { "question": "contradiction",       "value_gte": 0.40 }, "label": "CONTINUE_CONTRADICTION" },
     { "when": { "question": "evidence_sufficient", "value_lt": 0.85 },   "label": "CONTINUE_EVIDENCE_INSUFFICIENT" },
     { "when": { "question": "missing_evidence",    "value_gte": 0.40 }, "label": "CONTINUE_MISSING" },
-    { "when": { "question": "contradiction",       "value_gte": 0.40 }, "label": "CONTINUE_CONTRADICTION" },
-    { "when": { "question": "continue_useful",     "value_lt": 0.40 },  "label": "STOP_FURTHER_USELESS" },
     { "when": { "always": true },                                          "label": "STOP_EVIDENCE_OK" }
   ]
 }
@@ -69,6 +69,7 @@ laya-workflow validate --spec dsl/ole_eval/jev_mem/relation_pair.json
 laya-workflow validate --spec dsl/ole_eval/jev_mem/routing.json
 laya-workflow validate --spec dsl/ole_eval/jev_mem/stopping.json
 laya-workflow validate --spec dsl/ole_eval/jev_mem/retrieve_loop.json
+laya-workflow validate --spec dsl/ole_eval/jev_mem/traversal.json
 
 # 2) 真模型跑（laya-tch 服务须先在 :8400）
 laya-workflow --base-url http://127.0.0.1:8400 run \
