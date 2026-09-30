@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_retrieve_loop",
+  "name": "laya_mem_retrieve_loop",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One read-side top loop. Port of memory/jev_mem_retrieval.RetrievalController._query, simplified to a decision graph: route (6 noul) -> stop_check (4 noul). If stopping says CONTINUE_*, the caller should fetch more evidence (outside the DSL) and re-enter this spec; if STOP_* the loop ends. The loop guard is `max_iterations` plus convergence. Graph budget allocation is left to the caller from the emitted route noul values.",
+  "description": "Laya-Mem System-One read-side top loop. Port of memory/laya_mem_retrieval.RetrievalController._query, simplified to a decision graph: route (6 noul) -> stop_check (4 noul). If stopping says CONTINUE_*, the caller should fetch more evidence (outside the DSL) and re-enter this spec; if STOP_* the loop ends. The loop guard is `max_iterations` plus convergence. Graph budget allocation is left to the caller from the emitted route noul values.",
   "start": "route",
   "max_iterations": 6,
   "convergence_window": 3,

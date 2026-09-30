@@ -1,4 +1,4 @@
-# dsl/ole_eval/jev_mem/ — Jev-Mem System-One 控制器 DSL 原生移植（路线 B）
+# laya_mem/ — Jev-Mem System-One 控制器 DSL 原生移植（路线 B）
 
 把 https://github.com/libingzheren/Jev-Mem 的 System-One 控制器（arxiv:2609.23986）原生写成 `laya-workflow` DSL spec，使我们不再依赖 Jev-Mem 的 Python 仓库就能跑同形态决策图。System-One 只用 `POST /v1/systemone` 与 `laya-tch` 通信，System-Two 答案生成仍是 OpenAI-兼容端点（不在这批 spec 内）。
 
@@ -63,20 +63,20 @@ DSL `threshold` 规则每条只能引用一个 `when.question`（单条件），
 
 ```bash
 # 1) 校验（应零 warning）
-laya-workflow validate --spec dsl/ole_eval/jev_mem/memory_type.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/admission.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/relation_pair.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/routing.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/stopping.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/retrieve_loop.json
-laya-workflow validate --spec dsl/ole_eval/jev_mem/traversal.json
+laya-workflow validate --spec laya_mem/memory_type.json
+laya-workflow validate --spec laya_mem/admission.json
+laya-workflow validate --spec laya_mem/relation_pair.json
+laya-workflow validate --spec laya_mem/routing.json
+laya-workflow validate --spec laya_mem/stopping.json
+laya-workflow validate --spec laya_mem/retrieve_loop.json
+laya-workflow validate --spec laya_mem/traversal.json
 
 # 2) 真模型跑（laya-tch 服务须先在 :8400）
 laya-workflow --base-url http://127.0.0.1:8400 run \
-    --spec dsl/ole_eval/jev_mem/memory_type.json \
+    --spec laya_mem/memory_type.json \
     --state '{"observation":"Mira planted basil and wants a weekly reminder."}'
 
 laya-workflow --base-url http://127.0.0.1:8400 run \
-    --spec dsl/ole_eval/jev_mem/stopping.json \
+    --spec laya_mem/stopping.json \
     --state '{"query":"What does Alice prefer?", "evidence":["Alice prefers concise explanations.","Alice prefers short answers."]}'
 ```

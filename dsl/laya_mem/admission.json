@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_admission",
+  "name": "laya_mem_admission",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One write-side admission gate. Port of memory/jev_questions.observation_questions (admission slice: should_store/future_utility/importance/novelty/redundancy) + a port-added `borderline` noul so we can emit a 3-state label. Jev-Mem itself is binary (store / drop via admission score < threshold); the 3-state label (BLOCK=drop / CONFIRM=borderline-review / ALLOW=store) is a DSL `threshold` enrichment that preserves Jev-Mem's two clear paths and only adds a label for the borderline band. The four supporting noul/score questions ride along for audit; Jev-Mem's threshold logic (should_store * max(0, utility - redundancy) in MemoryAdmission.score) can be recomputed by the caller from them.",
+  "description": "Laya-Mem System-One write-side admission gate. Port of memory/jev_questions.observation_questions (admission slice: should_store/future_utility/importance/novelty/redundancy) + a port-added `borderline` noul so we can emit a 3-state label. Laya-Mem itself is binary (store / drop via admission score < threshold); the 3-state label (BLOCK=drop / CONFIRM=borderline-review / ALLOW=store) is a DSL `threshold` enrichment that preserves Laya-Mem's two clear paths and only adds a label for the borderline band. The four supporting noul/score questions ride along for audit; Laya-Mem's threshold logic (should_store * max(0, utility - redundancy) in MemoryAdmission.score) can be recomputed by the caller from them.",
   "start": "admit",
   "max_iterations": 3,
   "nodes": [

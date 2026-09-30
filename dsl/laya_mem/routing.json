@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_routing",
+  "name": "laya_mem_routing",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One read-side query routing. Port of memory/jev_questions.routing_questions (6 noul). Single node: the 4 graph-view nouls (semantic/temporal/causal/entity) are emitted verbatim into state via copy_keys on each answer value, along with multi_hop_need and recency_importance. `budget_label` gives a coarse retrieval-depth hint. Caller reads the 4 raw noul values (0..1) and can apply the Jev-Mem largest-remainder `allocate_graph_budgets` externally (or via math.eval). This is more faithful than a single 4-way choice because each graph is judged independently.",
+  "description": "Laya-Mem System-One read-side query routing. Port of memory/jev_questions.routing_questions (6 noul). Single node: the 4 graph-view nouls (semantic/temporal/causal/entity) are emitted verbatim into state via copy_keys on each answer value, along with multi_hop_need and recency_importance. `budget_label` gives a coarse retrieval-depth hint. Caller reads the 4 raw noul values (0..1) and can apply the Laya-Mem largest-remainder `allocate_graph_budgets` externally (or via math.eval). This is more faithful than a single 4-way choice because each graph is judged independently.",
   "start": "route",
   "max_iterations": 3,
   "nodes": [

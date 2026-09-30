@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_stopping",
+  "name": "laya_mem_stopping",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One read-side stopping decision. Port of memory/jev_questions.stopping_questions (4 noul) with the AND-of-STOP threshold logic from memory/jev_mem_retrieval.RetrievalController._query. Each rule matches one question (single condition) via `when.question`, ordered so that the first (most specific) CONTINUE reason wins — contradiction > missing_evidence > evidence_sufficient; if none fires, the fallthrough STOP_EVIDENCE_OK wins. This is the DSL idiom for `A && B && C => STOP` because `¬A ∨ ¬B ∨ ¬C => CONTINUE`.",
+  "description": "Laya-Mem System-One read-side stopping decision. Port of memory/jev_questions.stopping_questions (4 noul) with the AND-of-STOP threshold logic from memory/laya_mem_retrieval.RetrievalController._query. Each rule matches one question (single condition) via `when.question`, ordered so that the first (most specific) CONTINUE reason wins — contradiction > missing_evidence > evidence_sufficient; if none fires, the fallthrough STOP_EVIDENCE_OK wins. This is the DSL idiom for `A && B && C => STOP` because `¬A ∨ ¬B ∨ ¬C => CONTINUE`.",
   "start": "stop_check",
   "max_iterations": 3,
   "nodes": [

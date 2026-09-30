@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_memory_type",
+  "name": "laya_mem_memory_type",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One write-side memory typing. Port of memory/jev_questions.memory_type_questions (4 independent noul). `type` node emits each noul's calibrated probability via `copy_keys` (`state.episodic / semantic / procedural / preference`) — that is exactly what Jev-Mem stores as `MemoryTypeScores` (the four scores are independent and never decide whether to store the turn). The `classify` node derives a dominant-type `TYPE_*` label via cross-question threshold rules — a DSL-only enrichment that lets downstream code route by type without inspecting every score. Jev-Mem itself returns the four scores with no dominant-type label.",
+  "description": "Laya-Mem System-One write-side memory typing. Port of memory/jev_questions.memory_type_questions (4 independent noul). `type` node emits each noul's calibrated probability via `copy_keys` (`state.episodic / semantic / procedural / preference`) — that is exactly what Laya-Mem stores as `MemoryTypeScores` (the four scores are independent and never decide whether to store the turn). The `classify` node derives a dominant-type `TYPE_*` label via cross-question threshold rules — a DSL-only enrichment that lets downstream code route by type without inspecting every score. Laya-Mem itself returns the four scores with no dominant-type label.",
   "start": "type",
   "max_iterations": 3,
   "nodes": [

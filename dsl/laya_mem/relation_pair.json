@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_relation_pair",
+  "name": "laya_mem_relation_pair",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One write-side relation judgment. Port of memory/jev_questions.relation_questions for a single pair (new_memory vs candidates[0]). 4 noul per pair: semantic / causes / caused_by / entity. Action emits one label per LinkType if its noul crosses relation_threshold (default 0.60). Caller can pass up to 4 pairs by extending the questions block; default spec handles 1 pair so the model context stays small.",
+  "description": "Laya-Mem System-One write-side relation judgment. Port of memory/jev_questions.relation_questions for a single pair (new_memory vs candidates[0]). 4 noul per pair: semantic / causes / caused_by / entity. Action emits one label per LinkType if its noul crosses relation_threshold (default 0.60). Caller can pass up to 4 pairs by extending the questions block; default spec handles 1 pair so the model context stays small.",
   "start": "relations",
   "max_iterations": 3,
   "nodes": [

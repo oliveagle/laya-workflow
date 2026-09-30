@@ -256,7 +256,7 @@ STATES: dict[str, dict] = {
         "pass_no_branch": {"line_cover_pct": 92, "agents_md_lines": 100},
     },
 
-    # ── Jev-Mem System-One controller ports (dsl/ole_eval/jev_mem/) ─
+    # ── Laya-Mem System-One controller ports (dsl/laya_mem/) ─
     "memory_type": {
         "episodic": {"observation": "Alice planted basil and presented it on Friday."},
         "semantic": {"observation": "Alice lives in Dallas and works at the Jev-Mem project."},

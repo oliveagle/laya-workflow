@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_traversal",
+  "name": "laya_mem_traversal",
   "dsl_version": 2,
-  "description": "Jev-Mem System-One read-side traversal. Port of memory/jev_questions.traversal_questions (4 noul per candidate) over up to 2 frontier candidates per call — Jev-Mem batches these inside a Python loop; the DSL port expands 2 candidates inline (8 noul) so callers that walk a 2-deep frontier can run the same scoring without writing Rust. If you need more than 2 candidates, run this spec once per candidate pair, or hand-roll a `heuristic.extract_numeric` version per edge weight. `copy_keys` emits all 8 calibrated probabilities into state; the caller applies Jev-Mem's weighted `transition_weights` scoring externally. The primary_q is the first candidate's relevance signal.",
+  "description": "Laya-Mem System-One read-side traversal. Port of memory/jev_questions.traversal_questions (4 noul per candidate) over up to 2 frontier candidates per call — Laya-Mem batches these inside a Python loop; the DSL port expands 2 candidates inline (8 noul) so callers that walk a 2-deep frontier can run the same scoring without writing Rust. If you need more than 2 candidates, run this spec once per candidate pair, or hand-roll a `heuristic.extract_numeric` version per edge weight. `copy_keys` emits all 8 calibrated probabilities into state; the caller applies Laya-Mem's weighted `transition_weights` scoring externally. The primary_q is the first candidate's relevance signal.",
   "start": "traverse",
   "max_iterations": 3,
   "nodes": [

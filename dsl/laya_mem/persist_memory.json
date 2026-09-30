@@ -1,7 +1,7 @@
 {
-  "name": "jev_mem_persist",
+  "name": "laya_mem_persist",
   "dsl_version": 2,
-  "description": "Jev-Mem write-side persistence into SQLite via the `db` capability. Port of memory/memory_builder.MemoryBuilder.save (graph.json + keyword_index) using SQLite as the ACID system of record. Node 'reset' drops and recreates the tables, node 'persist' inserts one memory observation with its memory-type scores as a JSON column, node 'link' inserts one relation row, node 'verify' reads the rows back. Policy allows exec (embed mode needs sqlite3/duckdb CLIs) and writes inside $LAYA_WORK_DIR.",
+  "description": "Laya-Mem write-side persistence into SQLite via the `db` capability. Port of memory/memory_builder.MemoryBuilder.save (graph.json + keyword_index) using SQLite as the ACID system of record. Node 'reset' drops and recreates the tables, node 'persist' inserts one memory observation with its memory-type scores as a JSON column, node 'link' inserts one relation row, node 'verify' reads the rows back. Policy allows exec (embed mode needs sqlite3/duckdb CLIs) and writes inside $LAYA_WORK_DIR.",
   "start": "reset",
   "max_iterations": 10,
   "policy": {
@@ -14,7 +14,7 @@
   "capabilities": {
     "mem_db": {
       "kind": "db",
-      "sqlite": "${env.LAYA_WORK_DIR}/jev_mem.sqlite",
+      "sqlite": "${env.LAYA_WORK_DIR}/laya_mem.sqlite",
       "readonly": false
     }
   },
@@ -25,7 +25,7 @@
       "questions": {
         "go": {
           "type": "choice",
-          "instructions": "Reset the Jev-Mem tables?",
+          "instructions": "Reset the Laya-Mem tables?",
           "criteria": {
             "A": "yes"
           }
