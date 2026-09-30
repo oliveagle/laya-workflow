@@ -1,0 +1,146 @@
+{
+  "name": "jev_mem_admission",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One write-side admission gate. Port of memory/jev_questions.observation_questions (admission slice: should_store/future_utility/importance/novelty/redundancy) + a port-added `borderline` noul so we can emit a 3-state label. Jev-Mem itself is binary (store / drop via admission score < threshold); the 3-state label (BLOCK=drop / CONFIRM=borderline-review / ALLOW=store) is a DSL `threshold` enrichment that preserves Jev-Mem's two clear paths and only adds a label for the borderline band. The four supporting noul/score questions ride along for audit; Jev-Mem's threshold logic (should_store * max(0, utility - redundancy) in MemoryAdmission.score) can be recomputed by the caller from them.",
+  "start": "admit",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "admit",
+      "primary_q": "should_store",
+      "questions": {
+        "should_store": {
+          "type": "choice",
+          "instructions": "Given `observation`, `exact_duplicate`, `recent_memories` and `redundancy`, should this be stored as a memory? Choose A (drop) only when there is no new recallable detail; choose B (store) when any recallable detail, correction or time-specific update is present; choose the band between only when genuinely borderline.",
+          "criteria": {
+            "A": "drop (no new recallable detail)",
+            "B": "store (recallable detail present)"
+          },
+          "heuristic": {
+            "match_any": [
+              "thanks",
+              "ok",
+              "got it",
+              "acknowledge",
+              "noted",
+              "trivial",
+              "duplicate",
+              "fine"
+            ],
+            "p_hit": 0.1,
+            "p_miss": 0.9
+          }
+        },
+        "future_utility": {
+          "type": "score",
+          "instructions": "How likely is this observation to be useful in a future recall? 0 = never, 1 = unlikely, 2 = likely, 3 = definitely",
+          "criteria": [
+            "0 never",
+            "1 unlikely",
+            "2 likely",
+            "3 definitely"
+          ],
+          "heuristic": {
+            "extract_numeric": "future_utility",
+            "score_miss": 0.5
+          }
+        },
+        "importance": {
+          "type": "score",
+          "instructions": "How important or impactful is this observation to the participant? 0 = trivial, 1 = minor, 2 = notable, 3 = major",
+          "criteria": [
+            "0 trivial",
+            "1 minor",
+            "2 notable",
+            "3 major"
+          ],
+          "heuristic": {
+            "extract_numeric": "importance",
+            "score_miss": 0.5
+          }
+        },
+        "novelty": {
+          "type": "noul",
+          "instructions": "Does `observation` add a fact absent from `recent_memories`, given the `exact_duplicate` flag?",
+          "truthy": "At least one new detail, correction or time-specific update; no exact duplicate.",
+          "falsy": "An exact duplicate, or all recallable details are already in the supplied recent memories.",
+          "heuristic": {
+            "match_any": [
+              "new",
+              "added",
+              "changed",
+              "updated"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "redundancy": {
+          "type": "noul",
+          "instructions": "Is all recallable information in `observation` already present in `recent_memories`, or is `exact_duplicate` true?",
+          "truthy": "An exact duplicate or paraphrase with no new detail, correction or temporal update.",
+          "falsy": "Adds any new detail or meaningful update; shared topic alone does not imply redundancy.",
+          "heuristic": {
+            "match_any": [
+              "duplicate",
+              "already",
+              "same as",
+              "repeat"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "borderline": {
+          "type": "noul",
+          "instructions": "Is `observation` weak or borderline — neither clearly drop nor clearly store? Triggers when observation hedges (`maybe`, `might`, `perhaps`, `unsure`), or when `recent_memories` already covers the topic.",
+          "truthy": "A genuine middle case where storing may help but is not necessary.",
+          "falsy": "Observation is either clearly empty/trivial or clearly carries new recallable detail.",
+          "heuristic": {
+            "field": "observation",
+            "match_any": [
+              "maybe",
+              "might",
+              "perhaps",
+              "unsure",
+              "borderline",
+              "could be"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.2
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "should_store",
+        "rules": [
+          {
+            "when": {
+              "answer": "A"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "borderline",
+              "value_gte": 0.5
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALLOW"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -255,6 +255,48 @@ STATES: dict[str, dict] = {
         "fail_agents501": {"agents_md_lines": 501, "line_cover_pct": 92, "branch_cover_pct": 88},
         "pass_no_branch": {"line_cover_pct": 92, "agents_md_lines": 100},
     },
+
+    # ── Jev-Mem System-One controller ports (dsl/ole_eval/jev_mem/) ─
+    "memory_type": {
+        "episodic": {"observation": "Alice planted basil and presented it on Friday."},
+        "semantic": {"observation": "Alice lives in Dallas and works at the Jev-Mem project."},
+        "procedural": {"observation": "How to install the plugin: follow the steps in the guide."},
+        "preference": {"observation": "Alice prefers concise explanations about the Jev-Mem project."},
+        "other": {"observation": "The weather is nice."},
+    },
+    "admission": {
+        "store": {"observation": "Alice prefers concise explanations.", "recent_memories": []},
+        "drop": {"observation": "Thanks! Noted.", "recent_memories": []},
+        "review": {"observation": "Maybe it matters.", "recent_memories": ["Same topic seen before"], "importance": 1},
+    },
+    "relation_pair": {
+        "entity": {"new_memory": {"content": "Alice prefers short answers.", "entities": ["Alice"]},
+                   "candidates": [{"content": "Alice wants short answers.", "entities": ["Alice"]}],
+                   "share_entity": "yes"},
+        "semantic": {"new_memory": {"content": "Alice prefers short answers.", "entities": ["Alice"]},
+                     "candidates": [{"content": "Alice wants short answers.", "entities": ["Alice"]}],
+                     "pair_0_semantic_status": "semantic", "share_entity": "no"},
+        "causes": {"new_memory": {"content": "Alice asked a question.", "entities": ["Alice"]},
+                   "candidates": [{"content": "Bob answered.", "entities": ["Bob"]}],
+                   "pair_0_causes_status": "causes"},
+        "none": {"new_memory": {"content": "The weather is nice.", "entities": []},
+                 "candidates": [{"content": "Bob likes tea.", "entities": []}], "share_entity": "no"},
+    },
+    "routing": {
+        "semantic": {"query": "What facts do we know about Alice?", "route_semantic": "high"},
+        "temporal": {"query": "When did Alice plant basil?", "route_temporal": "high"},
+        "causal":   {"query": "Why did Bob answer Alice?", "route_causal": "high"},
+        "entity":   {"query": "Who is Alice in this conversation?", "route_entity": "high"},
+    },
+    "stopping": {
+        "sufficient": {"query": "What does Alice prefer?", "evidence": ["Alice prefers concise explanations."], "evidence_status": "sufficient"},
+        "insufficient": {"query": "Who helped Mary?", "evidence": ["Alice was there."]},
+        "contradiction": {"query": "What did Alice prefer?", "evidence": ["Alice prefers short.", "Alice prefers long.", "contradiction"], "evidence_status": "contradiction"},
+    },
+    "retrieve_loop": {
+        "sufficient": {"query": "What does Alice prefer?", "evidence": ["Alice prefers concise."], "evidence_status": "sufficient", "route_semantic": "high"},
+        "insufficient": {"query": "Who helped Mary?", "evidence": ["Alice was there."], "route_semantic": "high"},
+    },
 }
 
 
@@ -317,6 +359,27 @@ EXPECT: dict[str, dict[str, str]] = {
         "ok": "OK", "warn": "WARN_RENEW", "warn0": "WARN_RENEW",
         "expired": "EXPIRED", "unreadable": "FAIL_UNREADABLE",
         "forced": "RENEW_FORCED", "ok30": "OK",
+    },
+
+    # ── Jev-Mem System-One controller ports ─
+    "memory_type": {
+        "episodic": "TYPE_EPISODIC", "semantic": "TYPE_SEMANTIC",
+        "procedural": "TYPE_PROCEDURAL", "preference": "TYPE_PREFERENCE",
+        "other": "TYPE_OTHER",
+    },
+    "admission": {
+        "store": "ALLOW", "drop": "BLOCK", "review": "CONFIRM",
+    },
+    "relation_pair": {
+        "entity": "LINK_ENTITY", "semantic": "LINK_SEMANTIC",
+        "causes": "LINK_CAUSAL_OUT", "none": "LINK_NONE",
+    },
+    "stopping": {
+        "sufficient": "STOP_EVIDENCE_OK", "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT",
+        "contradiction": "CONTINUE_CONTRADICTION",
+    },
+    "retrieve_loop": {
+        "sufficient": "STOP_EVIDENCE_OK", "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT",
     },
 }
 
@@ -389,6 +452,10 @@ def main() -> int:
                 print(f"                  payload={json.dumps(keys, ensure_ascii=False)}")
             want = EXPECT.get(spec.stem, {}).get(label)
             got = res.get("result", {}).get("label")
+            if got is None:
+                # `gate` action emits `gate_action` (BLOCK/ALLOW/CONFIRM)
+                # instead of `label`; accept it as the label-equivalent.
+                got = res.get("result", {}).get("gate_action")
             if want is not None and got != want:
                 fails += 1
                 print(f"       [FAIL] {label}: expected label {want!r}, got {got!r}")

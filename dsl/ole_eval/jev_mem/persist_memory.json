@@ -1,0 +1,179 @@
+{
+  "name": "jev_mem_persist",
+  "dsl_version": 2,
+  "description": "Jev-Mem write-side persistence into SQLite via the `db` capability. Port of memory/memory_builder.MemoryBuilder.save (graph.json + keyword_index) using SQLite as the ACID system of record. Node 'reset' drops and recreates the tables, node 'persist' inserts one memory observation with its memory-type scores as a JSON column, node 'link' inserts one relation row, node 'verify' reads the rows back. Policy allows exec (embed mode needs sqlite3/duckdb CLIs) and writes inside $LAYA_WORK_DIR.",
+  "start": "reset",
+  "max_iterations": 10,
+  "policy": {
+    "allow_exec": true,
+    "allow_paths": [
+      "${env.LAYA_WORK_DIR}"
+    ],
+    "max_output": 262144
+  },
+  "capabilities": {
+    "mem_db": {
+      "kind": "db",
+      "sqlite": "${env.LAYA_WORK_DIR}/jev_mem.sqlite",
+      "readonly": false
+    }
+  },
+  "nodes": [
+    {
+      "name": "reset",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Reset the Jev-Mem tables?",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "persist"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "mem_db",
+        "with": {
+          "op": "exec",
+          "statements": [
+            "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, ts TEXT, entities TEXT, type_scores TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS relations (id INTEGER PRIMARY KEY, source TEXT, target TEXT, link_type TEXT, probability REAL)",
+            "DELETE FROM memories",
+            "DELETE FROM relations"
+          ]
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "persist",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Insert the observation into `memories`?",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "link"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "mem_db",
+        "with": {
+          "op": "exec",
+          "statements": [
+            "INSERT INTO memories (content, ts, entities, type_scores) VALUES ('Alice prefers concise explanations.', '2026-09-02', '[\"Alice\"]', '{\"episodic\":0.1,\"semantic\":0.2,\"procedural\":0.1,\"preference\":0.9}')"
+          ]
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "link",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Insert a relation row?",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "verify"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "mem_db",
+        "with": {
+          "op": "exec",
+          "statements": [
+            "INSERT INTO relations (source, target, link_type, probability) VALUES ('m1', 'm2', 'SEMANTIC', 0.7)"
+          ]
+        },
+        "project": {
+          "ok": "/ok",
+          "exit_code": "/exit_code",
+          "stderr": "/stderr"
+        }
+      }
+    },
+    {
+      "name": "verify",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Read the rows back?",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "inspect"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "mem_db",
+        "with": {
+          "op": "query",
+          "sql": "SELECT id, content, type_scores FROM memories ORDER BY id"
+        },
+        "project": {
+          "rows": "/rows",
+          "exit_code": "/exit_code"
+        }
+      }
+    },
+    {
+      "name": "inspect",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "List relations?",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "mem_db",
+        "with": {
+          "op": "query",
+          "sql": "SELECT source, target, link_type, probability FROM relations ORDER BY id"
+        },
+        "project": {
+          "relations": "/rows"
+        }
+      }
+    }
+  ]
+}

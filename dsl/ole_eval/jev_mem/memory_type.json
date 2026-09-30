@@ -1,0 +1,242 @@
+{
+  "name": "jev_mem_memory_type",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One write-side memory typing. Port of memory/jev_questions.memory_type_questions (4 independent noul). `type` node emits each noul's calibrated probability via `copy_keys` (`state.episodic / semantic / procedural / preference`) — that is exactly what Jev-Mem stores as `MemoryTypeScores` (the four scores are independent and never decide whether to store the turn). The `classify` node derives a dominant-type `TYPE_*` label via cross-question threshold rules — a DSL-only enrichment that lets downstream code route by type without inspecting every score. Jev-Mem itself returns the four scores with no dominant-type label.",
+  "start": "type",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "type",
+      "primary_q": "episodic",
+      "questions": {
+        "episodic": {
+          "type": "noul",
+          "instructions": "Does `observation` describe a particular experience or event involving a participant?",
+          "truthy": "A specific past, current or planned event, even if its exact time is unstated.",
+          "falsy": "Only a general fact, procedure or preference with no particular event.",
+          "heuristic": {
+            "match_any": [
+              "planted",
+              "started",
+              "presented",
+              "visited",
+              "met",
+              "began",
+              "launched",
+              "happened",
+              "on friday"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "semantic": {
+          "type": "noul",
+          "instructions": "Does `observation` state a fact about a person, entity or the world that remains useful beyond this conversational turn?",
+          "truthy": "An attributable fact or relationship, even when it also appears in an episodic account.",
+          "falsy": "Only a transient conversational acknowledgement or a question with no asserted fact.",
+          "heuristic": {
+            "match_any": [
+              "is a",
+              "lives in",
+              "works at",
+              "born in",
+              "facts about",
+              "located in"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "procedural": {
+          "type": "noul",
+          "instructions": "Does `observation` describe how to carry out a task?",
+          "truthy": "An instruction, ordered step, method or actionable rule for performing a task.",
+          "falsy": "Merely mentions doing a task without describing how.",
+          "heuristic": {
+            "match_any": [
+              "how to",
+              "steps",
+              "recipe",
+              "instructions",
+              "tutorial",
+              "guide",
+              "procedure"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "preference": {
+          "type": "noul",
+          "instructions": "Does `observation` express a participant's preference, aversion or habitual choice?",
+          "truthy": "An attributable like, dislike, preferred option or habitual choice.",
+          "falsy": "An isolated action alone, another person's unattributed preference, or no preference evidence.",
+          "heuristic": {
+            "match_any": [
+              "prefer",
+              "prefers",
+              "like",
+              "likes",
+              "favorite",
+              "preference",
+              "wants a weekly"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "classify"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "episodic",
+          "semantic",
+          "procedural",
+          "preference"
+        ]
+      }
+    },
+    {
+      "name": "classify",
+      "primary_q": "episodic",
+      "questions": {
+        "episodic": {
+          "type": "noul",
+          "instructions": "Does `observation` describe a particular experience or event involving a participant?",
+          "truthy": "A specific past, current or planned event, even if its exact time is unstated.",
+          "falsy": "Only a general fact, procedure or preference with no particular event.",
+          "heuristic": {
+            "match_any": [
+              "planted",
+              "started",
+              "presented",
+              "visited",
+              "met",
+              "began",
+              "launched",
+              "happened",
+              "on friday"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "semantic": {
+          "type": "noul",
+          "instructions": "Does `observation` state a fact about a person, entity or the world that remains useful beyond this conversational turn?",
+          "truthy": "An attributable fact or relationship, even when it also appears in an episodic account.",
+          "falsy": "Only a transient conversational acknowledgement or a question with no asserted fact.",
+          "heuristic": {
+            "match_any": [
+              "is a",
+              "lives in",
+              "works at",
+              "born in",
+              "facts about",
+              "located in"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "procedural": {
+          "type": "noul",
+          "instructions": "Does `observation` describe how to carry out a task?",
+          "truthy": "An instruction, ordered step, method or actionable rule for performing a task.",
+          "falsy": "Merely mentions doing a task without describing how.",
+          "heuristic": {
+            "match_any": [
+              "how to",
+              "steps",
+              "recipe",
+              "instructions",
+              "tutorial",
+              "guide",
+              "procedure"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        },
+        "preference": {
+          "type": "noul",
+          "instructions": "Does `observation` express a participant's preference, aversion or habitual choice?",
+          "truthy": "An attributable like, dislike, preferred option or habitual choice.",
+          "falsy": "An isolated action alone, another person's unattributed preference, or no preference evidence.",
+          "heuristic": {
+            "match_any": [
+              "prefer",
+              "prefers",
+              "like",
+              "likes",
+              "favorite",
+              "preference",
+              "wants a weekly"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1,
+            "field": "observation"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "episodic",
+        "rules": [
+          {
+            "when": {
+              "question": "episodic",
+              "value_gte": 0.5
+            },
+            "label": "TYPE_EPISODIC"
+          },
+          {
+            "when": {
+              "question": "semantic",
+              "value_gte": 0.5
+            },
+            "label": "TYPE_SEMANTIC"
+          },
+          {
+            "when": {
+              "question": "procedural",
+              "value_gte": 0.5
+            },
+            "label": "TYPE_PROCEDURAL"
+          },
+          {
+            "when": {
+              "question": "preference",
+              "value_gte": 0.5
+            },
+            "label": "TYPE_PREFERENCE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "TYPE_OTHER"
+          }
+        ]
+      }
+    }
+  ]
+}

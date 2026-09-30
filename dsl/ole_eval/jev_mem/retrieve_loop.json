@@ -1,0 +1,223 @@
+{
+  "name": "jev_mem_retrieve_loop",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One read-side top loop. Port of memory/jev_mem_retrieval.RetrievalController._query, simplified to a decision graph: route (6 noul) -> stop_check (4 noul). If stopping says CONTINUE_*, the caller should fetch more evidence (outside the DSL) and re-enter this spec; if STOP_* the loop ends. The loop guard is `max_iterations` plus convergence. Graph budget allocation is left to the caller from the emitted route noul values.",
+  "start": "route",
+  "max_iterations": 6,
+  "convergence_window": 3,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "semantic",
+      "questions": {
+        "semantic": {
+          "type": "noul",
+          "instructions": "Would finding topically or semantically related memories help answer `query`?",
+          "truthy": "Recall of related facts is useful.",
+          "falsy": "No related-memory lookup is needed.",
+          "heuristic": {
+            "field": "route_semantic",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "temporal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require event dates, durations, ordering or changes over time?",
+          "truthy": "A time relation is needed to answer correctly.",
+          "falsy": "Dates or ordering are incidental to the answer.",
+          "heuristic": {
+            "field": "route_temporal",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "causal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require explaining a cause, motivation, enabling condition or effect?",
+          "truthy": "Causal or explanatory evidence is needed.",
+          "falsy": "Only factual association or chronology is requested.",
+          "heuristic": {
+            "field": "route_causal",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "entity": {
+          "type": "noul",
+          "instructions": "Would connecting mentions of the same person, place, object or organization help answer `query`?",
+          "truthy": "Combining entity-specific facts or aliases is useful.",
+          "falsy": "Entity identity is irrelevant to the answer.",
+          "heuristic": {
+            "field": "route_entity",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "multi_hop_need": {
+          "type": "noul",
+          "instructions": "Does `query` require combining at least two distinct pieces of remembered evidence?",
+          "truthy": "The question asks for a comparison, aggregation or chained inference.",
+          "falsy": "One direct remembered fact suffices.",
+          "heuristic": {
+            "field": "route_multi_hop_need",
+            "match_any": [
+              "yes",
+              "high"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "recency_importance": {
+          "type": "noul",
+          "instructions": "Does `query` require the latest applicable fact rather than a historical fact?",
+          "truthy": "Current state, latest update or recent status is requested.",
+          "falsy": "Historical or timeless facts answer the question.",
+          "heuristic": {
+            "field": "route_recency",
+            "match_any": [
+              "yes",
+              "high"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "stop_check"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "semantic",
+          "temporal",
+          "causal",
+          "entity",
+          "multi_hop_need",
+          "recency_importance"
+        ]
+      }
+    },
+    {
+      "name": "stop_check",
+      "primary_q": "evidence_sufficient",
+      "questions": {
+        "evidence_sufficient": {
+          "type": "noul",
+          "instructions": "Does `evidence` contain support for every factual part of an answer to `query`?",
+          "truthy": "A grounded answer can be given from these memories without inventing missing facts.",
+          "falsy": "Any required fact or reasoning link is unsupported; related topics alone are insufficient.",
+          "heuristic": {
+            "field": "evidence_status",
+            "match_any": [
+              "sufficient"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        },
+        "continue_useful": {
+          "type": "noul",
+          "instructions": "Given `query` and `evidence`, is another retrieval round likely to fill a specific gap or resolve a conflict?",
+          "truthy": "An identifiable missing fact or conflict could benefit from more memory retrieval.",
+          "falsy": "No identifiable retrieval need remains or more memories are unlikely to help.",
+          "heuristic": {
+            "field": "evidence_status",
+            "match_any": [
+              "sufficient"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.1
+          }
+        },
+        "missing_evidence": {
+          "type": "noul",
+          "instructions": "Is at least one fact required by `query` absent from `evidence`?",
+          "truthy": "A required detail, date, identity, count or linking fact is not supported.",
+          "falsy": "All required facts have explicit support in the supplied evidence.",
+          "heuristic": {
+            "field": "evidence_status",
+            "match_any": [
+              "sufficient"
+            ],
+            "p_hit": 0.05,
+            "p_miss": 0.9
+          }
+        },
+        "contradiction": {
+          "type": "noul",
+          "instructions": "Does `evidence` contain conflicting claims relevant to `query` that the supplied time/context cannot reconcile?",
+          "truthy": "A conflict still affects which answer is correct.",
+          "falsy": "Claims agree, differ only by explained temporal updates, or do not affect the answer.",
+          "heuristic": {
+            "field": "evidence_status",
+            "match_any": [
+              "contradiction"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "evidence_sufficient",
+        "rules": [
+          {
+            "when": {
+              "question": "contradiction",
+              "value_gte": 0.4
+            },
+            "label": "CONTINUE_CONTRADICTION"
+          },
+          {
+            "when": {
+              "question": "evidence_sufficient",
+              "value_lt": 0.85
+            },
+            "label": "CONTINUE_EVIDENCE_INSUFFICIENT"
+          },
+          {
+            "when": {
+              "question": "missing_evidence",
+              "value_gte": 0.4
+            },
+            "label": "CONTINUE_MISSING"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "STOP_EVIDENCE_OK"
+          }
+        ]
+      }
+    }
+  ]
+}

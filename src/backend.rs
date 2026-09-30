@@ -729,6 +729,18 @@ impl Decide for HeuristicBackend {
                             else { h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5) };
                             bscore(v)
                         }
+                        "noul" => {
+                            // Noul returns a *probability* (0..1 = p(true)), not an A/B choice.
+                            // Returning the bchoice shape made threshold rules on value_gte/value_lt
+                            // compare against the string "A"/"B" (as_f64 -> 0.0), which silently
+                            // triggered CONTINUE in stop-check-style specs.
+                            let p = if hit { h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9) }
+                                    else { h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.1) };
+                            let mut m = Map::new();
+                            m.insert("false".to_string(), serde_json::json!(1.0 - p));
+                            m.insert("true".to_string(), serde_json::json!(p));
+                            (serde_json::json!(p), m, p.max(1.0 - p))
+                        }
                         _ => {
                             let p_b = if hit { h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9) }
                                       else { h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.1) };

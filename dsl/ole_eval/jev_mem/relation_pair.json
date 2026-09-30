@@ -1,0 +1,116 @@
+{
+  "name": "jev_mem_relation_pair",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One write-side relation judgment. Port of memory/jev_questions.relation_questions for a single pair (new_memory vs candidates[0]). 4 noul per pair: semantic / causes / caused_by / entity. Action emits one label per LinkType if its noul crosses relation_threshold (default 0.60). Caller can pass up to 4 pairs by extending the questions block; default spec handles 1 pair so the model context stays small.",
+  "start": "relations",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "relations",
+      "primary_q": "pair_0_semantic",
+      "questions": {
+        "pair_0_semantic": {
+          "type": "noul",
+          "instructions": "Would a semantic link between `new_memory.content` and `candidates[0].content` help retrieve a shared specific topic or fact?",
+          "truthy": "A specific shared topic, fact or event makes the connection useful.",
+          "falsy": "Only generic conversational vocabulary or no meaningful semantic connection.",
+          "heuristic": {
+            "field": "pair_0_semantic_status",
+            "match_any": [
+              "semantic"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_causes": {
+          "type": "noul",
+          "instructions": "Does the event in `new_memory.content` cause, enable or explain the candidate event in `candidates[0].content`?",
+          "truthy": "The supplied accounts support this direction of causal influence.",
+          "falsy": "Only similarity, chronology, a shared entity, or insufficient causal evidence.",
+          "heuristic": {
+            "field": "pair_0_causes_status",
+            "match_any": [
+              "causes"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_caused_by": {
+          "type": "noul",
+          "instructions": "Does the candidate event in `candidates[0].content` cause, enable or explain the event in `new_memory.content`?",
+          "truthy": "The supplied accounts support this direction of causal influence.",
+          "falsy": "Only similarity, chronology, a shared entity, or insufficient causal evidence.",
+          "heuristic": {
+            "field": "pair_0_caused_by_status",
+            "match_any": [
+              "caused_by"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_entity": {
+          "type": "noul",
+          "instructions": "Using `new_memory.entities` and `candidates[0].entities`, do any names or aliases refer to the same real-world entity?",
+          "truthy": "Context supports a shared identity despite differing names or aliases.",
+          "falsy": "Distinct entities or insufficient evidence to resolve the alias; similar names alone are insufficient.",
+          "heuristic": {
+            "field": "share_entity",
+            "match_any": [
+              "yes"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "pair_0_semantic",
+        "rules": [
+          {
+            "when": {
+              "question": "pair_0_entity",
+              "value_gte": 0.6
+            },
+            "label": "LINK_ENTITY"
+          },
+          {
+            "when": {
+              "question": "pair_0_causes",
+              "value_gte": 0.6
+            },
+            "label": "LINK_CAUSAL_OUT"
+          },
+          {
+            "when": {
+              "question": "pair_0_caused_by",
+              "value_gte": 0.6
+            },
+            "label": "LINK_CAUSAL_IN"
+          },
+          {
+            "when": {
+              "question": "pair_0_semantic",
+              "value_gte": 0.6
+            },
+            "label": "LINK_SEMANTIC"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "LINK_NONE"
+          }
+        ]
+      }
+    }
+  ]
+}

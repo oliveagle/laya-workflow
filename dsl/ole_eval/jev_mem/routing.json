@@ -1,0 +1,121 @@
+{
+  "name": "jev_mem_routing",
+  "dsl_version": 2,
+  "description": "Jev-Mem System-One read-side query routing. Port of memory/jev_questions.routing_questions (6 noul). Single node: the 4 graph-view nouls (semantic/temporal/causal/entity) are emitted verbatim into state via copy_keys on each answer value, along with multi_hop_need and recency_importance. `budget_label` gives a coarse retrieval-depth hint. Caller reads the 4 raw noul values (0..1) and can apply the Jev-Mem largest-remainder `allocate_graph_budgets` externally (or via math.eval). This is more faithful than a single 4-way choice because each graph is judged independently.",
+  "start": "route",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "semantic",
+      "questions": {
+        "semantic": {
+          "type": "noul",
+          "instructions": "Would finding topically or semantically related memories help answer `query`?",
+          "truthy": "Recall of related facts is useful.",
+          "falsy": "No related-memory lookup is needed.",
+          "heuristic": {
+            "field": "route_semantic",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "temporal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require event dates, durations, ordering or changes over time?",
+          "truthy": "A time relation is needed to answer correctly.",
+          "falsy": "Dates or ordering are incidental to the answer.",
+          "heuristic": {
+            "field": "route_temporal",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "causal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require explaining a cause, motivation, enabling condition or effect?",
+          "truthy": "Causal or explanatory evidence is needed.",
+          "falsy": "Only factual association or chronology is requested.",
+          "heuristic": {
+            "field": "route_causal",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "entity": {
+          "type": "noul",
+          "instructions": "Would connecting mentions of the same person, place, object or organization help answer `query`?",
+          "truthy": "Combining entity-specific facts or aliases is useful.",
+          "falsy": "Entity identity is irrelevant to the answer.",
+          "heuristic": {
+            "field": "route_entity",
+            "match_any": [
+              "high",
+              "yes"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "multi_hop_need": {
+          "type": "noul",
+          "instructions": "Does `query` require combining at least two distinct pieces of remembered evidence?",
+          "truthy": "The question asks for a comparison, aggregation or chained inference.",
+          "falsy": "One direct remembered fact suffices.",
+          "heuristic": {
+            "field": "route_multi_hop_need",
+            "match_any": [
+              "yes",
+              "high"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        },
+        "recency_importance": {
+          "type": "noul",
+          "instructions": "Does `query` require the latest applicable fact rather than a historical fact?",
+          "truthy": "Current state, latest update or recent status is requested.",
+          "falsy": "Historical or timeless facts answer the question.",
+          "heuristic": {
+            "field": "route_recency",
+            "match_any": [
+              "yes",
+              "high"
+            ],
+            "p_hit": 0.85,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "semantic",
+          "temporal",
+          "causal",
+          "entity",
+          "multi_hop_need",
+          "recency_importance"
+        ]
+      }
+    }
+  ]
+}
