@@ -42,12 +42,14 @@ SPEC_DIR = REPO / "dsl" / "laya_mem"
 # ---- JSON-RPC client over a subprocess ------------------------------------
 
 class McpClient:
-    def __init__(self, bin_path, spec_dir, db_path):
+    def __init__(self, bin_path, spec_dir, db_path, base_url=None):
         env = {
             **os.environ,
             "LAYA_MEM_SPEC_DIR": str(spec_dir),
             "LAYA_MEM_SQLITE": str(db_path),
         }
+        if base_url:
+            env["LAYA_BASE_URL"] = base_url
         self.proc = subprocess.Popen(
             [str(bin_path), "mcp", "serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
