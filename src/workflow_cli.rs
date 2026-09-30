@@ -167,6 +167,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: ServerCmd,
     },
+    /// MCP stdio server exposing the jev_mem DSL specs as MCP tools.
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
     /// HTAP database lifecycle: `serve` a local SQLite + DuckDB daemon (the
     /// *server* mode of the `db` capability), plus `ensure`/`stop`/`status`.
     /// Without it, `kind: "db"` runs *embedded* — the same ops, local CLIs,
@@ -199,6 +204,23 @@ enum Cmd {
         /// Also emit a terminal bell.
         #[arg(long, default_value_t = false)]
         bell: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpCmd {
+    /// Start the MCP stdio server: reads JSON-RPC 2.0 from stdin, writes one
+    /// JSON-RPC object per line to stdout. Exposes the jev_mem DSL specs as
+    /// MCP tools (assess / retrieve / persist / recall). Blocks until EOF.
+    Serve {
+        /// Directory holding the jev_mem DSL specs (e.g. dsl/ole_eval/jev_mem).
+        /// Defaults to $LAYA_MEM_SPEC_DIR or the repo's dsl/ole_eval/jev_mem.
+        #[arg(long)]
+        spec_dir: Option<String>,
+        /// SQLite database file for the persist/recall tools.
+        /// Defaults to $LAYA_MEM_SQLITE or ~/tmp/jev_mem/codex.sqlite.
+        #[arg(long)]
+        db_path: Option<String>,
     },
 }
 
@@ -610,6 +632,7 @@ fn main() -> Result<()> {
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
         Cmd::Server { cmd } => run_server(cmd),
+        Cmd::Mcp { cmd } => run_mcp(cmd),
         Cmd::Db { cmd } => run_db(cmd),
         Cmd::Notify {
             message,
@@ -1263,6 +1286,37 @@ static RECIPE_CHECKPOINT_RESUME: &str = include_str!("skill/recipes/checkpoint_r
 static RECIPE_ROLLBACK_BAD_ITER: &str = include_str!("skill/recipes/rollback_bad_iter.md");
 static RECIPE_HARDEN_SPEC: &str = include_str!("skill/recipes/harden_spec.md");
 static RECIPE_AGENT_ONBOARDING: &str = include_str!("skill/recipes/agent_onboarding.md");
+
+/// MCP subcommand dispatch: only one subcommand (Serve) for now, but kept as
+/// a function so the wiring stays consistent with `run_db` / `run_server`.
+fn run_mcp(cmd: &McpCmd) -> Result<()> {
+    match cmd {
+        McpCmd::Serve { spec_dir, db_path } => {
+            let spec_dir = spec_dir
+                .clone()
+                .or_else(|| std::env::var("LAYA_MEM_SPEC_DIR").ok().filter(|v| !v.is_empty()))
+                .unwrap_or_else(|| "dsl/ole_eval/jev_mem".to_string());
+            let spec_dir = std::path::PathBuf::from(spec_dir);
+            let db_path = db_path
+                .clone()
+                .or_else(|| std::env::var("LAYA_MEM_SQLITE").ok().filter(|v| !v.is_empty()))
+                .unwrap_or_else(|| {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+                    std::path::PathBuf::from(home)
+                        .join("tmp")
+                        .join("jev_mem")
+                        .join("codex.sqlite")
+                        .to_string_lossy()
+                        .into_owned()
+                });
+            let db_path = std::path::PathBuf::from(db_path);
+            // The backend URL is inherited from the CLI top-level --base-url
+            // via explicit_dsl_dir(); mirror that here for the live-model path.
+            let base_url = std::env::var("LAYA_BASE_URL").ok().filter(|v| !v.is_empty());
+            laya_workflow::mcp::serve_stdio(spec_dir, db_path, base_url)
+        }
+    }
+}
 
 /// The explicitly requested spec root, if any: `--dsl-dir` beats
 /// `LAYA_DSL_DIR`. `None` means "no pin" — fall back to the layered lookup
