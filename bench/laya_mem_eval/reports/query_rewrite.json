@@ -1,0 +1,1491 @@
+{
+  "tally": {
+    "baseline@5": {
+      "exact": 8,
+      "judge": 7,
+      "n": 30
+    },
+    "rewrites@5": {
+      "exact": 3,
+      "judge": 3,
+      "n": 30
+    },
+    "combined@5": {
+      "exact": 7,
+      "judge": 6,
+      "n": 30
+    }
+  },
+  "rewrites": [
+    {
+      "q": "For my daily commute, how much more expensive was the taxi ride compared to the ",
+      "rw": [
+        "daily",
+        "commute",
+        "taxi",
+        "ride",
+        "train",
+        "fare",
+        "cost",
+        "difference"
+      ]
+    },
+    {
+      "q": "How many sessions of the bereavement support group did I attend?",
+      "rw": [
+        "bereavement",
+        "support",
+        "group",
+        "sessions",
+        "attended",
+        "session",
+        "count",
+        "support"
+      ]
+    },
+    {
+      "q": "What type of action figure did I buy from a thrift store?",
+      "rw": []
+    },
+    {
+      "q": "I'm planning a trip to Denver soon. Any suggestions on what to do there?",
+      "rw": []
+    },
+    {
+      "q": "How many hours did I spend watching documentaries on Netflix last month?",
+      "rw": []
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "rw": [
+        "model",
+        "kit",
+        "model",
+        "kits",
+        "worked",
+        "bought",
+        "kit"
+      ]
+    },
+    {
+      "q": "How many days before the 'Rack Fest' did I participate in the 'Turbocharged Tues",
+      "rw": [
+        "rack",
+        "fest",
+        "turbocharged",
+        "tuesdays",
+        "days",
+        "before",
+        "participated",
+        "event"
+      ]
+    },
+    {
+      "q": "What percentage of leadership positions do women hold in the my company?",
+      "rw": [
+        "women",
+        "leadership",
+        "positions",
+        "percentage",
+        "company"
+      ]
+    },
+    {
+      "q": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies ",
+      "rw": [
+        "marvel",
+        "cinematic",
+        "universe",
+        "star",
+        "wars",
+        "weeks",
+        "movies",
+        "films"
+      ]
+    },
+    {
+      "q": "How many days had passed since I bought my Adidas running shoes when I realized ",
+      "rw": [
+        "adidas",
+        "converse",
+        "running",
+        "shoes",
+        "sneakers",
+        "shoelace",
+        "broken",
+        "days"
+      ]
+    },
+    {
+      "q": "How many issues of National Geographic have I finished reading?",
+      "rw": []
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K run?",
+      "rw": []
+    },
+    {
+      "q": "How many properties did I view before making an offer on the townhouse in the Br",
+      "rw": [
+        "townhouse",
+        "brookside",
+        "offer",
+        "properties",
+        "viewed",
+        "viewed",
+        "before",
+        "offer"
+      ]
+    },
+    {
+      "q": "What is the total number of comments on my recent Facebook Live session and my m",
+      "rw": [
+        "facebook",
+        "live",
+        "session",
+        "youtube",
+        "video",
+        "comments",
+        "total",
+        "comments"
+      ]
+    },
+    {
+      "q": "Can you remind me what was the average improvement in framerate when using the H",
+      "rw": [
+        "hamt",
+        "framerate",
+        "average",
+        "improvement",
+        "semantic",
+        "segmentation",
+        "real-time",
+        "adaptation"
+      ]
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "rw": [
+        "stand",
+        "mixer",
+        "birthday",
+        "gift",
+        "gave",
+        "mother"
+      ]
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocation?",
+      "rw": []
+    },
+    {
+      "q": "How many pages do I have left to read in 'The Nightingale'?",
+      "rw": [
+        "nightingale",
+        "pages",
+        "left",
+        "remaining",
+        "pages",
+        "total",
+        "pages",
+        "current"
+      ]
+    },
+    {
+      "q": "How much will I save by taking the train from the airport to my hotel instead of",
+      "rw": [
+        "airport",
+        "hotel",
+        "train",
+        "taxi",
+        "distance",
+        "speed"
+      ]
+    },
+    {
+      "q": "How many weeks in total do I spent on reading 'The Nightingale' and listening to",
+      "rw": [
+        "nightingale",
+        "sapiens",
+        "brief",
+        "history",
+        "humankind",
+        "power",
+        "weeks",
+        "reading"
+      ]
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "rw": [
+        "old",
+        "sneakers",
+        "keep",
+        "currently",
+        "storage",
+        "closet"
+      ]
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence or trimming the goats' hooves?",
+      "rw": [
+        "fixing",
+        "fence",
+        "trimming",
+        "goats",
+        "hooves",
+        "task",
+        "completed",
+        "first"
+      ]
+    },
+    {
+      "q": "What charity event did I participate in a month ago?",
+      "rw": []
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, did I switch to more water per",
+      "rw": [
+        "coffee",
+        "water",
+        "ratio",
+        "french",
+        "press",
+        "tablespoon",
+        "more",
+        "water"
+      ]
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "rw": []
+    },
+    {
+      "q": "I was thinking about our previous conversation about data privacy and security. ",
+      "rw": [
+        "two-factor",
+        "authentication",
+        "2fa",
+        "totp",
+        "hotp",
+        "fido2",
+        "security",
+        "key"
+      ]
+    },
+    {
+      "q": "How many days ago did I buy a smoker?",
+      "rw": [
+        "bought",
+        "smoker",
+        "smoker",
+        "days",
+        "ago",
+        "date",
+        "purchase"
+      ]
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes and chili peppers?",
+      "rw": [
+        "tomatoes",
+        "chili",
+        "peppers",
+        "plants",
+        "initially",
+        "planted",
+        "seed",
+        "count"
+      ]
+    },
+    {
+      "q": "How many days had passed since I finished reading 'The Seven Husbands of Evelyn ",
+      "rw": []
+    },
+    {
+      "q": "What is the total number of views on my most popular videos on YouTube and TikTo",
+      "rw": [
+        "youtube",
+        "tiktok",
+        "views",
+        "most",
+        "popular",
+        "videos",
+        "total",
+        "number"
+      ]
+    }
+  ],
+  "per_row": [
+    {
+      "q": "For my daily commute, how much more expensive was ",
+      "label": "baseline@5",
+      "rw": [
+        "daily",
+        "commute",
+        "taxi",
+        "ride",
+        "train",
+        "fare",
+        "cost",
+        "difference"
+      ],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "For my daily commute, how much more expensive was ",
+      "label": "rewrites@5",
+      "rw": [
+        "daily",
+        "commute",
+        "taxi",
+        "ride",
+        "train",
+        "fare",
+        "cost",
+        "difference"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "For my daily commute, how much more expensive was ",
+      "label": "combined@5",
+      "rw": [
+        "daily",
+        "commute",
+        "taxi",
+        "ride",
+        "train",
+        "fare",
+        "cost",
+        "difference"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many sessions of the bereavement support group",
+      "label": "baseline@5",
+      "rw": [
+        "bereavement",
+        "support",
+        "group",
+        "sessions",
+        "attended",
+        "session",
+        "count",
+        "support"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How many sessions of the bereavement support group",
+      "label": "rewrites@5",
+      "rw": [
+        "bereavement",
+        "support",
+        "group",
+        "sessions",
+        "attended",
+        "session",
+        "count",
+        "support"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How many sessions of the bereavement support group",
+      "label": "combined@5",
+      "rw": [
+        "bereavement",
+        "support",
+        "group",
+        "sessions",
+        "attended",
+        "session",
+        "count",
+        "support"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "What type of action figure did I buy from a thrift",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "What type of action figure did I buy from a thrift",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What type of action figure did I buy from a thrift",
+      "label": "combined@5",
+      "rw": [],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "I'm planning a trip to Denver soon. Any suggestion",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "I'm planning a trip to Denver soon. Any suggestion",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "I'm planning a trip to Denver soon. Any suggestion",
+      "label": "combined@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many hours did I spend watching documentaries ",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "How many hours did I spend watching documentaries ",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many hours did I spend watching documentaries ",
+      "label": "combined@5",
+      "rw": [],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "label": "baseline@5",
+      "rw": [
+        "model",
+        "kit",
+        "model",
+        "kits",
+        "worked",
+        "bought",
+        "kit"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "label": "rewrites@5",
+      "rw": [
+        "model",
+        "kit",
+        "model",
+        "kits",
+        "worked",
+        "bought",
+        "kit"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "label": "combined@5",
+      "rw": [
+        "model",
+        "kit",
+        "model",
+        "kits",
+        "worked",
+        "bought",
+        "kit"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days before the 'Rack Fest' did I partici",
+      "label": "baseline@5",
+      "rw": [
+        "rack",
+        "fest",
+        "turbocharged",
+        "tuesdays",
+        "days",
+        "before",
+        "participated",
+        "event"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "How many days before the 'Rack Fest' did I partici",
+      "label": "rewrites@5",
+      "rw": [
+        "rack",
+        "fest",
+        "turbocharged",
+        "tuesdays",
+        "days",
+        "before",
+        "participated",
+        "event"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "How many days before the 'Rack Fest' did I partici",
+      "label": "combined@5",
+      "rw": [
+        "rack",
+        "fest",
+        "turbocharged",
+        "tuesdays",
+        "days",
+        "before",
+        "participated",
+        "event"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What percentage of leadership positions do women h",
+      "label": "baseline@5",
+      "rw": [
+        "women",
+        "leadership",
+        "positions",
+        "percentage",
+        "company"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What percentage of leadership positions do women h",
+      "label": "rewrites@5",
+      "rw": [
+        "women",
+        "leadership",
+        "positions",
+        "percentage",
+        "company"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What percentage of leadership positions do women h",
+      "label": "combined@5",
+      "rw": [
+        "women",
+        "leadership",
+        "positions",
+        "percentage",
+        "company"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many weeks did it take me to watch all the Mar",
+      "label": "baseline@5",
+      "rw": [
+        "marvel",
+        "cinematic",
+        "universe",
+        "star",
+        "wars",
+        "weeks",
+        "movies",
+        "films"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many weeks did it take me to watch all the Mar",
+      "label": "rewrites@5",
+      "rw": [
+        "marvel",
+        "cinematic",
+        "universe",
+        "star",
+        "wars",
+        "weeks",
+        "movies",
+        "films"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many weeks did it take me to watch all the Mar",
+      "label": "combined@5",
+      "rw": [
+        "marvel",
+        "cinematic",
+        "universe",
+        "star",
+        "wars",
+        "weeks",
+        "movies",
+        "films"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I bought my Adidas ",
+      "label": "baseline@5",
+      "rw": [
+        "adidas",
+        "converse",
+        "running",
+        "shoes",
+        "sneakers",
+        "shoelace",
+        "broken",
+        "days"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I bought my Adidas ",
+      "label": "rewrites@5",
+      "rw": [
+        "adidas",
+        "converse",
+        "running",
+        "shoes",
+        "sneakers",
+        "shoelace",
+        "broken",
+        "days"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I bought my Adidas ",
+      "label": "combined@5",
+      "rw": [
+        "adidas",
+        "converse",
+        "running",
+        "shoes",
+        "sneakers",
+        "shoelace",
+        "broken",
+        "days"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many issues of National Geographic have I fini",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How many issues of National Geographic have I fini",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many issues of National Geographic have I fini",
+      "label": "combined@5",
+      "rw": [],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "What was my previous personal best time for the ch",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "What was my previous personal best time for the ch",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What was my previous personal best time for the ch",
+      "label": "combined@5",
+      "rw": [],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How many properties did I view before making an of",
+      "label": "baseline@5",
+      "rw": [
+        "townhouse",
+        "brookside",
+        "offer",
+        "properties",
+        "viewed",
+        "viewed",
+        "before",
+        "offer"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many properties did I view before making an of",
+      "label": "rewrites@5",
+      "rw": [
+        "townhouse",
+        "brookside",
+        "offer",
+        "properties",
+        "viewed",
+        "viewed",
+        "before",
+        "offer"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many properties did I view before making an of",
+      "label": "combined@5",
+      "rw": [
+        "townhouse",
+        "brookside",
+        "offer",
+        "properties",
+        "viewed",
+        "viewed",
+        "before",
+        "offer"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of comments on my recent ",
+      "label": "baseline@5",
+      "rw": [
+        "facebook",
+        "live",
+        "session",
+        "youtube",
+        "video",
+        "comments",
+        "total",
+        "comments"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of comments on my recent ",
+      "label": "rewrites@5",
+      "rw": [
+        "facebook",
+        "live",
+        "session",
+        "youtube",
+        "video",
+        "comments",
+        "total",
+        "comments"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of comments on my recent ",
+      "label": "combined@5",
+      "rw": [
+        "facebook",
+        "live",
+        "session",
+        "youtube",
+        "video",
+        "comments",
+        "total",
+        "comments"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Can you remind me what was the average improvement",
+      "label": "baseline@5",
+      "rw": [
+        "hamt",
+        "framerate",
+        "average",
+        "improvement",
+        "semantic",
+        "segmentation",
+        "real-time",
+        "adaptation"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "Can you remind me what was the average improvement",
+      "label": "rewrites@5",
+      "rw": [
+        "hamt",
+        "framerate",
+        "average",
+        "improvement",
+        "semantic",
+        "segmentation",
+        "real-time",
+        "adaptation"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "Can you remind me what was the average improvement",
+      "label": "combined@5",
+      "rw": [
+        "hamt",
+        "framerate",
+        "average",
+        "improvement",
+        "semantic",
+        "segmentation",
+        "real-time",
+        "adaptation"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "label": "baseline@5",
+      "rw": [
+        "stand",
+        "mixer",
+        "birthday",
+        "gift",
+        "gave",
+        "mother"
+      ],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "label": "rewrites@5",
+      "rw": [
+        "stand",
+        "mixer",
+        "birthday",
+        "gift",
+        "gave",
+        "mother"
+      ],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "label": "combined@5",
+      "rw": [
+        "stand",
+        "mixer",
+        "birthday",
+        "gift",
+        "gave",
+        "mother"
+      ],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocati",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocati",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocati",
+      "label": "combined@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many pages do I have left to read in 'The Nigh",
+      "label": "baseline@5",
+      "rw": [
+        "nightingale",
+        "pages",
+        "left",
+        "remaining",
+        "pages",
+        "total",
+        "pages",
+        "current"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many pages do I have left to read in 'The Nigh",
+      "label": "rewrites@5",
+      "rw": [
+        "nightingale",
+        "pages",
+        "left",
+        "remaining",
+        "pages",
+        "total",
+        "pages",
+        "current"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many pages do I have left to read in 'The Nigh",
+      "label": "combined@5",
+      "rw": [
+        "nightingale",
+        "pages",
+        "left",
+        "remaining",
+        "pages",
+        "total",
+        "pages",
+        "current"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How much will I save by taking the train from the ",
+      "label": "baseline@5",
+      "rw": [
+        "airport",
+        "hotel",
+        "train",
+        "taxi",
+        "distance",
+        "speed"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How much will I save by taking the train from the ",
+      "label": "rewrites@5",
+      "rw": [
+        "airport",
+        "hotel",
+        "train",
+        "taxi",
+        "distance",
+        "speed"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How much will I save by taking the train from the ",
+      "label": "combined@5",
+      "rw": [
+        "airport",
+        "hotel",
+        "train",
+        "taxi",
+        "distance",
+        "speed"
+      ],
+      "exact": true,
+      "judge": false
+    },
+    {
+      "q": "How many weeks in total do I spent on reading 'The",
+      "label": "baseline@5",
+      "rw": [
+        "nightingale",
+        "sapiens",
+        "brief",
+        "history",
+        "humankind",
+        "power",
+        "weeks",
+        "reading"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many weeks in total do I spent on reading 'The",
+      "label": "rewrites@5",
+      "rw": [
+        "nightingale",
+        "sapiens",
+        "brief",
+        "history",
+        "humankind",
+        "power",
+        "weeks",
+        "reading"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many weeks in total do I spent on reading 'The",
+      "label": "combined@5",
+      "rw": [
+        "nightingale",
+        "sapiens",
+        "brief",
+        "history",
+        "humankind",
+        "power",
+        "weeks",
+        "reading"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "label": "baseline@5",
+      "rw": [
+        "old",
+        "sneakers",
+        "keep",
+        "currently",
+        "storage",
+        "closet"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "label": "rewrites@5",
+      "rw": [
+        "old",
+        "sneakers",
+        "keep",
+        "currently",
+        "storage",
+        "closet"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "label": "combined@5",
+      "rw": [
+        "old",
+        "sneakers",
+        "keep",
+        "currently",
+        "storage",
+        "closet"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence ",
+      "label": "baseline@5",
+      "rw": [
+        "fixing",
+        "fence",
+        "trimming",
+        "goats",
+        "hooves",
+        "task",
+        "completed",
+        "first"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence ",
+      "label": "rewrites@5",
+      "rw": [
+        "fixing",
+        "fence",
+        "trimming",
+        "goats",
+        "hooves",
+        "task",
+        "completed",
+        "first"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence ",
+      "label": "combined@5",
+      "rw": [
+        "fixing",
+        "fence",
+        "trimming",
+        "goats",
+        "hooves",
+        "task",
+        "completed",
+        "first"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What charity event did I participate in a month ag",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What charity event did I participate in a month ag",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What charity event did I participate in a month ag",
+      "label": "combined@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, ",
+      "label": "baseline@5",
+      "rw": [
+        "coffee",
+        "water",
+        "ratio",
+        "french",
+        "press",
+        "tablespoon",
+        "more",
+        "water"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, ",
+      "label": "rewrites@5",
+      "rw": [
+        "coffee",
+        "water",
+        "ratio",
+        "french",
+        "press",
+        "tablespoon",
+        "more",
+        "water"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, ",
+      "label": "combined@5",
+      "rw": [
+        "coffee",
+        "water",
+        "ratio",
+        "french",
+        "press",
+        "tablespoon",
+        "more",
+        "water"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "label": "combined@5",
+      "rw": [],
+      "exact": true,
+      "judge": true
+    },
+    {
+      "q": "I was thinking about our previous conversation abo",
+      "label": "baseline@5",
+      "rw": [
+        "two-factor",
+        "authentication",
+        "2fa",
+        "totp",
+        "hotp",
+        "fido2",
+        "security",
+        "key"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "I was thinking about our previous conversation abo",
+      "label": "rewrites@5",
+      "rw": [
+        "two-factor",
+        "authentication",
+        "2fa",
+        "totp",
+        "hotp",
+        "fido2",
+        "security",
+        "key"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "I was thinking about our previous conversation abo",
+      "label": "combined@5",
+      "rw": [
+        "two-factor",
+        "authentication",
+        "2fa",
+        "totp",
+        "hotp",
+        "fido2",
+        "security",
+        "key"
+      ],
+      "exact": false,
+      "judge": true
+    },
+    {
+      "q": "How many days ago did I buy a smoker?",
+      "label": "baseline@5",
+      "rw": [
+        "bought",
+        "smoker",
+        "smoker",
+        "days",
+        "ago",
+        "date",
+        "purchase"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days ago did I buy a smoker?",
+      "label": "rewrites@5",
+      "rw": [
+        "bought",
+        "smoker",
+        "smoker",
+        "days",
+        "ago",
+        "date",
+        "purchase"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days ago did I buy a smoker?",
+      "label": "combined@5",
+      "rw": [
+        "bought",
+        "smoker",
+        "smoker",
+        "days",
+        "ago",
+        "date",
+        "purchase"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes",
+      "label": "baseline@5",
+      "rw": [
+        "tomatoes",
+        "chili",
+        "peppers",
+        "plants",
+        "initially",
+        "planted",
+        "seed",
+        "count"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes",
+      "label": "rewrites@5",
+      "rw": [
+        "tomatoes",
+        "chili",
+        "peppers",
+        "plants",
+        "initially",
+        "planted",
+        "seed",
+        "count"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes",
+      "label": "combined@5",
+      "rw": [
+        "tomatoes",
+        "chili",
+        "peppers",
+        "plants",
+        "initially",
+        "planted",
+        "seed",
+        "count"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I finished reading ",
+      "label": "baseline@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I finished reading ",
+      "label": "rewrites@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "How many days had passed since I finished reading ",
+      "label": "combined@5",
+      "rw": [],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of views on my most popul",
+      "label": "baseline@5",
+      "rw": [
+        "youtube",
+        "tiktok",
+        "views",
+        "most",
+        "popular",
+        "videos",
+        "total",
+        "number"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of views on my most popul",
+      "label": "rewrites@5",
+      "rw": [
+        "youtube",
+        "tiktok",
+        "views",
+        "most",
+        "popular",
+        "videos",
+        "total",
+        "number"
+      ],
+      "exact": false,
+      "judge": false
+    },
+    {
+      "q": "What is the total number of views on my most popul",
+      "label": "combined@5",
+      "rw": [
+        "youtube",
+        "tiktok",
+        "views",
+        "most",
+        "popular",
+        "videos",
+        "total",
+        "number"
+      ],
+      "exact": false,
+      "judge": false
+    }
+  ],
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "topk": 5,
+    "judge_url": "http://127.0.0.1:11032/v1"
+  }
+}
