@@ -241,7 +241,7 @@ def main():
         pass
 
     client = McpClient(BIN, SPEC_DIR, db_path)
-    results = {"gate": None, "recall": None, "meta": {}}
+    results = {"gate": None, "recall": None, "natural": None, "meta": {}}
 
     try:
         if args.mode in ("gate", "all"):

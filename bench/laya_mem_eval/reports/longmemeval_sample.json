@@ -1,0 +1,363 @@
+{
+  "n": 10,
+  "topk": 5,
+  "strategies": {
+    "full": {
+      "exact_hits": 3,
+      "judge_hits": 3,
+      "exact_at_k": 0.3
+    },
+    "raw": {
+      "exact_hits": 3,
+      "judge_hits": 2,
+      "exact_at_k": 0.3
+    },
+    "top4": {
+      "exact_hits": 3,
+      "judge_hits": 1,
+      "exact_at_k": 0.3
+    }
+  },
+  "results": [
+    {
+      "question_id": "cc06de0d",
+      "qtype": "multi-session",
+      "question": "For my daily commute, how much more expensive was the taxi r",
+      "answer": "$6",
+      "ingested_turns": 460,
+      "stored_turns": 460,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "daily commute, how much",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "daily commute, how much more expensive taxi ride compared train fare?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "For my daily commute, how much more expensive was the taxi ride compared to the train fare?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "f9e8c073",
+      "qtype": "knowledge-update",
+      "question": "How many sessions of the bereavement support group did I att",
+      "answer": "five",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many sessions bereavement",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many sessions bereavement support group attend?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many sessions of the bereavement support group did I attend?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "b320f3f8",
+      "qtype": "single-session-user",
+      "question": "What type of action figure did I buy from a thrift store?",
+      "answer": "a blue Snaggletooth",
+      "ingested_turns": 456,
+      "stored_turns": 456,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "type action figure buy",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "type action figure buy from thrift store?",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "What type of action figure did I buy from a thrift store?",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "a89d7624",
+      "qtype": "single-session-preference",
+      "question": "I'm planning a trip to Denver soon. Any suggestions on what ",
+      "answer": "The user would prefer responses that take into account their previous experience in Denver, specifically their interest in live music and memorable encounter with Brandon Flowers. They might appreciate suggestions that revisit or build upon this experience, such as revisiting the same bar or exploring similar music venues in the area. The user may not prefer general tourist recommendations or activities unrelated to their interest in live music.",
+      "ingested_turns": 492,
+      "stored_turns": 492,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "i'm planning trip denver",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "i'm planning trip denver soon. any suggestions there?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "I'm planning a trip to Denver soon. Any suggestions on what to do there?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "311778f1",
+      "qtype": "single-session-user",
+      "question": "How many hours did I spend watching documentaries on Netflix",
+      "answer": "10",
+      "ingested_turns": 493,
+      "stored_turns": 493,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many hours spend",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many hours spend watching documentaries netflix last month?",
+          "exact_hit": true,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many hours did I spend watching documentaries on Netflix last month?",
+          "exact_hit": true,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "gpt4_59c863d7",
+      "qtype": "multi-session",
+      "question": "How many model kits have I worked on or bought?",
+      "answer": "I have worked on or bought five model kits. The scales of the models are: Revell F-15 Eagle (scale not mentioned), Tamiya 1/48 scale Spitfire Mk.V, 1/16 scale German Tiger I tank, 1/72 scale B-29 bomber, and 1/24 scale '69 Camaro.",
+      "ingested_turns": 477,
+      "stored_turns": 477,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many model kits",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many model kits have worked or bought?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many model kits have I worked on or bought?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "bbf86515",
+      "qtype": "temporal-reasoning",
+      "question": "How many days before the 'Rack Fest' did I participate in th",
+      "answer": "4 days.",
+      "ingested_turns": 481,
+      "stored_turns": 481,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many days before",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many days before 'rack fest' participate 'turbocharged tuesdays' event?",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many days before the 'Rack Fest' did I participate in the 'Turbocharged Tuesdays' event?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "099778bb",
+      "qtype": "multi-session",
+      "question": "What percentage of leadership positions do women hold in the",
+      "answer": "20%",
+      "ingested_turns": 461,
+      "stored_turns": 461,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "percentage leadership positions women",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "percentage leadership positions women hold company?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "What percentage of leadership positions do women hold in the my company?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "e831120c",
+      "qtype": "multi-session",
+      "question": "How many weeks did it take me to watch all the Marvel Cinema",
+      "answer": "3.5 weeks",
+      "ingested_turns": 474,
+      "stored_turns": 474,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many weeks it",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many weeks it take me watch all marvel cinematic universe movies and main star wars films?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "dcfa8644",
+      "qtype": "temporal-reasoning",
+      "question": "How many days had passed since I bought my Adidas running sh",
+      "answer": "14 days. 15 days (including the last day) is also acceptable.",
+      "ingested_turns": 465,
+      "stored_turns": 465,
+      "per_strategy": [
+        {
+          "strategy": "top4",
+          "qterm": "how many days had",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "full",
+          "qterm": "how many days had passed since bought adidas running shoes realized one shoelaces old converse sneakers had broken?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        },
+        {
+          "strategy": "raw",
+          "qterm": "How many days had passed since I bought my Adidas running shoes when I realized one of the shoelaces on my old Converse sneakers had broken?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "variants": [
+    "bm25"
+  ],
+  "tally": {
+    "bm25": {
+      "n": 10,
+      "exact": 3,
+      "judge": 1
+    }
+  },
+  "per_row": [
+    {
+      "bm25": {
+        "exact": true,
+        "judge": false,
+        "q": "For my daily commute, how much more expensive was ",
+        "ans": "$6"
+      }
+    },
+    {
+      "bm25": {
+        "exact": true,
+        "judge": false,
+        "q": "How many sessions of the bereavement support group",
+        "ans": "five"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": true,
+        "q": "What type of action figure did I buy from a thrift",
+        "ans": "a blue Snaggletooth"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "I'm planning a trip to Denver soon. Any suggestion",
+        "ans": "The user would prefer responses that tak"
+      }
+    },
+    {
+      "bm25": {
+        "exact": true,
+        "judge": false,
+        "q": "How many hours did I spend watching documentaries ",
+        "ans": "10"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "How many model kits have I worked on or bought?",
+        "ans": "I have worked on or bought five model ki"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "How many days before the 'Rack Fest' did I partici",
+        "ans": "4 days."
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "What percentage of leadership positions do women h",
+        "ans": "20%"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "How many weeks did it take me to watch all the Mar",
+        "ans": "3.5 weeks"
+      }
+    },
+    {
+      "bm25": {
+        "exact": false,
+        "judge": false,
+        "q": "How many days had passed since I bought my Adidas ",
+        "ans": "14 days. 15 days (including the last day"
+      }
+    }
+  ],
+  "args": {
+    "sample": 10,
+    "topk": 10,
+    "max_turns": 500,
+    "judge_url": "http://127.0.0.1:11032/v1",
+    "strategy": "full",
+    "variants": "bm25"
+  }
+}

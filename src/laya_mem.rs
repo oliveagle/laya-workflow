@@ -303,7 +303,11 @@ impl McpTool for PersistTool {
                 "op": "exec",
                 "statements": [
                     "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, ts TEXT, entities TEXT, type_scores TEXT NOT NULL)",
-                    "CREATE TABLE IF NOT EXISTS relations (id INTEGER PRIMARY KEY, source TEXT, target TEXT, link_type TEXT, probability REAL)"
+                    "CREATE TABLE IF NOT EXISTS relations (id INTEGER PRIMARY KEY, source TEXT, target TEXT, link_type TEXT, probability REAL)",
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
+                    "CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
+                    "CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); END",
+                    "CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END"
                 ]
             }),
         )?;
@@ -405,10 +409,28 @@ impl McpTool for RecallTool {
             .unwrap_or_else(|| self.0.db_path.clone());
 
         let sql = if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-            let esc = q.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
-            format!(
-                "SELECT id, content, ts, entities, type_scores FROM memories WHERE content LIKE '%' || '{esc}' || '%' ESCAPE '\\' ORDER BY id DESC LIMIT {limit}"
-            )
+            // FTS5 with prefix wildcards on every token: "graduat*" matches
+            // "graduated" / "graduating" / "graduate". This is the semantic-ish
+            // retrieval the real dataset (LongMemEval) needs — plain LIKE
+            // can't bridge "What degree did I graduate with?" to "Business
+            // Administration". Tokenise on non-alnum, escape FTS5 punctuation.
+            let tokens: Vec<String> = q.split(|c: char| !c.is_alphanumeric())
+                .filter(|t| !t.is_empty())
+                .map(|t| format!("{}*", t))
+                .collect();
+            if tokens.is_empty() {
+                format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}")
+            } else {
+                // OR semantics: an AND of every question term almost never
+                // matches natural phrasing ("what type of action figure"
+                // needs all 4 tokens in one memory). OR lets BM25 rank —
+                // memories matching more/rarer terms float to the top.
+                let fts_query = tokens.join(" OR ");
+                format!(
+                    "SELECT m.id, m.content, m.ts, m.entities, m.type_scores FROM memories_fts f JOIN memories m ON m.id = f.rowid WHERE memories_fts MATCH '{}' ORDER BY bm25(memories_fts), m.id DESC LIMIT {limit}",
+                    fts_query.replace('\'', "''")
+                )
+            }
         } else {
             format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}")
         };
