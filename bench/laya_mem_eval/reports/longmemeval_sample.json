@@ -1,21 +1,11 @@
 {
-  "n": 10,
+  "n": 30,
   "topk": 5,
   "strategies": {
     "full": {
-      "exact_hits": 3,
-      "judge_hits": 3,
-      "exact_at_k": 0.3
-    },
-    "raw": {
-      "exact_hits": 3,
-      "judge_hits": 2,
-      "exact_at_k": 0.3
-    },
-    "top4": {
-      "exact_hits": 3,
-      "judge_hits": 1,
-      "exact_at_k": 0.3
+      "exact_hits": 8,
+      "judge_hits": 6,
+      "exact_at_k": 0.26666666666666666
     }
   },
   "results": [
@@ -28,24 +18,8 @@
       "stored_turns": 460,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "daily commute, how much",
-          "exact_hit": true,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "daily commute, how much more expensive taxi ride compared train fare?",
-          "exact_hit": true,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "For my daily commute, how much more expensive was the taxi ride compared to the train fare?",
           "exact_hit": true,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -62,24 +36,8 @@
       "stored_turns": 500,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many sessions bereavement",
-          "exact_hit": true,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many sessions bereavement support group attend?",
-          "exact_hit": true,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "How many sessions of the bereavement support group did I attend?",
           "exact_hit": true,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -96,24 +54,8 @@
       "stored_turns": 456,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "type action figure buy",
-          "exact_hit": false,
-          "judge_hit": true,
-          "judge_score": 1.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "type action figure buy from thrift store?",
-          "exact_hit": false,
-          "judge_hit": true,
-          "judge_score": 1.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "What type of action figure did I buy from a thrift store?",
           "exact_hit": false,
           "judge_hit": true,
           "judge_score": 1.0,
@@ -130,24 +72,8 @@
       "stored_turns": 492,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "i'm planning trip denver",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "i'm planning trip denver soon. any suggestions there?",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "I'm planning a trip to Denver soon. Any suggestions on what to do there?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -164,24 +90,8 @@
       "stored_turns": 493,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many hours spend",
-          "exact_hit": true,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many hours spend watching documentaries netflix last month?",
-          "exact_hit": true,
-          "judge_hit": true,
-          "judge_score": 1.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "How many hours did I spend watching documentaries on Netflix last month?",
           "exact_hit": true,
           "judge_hit": true,
           "judge_score": 1.0,
@@ -198,24 +108,8 @@
       "stored_turns": 477,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many model kits",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many model kits have worked or bought?",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "How many model kits have I worked on or bought?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -232,27 +126,11 @@
       "stored_turns": 481,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many days before",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many days before 'rack fest' participate 'turbocharged tuesdays' event?",
           "exact_hit": false,
           "judge_hit": true,
           "judge_score": 1.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "How many days before the 'Rack Fest' did I participate in the 'Turbocharged Tuesdays' event?",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
           "num_memories": 5
         }
       ]
@@ -266,24 +144,8 @@
       "stored_turns": 461,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "percentage leadership positions women",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "percentage leadership positions women hold company?",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "What percentage of leadership positions do women hold in the my company?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -300,24 +162,8 @@
       "stored_turns": 474,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many weeks it",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many weeks it take me watch all marvel cinematic universe movies and main star wars films?",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
-          "strategy": "raw",
-          "qterm": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,
@@ -334,24 +180,368 @@
       "stored_turns": 465,
       "per_strategy": [
         {
-          "strategy": "top4",
-          "qterm": "how many days had",
-          "exact_hit": false,
-          "judge_hit": false,
-          "judge_score": 0.0,
-          "num_memories": 5
-        },
-        {
           "strategy": "full",
           "qterm": "how many days had passed since bought adidas running shoes realized one shoelaces old converse sneakers had broken?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,
           "num_memories": 5
-        },
+        }
+      ]
+    },
+    {
+      "question_id": "8fb83627",
+      "qtype": "knowledge-update",
+      "question": "How many issues of National Geographic have I finished readi",
+      "answer": "Five",
+      "ingested_turns": 481,
+      "stored_turns": 481,
+      "per_strategy": [
         {
-          "strategy": "raw",
-          "qterm": "How many days had passed since I bought my Adidas running shoes when I realized one of the shoelaces on my old Converse sneakers had broken?",
+          "strategy": "full",
+          "qterm": "how many issues national geographic have finished reading?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "e66b632c",
+      "qtype": "knowledge-update",
+      "question": "What was my previous personal best time for the charity 5K r",
+      "answer": "27 minutes and 45 seconds",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "previous personal best time charity 5k run?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "gpt4_7fce9456",
+      "qtype": "multi-session",
+      "question": "How many properties did I view before making an offer on the",
+      "answer": "I viewed four properties before making an offer on the townhouse in the Brookside neighborhood. The reasons I didn't make an offer on them were: the kitchen of the bungalow needed serious renovation, the property in Cedar Creek was out of my budget, the noise from the highway was a deal-breaker for the 1-bedroom condo, and my offer on the 2-bedroom condo was rejected due to a higher bid.",
+      "ingested_turns": 484,
+      "stored_turns": 484,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many properties view before making offer townhouse brookside neighborhood?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "55241a1f",
+      "qtype": "multi-session",
+      "question": "What is the total number of comments on my recent Facebook L",
+      "answer": "33",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "total number comments recent facebook live session and most popular youtube video?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "352ab8bd",
+      "qtype": "single-session-assistant",
+      "question": "Can you remind me what was the average improvement in framer",
+      "answer": "The average improvement in framerate was approximately 20% when using the Hardware-Aware Modular Training (HAMT) agent.",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "can you remind me average improvement framerate using hardware-aware modular training (hamt) agent 'to adapt or not adapt? real-time adaptation semantic segmentation' submission?",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "f4f1d8a4",
+      "qtype": "single-session-user",
+      "question": "Who gave me a new stand mixer as a birthday gift?",
+      "answer": "my sister",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "gave me new stand mixer as birthday gift?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "830ce83f",
+      "qtype": "knowledge-update",
+      "question": "Where did Rachel move to after her recent relocation?",
+      "answer": "the suburbs",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "rachel move after her recent relocation?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "2311e44b",
+      "qtype": "multi-session",
+      "question": "How many pages do I have left to read in 'The Nightingale'?",
+      "answer": "190",
+      "ingested_turns": 492,
+      "stored_turns": 492,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many pages have left read 'the nightingale'?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "09ba9854",
+      "qtype": "multi-session",
+      "question": "How much will I save by taking the train from the airport to",
+      "answer": "$50",
+      "ingested_turns": 476,
+      "stored_turns": 476,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how much will save by taking train from airport hotel instead taxi?",
+          "exact_hit": true,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "gpt4_a1b77f9c",
+      "qtype": "temporal-reasoning",
+      "question": "How many weeks in total do I spent on reading 'The Nightinga",
+      "answer": "2 weeks for 'The Nightingale', 4 weeks for 'Sapiens: A Brief History of Humankind', and 2 weeks for 'The Power', so a total of 8 weeks.",
+      "ingested_turns": 493,
+      "stored_turns": 493,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many weeks total spent reading 'the nightingale' and listening 'sapiens: brief history humankind' and 'the power'?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "07741c45",
+      "qtype": "knowledge-update",
+      "question": "Where do I currently keep my old sneakers?",
+      "answer": "in a shoe rack in my closet",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "currently keep old sneakers?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "gpt4_70e84552",
+      "qtype": "temporal-reasoning",
+      "question": "Which task did I complete first, fixing the fence or trimmin",
+      "answer": "Fixing the fence",
+      "ingested_turns": 466,
+      "stored_turns": 466,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "task complete first, fixing fence or trimming goats' hooves?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "b46e15ee",
+      "qtype": "temporal-reasoning",
+      "question": "What charity event did I participate in a month ago?",
+      "answer": "the 'Walk for Hunger' charity event",
+      "ingested_turns": 457,
+      "stored_turns": 457,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "charity event participate month ago?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "6071bd76",
+      "qtype": "knowledge-update",
+      "question": "For the coffee-to-water ratio in my French press, did I swit",
+      "answer": "You switched to less water (5 ounces) per tablespoon of coffee.",
+      "ingested_turns": 481,
+      "stored_turns": 481,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "coffee-to-water ratio french press, switch more water per tablespoon coffee, or less?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "6f9b354f",
+      "qtype": "single-session-user",
+      "question": "What color did I repaint my bedroom walls?",
+      "answer": "a lighter shade of gray",
+      "ingested_turns": 483,
+      "stored_turns": 483,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "color repaint bedroom walls?",
+          "exact_hit": true,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "1d4da289",
+      "qtype": "single-session-assistant",
+      "question": "I was thinking about our previous conversation about data pr",
+      "answer": "I mentioned biometric authentication or one-time passwords (OTP) as examples of two-factor authentication methods.",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "thinking about our previous conversation about data privacy and security. you mentioned that companies use two-factor authentication enhance security. can you remind me kind two-factor authentication methods you referring to?",
+          "exact_hit": false,
+          "judge_hit": true,
+          "judge_score": 1.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "gpt4_8279ba02",
+      "qtype": "temporal-reasoning",
+      "question": "How many days ago did I buy a smoker?",
+      "answer": "10 days ago. 11 days (including the last day) is also acceptable.",
+      "ingested_turns": 477,
+      "stored_turns": 477,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many days ago buy smoker?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "6456829e_abs",
+      "qtype": "multi-session",
+      "question": "How many plants did I initially plant for tomatoes and chili",
+      "answer": "The information provided is not enough. You mentioned planting 5 plants for tomatoes but you did not mention chili peppers.",
+      "ingested_turns": 485,
+      "stored_turns": 485,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many plants initially plant tomatoes and chili peppers?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "0db4c65d",
+      "qtype": "temporal-reasoning",
+      "question": "How many days had passed since I finished reading 'The Seven",
+      "answer": "18 days. 19 days (including the last day) is also acceptable.",
+      "ingested_turns": 459,
+      "stored_turns": 459,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "how many days had passed since finished reading 'the seven husbands evelyn hugo' attended book reading event at local library, author 'the silent patient' discussing her latest thriller novel?",
+          "exact_hit": false,
+          "judge_hit": false,
+          "judge_score": 0.0,
+          "num_memories": 5
+        }
+      ]
+    },
+    {
+      "question_id": "d6062bb9",
+      "qtype": "multi-session",
+      "question": "What is the total number of views on my most popular videos ",
+      "answer": "1,998",
+      "ingested_turns": 500,
+      "stored_turns": 500,
+      "per_strategy": [
+        {
+          "strategy": "full",
+          "qterm": "total number views most popular videos youtube and tiktok?",
           "exact_hit": false,
           "judge_hit": false,
           "judge_score": 0.0,

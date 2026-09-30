@@ -1,0 +1,388 @@
+{
+  "tally": {
+    "bm25@5": {
+      "exact": 8,
+      "judge": 7,
+      "n": 30
+    },
+    "rerank@5": {
+      "exact": 8,
+      "judge": 7,
+      "n": 30
+    },
+    "bm25@20": {
+      "exact": 10,
+      "judge": 4,
+      "n": 30
+    }
+  },
+  "per_row": [
+    {
+      "q": "For my daily commute, how much more expensive was the taxi r",
+      "ans": "$6",
+      "bm5": [
+        "I'm trying to get a better sense of my daily commute expense",
+        "I'd be happy to help you break down your daily train fare.\n\n"
+      ],
+      "rr5": [
+        "I'm trying to get a better sense of my daily commute expense",
+        "I'd be happy to help you break down your daily train fare.\n\n"
+      ]
+    },
+    {
+      "q": "How many sessions of the bereavement support group did I att",
+      "ans": "five",
+      "bm5": [
+        "I did attend three sessions of the bereavement support group",
+        "I think I'll start with \"Wild: From Lost to Found on the Pac"
+      ],
+      "rr5": [
+        "I did attend three sessions of the bereavement support group",
+        "I think I'll start with \"Wild: From Lost to Found on the Pac"
+      ]
+    },
+    {
+      "q": "What type of action figure did I buy from a thrift store?",
+      "ans": "a blue Snaggletooth",
+      "bm5": [
+        "I'm trying to find a good way to display my vintage watch co",
+        "What a fantastic collection! You have a diverse range of rar"
+      ],
+      "rr5": [
+        "I'm trying to find a good way to display my vintage watch co",
+        "What a fantastic collection! You have a diverse range of rar"
+      ]
+    },
+    {
+      "q": "I'm planning a trip to Denver soon. Any suggestions on what ",
+      "ans": "The user would prefer responses that tak",
+      "bm5": [
+        "I was thinking of planning a trip to Target soon, and I want",
+        "I'm actually thinking of planning a skiing trip with friends"
+      ],
+      "rr5": [
+        "I was thinking of planning a trip to Target soon, and I want",
+        "I'm actually thinking of planning a skiing trip with friends"
+      ]
+    },
+    {
+      "q": "How many hours did I spend watching documentaries on Netflix",
+      "ans": "10",
+      "bm5": [
+        "I'm really interested in applying machine learning to my wor",
+        "I think I'll start by exploring the libraries and resources "
+      ],
+      "rr5": [
+        "I'm really interested in applying machine learning to my wor",
+        "I think I'll start by exploring the libraries and resources "
+      ]
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "ans": "I have worked on or bought five model ki",
+      "bm5": [
+        "I'm looking for some tips on weathering techniques for my mo",
+        "I think I'll start with steps 1-3, which involve defining th"
+      ],
+      "rr5": [
+        "I'm looking for some tips on weathering techniques for my mo",
+        "I think I'll start with steps 1-3, which involve defining th"
+      ]
+    },
+    {
+      "q": "How many days before the 'Rack Fest' did I participate in th",
+      "ans": "4 days.",
+      "bm5": [
+        "I'm looking for some recommendations on performance air filt",
+        "I'm also looking for some advice on how to optimize my car's"
+      ],
+      "rr5": [
+        "I'm looking for some recommendations on performance air filt",
+        "I'm also looking for some advice on how to optimize my car's"
+      ]
+    },
+    {
+      "q": "What percentage of leadership positions do women hold in the",
+      "ans": "20%",
+      "bm5": [
+        "Many of the resources I mentioned earlier provide data on th",
+        "That's really helpful. I'll definitely check out some of tho"
+      ],
+      "rr5": [
+        "Many of the resources I mentioned earlier provide data on th",
+        "That's really helpful. I'll definitely check out some of tho"
+      ]
+    },
+    {
+      "q": "How many weeks did it take me to watch all the Marvel Cinema",
+      "ans": "3.5 weeks",
+      "bm5": [
+        "Here's your simple list with the Star Wars movies, including",
+        "I'm trying to organize my movie watching history, can you he"
+      ],
+      "rr5": [
+        "Here's your simple list with the Star Wars movies, including",
+        "I'm trying to organize my movie watching history, can you he"
+      ]
+    },
+    {
+      "q": "How many days had passed since I bought my Adidas running sh",
+      "ans": "14 days. 15 days (including the last day",
+      "bm5": [
+        "I'm looking for some shoe cleaning tips. I've got a pair of ",
+        "I think I'll try cleaning my sneakers at home first, but if "
+      ],
+      "rr5": [
+        "I'm looking for some shoe cleaning tips. I've got a pair of ",
+        "I think I'll try cleaning my sneakers at home first, but if "
+      ]
+    },
+    {
+      "q": "How many issues of National Geographic have I finished readi",
+      "ans": "Five",
+      "bm5": [
+        "Let's fill in the National Geographic section of the spreads",
+        "It sounds like you have a great mix of news, science, and en"
+      ],
+      "rr5": [
+        "Let's fill in the National Geographic section of the spreads",
+        "It sounds like you have a great mix of news, science, and en"
+      ]
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K r",
+      "ans": "27 minutes and 45 seconds",
+      "bm5": [
+        "That looks like a solid plan! I'm excited to get started. On",
+        "I'm in the city of Oakdale. We'd like to avoid downtown and "
+      ],
+      "rr5": [
+        "That looks like a solid plan! I'm excited to get started. On",
+        "I'm in the city of Oakdale. We'd like to avoid downtown and "
+      ]
+    },
+    {
+      "q": "How many properties did I view before making an offer on the",
+      "ans": "I viewed four properties before making a",
+      "bm5": [
+        "I forgot to mention that I saw the 3-bedroom townhouse in th",
+        "Hi! I'm in the process of buying a house and I need help wit"
+      ],
+      "rr5": [
+        "I forgot to mention that I saw the 3-bedroom townhouse in th",
+        "Hi! I'm in the process of buying a house and I need help wit"
+      ]
+    },
+    {
+      "q": "What is the total number of comments on my recent Facebook L",
+      "ans": "33",
+      "bm5": [
+        "Facebook Live is a fantastic way to increase engagement on y",
+        "Repurposing your Facebook Live content can help you reach a "
+      ],
+      "rr5": [
+        "Facebook Live is a fantastic way to increase engagement on y",
+        "Repurposing your Facebook Live content can help you reach a "
+      ]
+    },
+    {
+      "q": "Can you remind me what was the average improvement in framer",
+      "ans": "The average improvement in framerate was",
+      "bm5": [
+        "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad",
+        "The \"Experimental Results\" section of the \"To Adapt or Not t"
+      ],
+      "rr5": [
+        "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad",
+        "The \"Experimental Results\" section of the \"To Adapt or Not t"
+      ]
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "ans": "my sister",
+      "bm5": [
+        "I actually got my new stand mixer as a birthday gift from my",
+        "Happy belated birthday! A new stand mixer is an amazing gift"
+      ],
+      "rr5": [
+        "I actually got my new stand mixer as a birthday gift from my",
+        "Happy belated birthday! A new stand mixer is an amazing gift"
+      ]
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocation?",
+      "ans": "the suburbs",
+      "bm5": [
+        "I'm also thinking about visiting my friend Rachel who recent",
+        "When reaching out to Rachel, it's a good idea to acknowledge"
+      ],
+      "rr5": [
+        "I'm also thinking about visiting my friend Rachel who recent",
+        "When reaching out to Rachel, it's a good idea to acknowledge"
+      ]
+    },
+    {
+      "q": "How many pages do I have left to read in 'The Nightingale'?",
+      "ans": "190",
+      "bm5": [
+        "I'd be happy to help you calculate your daily page goal.\n\nFi",
+        "I've been tracking my reading habits and I want to update my"
+      ],
+      "rr5": [
+        "I'd be happy to help you calculate your daily page goal.\n\nFi",
+        "I've been tracking my reading habits and I want to update my"
+      ]
+    },
+    {
+      "q": "How much will I save by taking the train from the airport to",
+      "ans": "$50",
+      "bm5": [
+        "Japan! You're in for an amazing adventure!\n\nGetting from the",
+        "Narita Airport is about 60-70 km (37-43 miles) east of centr"
+      ],
+      "rr5": [
+        "Japan! You're in for an amazing adventure!\n\nGetting from the",
+        "Narita Airport is about 60-70 km (37-43 miles) east of centr"
+      ]
+    },
+    {
+      "q": "How many weeks in total do I spent on reading 'The Nightinga",
+      "ans": "2 weeks for 'The Nightingale', 4 weeks f",
+      "bm5": [
+        "I'm trying to get back into non-fiction books. Can you recom",
+        "That's really helpful, thanks! I think I can apply this to s"
+      ],
+      "rr5": [
+        "I'm trying to get back into non-fiction books. Can you recom",
+        "That's really helpful, thanks! I think I can apply this to s"
+      ]
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "ans": "in a shoe rack in my closet",
+      "bm5": [
+        "I'm thinking of getting a new pair of sandals with better qu",
+        "I'm thinking of buying a new pair of sandals with better qua"
+      ],
+      "rr5": [
+        "I'm thinking of getting a new pair of sandals with better qu",
+        "I'm thinking of buying a new pair of sandals with better qua"
+      ]
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence or trimmin",
+      "ans": "Fixing the fence",
+      "bm5": [
+        "Electric fencing can be a great option for containing adult ",
+        "Congratulations on fixing that broken fence! It's great to h"
+      ],
+      "rr5": [
+        "Electric fencing can be a great option for containing adult ",
+        "Congratulations on fixing that broken fence! It's great to h"
+      ]
+    },
+    {
+      "q": "What charity event did I participate in a month ago?",
+      "ans": "the 'Walk for Hunger' charity event",
+      "bm5": [
+        "I'm planning to volunteer at another charity event this week",
+        "I'm actually planning to participate in a charity cycling ev"
+      ],
+      "rr5": [
+        "I'm planning to volunteer at another charity event this week",
+        "I'm actually planning to participate in a charity cycling ev"
+      ]
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, did I swit",
+      "ans": "You switched to less water (5 ounces) pe",
+      "bm5": [
+        "Coffee-to-water ratio experimentation! That's a great way to",
+        "I'm thinking of trying out a new coffee recipe, but I'm not "
+      ],
+      "rr5": [
+        "Coffee-to-water ratio experimentation! That's a great way to",
+        "I'm thinking of trying out a new coffee recipe, but I'm not "
+      ]
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "ans": "a lighter shade of gray",
+      "bm5": [
+        "I've heard great things about Snake Plants, but I'm also cur",
+        "I'm actually planning to repaint the walls this weekend, and"
+      ],
+      "rr5": [
+        "I've heard great things about Snake Plants, but I'm also cur",
+        "I'm actually planning to repaint the walls this weekend, and"
+      ]
+    },
+    {
+      "q": "I was thinking about our previous conversation about data pr",
+      "ans": "I mentioned biometric authentication or ",
+      "bm5": [
+        "1. Implementing robust data security measures: Companies tak",
+        "It can definitely feel like a hassle to remember multiple pa"
+      ],
+      "rr5": [
+        "1. Implementing robust data security measures: Companies tak",
+        "It can definitely feel like a hassle to remember multiple pa"
+      ]
+    },
+    {
+      "q": "How many days ago did I buy a smoker?",
+      "ans": "10 days ago. 11 days (including the last",
+      "bm5": [
+        "I think I got into bird watching after buying a new pair of ",
+        "Congratulations on tracking your expenses and reducing your "
+      ],
+      "rr5": [
+        "I just got a smoker today and I'm excited to experiment with"
+      ]
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes and chili",
+      "ans": "The information provided is not enough. ",
+      "bm5": [
+        "I'm happy to help you plan a detailed crop rotation plan for",
+        "I've been enjoying the harvest immensely! I planted 5 tomato"
+      ],
+      "rr5": [
+        "I'm happy to help you plan a detailed crop rotation plan for",
+        "I've been enjoying the harvest immensely! I planted 5 tomato"
+      ]
+    },
+    {
+      "q": "How many days had passed since I finished reading 'The Seven",
+      "ans": "18 days. 19 days (including the last day",
+      "bm5": [
+        "I'm looking for some book recommendations. I just attended a",
+        "I'm so glad to hear that! Julia Whelan's narration of \"The S"
+      ],
+      "rr5": [
+        "I'm looking for some book recommendations. I just attended a",
+        "I'm so glad to hear that! Julia Whelan's narration of \"The S"
+      ]
+    },
+    {
+      "q": "What is the total number of views on my most popular videos ",
+      "ans": "1,998",
+      "bm5": [
+        "I do not have personal opinions or experiences with tiktok, ",
+        "Sure, here are a few examples of how social media platforms "
+      ],
+      "rr5": [
+        "I do not have personal opinions or experiences with tiktok, ",
+        "Sure, here are a few examples of how social media platforms "
+      ]
+    }
+  ],
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "strategy": "full",
+    "judge_url": "http://127.0.0.1:11032/v1",
+    "candidates": 20,
+    "topk": 5
+  }
+}

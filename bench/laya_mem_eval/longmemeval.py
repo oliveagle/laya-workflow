@@ -119,14 +119,19 @@ def judge(judge_url: str, question: str, answer: str, memories: list) -> bool:
         }).encode(),
         headers={"Content-Type": "application/json"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            body = json.load(r)
-        content = body["choices"][0]["message"].get("content") or ""
-        return content.strip().upper().startswith("YES")
-    except Exception as e:
-        print(f"  judge failed: {e}", file=sys.stderr)
-        return False
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                body = json.load(r)
+            content = body["choices"][0]["message"].get("content") or ""
+            return content.strip().upper().startswith("YES")
+        except Exception as e:
+            last_err = e
+            import time as _t
+            _t.sleep(2 + attempt)
+    print(f"  judge failed after 3 retries: {last_err}", file=sys.stderr)
+    return False
 
 
 def main():

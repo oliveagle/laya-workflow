@@ -1,4 +1,4 @@
-# laya-mem evaluation report (2026-09-30 17:52)
+# laya-mem evaluation report (2026-09-30 18:39)
 
 - binary: `/home/oliveagle/repos/github.com/oliveagle/laya-workflow/target/debug/laya-workflow`
 - spec dir: `/home/oliveagle/repos/github.com/oliveagle/laya-workflow/dsl/laya_mem`
@@ -7,7 +7,7 @@
 
 | task | n | want_acc | oracle_agree | avg_ms | p50_ms | p95_ms |
 |------|---|----------|--------------|--------|--------|--------|
-| admission | 30 | 100.0% | 100.0% | 1.9 | 1.8 | 2.0 |
+| admission | 30 | 100.0% | 100.0% | 2.4 | 1.9 | 3.1 |
 | memory_type | 30 | 100.0% | 100.0% | 1.8 | 1.8 | 1.9 |
 | stopping | 29 | 100.0% | 100.0% | 1.3 | 1.3 | 1.3 |
 

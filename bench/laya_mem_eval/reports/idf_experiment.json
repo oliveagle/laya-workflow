@@ -1,0 +1,21 @@
+{
+  "tally": {
+    "all@5": {
+      "exact": 7,
+      "judge": 6,
+      "n": 30
+    },
+    "rare3@5": {
+      "exact": 8,
+      "judge": 6,
+      "n": 30
+    }
+  },
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "topk": 5,
+    "rare_n": 3,
+    "judge_url": "http://127.0.0.1:11032/v1"
+  }
+}
