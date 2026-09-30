@@ -1,0 +1,11 @@
+[
+  {
+    "n": 1000,
+    "persist_p50_ms": 73.186,
+    "persist_p95_ms": 84.45,
+    "recall_bm25_p50_ms": 11.835,
+    "recall_bm25_p95_ms": 12.06,
+    "bge_encode_total_s": 8.491,
+    "bge_query_p50_ms": 21.231
+  }
+]

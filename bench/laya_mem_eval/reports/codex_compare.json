@@ -1,0 +1,64 @@
+{
+  "args": {
+    "distractors": 2000,
+    "methods": "laya_mem_script,full_ctx"
+  },
+  "n_facts": 2020,
+  "results": {
+    "laya_mem_script": {
+      "accuracy": 0.95,
+      "answers": {
+        "What CI system does the deployment pipeline for repo A use?": "\n\nJenkins",
+        "Who is on call this week?": "\n\nPriya and Marcus",
+        "What database does production use?": "\n\nProduction uses Postgres 16.",
+        "What API gateway is in front of the services?": "\n\nKong",
+        "What does the release process require before merging?": "\n\nThe release process requires a signed commit and a JIRA ticket before merging.",
+        "What SSO provider handles authentication for internal services?": "\n\nOkta SSO",
+        "What metrics dashboard do we watch?": "\n\nGrafana at the observability stack.",
+        "What message broker was the system migrated to in Q2?": "\n\nNATS",
+        "What feature flag service replaced the in-house toggle system?": "\n\n**Acme Flags** replaced the in-house toggle system.",
+        "What issue tracker did the company switch to last month?": "\n\nLinear",
+        "What does the mobile build pipeline use under the mobile-team org?": "\n\nFastlane",
+        "Where is the staging environment hosted?": "\n\nThe staging environment is hosted on Kubernetes in the us-west-2 region.",
+        "What secret manager is in use, and which backend?": "\n\nVault, using the kv-v2 backend.",
+        "What is the search backend on the data plane?": "\n\nThe search backend on the data plane is **Meilisearch**.",
+        "What CDN provider is configured for the website?": "\n\nCloudflare",
+        "What build system does the frontend use, and which package manager?": "\n\nThe frontend uses Vite as its build system, with pnpm as the package manager.",
+        "What tool does the team use for documentation?": "\n\nNotion",
+        "What payments provider is in use, and what's required for EU cards?": "\n\nStripe is in use, and 3DS is required for EU cards.",
+        "Where is the data warehouse hosted?": "\n\nThe data warehouse is hosted on AWS us-east-1.",
+        "Where do analytics events go first before reaching Kafka?": "\n\nSegment"
+      },
+      "calls": 20,
+      "wall": 169.79036235809326,
+      "prompt_tokens_per_q": 561.5
+    },
+    "full_ctx": {
+      "accuracy": 0.9,
+      "answers": {
+        "What CI system does the deployment pipeline for repo A use?": "\n\nJenkins.",
+        "Who is on call this week?": "\n\nPriya and Marcus.",
+        "What database does production use?": "\n\nPostgres 16 on the shared cluster (read replica on port 5433).",
+        "What API gateway is in front of the services?": "\n\nKong",
+        "What SSO provider handles authentication for internal services?": "\n\nOkta SSO.",
+        "What metrics dashboard do we watch?": "\n\nGrafana at the observability stack.",
+        "What message broker was the system migrated to in Q2?": "\n\nNATS",
+        "What feature flag service replaced the in-house toggle system?": "\n\nAcme Flags",
+        "What issue tracker did the company switch to last month?": "\n\nLinear.",
+        "What does the mobile build pipeline use under the mobile-team org?": "\n\nFastlane",
+        "Where is the staging environment hosted?": "\n\nThe staging environment is hosted on Kubernetes in the us-west-2 region.",
+        "What secret manager is in use, and which backend?": "\n\nVault with the kv-v2 backend.",
+        "What is the search backend on the data plane?": "\n\nMeilisearch",
+        "What CDN provider is configured for the website?": "\n\nCloudflare (with Argo smart routing enabled).",
+        "What build system does the frontend use, and which package manager?": "\n\nVite with pnpm workspaces.",
+        "What tool does the team use for documentation?": "\n\nNotion.",
+        "What payments provider is in use, and what's required for EU cards?": "\n\nStripe; 3DS is required for EU cards.",
+        "Where is the data warehouse hosted?": "\n\nAWS us-east-1",
+        "Where do analytics events go first before reaching Kafka?": "\n\nSegment."
+      },
+      "calls": 20,
+      "wall": 54.505155086517334,
+      "prompt_tokens_per_q": 78727.95
+    }
+  }
+}
