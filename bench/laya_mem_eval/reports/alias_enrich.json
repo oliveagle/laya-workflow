@@ -1,0 +1,19 @@
+{
+  "tally": {
+    "content@5": {
+      "hit": 5,
+      "n": 11
+    },
+    "alias@5": {
+      "hit": 5,
+      "n": 11
+    }
+  },
+  "enrich_used": 264,
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "topk": 5,
+    "enrich_n": 24
+  }
+}
