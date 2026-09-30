@@ -1,0 +1,25 @@
+{
+  "mode": "no_tools",
+  "stats": {
+    "persist": 0,
+    "recall": 0,
+    "assess": 0
+  },
+  "rows": [
+    {
+      "question": "What city did Maya say is her favorite?",
+      "expected": [
+        "Lisbon"
+      ],
+      "hit": true,
+      "hits": [
+        true
+      ],
+      "answer": "\n\nLisbon."
+    }
+  ],
+  "answers": {
+    "Did you see the new feature release notes?": "\n\nNo \u2014 I don\u2019t have access",
+    "What city did Maya say is her favorite?": "\n\nLisbon."
+  }
+}

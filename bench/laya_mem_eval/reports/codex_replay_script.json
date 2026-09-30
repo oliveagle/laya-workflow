@@ -1,0 +1,52 @@
+{
+  "mode": "script",
+  "stats": {
+    "persist": 4,
+    "recall": 3,
+    "assess": 0
+  },
+  "rows": [
+    {
+      "question": "Where does Carol live now, and what is her role an",
+      "expected": [
+        "Berlin",
+        "Senior Engineer",
+        "Acme"
+      ],
+      "hit": true,
+      "hits": [
+        true,
+        true,
+        true
+      ],
+      "answer": "{'id': 4, 'content': 'By the way, David is now the tech lead on our team, replacing Ana.', 'ts': '2026-09-30T21:50:02', "
+    },
+    {
+      "question": "And how does Carol prefer to communicate?",
+      "expected": [
+        "async"
+      ],
+      "hit": true,
+      "hits": [
+        true
+      ],
+      "answer": "{'id': 1, 'content': 'Hi! Quick update: Carol just told me she moved to Berlin for a new job.', 'ts': '2026-09-30T21:50:"
+    },
+    {
+      "question": "Who is the current tech lead on our team?",
+      "expected": [
+        "David"
+      ],
+      "hit": true,
+      "hits": [
+        true
+      ],
+      "answer": "{'id': 4, 'content': 'By the way, David is now the tech lead on our team, replacing Ana.', 'ts': '2026-09-30T21:50:02', "
+    }
+  ],
+  "answers": {
+    "Where does Carol live now, and what is her role and employer?": "{'id': 4, 'content': 'By the way, David is now the tech lead on our team, replacing Ana.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 2, 'content': \"Also Carol's new role is Senior Engineer at Acme Robotics. She's been there since March.\", 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 3, 'content': 'One more thing \u2014 Carol said she prefers async communication over long meetings.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 1, 'content': 'Hi! Quick update: Carol just told me she moved to Berlin for a new job.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'}",
+    "And how does Carol prefer to communicate?": "{'id': 1, 'content': 'Hi! Quick update: Carol just told me she moved to Berlin for a new job.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 3, 'content': 'One more thing \u2014 Carol said she prefers async communication over long meetings.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 2, 'content': \"Also Carol's new role is Senior Engineer at Acme Robotics. She's been there since March.\", 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'}",
+    "Who is the current tech lead on our team?": "{'id': 4, 'content': 'By the way, David is now the tech lead on our team, replacing Ana.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 2, 'content': \"Also Carol's new role is Senior Engineer at Acme Robotics. She's been there since March.\", 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'} {'id': 3, 'content': 'One more thing \u2014 Carol said she prefers async communication over long meetings.', 'ts': '2026-09-30T21:50:02', 'entities': '[]', 'type_scores': '{\"episodic\":0.5,\"semantic\":0.3,\"procedural\":0.1,\"preference\":0.1}'}"
+  }
+}

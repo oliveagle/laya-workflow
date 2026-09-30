@@ -1,0 +1,25 @@
+{
+  "mode": "tool",
+  "stats": {
+    "persist": 17,
+    "recall": 17,
+    "assess": 0
+  },
+  "rows": [
+    {
+      "question": "What city did Maya say is her favorite?",
+      "expected": [
+        "Lisbon"
+      ],
+      "hit": true,
+      "hits": [
+        true
+      ],
+      "answer": "\n\nMaya said her favorite city is Lisbon."
+    }
+  ],
+  "answers": {
+    "Did you see the new feature release notes?": "\n\nNo \u2014 I've checked my memory multiple times and there's nothing stored about new feature release notes. I genuinely don't have them. If you paste the content, I'll store it.",
+    "What city did Maya say is her favorite?": "\n\nMaya said her favorite city is Lisbon."
+  }
+}
