@@ -25,7 +25,10 @@
               "noted",
               "trivial",
               "duplicate",
-              "fine"
+              "fine",
+              "acknowledged",
+              "no need",
+              "ack"
             ],
             "p_hit": 0.1,
             "p_miss": 0.9
@@ -104,7 +107,11 @@
               "perhaps",
               "unsure",
               "borderline",
-              "could be"
+              "could be",
+              "not sure",
+              "either way",
+              "debating",
+              "could go"
             ],
             "p_hit": 0.85,
             "p_miss": 0.2

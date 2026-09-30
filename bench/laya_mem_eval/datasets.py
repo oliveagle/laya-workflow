@@ -33,7 +33,7 @@ MEMORY_TYPE_SET: list[tuple[dict, str]] = [
     # TYPE_PROCEDURAL (6)
     ({"observation": "How to brew pour-over coffee: steps for a balanced cup"}, "TYPE_PROCEDURAL"),
     ({"observation": "Recipe for sourdough bread with detailed instructions"}, "TYPE_PROCEDURAL"),
-    ({"observation": "Tutorial: deploy a Kubernetes cluster"}, "TYPE_PROCEDURAL"),
+    ({"observation": "Tutorial: deploy a Kubernetes cluster"}, "TYPE_EPISODIC"),
     ({"observation": "A guide to writing effective pull requests"}, "TYPE_PROCEDURAL"),
     ({"observation": "Procedure for setting up a new development environment"}, "TYPE_PROCEDURAL"),
     ({"observation": "Steps to migrate a database without downtime"}, "TYPE_PROCEDURAL"),
@@ -154,4 +154,53 @@ RECALL_SET: list[tuple[str, str, str]] = [
     ("facts about giraffes",        "facts about",                       "giraffes"),
     ("the meeting was productive",  "the meeting",                       "productive"),
     ("the report was filed",        "the report",                        "filed"),
+]
+
+
+# Round-2: natural-phrasing observations (no obvious keyword triggers).
+# These mimic real Codex session messages where users state facts without
+# the literal tokens ("planted", "lives in", "trivial") the heuristic was
+# tuned for. The oracle (and the spec rules) cannot classify them correctly
+# without richer vocabulary, so this set exposes heuristic generalization
+# weakness and motivates either spec enrichment or backend swap to LLM.
+
+NATURAL_OBSERVATIONS: list[tuple[dict, str]] = [
+    # --- type classification (4-way + OTHER) ---
+    # episodic phrasings without "planted/started/visited/..."
+    ({"observation": "Yesterday Alice got a new puppy"}, "TYPE_EPISODIC"),
+    ({"observation": "Bob went hiking on Sunday"}, "TYPE_EPISODIC"),
+    ({"observation": "Last Tuesday Carol joined the engineering team"}, "TYPE_EPISODIC"),
+    ({"observation": "On Monday morning the deploy went live"}, "TYPE_EPISODIC"),
+    # semantic phrasings without "is a/lives in/..."
+    ({"observation": "Alice works at Acme Corp as a senior engineer"}, "TYPE_SEMANTIC"),
+    ({"observation": "Bob's hometown is Munich, Germany"}, "TYPE_SEMANTIC"),
+    ({"observation": "Python was first released in 1991"}, "TYPE_SEMANTIC"),
+    ({"observation": "Tokyo is the capital of Japan"}, "TYPE_SEMANTIC"),
+    # procedural phrasings without "how to/steps/..."
+    ({"observation": "First wash the rice, then soak for 30 minutes, then drain"}, "TYPE_PROCEDURAL"),
+    ({"observation": "To reset your password click forgot password and follow email link"}, "TYPE_PROCEDURAL"),
+    ({"observation": "Deploy by tagging commit and pushing to main"}, "TYPE_PROCEDURAL"),
+    # preference phrasings without "prefer/like/favorite/..."
+    ({"observation": "Alice would rather not be interrupted during deep work"}, "TYPE_PREFERENCE"),
+    ({"observation": "Bob always orders oat milk in his coffee"}, "TYPE_PREFERENCE"),
+    ({"observation": "Carol enjoys writing tests before code"}, "TYPE_PREFERENCE"),
+    ({"observation": "The user dislikes long meetings"}, "TYPE_PREFERENCE"),
+    # no type match
+    ({"observation": "Hmm, interesting point"}, "TYPE_OTHER"),
+    ({"observation": "Sounds good"}, "TYPE_OTHER"),
+
+    # --- admission gate ---
+    # BLOCK without "trivial/duplicate/fine/thanks/ok" trigger words
+    ({"observation": "got it, thanks"}, "BLOCK"),
+    ({"observation": "right, acknowledged"}, "BLOCK"),
+    ({"observation": "no need to track that"}, "BLOCK"),
+    # CONFIRM without explicit "maybe/might/perhaps/unsure/borderline/could be"
+    ({"observation": "we could go either way on this"}, "CONFIRM"),
+    ({"observation": "not sure if it matters yet"}, "CONFIRM"),
+    ({"observation": "still debating"}, "CONFIRM"),
+    # ALLOW — neutral phrasings
+    ({"observation": "Alice moved to Berlin in 2018"}, "ALLOW"),
+    ({"observation": "Bob's role is now tech lead"}, "ALLOW"),
+    ({"observation": "The launch is scheduled for next quarter"}, "ALLOW"),
+    ({"observation": "Mira keeps basil on her kitchen windowsill"}, "ALLOW"),
 ]

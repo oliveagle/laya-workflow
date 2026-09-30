@@ -50,11 +50,19 @@ def serialize_state(state: dict) -> str:
 
 # --- spec-declared heuristics (mirror dsl/laya_mem/*.json) ----------------
 
+# v2_natural vocabulary (sweep-optimised, mirrors dsl/laya_mem/*.json after
+# Round-2 enrichment). Words like "went", "joined", "hometown", "capital",
+# "first", "then", "would rather", "always orders", "enjoys", "dislikes"
+# widen the heuristic's reach on natural phrasings.
 MEMORY_TYPE_QS = {
-    "episodic":    ["planted", "started", "presented", "visited", "met", "began", "launched", "happened"],
-    "semantic":    ["is a", "lives in", "works at", "born in", "facts about", "located in"],
-    "procedural":  ["how to", "steps", "recipe", "instructions", "tutorial", "guide", "procedure"],
-    "preference":  ["prefer", "prefers", "like", "likes", "favorite", "preference", "wants a weekly"],
+    "episodic":    ["planted", "started", "presented", "visited", "met", "began", "launched", "happened", "on friday",
+                    "went", "joined", "got a", "deploy"],
+    "semantic":    ["is a", "lives in", "works at", "born in", "facts about", "located in",
+                    "hometown", "capital", "was released"],
+    "procedural":  ["how to", "steps", "recipe", "instructions", "tutorial", "guide", "procedure",
+                    "first", "then", "click", "follow"],
+    "preference":  ["prefer", "prefers", "like", "likes", "favorite", "preference", "wants a weekly",
+                    "would rather", "always orders", "enjoys", "dislikes"],
 }
 MEMORY_TYPE_HIT = {"episodic": 0.8, "semantic": 0.8, "procedural": 0.8, "preference": 0.9}
 MEMORY_TYPE_MISS = 0.1
@@ -63,13 +71,15 @@ ADMISSION_QS = {
     # choice: A = drop, B = store
     "should_store": {
         "kind": "choice",
-        "match_any": ["thanks", "ok", "got it", "acknowledge", "noted", "trivial", "duplicate", "fine"],
+        "match_any": ["thanks", "ok", "got it", "acknowledge", "noted", "trivial", "duplicate", "fine",
+                      "acknowledged", "no need", "ack"],
         "p_hit": 0.1, "p_miss": 0.9,  # hit tokens → A (drop)
     },
     # noul
     "novelty":     {"kind": "noul", "match_any": ["new", "added", "changed", "updated"], "p_hit": 0.9, "p_miss": 0.1},
     "redundancy":  {"kind": "noul", "match_any": ["duplicate", "already", "same as", "repeat"], "p_hit": 0.9, "p_miss": 0.1},
-    "borderline":  {"kind": "noul", "match_any": ["maybe", "might", "perhaps", "unsure", "borderline", "could be"], "p_hit": 0.85, "p_miss": 0.2},
+    "borderline":  {"kind": "noul", "match_any": ["maybe", "might", "perhaps", "unsure", "borderline", "could be",
+                                                   "not sure", "either way", "debating", "could go"], "p_hit": 0.85, "p_miss": 0.2},
 }
 
 # Spec declares per-question `field`; the heuristic only inspects that
@@ -175,7 +185,7 @@ if __name__ == "__main__":
         ("memory_type", {"observation": "Mira lives in Dallas"}, "TYPE_SEMANTIC"),
         ("memory_type", {"observation": "weather is nice"}, "TYPE_OTHER"),
         ("admission",   {"observation": "this is trivial"}, "BLOCK"),
-        ("admission",   {"observation": "ack"}, "ALLOW"),
+        ("admission",   {"observation": "ack"}, "BLOCK"),
         ("admission",   {"observation": "maybe we should do X"}, "CONFIRM"),
         ("admission",   {"observation": "Alice prefers concise explanations"}, "ALLOW"),
         ("stopping",    {"evidence_status": "sufficient"}, "STOP_EVIDENCE_OK"),

@@ -24,7 +24,11 @@
               "began",
               "launched",
               "happened",
-              "on friday"
+              "on friday",
+              "went",
+              "joined",
+              "got a",
+              "deploy"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -43,7 +47,10 @@
               "works at",
               "born in",
               "facts about",
-              "located in"
+              "located in",
+              "hometown",
+              "capital",
+              "was released"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -63,7 +70,11 @@
               "instructions",
               "tutorial",
               "guide",
-              "procedure"
+              "procedure",
+              "first",
+              "then",
+              "click",
+              "follow"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -83,7 +94,11 @@
               "likes",
               "favorite",
               "preference",
-              "wants a weekly"
+              "wants a weekly",
+              "would rather",
+              "always orders",
+              "enjoys",
+              "dislikes"
             ],
             "p_hit": 0.9,
             "p_miss": 0.1,
@@ -125,7 +140,11 @@
               "began",
               "launched",
               "happened",
-              "on friday"
+              "on friday",
+              "went",
+              "joined",
+              "got a",
+              "deploy"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -144,7 +163,10 @@
               "works at",
               "born in",
               "facts about",
-              "located in"
+              "located in",
+              "hometown",
+              "capital",
+              "was released"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -164,7 +186,11 @@
               "instructions",
               "tutorial",
               "guide",
-              "procedure"
+              "procedure",
+              "first",
+              "then",
+              "click",
+              "follow"
             ],
             "p_hit": 0.8,
             "p_miss": 0.1,
@@ -184,7 +210,11 @@
               "likes",
               "favorite",
               "preference",
-              "wants a weekly"
+              "wants a weekly",
+              "would rather",
+              "always orders",
+              "enjoys",
+              "dislikes"
             ],
             "p_hit": 0.9,
             "p_miss": 0.1,

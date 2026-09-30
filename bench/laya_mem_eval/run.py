@@ -32,7 +32,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from oracle import eval_admission, eval_memory_type, eval_stopping
-from datasets import ADMISSION_SET, MEMORY_TYPE_SET, RECALL_SET, STOPPING_SET
+from datasets import ADMISSION_SET, MEMORY_TYPE_SET, NATURAL_OBSERVATIONS, RECALL_SET, STOPPING_SET
 
 REPO = HERE.parent.parent
 BIN = REPO / "target" / "debug" / "laya-workflow"
@@ -168,6 +168,29 @@ def run_recall(client, db_path, top_k=5):
     return results
 
 
+def run_natural(client):
+    """Diagnostic: score natural-phrasing observations against the oracle.
+    These deliberately avoid the heuristic trigger tokens, so a keyword-only
+    backend necessarily under-performs — the report shows the gap that an
+    LLM backend (or a richer spec vocabulary) must close. Not a gate."""
+    rows = []
+    for state, want in NATURAL_OBSERVATIONS:
+        resp = client.tool("laya_mem_assess", {"observation": state["observation"]})
+        p = _tool_payload(resp)
+        got_type = p.get("dominant_type")
+        got_adv = p.get("admission")
+        want_type = want if want in ("TYPE_EPISODIC","TYPE_SEMANTIC","TYPE_PROCEDURAL","TYPE_PREFERENCE","TYPE_OTHER") else None
+        want_adv = want if want in ("ALLOW","CONFIRM","BLOCK") else None
+        rows.append({
+            "task": "natural", "observation": state["observation"],
+            "want_type": want_type, "got_type": got_type,
+            "want_adv": want_adv, "got_adv": got_adv,
+            "type_hit": (want_type == got_type) if want_type else None,
+            "adv_hit": (want_adv == got_adv) if want_adv else None,
+        })
+    return rows
+
+
 # ---- metrics --------------------------------------------------------------
 
 def summarize(rows):
@@ -203,7 +226,7 @@ def fmt_pct(x):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", default="all", choices=["gate", "recall", "all", "sweep"])
+    ap.add_argument("--mode", default="all", choices=["gate", "recall", "all", "sweep", "natural"])
     ap.add_argument("--md-out", default=None)
     ap.add_argument("--db", default=None, help="SQLite path for recall (default: temp)")
     args = ap.parse_args()
@@ -225,6 +248,8 @@ def main():
         if args.mode in ("recall", "all"):
             rres = run_recall(client, db_path)
             results["recall"] = rres
+        if args.mode in ("natural", "all"):
+            results["natural"] = run_natural(client)
     finally:
         client.close()
 
@@ -267,6 +292,27 @@ def main():
         if rm["recall_at_k"] < 1.0:
             ok = False
             lines.append(f"\n⚠ recall@5 {fmt_pct(rm['recall_at_k'])} < 100%")
+
+    if results["natural"]:
+        nr = results["natural"]
+        type_rows = [r for r in nr if r["type_hit"] is not None]
+        adv_rows = [r for r in nr if r["adv_hit"] is not None]
+        t_hit = sum(1 for r in type_rows if r["type_hit"])
+        a_hit = sum(1 for r in adv_rows if r["adv_hit"])
+        lines.append("")
+        lines.append("## Natural-phrasing diagnostic (heuristic generalization)")
+        lines.append("")
+        lines.append(f"- type classification: {t_hit}/{len(type_rows)} = {fmt_pct(t_hit/len(type_rows))}")
+        lines.append(f"- admission gate:      {a_hit}/{len(adv_rows)} = {fmt_pct(a_hit/len(adv_rows))}")
+        lines.append("- rows (want_type/want_adv vs got):")
+        lines.append("")
+        lines.append("| observation | want_type | got_type | want_adv | got_adv |")
+        lines.append("|---|---|---|---|---|")
+        for r in nr:
+            lines.append(f"| {r['observation'][:40]} | {r['want_type'] or ''} | {r['got_type'] or ''} | "
+                         f"{r['want_adv'] or ''} | {r['got_adv'] or ''} |")
+        lines.append("")
+        # note: not a gate, informational only
 
     lines.append("")
     lines.append(f"**Overall: {'PASS' if ok else 'FAIL'}**")
