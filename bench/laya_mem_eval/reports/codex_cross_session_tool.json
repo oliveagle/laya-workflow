@@ -1,12 +1,12 @@
 {
   "mode": "tool",
   "s1": {
-    "persist": 5,
-    "recall": 0
+    "persist": 20,
+    "recall": 2
   },
   "s2": {
     "persist": 0,
-    "recall": 1
+    "recall": 7
   },
   "rows": [
     {
@@ -25,26 +25,130 @@
       "question": "What database does production use?",
       "expected": "postgres",
       "hit": true,
-      "answer": "\n\nProduction uses **Postgres 16** on the shared cluster, with a read replica on port 5433."
+      "answer": "\n\nProduction uses **Postgres 16** on the shared cluster (read replica on port 5433)."
     },
     {
       "question": "What API gateway is in front of the services?",
       "expected": "kong",
       "hit": true,
-      "answer": "\n\nThe API gateway in front of the services is **Kong** (switched to it last sprint)."
+      "answer": "\n\nThe API gateway is **Kong** (switched to it last sprint)."
     },
     {
       "question": "What does the release process require before merging?",
       "expected": "jira",
       "hit": true,
-      "answer": "\n\nThe release process requires a **signed commit** and a **JIRA ticket** before merging."
+      "answer": "\n\nThe release process requires a **signed commit** and a **JIRA ticket**."
+    },
+    {
+      "question": "What SSO provider handles authentication for internal services?",
+      "expected": "okta",
+      "hit": true,
+      "answer": "\n\nInternal services authenticate via **Okta SSO** (legacy auth was decommissioned)."
+    },
+    {
+      "question": "What metrics dashboard do we watch?",
+      "expected": "grafana",
+      "hit": true,
+      "answer": "\n\nThe metrics dashboard is **Grafana** at the observability stack."
+    },
+    {
+      "question": "What message broker was the system migrated to in Q2?",
+      "expected": "nats",
+      "hit": false,
+      "answer": ""
+    },
+    {
+      "question": "What feature flag service replaced the in-house toggle system?",
+      "expected": "acme flags",
+      "hit": true,
+      "answer": "\n\nThe feature flag service is **Acme Flags**, which replaced the in-house toggle system."
+    },
+    {
+      "question": "What issue tracker did the company switch to last month?",
+      "expected": "linear",
+      "hit": true,
+      "answer": "\n\nThe company switched to **Linear** for issue tracking last month (from Jira)."
+    },
+    {
+      "question": "What does the mobile build pipeline use under the mobile-team org?",
+      "expected": "fastlane",
+      "hit": true,
+      "answer": "\n\nThe mobile build pipeline uses **Fastlane** under the mobile-team org."
+    },
+    {
+      "question": "Where is the staging environment hosted?",
+      "expected": "kubernetes",
+      "hit": true,
+      "answer": "\n\nThe staging environment is hosted on **Kubernetes** in the **us-west-2** region."
+    },
+    {
+      "question": "What secret manager is in use, and which backend?",
+      "expected": "vault",
+      "hit": true,
+      "answer": "\n\nThe secret manager is **Vault** with the **kv-v2** backend enabled."
+    },
+    {
+      "question": "What is the search backend on the data plane?",
+      "expected": "meilisearch",
+      "hit": true,
+      "answer": "\n\nThe search backend is **Meilisearch** on the data plane.\n</think>\n\nThe search backend is **Meilisearch** on the data plane."
+    },
+    {
+      "question": "What CDN provider is configured for the website?",
+      "expected": "cloudflare",
+      "hit": true,
+      "answer": "\n\nThe CDN provider is **Cloudflare**, with **Argo** smart routing enabled."
+    },
+    {
+      "question": "What build system does the frontend use, and which package manager?",
+      "expected": "vite",
+      "hit": true,
+      "answer": "\n\nThe frontend build system is **Vite** with **pnpm** workspaces."
+    },
+    {
+      "question": "What tool does the team use for documentation?",
+      "expected": "notion",
+      "hit": true,
+      "answer": "\n\nThe team uses **Notion** for documentation."
+    },
+    {
+      "question": "What payments provider is in use, and what's required for EU cards?",
+      "expected": "stripe",
+      "hit": true,
+      "answer": "\n\nThe payments provider is **Stripe**, and **3DS** (3D Secure) is required for EU cards."
+    },
+    {
+      "question": "Where is the data warehouse hosted?",
+      "expected": "snowflake",
+      "hit": true,
+      "answer": "\n\nThe data warehouse is **Snowflake**, hosted on **AWS us-east-1**."
+    },
+    {
+      "question": "Where do analytics events go first before reaching Kafka?",
+      "expected": "segment",
+      "hit": true,
+      "answer": "\n\nAnalytics events flow through **Segment** first, then reach Kafka."
     }
   ],
   "answers": {
     "What CI system does the deployment pipeline for repo A use?": "\n\nThe deployment pipeline for repo A uses **Jenkins** (on the staging box).",
     "Who is on call this week?": "\n\n**Priya** and **Marcus** are on call this week.",
-    "What database does production use?": "\n\nProduction uses **Postgres 16** on the shared cluster, with a read replica on port 5433.",
-    "What API gateway is in front of the services?": "\n\nThe API gateway in front of the services is **Kong** (switched to it last sprint).",
-    "What does the release process require before merging?": "\n\nThe release process requires a **signed commit** and a **JIRA ticket** before merging."
+    "What database does production use?": "\n\nProduction uses **Postgres 16** on the shared cluster (read replica on port 5433).",
+    "What API gateway is in front of the services?": "\n\nThe API gateway is **Kong** (switched to it last sprint).",
+    "What does the release process require before merging?": "\n\nThe release process requires a **signed commit** and a **JIRA ticket**.",
+    "What SSO provider handles authentication for internal services?": "\n\nInternal services authenticate via **Okta SSO** (legacy auth was decommissioned).",
+    "What metrics dashboard do we watch?": "\n\nThe metrics dashboard is **Grafana** at the observability stack.",
+    "What feature flag service replaced the in-house toggle system?": "\n\nThe feature flag service is **Acme Flags**, which replaced the in-house toggle system.",
+    "What issue tracker did the company switch to last month?": "\n\nThe company switched to **Linear** for issue tracking last month (from Jira).",
+    "What does the mobile build pipeline use under the mobile-team org?": "\n\nThe mobile build pipeline uses **Fastlane** under the mobile-team org.",
+    "Where is the staging environment hosted?": "\n\nThe staging environment is hosted on **Kubernetes** in the **us-west-2** region.",
+    "What secret manager is in use, and which backend?": "\n\nThe secret manager is **Vault** with the **kv-v2** backend enabled.",
+    "What is the search backend on the data plane?": "\n\nThe search backend is **Meilisearch** on the data plane.\n</think>\n\nThe search backend is **Meilisearch** on the data plane.",
+    "What CDN provider is configured for the website?": "\n\nThe CDN provider is **Cloudflare**, with **Argo** smart routing enabled.",
+    "What build system does the frontend use, and which package manager?": "\n\nThe frontend build system is **Vite** with **pnpm** workspaces.",
+    "What tool does the team use for documentation?": "\n\nThe team uses **Notion** for documentation.",
+    "What payments provider is in use, and what's required for EU cards?": "\n\nThe payments provider is **Stripe**, and **3DS** (3D Secure) is required for EU cards.",
+    "Where is the data warehouse hosted?": "\n\nThe data warehouse is **Snowflake**, hosted on **AWS us-east-1**.",
+    "Where do analytics events go first before reaching Kafka?": "\n\nAnalytics events flow through **Segment** first, then reach Kafka."
   }
 }

@@ -19,7 +19,7 @@
       "question": "Who is on call this week?",
       "expected": "priya",
       "hit": false,
-      "answer": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant schedule or document?"
+      "answer": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant information?"
     },
     {
       "question": "What database does production use?",
@@ -31,20 +31,125 @@
       "question": "What API gateway is in front of the services?",
       "expected": "kong",
       "hit": false,
-      "answer": "\n\nI don’t have enough context to determine which API gateway is in front of the services."
+      "answer": "\n\nI don’t have enough context to determine what API gateway is in front of the services."
     },
     {
       "question": "What does the release process require before merging?",
       "expected": "jira",
       "hit": false,
       "answer": "\n\nI don’t have enough context to determine what the release process requires before merging."
+    },
+    {
+      "question": "What SSO provider handles authentication for internal services?",
+      "expected": "okta",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what SSO provider handles authentication for internal services."
+    },
+    {
+      "question": "What metrics dashboard do we watch?",
+      "expected": "grafana",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what metrics dashboard you watch."
+    },
+    {
+      "question": "What message broker was the system migrated to in Q2?",
+      "expected": "nats",
+      "hit": false,
+      "answer": "\n\nI don't have enough context to determine what message broker the system was migrated to in Q2."
+    },
+    {
+      "question": "What feature flag service replaced the in-house toggle system?",
+      "expected": "acme flags",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what feature flag service replaced the in-house toggle system."
+    },
+    {
+      "question": "What issue tracker did the company switch to last month?",
+      "expected": "linear",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what issue tracker the company switched to last month."
+    },
+    {
+      "question": "What does the mobile build pipeline use under the mobile-team org?",
+      "expected": "fastlane",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what the mobile build pipeline uses under the mobile-team org."
+    },
+    {
+      "question": "Where is the staging environment hosted?",
+      "expected": "kubernetes",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine where the staging environment is hosted."
+    },
+    {
+      "question": "What secret manager is in use, and which backend?",
+      "expected": "vault",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what secret manager is in use or which backend it uses."
+    },
+    {
+      "question": "What is the search backend on the data plane?",
+      "expected": "meilisearch",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what the search backend on the data plane is."
+    },
+    {
+      "question": "What CDN provider is configured for the website?",
+      "expected": "cloudflare",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what CDN provider is configured for the website."
+    },
+    {
+      "question": "What build system does the frontend use, and which package manager?",
+      "expected": "vite",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what build system the frontend uses or which package manager it uses."
+    },
+    {
+      "question": "What tool does the team use for documentation?",
+      "expected": "notion",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what tool the team uses for documentation."
+    },
+    {
+      "question": "What payments provider is in use, and what's required for EU cards?",
+      "expected": "stripe",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine what payments provider is in use or what is required for EU cards."
+    },
+    {
+      "question": "Where is the data warehouse hosted?",
+      "expected": "snowflake",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine where the data warehouse is hosted."
+    },
+    {
+      "question": "Where do analytics events go first before reaching Kafka?",
+      "expected": "segment",
+      "hit": false,
+      "answer": "\n\nI don’t have enough context to determine where analytics events go before reaching Kafka."
     }
   ],
   "answers": {
     "What CI system does the deployment pipeline for repo A use?": "\n\nI don’t have enough context to determine which CI system the deployment pipeline for repo A uses.",
-    "Who is on call this week?": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant schedule or document?",
+    "Who is on call this week?": "\n\nI don't have any context about who is on call this week. Could you provide more details or point me to the relevant information?",
     "What database does production use?": "\n\nI don’t have enough context to determine what database production uses.",
-    "What API gateway is in front of the services?": "\n\nI don’t have enough context to determine which API gateway is in front of the services.",
-    "What does the release process require before merging?": "\n\nI don’t have enough context to determine what the release process requires before merging."
+    "What API gateway is in front of the services?": "\n\nI don’t have enough context to determine what API gateway is in front of the services.",
+    "What does the release process require before merging?": "\n\nI don’t have enough context to determine what the release process requires before merging.",
+    "What SSO provider handles authentication for internal services?": "\n\nI don’t have enough context to determine what SSO provider handles authentication for internal services.",
+    "What metrics dashboard do we watch?": "\n\nI don’t have enough context to determine what metrics dashboard you watch.",
+    "What message broker was the system migrated to in Q2?": "\n\nI don't have enough context to determine what message broker the system was migrated to in Q2.",
+    "What feature flag service replaced the in-house toggle system?": "\n\nI don’t have enough context to determine what feature flag service replaced the in-house toggle system.",
+    "What issue tracker did the company switch to last month?": "\n\nI don’t have enough context to determine what issue tracker the company switched to last month.",
+    "What does the mobile build pipeline use under the mobile-team org?": "\n\nI don’t have enough context to determine what the mobile build pipeline uses under the mobile-team org.",
+    "Where is the staging environment hosted?": "\n\nI don’t have enough context to determine where the staging environment is hosted.",
+    "What secret manager is in use, and which backend?": "\n\nI don’t have enough context to determine what secret manager is in use or which backend it uses.",
+    "What is the search backend on the data plane?": "\n\nI don’t have enough context to determine what the search backend on the data plane is.",
+    "What CDN provider is configured for the website?": "\n\nI don’t have enough context to determine what CDN provider is configured for the website.",
+    "What build system does the frontend use, and which package manager?": "\n\nI don’t have enough context to determine what build system the frontend uses or which package manager it uses.",
+    "What tool does the team use for documentation?": "\n\nI don’t have enough context to determine what tool the team uses for documentation.",
+    "What payments provider is in use, and what's required for EU cards?": "\n\nI don’t have enough context to determine what payments provider is in use or what is required for EU cards.",
+    "Where is the data warehouse hosted?": "\n\nI don’t have enough context to determine where the data warehouse is hosted.",
+    "Where do analytics events go first before reaching Kafka?": "\n\nI don’t have enough context to determine where analytics events go before reaching Kafka."
   }
 }

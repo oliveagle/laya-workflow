@@ -51,12 +51,30 @@ SYS_NO_TOOLS = (
 )
 
 # Session-1 facts (user -> assistant turns). Each has a fact that Session-2 will probe.
+# 20 durable facts across infra, people, preferences, tooling.
+# Each fact includes a distinctive token that no paraphrasing can collapse
+# (Postgres, JIRA, Acme, okta, Grafana, etc.) so substring scoring is fair.
 FACTS = [
     ("the deployment pipeline for repo A is Jenkins on the staging box", "Jenkins"),
     ("the on-call rotation this week is Priya and Marcus", "Priya"),
     ("the production DB is Postgres 16 on the shared cluster, read replica on port 5433", "Postgres"),
     ("the API gateway was switched to Kong last sprint", "Kong"),
     ("the release process requires a signed commit and a JIRA ticket", "JIRA"),
+    ("internal services authenticate via Okta SSO; legacy auth was decommissioned", "Okta"),
+    ("the metrics dashboard we watch is Grafana at the observability stack", "Grafana"),
+    ("the message broker was migrated from RabbitMQ to NATS in Q2", "NATS"),
+    ("the new feature flag service is Acme Flags, replacing the in-house toggle system", "Acme Flags"),
+    ("our company switched to Linear for issue tracking from Jira last month", "Linear"),
+    ("the mobile build pipeline uses Fastlane under the mobile-team org", "Fastlane"),
+    ("the staging environment is hosted on Kubernetes in the us-west-2 region", "Kubernetes"),
+    ("the secret manager is Vault with the kv-v2 backend enabled", "Vault"),
+    ("the search backend is Meilisearch on the data plane", "Meilisearch"),
+    ("our CDN provider is Cloudflare with Argo smart routing enabled", "Cloudflare"),
+    ("the frontend build system is Vite with pnpm workspaces", "Vite"),
+    ("the team uses Slack for chat and Notion for documentation", "Notion"),
+    ("the payments provider is Stripe with 3DS required for EU cards", "Stripe"),
+    ("the data warehouse is Snowflake on AWS us-east-1", "Snowflake"),
+    ("the analytics events go through Segment then Kafka", "Segment"),
 ]
 
 QUESTIONS = [
@@ -65,8 +83,26 @@ QUESTIONS = [
     "What database does production use?",
     "What API gateway is in front of the services?",
     "What does the release process require before merging?",
+    "What SSO provider handles authentication for internal services?",
+    "What metrics dashboard do we watch?",
+    "What message broker was the system migrated to in Q2?",
+    "What feature flag service replaced the in-house toggle system?",
+    "What issue tracker did the company switch to last month?",
+    "What does the mobile build pipeline use under the mobile-team org?",
+    "Where is the staging environment hosted?",
+    "What secret manager is in use, and which backend?",
+    "What is the search backend on the data plane?",
+    "What CDN provider is configured for the website?",
+    "What build system does the frontend use, and which package manager?",
+    "What tool does the team use for documentation?",
+    "What payments provider is in use, and what's required for EU cards?",
+    "Where is the data warehouse hosted?",
+    "Where do analytics events go first before reaching Kafka?",
 ]
-EXPECT = [f.lower() for f in ["Jenkins", "Priya", "Postgres", "Kong", "JIRA"]]
+EXPECT = [f.lower() for f in ["Jenkins","Priya","Postgres","Kong","JIRA","Okta","Grafana",
+                                "NATS","Acme Flags","Linear","Fastlane","Kubernetes","Vault",
+                                "Meilisearch","Cloudflare","Vite","Notion","Stripe","Snowflake",
+                                "Segment"]]
 
 
 def llm(messages, tools=None, max_tokens=500):
