@@ -1,0 +1,86 @@
+{
+  "tally": {
+    "bm25+OR@5": {
+      "hit": 5,
+      "n": 11
+    },
+    "bm25+OR@10": {
+      "hit": 5,
+      "n": 11
+    },
+    "bm25+OR@20": {
+      "hit": 5,
+      "n": 11
+    }
+  },
+  "per_row": [
+    {
+      "q": "For my daily commute, how much more expensive was the taxi r",
+      "ev_id": 364,
+      "ev_rank": 4
+    },
+    {
+      "q": "How many sessions of the bereavement support group did I att",
+      "ev_id": 463,
+      "ev_rank": null
+    },
+    {
+      "q": "How many hours did I spend watching documentaries on Netflix",
+      "ev_id": 966,
+      "ev_rank": null
+    },
+    {
+      "q": "What percentage of leadership positions do women hold in the",
+      "ev_id": 804,
+      "ev_rank": null
+    },
+    {
+      "q": "How many issues of National Geographic have I finished readi",
+      "ev_id": 2070,
+      "ev_rank": null
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K r",
+      "ev_id": 2429,
+      "ev_rank": 3
+    },
+    {
+      "q": "What is the total number of comments on my recent Facebook L",
+      "ev_id": 2969,
+      "ev_rank": null
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "ev_id": 3962,
+      "ev_rank": 1
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocation?",
+      "ev_id": 4447,
+      "ev_rank": 2
+    },
+    {
+      "q": "How much will I save by taking the train from the airport to",
+      "ev_id": 4352,
+      "ev_rank": null
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "ev_id": 5344,
+      "ev_rank": 1
+    }
+  ],
+  "ranks": [
+    4,
+    3,
+    1,
+    2,
+    1
+  ],
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "strategy": "full",
+    "topks": "5,10,20"
+  }
+}
