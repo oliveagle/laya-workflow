@@ -41,10 +41,11 @@ pub struct LayaMemTools {
 }
 
 impl LayaMemTools {
-    /// Default spec_dir: `<plugin-manifest>/dsl` (next to the binary),
-    /// falling back to `<cwd>/dsl/laya_mem` for in-repo use.
+    /// Default spec_dir: the specs shipped at `<crate>/dsl/laya_mem`,
+    /// falling back to `<cwd>/dsl/laya_mem` when the binary has moved away
+    /// from its source tree.
     pub fn default_spec_dir() -> PathBuf {
-        let bundled = PathBuf::from(PLUGIN_MANIFEST_DIR).join("dsl");
+        let bundled = PathBuf::from(PLUGIN_MANIFEST_DIR).join(DEFAULT_SPEC_SUBDIR);
         if bundled.is_dir() {
             return bundled;
         }
