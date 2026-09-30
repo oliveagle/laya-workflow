@@ -32,7 +32,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
 from oracle import eval_admission, eval_memory_type, eval_stopping
-from datasets import ADMISSION_SET, MEMORY_TYPE_SET, NATURAL_OBSERVATIONS, RECALL_SET, STOPPING_SET
+from laya_datasets import ADMISSION_SET, MEMORY_TYPE_SET, NATURAL_OBSERVATIONS, RECALL_SET, STOPPING_SET
 
 REPO = HERE.parent.parent
 BIN = REPO / "target" / "debug" / "laya-workflow"

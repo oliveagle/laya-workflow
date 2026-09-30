@@ -1,0 +1,69 @@
+{
+  "tally": {
+    "hit": 0,
+    "n": 6
+  },
+  "per_row": [
+    {
+      "q": "For my daily commute, how much more expensive was the taxi ride compared to the train fare?",
+      "ans": "$6",
+      "ev_id": 364,
+      "pred_id": 216,
+      "hit": false,
+      "raw": "[216]",
+      "n_memories": 460
+    },
+    {
+      "q": "How many sessions of the bereavement support group did I attend?",
+      "ans": "five",
+      "ev_id": 463,
+      "pred_id": 635,
+      "hit": false,
+      "raw": "[635]",
+      "n_memories": 963
+    },
+    {
+      "q": "How many hours did I spend watching documentaries on Netflix last month?",
+      "ans": "10",
+      "ev_id": 966,
+      "pred_id": 1262,
+      "hit": false,
+      "raw": "[1262]",
+      "n_memories": 1456
+    },
+    {
+      "q": "What percentage of leadership positions do women hold in the my company?",
+      "ans": "20%",
+      "ev_id": 1560,
+      "pred_id": 1522,
+      "hit": false,
+      "raw": "[1522]",
+      "n_memories": 1917
+    },
+    {
+      "q": "How many issues of National Geographic have I finished reading?",
+      "ans": "Five",
+      "ev_id": 2070,
+      "pred_id": 2182,
+      "hit": false,
+      "raw": "[2182]",
+      "n_memories": 2398
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K run?",
+      "ans": "27 minutes and 45 seconds",
+      "ev_id": 2429,
+      "pred_id": 2886,
+      "hit": false,
+      "raw": "[2886]",
+      "n_memories": 2901
+    }
+  ],
+  "args": {
+    "sample": 30,
+    "max_turns": 500,
+    "limit_rows": 6,
+    "min_len": 20,
+    "max_len": 350
+  }
+}

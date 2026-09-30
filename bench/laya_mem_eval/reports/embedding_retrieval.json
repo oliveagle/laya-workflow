@@ -1,0 +1,158 @@
+{
+  "tally": {
+    "bm25": {
+      "hit": 5,
+      "n": 11
+    },
+    "bge": {
+      "hit": 2,
+      "n": 11
+    },
+    "hyb_n1": {
+      "hit": 3,
+      "n": 11
+    },
+    "hyb_n2": {
+      "hit": 4,
+      "n": 11
+    },
+    "hyb_n3": {
+      "hit": 5,
+      "n": 11
+    },
+    "hyb_n4": {
+      "hit": 5,
+      "n": 11
+    }
+  },
+  "per_row": [
+    {
+      "q": "For my daily commute, how much more expensive was the taxi ride compared to the train fare?",
+      "ans": "$6",
+      "ev_id": 364,
+      "bm25": true,
+      "bge": true,
+      "hyb_n1": true,
+      "hyb_n2": true,
+      "hyb_n3": true,
+      "hyb_n4": true
+    },
+    {
+      "q": "How many sessions of the bereavement support group did I attend?",
+      "ans": "five",
+      "ev_id": 3,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "How many hours did I spend watching documentaries on Netflix last month?",
+      "ans": "10",
+      "ev_id": 3,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "What percentage of leadership positions do women hold in the my company?",
+      "ans": "20%",
+      "ev_id": 104,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "How many issues of National Geographic have I finished reading?",
+      "ans": "Five",
+      "ev_id": 153,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K run?",
+      "ans": "27 minutes and 45 seconds",
+      "ev_id": 31,
+      "bm25": true,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": true,
+      "hyb_n4": true
+    },
+    {
+      "q": "What is the total number of comments on my recent Facebook Live session and my most popular YouTube video?",
+      "ans": "33",
+      "ev_id": 68,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "ans": "my sister",
+      "ev_id": 551,
+      "bm25": true,
+      "bge": true,
+      "hyb_n1": true,
+      "hyb_n2": true,
+      "hyb_n3": true,
+      "hyb_n4": true
+    },
+    {
+      "q": "Where did Rachel move to after her recent relocation?",
+      "ans": "the suburbs",
+      "ev_id": 472,
+      "bm25": true,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": true,
+      "hyb_n3": true,
+      "hyb_n4": true
+    },
+    {
+      "q": "How much will I save by taking the train from the airport to my hotel instead of a taxi?",
+      "ans": "$50",
+      "ev_id": 122,
+      "bm25": false,
+      "bge": false,
+      "hyb_n1": false,
+      "hyb_n2": false,
+      "hyb_n3": false,
+      "hyb_n4": false
+    },
+    {
+      "q": "What color did I repaint my bedroom walls?",
+      "ans": "a lighter shade of gray",
+      "ev_id": 390,
+      "bm25": true,
+      "bge": false,
+      "hyb_n1": true,
+      "hyb_n2": true,
+      "hyb_n3": true,
+      "hyb_n4": true
+    }
+  ],
+  "args": {
+    "sample": 30,
+    "topk": 5,
+    "min_len": 20,
+    "limit_rows": 0,
+    "skip_embed": false
+  }
+}

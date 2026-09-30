@@ -152,7 +152,7 @@ def score_oracle(vocab: dict[str, list[str]], natural_rows) -> dict:
 
 
 def main():
-    from datasets import NATURAL_OBSERVATIONS
+    from laya_datasets import NATURAL_OBSERVATIONS
     groups = list(VOCAB_CANDIDATES.keys())
     # dict keys are v1_base / v2_natural / v3_natural; combo key is short v1/v2/v3
     variant_keys = {"v1": "v1_base", "v2": "v2_natural", "v3": "v3_natural"}
