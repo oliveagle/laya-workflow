@@ -165,6 +165,8 @@ impl McpTool for RetrieveTool {
                 "query": {"type": "string", "description": "What you are trying to answer."},
                 "evidence": {"type": "array", "items": {"type": "string"}, "description": "Candidate facts gathered so far."},
                 "evidence_status": {"type": "string", "enum": ["sufficient","insufficient","contradiction"]},
+                "contradiction": {"type": "boolean", "description": "Evidence set has a contradiction. Adds the DSL trigger token so stopping rules can fire."},
+                "missing_evidence": {"type": "boolean", "description": "Caller explicitly flags missing evidence."},
                 "route_semantic": {"type": "string", "enum": ["high","low","yes","no"]},
                 "route_temporal": {"type": "string", "enum": ["high","low","yes","no"]},
                 "route_causal": {"type": "string", "enum": ["high","low","yes","no"]},
@@ -196,6 +198,27 @@ impl McpTool for RetrieveTool {
             if let Some(v) = args.get(k) {
                 state[k] = v.clone();
             }
+        }
+        // Fold caller signals into the DSL trigger fields the stopping spec
+        // reads via `heuristic.field`. Three inputs participate:
+        //   * `evidence_status` ("contradiction" / "insufficient" / "missing")
+        //   * `contradiction` (bool)
+        //   * `missing_evidence` (bool)
+        // The spec questions each `field` one of {evidence_status,
+        // contradiction, missing_evidence} and match_any the trigger word, so
+        // we normalise all three signals into those fields. A bare `true`
+        // would serialise to `true` and never match — the normalisation maps
+        // it to the spec's trigger token.
+        let ev_status = args.get("evidence_status").and_then(|v| v.as_str()).unwrap_or("");
+        if ev_status == "contradiction"
+            || args.get("contradiction").and_then(|v| v.as_bool()) == Some(true)
+        {
+            state["contradiction"] = json!("contradiction");
+        }
+        if matches!(ev_status, "insufficient" | "missing")
+            || args.get("missing_evidence").and_then(|v| v.as_bool()) == Some(true)
+        {
+            state["missing_evidence"] = json!("missing");
         }
         let backend = self.0.backend();
         let routing = run_spec(&self.0.spec_dir, backend.as_ref(), "routing", &state)?;
@@ -363,6 +386,7 @@ impl McpTool for RecallTool {
             "properties": {
                 "limit": {"type": "integer", "default": 10},
                 "include_relations": {"type": "boolean", "default": true},
+                "query": {"type": "string", "description": "Optional content filter (SQLite LIKE pattern without % wildcards; escaped)."},
                 "db_path": {"type": "string", "description": "Override the SQLite file for this call."}
             }
         })
@@ -380,9 +404,17 @@ impl McpTool for RecallTool {
             .map(PathBuf::from)
             .unwrap_or_else(|| self.0.db_path.clone());
 
+        let sql = if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            let esc = q.replace('\'', "''").replace('%', "\\%").replace('_', "\\_");
+            format!(
+                "SELECT id, content, ts, entities, type_scores FROM memories WHERE content LIKE '%' || '{esc}' || '%' ESCAPE '\\' ORDER BY id DESC LIMIT {limit}"
+            )
+        } else {
+            format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}")
+        };
         let memories = call_db_for_db(
             &db_path,
-            json!({ "op": "query", "sql": format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}") }),
+            json!({ "op": "query", "sql": sql }),
         )?;
         let mut out = json!({
             "memories": memories.get("rows").cloned().unwrap_or(Value::Null),

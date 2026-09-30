@@ -43,12 +43,13 @@
           "truthy": "A required detail, date, identity, count or linking fact is not supported.",
           "falsy": "All required facts have explicit support in the supplied evidence.",
           "heuristic": {
-            "field": "evidence_status",
+            "field": "missing_evidence",
             "match_any": [
-              "sufficient"
+              "missing",
+              "true"
             ],
-            "p_hit": 0.05,
-            "p_miss": 0.9
+            "p_hit": 0.9,
+            "p_miss": 0.05
           }
         },
         "contradiction": {
@@ -57,9 +58,10 @@
           "truthy": "A conflict still affects which answer is correct.",
           "falsy": "Claims agree, differ only by explained temporal updates, or do not affect the answer.",
           "heuristic": {
-            "field": "evidence_status",
+            "field": "contradiction",
             "match_any": [
-              "contradiction"
+              "contradiction",
+              "true"
             ],
             "p_hit": 0.95,
             "p_miss": 0.05
