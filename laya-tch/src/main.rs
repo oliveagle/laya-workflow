@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokenizers::Tokenizer;
 
+mod gbnf;
 mod model;
 use model::{LayaModel, SeqInput};
 
@@ -42,6 +43,26 @@ struct Cli {
     /// else cuda when the linked libtorch has it, else cpu.
     #[arg(long, value_name = "cpu|cuda[:N]|mlx|auto", default_value = "auto")]
     device: String,
+    /// Reject malformed requests with 400 + parser_pos before invoking the
+    /// model, and constrain the per-question logits to the declared answer
+    /// set (criteria keys for `choice`, `0..criteria.len()` for `score`).
+    /// Falls back to env `LAYA_TCH_GBNF_STRICT=1` when the flag is omitted.
+    #[arg(long)]
+    gbnf_strict: bool,
+}
+
+// ─── gbnf strict-mode resolution ───────────────────────────────────
+
+/// Resolve whether the strict GBNF gate is enabled. CLI flag wins; otherwise
+/// we honour `LAYA_TCH_GBNF_STRICT` (any of `1`, `true`, `yes`, `on`).
+fn gbnf_strict_enabled(cli_flag: bool) -> bool {
+    if cli_flag {
+        return true;
+    }
+    matches!(
+        std::env::var("LAYA_TCH_GBNF_STRICT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
 }
 
 // ─── Python-compatible JSON serialization (json.dumps(ensure_ascii=False)) ──
@@ -372,10 +393,14 @@ fn r4(x: f64) -> f64 {
 struct Engine {
     tok: Tokenizer,
     model: LayaModel,
+    /// When true, `predict_impl` masks the per-question logits to the
+    /// declared answer set (criteria keys for `choice`, 0..len for `score`),
+    /// and `system_one` rejects malformed requests before invoking the model.
+    strict_gbnf: bool,
 }
 
 impl Engine {
-    fn load_on(model_dir: &str, device: tch::Device) -> Result<Self> {
+    fn load_on(model_dir: &str, device: tch::Device, strict_gbnf: bool) -> Result<Self> {
         let tok_path = if std::path::Path::new(&format!("{model_dir}/tokenizer.json")).exists() {
             format!("{model_dir}/tokenizer.json")
         } else {
@@ -383,7 +408,7 @@ impl Engine {
         };
         let tok = Tokenizer::from_file(&tok_path).map_err(|e| anyhow!("tokenizer: {e}"))?;
         let model = LayaModel::load_on(model_dir, device)?;
-        Ok(Self { tok, model })
+        Ok(Self { tok, model, strict_gbnf })
     }
 
     fn predict(&self, state: &Value, questions: &Map<String, Value>) -> Result<(Value, usize)> {
@@ -406,6 +431,7 @@ impl Engine {
         questions: &Map<String, Value>,
         debug: bool,
     ) -> Result<(Value, usize)> {
+        let strict = self.strict_gbnf;
         let mut id_store: Vec<Vec<i64>> = Vec::new();
         let mut marker_store: Vec<Vec<i64>> = Vec::new();
         let mut metas: Vec<(String, InternalQ, usize, QType)> = Vec::new();
@@ -443,7 +469,35 @@ impl Engine {
         for (i, (qid, q, k, qt)) in metas.iter().enumerate() {
             let logits = &outs[i].logits;
             let temp = temperature_for(*qt, *k) as f32;
-            let z: Vec<f32> = logits.iter().map(|&v| v / temp).collect();
+            let mut z: Vec<f32> = logits.iter().map(|&v| v / temp).collect();
+            // In-gate: when GBNF strict mode is on, mask logits outside the
+            // declared answer set so the softmax can never assign positive
+            // probability to a category the request did not enumerate.
+            //   * Choice + criteria-as-object → allowed i ∈ [0, keys.len())
+            //   * Choice w/o criteria         → allow all k dims
+            //   * Score + criteria-as-array   → allowed i ∈ [0, legend.len())
+            //   * Score w/o criteria          → allow all k dims
+            //   * Noul                        → unchanged
+            if strict {
+                let allowed: Option<usize> = match q.t {
+                    QType::Choice => match &q.crit {
+                        Some(Value::Object(m)) => Some(m.len().min(*k)),
+                        _ => None,
+                    },
+                    QType::Score => match &q.crit {
+                        Some(Value::Array(a)) => Some(a.len().min(*k)),
+                        _ => None,
+                    },
+                    QType::Noul => None,
+                };
+                if let Some(n) = allowed {
+                    for (idx, val) in z.iter_mut().enumerate() {
+                        if idx >= n {
+                            *val = f32::NEG_INFINITY;
+                        }
+                    }
+                }
+            }
             let p = softmax_f32(&z);
             let conf = r4(confidence_from_probs(&p, *k) as f64);
             // act probability = softmax(act_logits)[0], computed in f32 like torch
@@ -547,6 +601,23 @@ async fn system_one(
     axum::extract::Json(req): axum::extract::Json<Value>,
 ) -> Result<axum::Json<Value>, (axum::http::StatusCode, String)> {
     let t0 = Instant::now();
+    // Pre-gate: reject malformed requests before the forward pass. We always
+    // hold the lock while reading the flag (cheap), but only re-acquire for
+    // predict() to keep the critical section small.
+    let strict = state.lock().map_err(|_| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "engine lock poisoned".to_string(),
+        )
+    })?.strict_gbnf;
+    if strict {
+        if let Err(e) = gbnf::validate_json(gbnf::SYSTEM_ONE_REQUEST_GBNF, "root", &req) {
+            return Err((
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("gbnf: {e}"),
+            ));
+        }
+    }
     let st = req.get("state").cloned().unwrap_or(Value::Null);
     let qs = req
         .get("questions")
@@ -643,6 +714,10 @@ fn resolve_backend(flag: &str) -> Result<laya_tch::device::Backend> {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let strict = gbnf_strict_enabled(cli.gbnf_strict);
+    if strict {
+        eprintln!("[laya-tch] GBNF strict gate ENABLED (pre-flight + answer-set mask)");
+    }
     laya_tch::preload_torch_cuda();
     let t0 = Instant::now();
     let backend = resolve_backend(&cli.device)?;
@@ -662,12 +737,17 @@ async fn main() -> Result<()> {
         "[laya-tch] loading model from {} on {:?}",
         cli.model_dir, device
     );
-    let engine = Engine::load_on(&cli.model_dir, device)?;
+    let engine = Engine::load_on(&cli.model_dir, device, strict)?;
     eprintln!("[laya-tch] loaded in {:.1}s", t0.elapsed().as_secs_f64());
 
     if let Some(path) = &cli.once {
         let raw = std::fs::read_to_string(path)?;
         let req: Value = serde_json::from_str(&raw)?;
+        if strict {
+            if let Err(e) = gbnf::validate_json(gbnf::SYSTEM_ONE_REQUEST_GBNF, "root", &req) {
+                bail!("gbnf: {e}");
+            }
+        }
         let st = req.get("state").cloned().unwrap_or(Value::Null);
         let qs = req
             .get("questions")

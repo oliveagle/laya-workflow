@@ -4,6 +4,7 @@
 //! `laya-workflow` crate (https://github.com/oliveagle/laya-workflow).
 
 pub mod device;
+pub mod gbnf;
 pub mod model;
 
 /// Load `libtorch_cuda.so` eagerly (Linux only).
