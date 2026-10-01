@@ -402,8 +402,16 @@ fn builtin(name: &str) -> Option<Sources> {
 pub fn builtin_names() -> &'static [&'static str] {
     &[
         ALPHAXIV_PLUGIN,
+        "goofish",
         "textdigest",
         "browser_base",
+        // `bdd` and `goofish` were compiled in by `builtin()` but missing here, so
+        // every caller that iterates this list skipped them: `plugin dir` under-
+        // reported, and `install` never materialized them. For `bdd` that
+        // defeated the reason it is bundled at all — an installed binary, run
+        // outside a checkout, is exactly the case it exists for. Kept in
+        // `builtin_handled()`-checked order by `builtin_names_matches_builtin`.
+        "bdd",
         "hf-trending",
         "hackernews",
         "arxiv",
@@ -1954,6 +1962,66 @@ mod tests {
         assert_eq!(src.entry_name, "main.rhai");
         assert!(src.entry.contains("fn run"), "entry body preserved");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `builtin_names()` and the `builtin()` match are two hand-maintained lists
+    /// of the same thing, and they drifted: `bdd` and `goofish` were compiled
+    /// into the binary but absent from `builtin_names()`, so `plugin dir`
+    /// under-reported and `install` never wrote them out. Nothing failed loudly
+    /// — a bundled plugin just silently did not get installed.
+    ///
+    /// The first direction (every listed name resolves) is checked dynamically.
+    /// The second — an arm exists that nobody listed — has no way to be derived
+    /// from the code, so the expected set is pinned. Adding a plugin to
+    /// `builtin()` therefore fails here until `builtin_names()` is updated too,
+    /// which is the point.
+    #[test]
+    fn builtin_names_matches_builtin() {
+        for name in builtin_names() {
+            assert!(
+                builtin(name).is_some(),
+                "builtin_names() lists {name:?} but builtin() has no arm for it"
+            );
+        }
+        const EXPECTED: &[&str] = &[
+            "alphaxiv", "goofish", "textdigest", "browser_base", "bdd", "hf-trending",
+            "hackernews", "arxiv", "wikipedia", "mdn", "bing", "v2ex", "crates", "pypi",
+            "docsrs", "github",
+        ];
+        let mut listed: Vec<&str> = builtin_names().to_vec();
+        listed.sort_unstable();
+        let mut want: Vec<&str> = EXPECTED.to_vec();
+        want.sort_unstable();
+        assert_eq!(
+            listed, want,
+            "builtin() and builtin_names() disagree: a plugin was added to the \
+             match without being listed, so `install` would skip it"
+        );
+    }
+
+    /// Every builtin must be installable to a tree that loads, since `install`
+    /// is the only way an installed binary gets an editable plugin.
+    #[test]
+    fn every_builtin_installs_to_a_loadable_tree() {
+        let root = std::env::temp_dir().join(format!("laya-builtin-all-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mut count = 0;
+        for name in builtin_names() {
+            let out = install_builtin_to(name, &root, false)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{name} is listed but not a builtin"));
+            assert!(out.dest.join("plugin.json").is_file(), "{name}: no manifest");
+            let m = std::fs::read_to_string(out.dest.join("plugin.json")).unwrap();
+            let manifest = Manifest::parse(&m, name).unwrap();
+            assert!(
+                out.dest.join(&manifest.entry).is_file(),
+                "{name}: no entry {:?}",
+                manifest.entry
+            );
+            count += 1;
+        }
+        assert_eq!(count, builtin_names().len());
         let _ = std::fs::remove_dir_all(&root);
     }
 
