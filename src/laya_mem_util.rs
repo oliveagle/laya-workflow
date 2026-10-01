@@ -98,6 +98,20 @@ pub(crate) fn call_db_for_db(db_path: &Path, with: Value) -> Result<Value> {
         .with_context(|| format!("db call for {}", db_path.display()))
 }
 
+pub(crate) fn count_rows(db_path: &Path, sql: &str) -> i64 {
+    let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql }));
+    match res {
+        Ok(r) => r
+            .get("rows")
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|row| row.as_object().and_then(|o| o.values().next().cloned()))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
 pub(crate) fn ensure_parent(p: &Path) -> Result<()> {
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
@@ -196,6 +210,40 @@ pub(crate) fn ensure_schema(db_path: &Path) -> Result<()> {
     if !stmts.is_empty() {
         call_db_for_db(db_path, json!({ "op": "exec", "statements": stmts }))?;
     }
+
+    // FTS5: create the virtual table + sync triggers only AFTER the memories
+    // table exists. Creating them before the table would cause the very first
+    // INSERT to run with no trigger in place, so row 1 is never indexed and
+    // `find_similar_memories` silently returns an empty candidate list.
+    // We use the default (internal-content) FTS5 mode — the external-content
+    // form (`content='memories'`) requires `INSERT INTO ft(ft, rowid, …)
+    // VALUES('insert', …)` trigger syntax, and mixing it with plain
+    // `INSERT INTO ft(rowid, content)` silently skips indexing.
+    call_db_for_db(
+        db_path,
+        json!({
+            "op": "exec",
+            "statements": [
+                "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tokenize='unicode61 remove_diacritics 2')",
+                "CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
+                "CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); END",
+                "CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END"
+            ]
+        }),
+    )?;
+
+    // Repair stale FTS indexes (e.g. DBs created before the trigger-order fix,
+    // or an external-content `memories_fts` whose first row was never indexed).
+    // `INSERT INTO memories_fts(memories_fts) VALUES('rebuild')` re-syncs the
+    // index from the memories table; a count mismatch is a cheap signal.
+    let mem_count = count_rows(db_path, "SELECT COUNT(*) AS c FROM memories");
+    let fts_count = count_rows(db_path, "SELECT COUNT(*) AS c FROM memories_fts");
+    if mem_count != fts_count {
+        let _ = call_db_for_db(
+            db_path,
+            json!({ "op": "exec", "statements": ["INSERT INTO memories_fts(memories_fts) VALUES('rebuild')"] }),
+        );
+    }
     Ok(())
 }
 
@@ -248,6 +296,442 @@ pub(crate) fn now_iso() -> String {
     }
 }
 
+/// Apply one consolidation decision to the SQLite store.
+///
+/// Shared by the manual `laya_mem_consolidate` MCP tool and the auto-trigger
+/// (`auto_consolidate`). Non-destructive by construction:
+/// - writes a typed relation (`SEMANTIC`/`TEMPORAL` × `REDUNDANT_WITH`/`CONTRADICTS`/...)
+/// - when `representation` ∈ {merge, promote} and `summary_content` is non-empty
+///   AND `contradiction < threshold`, creates a SUMMARY memory with
+///   `consolidation_key=fnv1a(target|candidate)` and `source_memory_ids=[target, candidate]`
+/// - skips the summary write if the same key already exists (dedupe)
+/// - always emits an `audit_log` row (op=`consolidation` or op=`auto_consolidation`)
+pub(crate) fn apply_consolidation(
+    db_path: &Path,
+    target: &str,
+    candidate: &str,
+    scores: &Value,
+    threshold: f64,
+    representation: &str,
+    summary_content: &str,
+    summary_type_scores: &Value,
+    summary_entities: &Value,
+    audit_op: &str,
+) -> Result<Value> {
+    ensure_schema(db_path)?;
+
+    let redundant = scores.get("redundant").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let contradiction = scores.get("contradiction").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let obsolete = scores.get("obsolete").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let link = scores.get("link").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+    let (link_sub_type, link_type_label, prob) = if contradiction >= threshold {
+        ("CONTRADICTS", "SEMANTIC", contradiction)
+    } else if obsolete >= threshold {
+        ("OBSOLETE", "TEMPORAL", obsolete)
+    } else if redundant >= threshold {
+        ("REDUNDANT_WITH", "SEMANTIC", redundant)
+    } else if link >= threshold {
+        ("RELATED_TO", "SEMANTIC", link)
+    } else {
+        ("", "", 0.0)
+    };
+
+    let mut written_relations: Vec<i64> = Vec::new();
+
+    if !link_sub_type.is_empty() {
+        let rel_sql = format!(
+            "INSERT INTO relations (source, target, link_type, link_sub_type, probability, status) VALUES ('{s}', '{t}', '{lt}', '{lst}', {p}, 'ACTIVE')",
+            s = sql_escape(target),
+            t = sql_escape(candidate),
+            lt = sql_escape(link_type_label),
+            lst = sql_escape(link_sub_type),
+            p = prob,
+        );
+        let res = call_db_for_db(
+            db_path,
+            json!({ "op": "exec", "statements": [rel_sql, "SELECT last_insert_rowid() AS last_insert_rowid".to_string()] }),
+        )?;
+        if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
+            for row in rows {
+                if let Some(id) = row.get("last_insert_rowid").and_then(|v| v.as_i64()) {
+                    written_relations.push(id);
+                }
+            }
+        }
+    }
+
+    let mut summary_memory_id: Option<i64> = None;
+    let mut summary_blocked_reason: Option<String> = None;
+    let allow_summarize = (representation == "merge" || representation == "promote")
+        && contradiction < threshold
+        && !summary_content.trim().is_empty();
+    if representation == "merge" || representation == "promote" {
+        if contradiction >= threshold {
+            summary_blocked_reason = Some(
+                "contradiction>=threshold forces keep_separate (non-destructive)".to_string()
+            );
+        } else if summary_content.trim().is_empty() {
+            summary_blocked_reason = Some(
+                "summary_content required for merge/promote".to_string()
+            );
+        }
+    }
+
+    if allow_summarize {
+        let key = fnv1a_hex(&format!("{}|{}", target, candidate));
+        let dup_q = format!(
+            "SELECT id FROM memories WHERE consolidation_key = '{}' LIMIT 1",
+            sql_escape(&key)
+        );
+        let dup = call_db_for_db(db_path, json!({ "op": "query", "sql": dup_q }))?;
+        let existing: Option<i64> = dup
+            .get("rows").and_then(|r| r.as_array())
+            .and_then(|a| a.first())
+            .and_then(|row| row.get("id"))
+            .and_then(|v| v.as_i64());
+        if let Some(id) = existing {
+            summary_memory_id = Some(id);
+            summary_blocked_reason = Some(format!(
+                "consolidation_key={} already produced summary id={}", key, id
+            ));
+        } else {
+            let entities_json = serde_json::to_string(summary_entities)?;
+            let type_scores_json = serde_json::to_string(summary_type_scores)?;
+            let summary_esc = sql_escape(summary_content);
+            let ts_esc = sql_escape(&now_iso());
+            let entities_esc = sql_escape(&entities_json);
+            let type_scores_esc = sql_escape(&type_scores_json);
+            let key_esc = sql_escape(&key);
+            let action_esc = sql_escape(representation);
+            let sources_esc = sql_escape(
+                &serde_json::to_string(&[target, candidate])
+                    .unwrap_or_else(|_| "[]".to_string())
+            );
+            let summary_sql = format!(
+                "INSERT INTO memories (content, ts, entities, type_scores, node_type, source_memory_ids, consolidation_key, consolidation_action, consolidated_at) VALUES ('{summary_esc}', '{ts_esc}', '{entities_esc}', '{type_scores_esc}', 'SUMMARY', '{sources_esc}', '{key_esc}', '{action_esc}', '{ts_esc}')"
+            );
+            let res = call_db_for_db(
+                db_path,
+                json!({ "op": "exec", "statements": [summary_sql, "SELECT last_insert_rowid() AS last_insert_rowid".to_string()] }),
+            )?;
+            summary_memory_id = res
+                .get("rows").and_then(|r| r.as_array())
+                .and_then(|a| a.first())
+                .and_then(|row| row.get("last_insert_rowid"))
+                .and_then(|v| v.as_i64());
+        }
+    }
+
+    let audit_details = json!({
+        "target": target,
+        "candidate": candidate,
+        "scores": scores,
+        "representation": representation,
+        "threshold": threshold,
+        "link_sub_type": link_sub_type,
+        "summary_memory_id": summary_memory_id,
+        "summary_blocked_reason": summary_blocked_reason,
+    });
+    let audit_id = audit_log(db_path, audit_op, target, &audit_details)?;
+
+    let verify_rels = call_db_for_db(
+        db_path,
+        json!({ "op": "query", "sql": format!(
+            "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations WHERE source IN ('{t}', '{c}') AND target IN ('{t}', '{c}') ORDER BY id DESC LIMIT 10",
+            t = sql_escape(target), c = sql_escape(candidate)) }),
+    )?;
+
+    Ok(json!({
+        "decision": representation,
+        "link_sub_type": link_sub_type,
+        "link_type": link_type_label,
+        "probability": prob,
+        "relation_ids": written_relations,
+        "summary_memory_id": summary_memory_id,
+        "summary_blocked_reason": summary_blocked_reason,
+        "audit_id": audit_id,
+        "op": audit_op,
+        "recent_relations": verify_rels.get("rows").cloned().unwrap_or(Value::Null),
+        "db_path": db_path.display().to_string(),
+    }))
+}
+
+/// Find the top-k rows of the memory index most similar to `content`, using
+/// FTS5 bm25 over `memories_fts`. Excludes `exclude_id` and SUMMARY rows
+/// (consolidation output rows would always be "self-similar").
+pub(crate) fn find_similar_memories(
+    db_path: &Path,
+    content: &str,
+    exclude_id: &str,
+    top_k: usize,
+) -> Result<Vec<(String, String)>> {
+    ensure_schema(db_path)?;
+    let tokens: Vec<String> = content
+        .split_whitespace()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| w.len() >= 3)
+        .map(|w| format!("\"{}\"", sql_escape(w)))
+        .collect();
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+    let match_expr = tokens.join(" OR ");
+    let sql = format!(
+        "SELECT m.id, m.content FROM memories_fts f JOIN memories m ON m.id = f.rowid \
+         WHERE memories_fts MATCH '{match_expr}' AND m.id <> {exclude} AND m.node_type <> 'SUMMARY' \
+         ORDER BY bm25(memories_fts) LIMIT {k}",
+        exclude = sql_escape(exclude_id),
+        k = top_k.max(1),
+    );
+    let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql }))?;
+    let mut out = Vec::new();
+    if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
+        for row in rows {
+            let id = row.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string()).unwrap_or_default();
+            let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if !id.is_empty() {
+                out.push((id, content));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Fetch one memory row by id as a JSON object (node_state shape).
+pub(crate) fn fetch_memory_row(db_path: &Path, id: &str) -> Result<Value> {
+    ensure_schema(db_path)?;
+    let sql = format!(
+        "SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories WHERE id = {} LIMIT 1",
+        sql_escape(id)
+    );
+    let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql }))?;
+    Ok(res
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .and_then(|a| a.first().cloned())
+        .unwrap_or(Value::Null))
+}
+
+/// Run the consolidation DSL spec for one (new_memory, candidate) pair and
+/// translate the result into (scores, representation, summary_content).
+/// Cheap deterministic pair scoring used to populate the consolidation spec's
+/// heuristic matchers when no Laya decision backend is configured. Mirrors
+/// Jev-Mem's `find_candidates` + noul semantics with a token-level proxy:
+/// - redundant: Jaccard token overlap >= 0.80 → high
+/// - contradiction: opposite-claim pair (word + negation/antonym pattern) → high
+/// - obsolete: update/supersede/replaces verb + overlap >= 0.5 → high
+/// - link: Jaccard overlap >= 0.3 (corroborating / related) → high
+///
+/// Returns four status strings — `"redundant duplicate paraphrase"`,
+/// `"contradict conflict incompatible"`, `"obsolete supersede replaced"`,
+/// `"related corroborat"` — or the empty string. The consolidation spec's
+/// match_any patterns match these; empty string produces p_miss.
+pub(crate) fn heuristic_pair_status(
+    new_content: &str,
+    cand_content: &str,
+) -> (String, String, String, String) {
+    let tokenize = |s: &str| -> Vec<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| !w.is_empty() && w.len() > 2)
+            .map(|w| w.to_string())
+            .collect()
+    };
+    let a = tokenize(new_content);
+    let b = tokenize(cand_content);
+    if a.is_empty() || b.is_empty() {
+        return (String::new(), String::new(), String::new(), String::new());
+    }
+    let a_set: std::collections::HashSet<_> = a.iter().cloned().collect();
+    let b_set: std::collections::HashSet<_> = b.iter().cloned().collect();
+    let inter = a_set.intersection(&b_set).count();
+    let union = a_set.union(&b_set).count();
+    let jaccard = if union == 0 { 0.0 } else { inter as f64 / union as f64 };
+    // Containment: overlap relative to the smaller set. Paraphrase pairs with
+    // near-identical tokens but different vocabulary sizes score higher here
+    // than under plain Jaccard, so 0.80 catches them.
+    let min_len = a_set.len().min(b_set.len());
+    let containment = if min_len == 0 { 0.0 } else { inter as f64 / min_len as f64 };
+
+    let lower = format!("{}\n{}", new_content.to_lowercase(), cand_content.to_lowercase());
+    let has_negation = ["not ", "n't ", "never ", "cannot ", "opposite ", "no longer "]
+        .iter().any(|w| lower.contains(w));
+    let has_update = ["updated ", "superseded ", "replaced ", "replaces ", "supersedes "]
+        .iter().any(|w| lower.contains(w));
+
+    // Contradiction outranks redundancy (mirrors the spec's threshold rules:
+    // CONTRADICTS is matched first). A negation flips a near-duplicate pair
+    // into a contradiction instead of a merge.
+    let con = if (jaccard >= 0.40 || containment >= 0.50) && has_negation {
+        "contradict conflict incompatible".to_string()
+    } else { String::new() };
+    let red = if con.is_empty() && (jaccard >= 0.80 || containment >= 0.85) {
+        "redundant duplicate paraphrase".to_string()
+    } else { String::new() };
+    let obs = if (jaccard >= 0.40 || containment >= 0.50) && has_update {
+        "obsolete supersede replaced".to_string()
+    } else { String::new() };
+    let lnk = if (jaccard >= 0.30 || containment >= 0.35) && red.is_empty() && con.is_empty() && obs.is_empty() {
+        "related corroborat".to_string()
+    } else { String::new() };
+
+    (red, con, obs, lnk)
+}
+
+pub(crate) fn evaluate_consolidation(
+    spec_dir: &Path,
+    backend: &dyn Decide,
+    new_memory_row: &Value,
+    candidate_row: &Value,
+    threshold: f64,
+) -> Result<(Value, String, String)> {
+    let new_content = new_memory_row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let cand_content = candidate_row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Pre-populate the `pair_0_*_status` fields consumed by the consolidation
+    // DSL spec's heuristic matchers. The HeuristicBackend reads
+    // `state[pair_0_redundant_status]` (or similar) and matches against the
+    // `match_any` patterns; without a populated field, every noul falls back
+    // to p_miss and the auto-trigger never produces a non-trivial decision.
+    let (red_st, con_st, obs_st, lnk_st) = heuristic_pair_status(new_content, cand_content);
+    let state = json!({
+        "new_memory": new_memory_row,
+        "candidates": [candidate_row],
+        "pair_0_redundant_status": red_st,
+        "pair_0_contradiction_status": con_st,
+        "pair_0_obsolete_status": obs_st,
+        "pair_0_link_status": lnk_st,
+    });
+    let out = run_spec(spec_dir, backend, "consolidation", &state)?;
+
+    // The DSL runner returns `out.result` (the spec's terminal JSON) plus
+    // `out.trace` and `out.history`. For a single-node consolidation spec, the
+    // answers are exposed as `result.<question_name>` (per-question probability)
+    // and the typed label as `result.label`. The runner also flattens some
+    // fields onto the top level for legacy callers.
+    let res = out.get("result").cloned().unwrap_or_else(|| out.clone());
+
+    // The consolidation DSL spec returns the relation subtype via
+    // `result.label` (REDUNDANT_WITH / CONTRADICTS / OBSOLETE / RELATED_TO /
+    // KEEP_SEPARATE). The runner only surfaces the *action* question's answer
+    // (`result.action_answer`), not every per-question probability, so we
+    // derive the four scores from the label — they are the evidence record
+    // `apply_consolidation` persists into the relation row. The high value
+    // (0.9) mirrors `p_hit` in the spec's heuristic matchers.
+    let label = res.get("label").and_then(|v| v.as_str()).unwrap_or("KEEP_SEPARATE");
+    let (redundant, contradiction, obsolete, link) = match label {
+        "REDUNDANT_WITH" => (0.9, 0.0, 0.0, 0.0),
+        "CONTRADICTS" => (0.0, 0.9, 0.0, 0.0),
+        "OBSOLETE" => (0.0, 0.0, 0.9, 0.0),
+        "RELATED_TO" => (0.0, 0.0, 0.0, 0.9),
+        _ => (0.0, 0.0, 0.0, 0.0),
+    };
+
+    // Translate the label into the representation action.
+    // REDUNDANT_WITH and OBSOLETE create a merged summary; the rest keep
+    // evidence separate (Jev-Mem non-destructive invariant — contradiction
+    // never merges).
+    let representation = match label {
+        "REDUNDANT_WITH" | "OBSOLETE" => "merge".to_string(),
+        "CONTRADICTS" | "RELATED_TO" | "KEEP_SEPARATE" => "keep_separate".to_string(),
+        _other => "keep_separate".to_string(),
+    };
+
+    let scores = json!({
+        "redundant": redundant,
+        "contradiction": contradiction,
+        "obsolete": obsolete,
+        "link": link,
+    });
+
+    let new_content = new_memory_row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let cand_content = candidate_row.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let summary_content = match representation.as_str() {
+        "merge" => format!("{} {}", new_content, cand_content),
+        "promote" => format!("Repeated: {} | {}", new_content, cand_content),
+        _ => String::new(),
+    };
+
+    let final_repr = if contradiction >= threshold
+        && (representation == "merge" || representation == "promote")
+    {
+        "keep_separate".to_string()
+    } else {
+        representation.clone()
+    };
+
+    Ok((scores, final_repr, summary_content))
+}
+
+/// Continuous, non-destructive consolidation trigger. After a new memory is
+/// written, finds the top-k most similar existing memories and runs the
+/// `consolidation` DSL spec on each pair. Per-pair decisions are applied via
+/// [`apply_consolidation`] with `audit_op = "auto_consolidation"`.
+pub(crate) fn auto_consolidate(
+    db_path: &Path,
+    spec_dir: &Path,
+    backend: &dyn Decide,
+    new_memory_id: &str,
+    top_k: usize,
+    threshold: f64,
+) -> Result<Vec<Value>> {
+    let new_row = fetch_memory_row(db_path, new_memory_id)?;
+    if new_row.is_null() {
+        return Ok(Vec::new());
+    }
+    let new_content = new_row
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if new_content.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let candidates = find_similar_memories(db_path, new_content, new_memory_id, top_k)?;
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut decisions: Vec<Value> = Vec::new();
+    for (cand_id, _cand_content) in candidates {
+        let cand_row = match fetch_memory_row(db_path, &cand_id) {
+            Ok(r) if !r.is_null() => r,
+            _ => continue,
+        };
+        let (scores, representation, summary_content) = match evaluate_consolidation(
+            spec_dir, backend, &new_row, &cand_row, threshold,
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                decisions.push(json!({
+                    "candidate_id": cand_id,
+                    "error": format!("evaluate_consolidation: {e:#}"),
+                }));
+                continue;
+            }
+        };
+        match apply_consolidation(
+            db_path,
+            new_memory_id,
+            &cand_id,
+            &scores,
+            threshold,
+            &representation,
+            &summary_content,
+            &json!({}),
+            &Value::Array(Vec::new()),
+            "auto_consolidation",
+        ) {
+            Ok(v) => decisions.push(v),
+            Err(e) => decisions.push(json!({
+                "candidate_id": cand_id,
+                "error": format!("apply_consolidation: {e:#}"),
+            })),
+        }
+    }
+    Ok(decisions)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,7 +768,7 @@ mod tests {
     /// `run_spec` but missing from the table is a runtime-only failure.
     #[test]
     fn every_referenced_spec_is_embedded() {
-        for name in ["memory_type", "admission", "routing", "stopping"] {
+        for name in ["memory_type", "admission", "routing", "stopping", "consolidation"] {
             let embedded = EMBEDDED_SPECS.iter().any(|(f, _)| *f == format!("{name}.json"));
             assert!(embedded, "{name}.json is run but not embedded");
         }

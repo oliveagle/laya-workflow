@@ -47,8 +47,9 @@ pub const PLUGIN_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
 /// or a release tarball, both leave an installed server with no specs at all.
 /// Embedding makes `laya-workflow mcp serve` self-sufficient wherever it is
 /// installed from.
-pub const EMBEDDED_SPECS: [(&str, &str); 8] = [
+pub const EMBEDDED_SPECS: [(&str, &str); 9] = [
     ("admission.json", include_str!("../dsl/laya_mem/admission.json")),
+    ("consolidation.json", include_str!("../dsl/laya_mem/consolidation.json")),
     ("memory_type.json", include_str!("../dsl/laya_mem/memory_type.json")),
     ("persist_memory.json", include_str!("../dsl/laya_mem/persist_memory.json")),
     ("relation_pair.json", include_str!("../dsl/laya_mem/relation_pair.json")),
@@ -64,6 +65,11 @@ pub struct LayaMemTools {
     pub spec_dir: PathBuf,
     pub db_path: PathBuf,
     pub base_url: Option<String>,
+    /// Continuous consolidation: every N-th persist auto-runs the
+    /// `consolidation` DSL spec against the top-k FTS5-matched candidates and
+    /// writes relations / SUMMARY / audit_log. 0 disables the auto-trigger
+    /// (the manual `laya_mem_consolidate` MCP tool always stays available).
+    pub consolidation_interval: u64,
 }
 
 impl LayaMemTools {
@@ -107,7 +113,12 @@ impl LayaMemTools {
             .map(PathBuf::from)
             .unwrap_or_else(Self::default_db_path);
         let base_url = std::env::var("LAYA_BASE_URL").ok().filter(|v| !v.is_empty());
-        Self { spec_dir, db_path, base_url }
+        let consolidation_interval = std::env::var("LAYA_MEM_CONSOLIDATE_INTERVAL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        Self { spec_dir, db_path, base_url, consolidation_interval }
     }
 
     fn backend(&self) -> Box<dyn Decide> {
@@ -336,20 +347,9 @@ impl McpTool for PersistTool {
         let entities_json = serde_json::to_string(&entities)?;
         let type_scores_json = serde_json::to_string(&type_scores)?;
 
-        // Ensure the laya-mem schema is current (memories + relations + audit_log;
-        // FTS5 + triggers; consolidation columns). Idempotent on older DBs.
-        call_db_for_db(
-            &db_path,
-            json!({
-                "op": "exec",
-                "statements": [
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
-                    "CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
-                    "CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); END",
-                    "CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END"
-                ]
-            }),
-        )?;
+        // ensure_schema creates memories/relations/audit_log + FTS5 table + triggers
+        // (in the right order so the first INSERT is indexed). Consolidation
+        // columns and migrations are also applied here.
         ensure_schema(&db_path)?;
 
         let content_esc = sql_escape(content);
@@ -418,11 +418,42 @@ impl McpTool for PersistTool {
             json!({ "op": "query", "sql": "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations ORDER BY id DESC LIMIT 5" }),
         )?;
 
+        // Continuous consolidation: every N-th persist (N = self.0.consolidation_interval)
+        // runs the `consolidation` DSL spec against the top-k FTS5-matched
+        // candidates and writes relations / SUMMARY / audit_log rows.
+        let mut auto_consolidations: Vec<Value> = Vec::new();
+        if self.0.consolidation_interval > 0 {
+            {
+                let mid = memory_id;
+                if mid % (self.0.consolidation_interval as i64) == 0 {
+                    let backend = self.0.backend();
+                    let threshold = args
+                        .get("consolidation_threshold")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.85);
+                    match auto_consolidate(
+                        &db_path,
+                        &self.0.spec_dir,
+                        backend.as_ref(),
+                        &mid.to_string(),
+                        3,
+                        threshold,
+                    ) {
+                        Ok(v) => auto_consolidations = v,
+                        Err(e) => auto_consolidations.push(json!({
+                            "error": format!("auto_consolidate: {e:#}"),
+                        })),
+                    }
+                }
+            }
+        }
+
         Ok(json!({
             "memory_id": memory_id,
             "relation_id": relation_id,
             "recent_memories": verify.get("rows").cloned().unwrap_or(Value::Null),
             "recent_relations": relations_q.get("rows").cloned().unwrap_or(Value::Null),
+            "auto_consolidations": auto_consolidations,
             "db_path": db_path.display().to_string(),
         }))
     }
@@ -572,145 +603,19 @@ impl McpTool for ConsolidateTool {
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| self.0.db_path.clone());
-        ensure_parent(&db_path)?;
-        ensure_schema(&db_path)?;
 
-        let redundant = scores.get("redundant").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let contradiction = scores.get("contradiction").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let obsolete = scores.get("obsolete").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let link = scores.get("link").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-        // Determine the link sub_type + probability (priority: contradiction > obsolete > redundant > link).
-        // Mirrors memory_builder.consolidate: 'CONTRADICTS' / 'REDUNDANT_WITH' / 'OBSOLETE' / 'RELATED_TO'.
-        let (link_sub_type, link_type_label, prob) = if contradiction >= threshold {
-            ("CONTRADICTS", "SEMANTIC", contradiction)
-        } else if obsolete >= threshold {
-            ("OBSOLETE", "TEMPORAL", obsolete)
-        } else if redundant >= threshold {
-            ("REDUNDANT_WITH", "SEMANTIC", redundant)
-        } else if link >= threshold {
-            ("RELATED_TO", "SEMANTIC", link)
-        } else {
-            ("", "", 0.0)
-        };
-
-        let mut written_relations: Vec<i64> = Vec::new();
-        let mut stmts: Vec<String> = Vec::new();
-
-        if !link_sub_type.is_empty() {
-            let rel_sql = format!(
-                "INSERT INTO relations (source, target, link_type, link_sub_type, probability, status) VALUES ('{s}', '{t}', '{lt}', '{lst}', {p}, 'ACTIVE')",
-                s = sql_escape(target),
-                t = sql_escape(candidate),
-                lt = sql_escape(link_type_label),
-                lst = sql_escape(link_sub_type),
-                p = prob,
-            );
-            stmts.push(rel_sql);
-            stmts.push("SELECT last_insert_rowid() AS last_insert_rowid".to_string());
-            let res = call_db_for_db(&db_path, json!({ "op": "exec", "statements": stmts.clone() }))?;
-            stmts.clear();
-            if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
-                for row in rows {
-                    if let Some(id) = row.get("last_insert_rowid").and_then(|v| v.as_i64()) {
-                        written_relations.push(id);
-                    }
-                }
-            }
-        }
-
-        // Non-destructive merge/promote: create a summary memory if requested.
-        // Forced keep_separate when contradiction is high (>= threshold).
-        let mut summary_memory_id: Option<i64> = None;
-        let mut summary_blocked_reason: Option<String> = None;
-        let allow_summarize = (representation == "merge" || representation == "promote")
-            && contradiction < threshold
-            && !summary_content.trim().is_empty();
-        if representation == "merge" || representation == "promote" {
-            if contradiction >= threshold {
-                summary_blocked_reason = Some("contradiction>=threshold forces keep_separate (non-destructive)".to_string());
-            } else if summary_content.trim().is_empty() {
-                summary_blocked_reason = Some("summary_content required for merge/promote".to_string());
-            }
-        }
-
-        if allow_summarize {
-            // consolidation_key dedupe (Jev-Mem MemoryBuilder._consolidating + already_done check).
-            let key = fnv1a_hex(&format!("{}|{}", target, candidate));
-            let dup_q = format!(
-                "SELECT id FROM memories WHERE consolidation_key = '{}' LIMIT 1",
-                sql_escape(&key)
-            );
-            let dup = call_db_for_db(
-                &db_path,
-                json!({ "op": "query", "sql": dup_q }),
-            )?;
-            let existing_summary: Option<i64> = dup
-                .get("rows").and_then(|r| r.as_array())
-                .and_then(|a| a.first())
-                .and_then(|row| row.get("id"))
-                .and_then(|v| v.as_i64());
-            if let Some(id) = existing_summary {
-                summary_memory_id = Some(id);
-                summary_blocked_reason = Some(format!("consolidation_key={} already produced summary id={}", key, id));
-            } else {
-                let entities_json = serde_json::to_string(&summary_entities)?;
-                let type_scores_json = serde_json::to_string(&summary_type_scores)?;
-                let summary_esc = sql_escape(summary_content);
-                let ts_esc = sql_escape(&now_iso());
-                let entities_esc = sql_escape(&entities_json);
-                let type_scores_esc = sql_escape(&type_scores_json);
-                let key_esc = sql_escape(&key);
-                let action_esc = sql_escape(representation);
-                let sources_esc = sql_escape(&serde_json::to_string(&[target, candidate]).unwrap_or_else(|_| "[]".to_string()));
-                let summary_sql = format!(
-                    "INSERT INTO memories (content, ts, entities, type_scores, node_type, source_memory_ids, consolidation_key, consolidation_action, consolidated_at) VALUES ('{summary_esc}', '{ts_esc}', '{entities_esc}', '{type_scores_esc}', 'SUMMARY', '{sources_esc}', '{key_esc}', '{action_esc}', '{ts_esc}')"
-                );
-                let res = call_db_for_db(
-                    &db_path,
-                    json!({ "op": "exec", "statements": [summary_sql, "SELECT last_insert_rowid() AS last_insert_rowid".to_string()] }),
-                )?;
-                summary_memory_id = res
-                    .get("rows").and_then(|r| r.as_array())
-                    .and_then(|a| a.first())
-                    .and_then(|row| row.get("last_insert_rowid"))
-                    .and_then(|v| v.as_i64());
-            }
-        }
-
-        // Always emit an audit row, even when no relation written (keep_separate / uncertain path).
-        let audit_details = json!({
-            "target": target,
-            "candidate": candidate,
-            "scores": scores,
-            "representation": representation,
-            "threshold": threshold,
-            "link_sub_type": link_sub_type,
-            "summary_memory_id": summary_memory_id,
-            "summary_blocked_reason": summary_blocked_reason,
-        });
-        let audit_id = audit_log(&db_path, "consolidation", target, &audit_details)?;
-
-        // Read back recent relations + summary memory for verification.
-        let verify_rels = call_db_for_db(
+        apply_consolidation(
             &db_path,
-            json!({ "op": "query", "sql": format!(
-                "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations WHERE source IN ('{t}', '{c}') AND target IN ('{t}', '{c}') ORDER BY id DESC LIMIT 10",
-                t = sql_escape(target), c = sql_escape(candidate)) }),
-        )?;
-
-        Ok(json!({
-            "decision": representation,
-            "link_sub_type": link_sub_type,
-            "link_type": link_type_label,
-            "probability": prob,
-            "relation_ids": written_relations,
-            "summary_memory_id": summary_memory_id,
-            "summary_blocked_reason": summary_blocked_reason,
-            "audit_id": audit_id,
-            "recent_relations": verify_rels.get("rows").cloned().unwrap_or(Value::Null),
-            "db_path": db_path.display().to_string(),
-        }))
+            target,
+            candidate,
+            &scores,
+            threshold,
+            representation,
+            summary_content,
+            &summary_type_scores,
+            &summary_entities,
+            "consolidation",
+        )
     }
 }
 
@@ -757,6 +662,7 @@ impl McpTool for StatsTool {
         let total_relations = count("SELECT COUNT(*) AS c FROM relations");
         let audit_count = count("SELECT COUNT(*) AS c FROM audit_log");
         let consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'consolidation'");
+        let auto_consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'auto_consolidation'");
 
         let recent_q = json!({ "op": "query", "sql": "SELECT id, ts, op, memory_id, substr(details, 1, 200) AS details FROM audit_log ORDER BY id DESC LIMIT 5" });
         let recent = call_db_for_db(&db_path, recent_q)
@@ -770,6 +676,7 @@ impl McpTool for StatsTool {
             "total_relations": total_relations,
             "audit_count": audit_count,
             "consolidation_actions": consolidation_actions,
+            "auto_consolidation_actions": auto_consolidation_actions,
             "recent_audit": recent,
             "db_path": db_path.display().to_string(),
         }))

@@ -12,6 +12,8 @@ pub mod capability;
 pub mod db;
 pub mod laya_mem;
 pub mod laya_mem_util;
+#[cfg(test)]
+mod laya_mem_auto_tests;
 pub mod mcp;
 pub mod optimizer;
 pub mod orchestrate;
