@@ -34,6 +34,13 @@ sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
 laya-workflow install
 ```
 
+**Only `laya-workflow` goes on a runtime machine.** The release tarball above
+contains just that binary — no test harness. A separate `laya-workflow-dev-*`
+tarball ships `laya-workflow-tests` (the dev-only offline regression harness)
+for engineers actively working on the engine itself. **Do not install
+`laya-workflow-tests` on every machine you deploy to**; install it on a dev
+machine only, never into `/usr/local/bin`. See *Developing this repo* below.
+
 ## Where it keeps its files
 
 One root, `~/.laya-workflow` (override with `$LAYA_HOME`):
@@ -59,11 +66,31 @@ starts and then answers every call with `spec not found`.
 cargo build --release --locked -p laya-workflow
 ./target/release/laya-workflow --help
 
+# dev-only: the extra `--bins` also builds `laya-workflow-tests`
+# (development machines only — see *Developing this repo* below)
+# cargo build --release --locked --bins -p laya-workflow
+
 # inference engine too (downloads libtorch on first build; heavy)
 cargo build --release --locked -p laya-tch
 MODEL_DIR="$HOME/models/convaiinnovations--laya" \
   ./target/release/laya-tch --model-dir "$MODEL_DIR" --port 8400
 ```
+
+## Developing this repo
+
+`laya-workflow-tests` is the engine's offline regression harness. It is built
+alongside the CLI with `cargo build --release --locked --bins -p laya-workflow`
+but it is **not** a runtime binary — end users do not need it and should not
+install it. On a dev machine it runs in place, never from `/usr/local/bin`:
+
+```bash
+cargo build --release --locked --bins -p laya-workflow
+./target/release/laya-workflow-tests
+```
+
+`scripts/verify.sh` wraps the fast suite + plugin gate and is the one command to
+run before pushing. See *Verify before you push* below for what it runs and why
+it skips the slow timeout section by default.
 
 ## Verify before you push
 

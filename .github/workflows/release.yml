@@ -41,13 +41,17 @@ jobs:
           mkdir -p dist
           BIN="target/${{ matrix.target }}/release/laya-workflow"
           TESTS="target/${{ matrix.target }}/release/laya-workflow-tests"
-          tar -czf "dist/laya-workflow-${{ matrix.target }}.tar.gz" -C "$(dirname "$BIN")" laya-workflow laya-workflow-tests
+          # Production tarball: the runtime CLI only. The test harness is
+          # dev-only and must not land on every machine that grabs a release.
+          tar -czf "dist/laya-workflow-${{ matrix.target }}.tar.gz" -C "$(dirname "$BIN")" laya-workflow
+          # Dev-only tarball: the offline regression harness, for developers.
+          tar -czf "dist/laya-workflow-dev-${{ matrix.target }}.tar.gz" -C "$(dirname "$TESTS")" laya-workflow-tests
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: laya-workflow-${{ matrix.target }}
-          path: dist/laya-workflow-${{ matrix.target }}.tar.gz
+          path: dist/*.tar.gz
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
