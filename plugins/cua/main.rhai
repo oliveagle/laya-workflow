@@ -1045,7 +1045,7 @@ fn emit(host, tool, args, why, allow_danger) {
     // An object would stringify into the argv slot as JSON too, but doing it
     // once, in the plugin, means the exact bytes that run are visible in the
     // plan the caller reviewed.
-    base["args_json"] = jstr(host, args);
+    base["args_json"] = wire(host, args);
     return base;
 }
 
@@ -1195,9 +1195,22 @@ fn plan_turn(host, w, log_len) {
 }
 
 fn sid_of(w) {
+    // Empty means "do not name a session". The driver only accepts a `session`
+    // label that a `start_session` call actually created -- an unstarted label
+    // is refused outright ("session has ended; ... Call start_session"). So a
+    // made-up label is worse than none: with none the driver falls back to its
+    // own implicit session and every tool works.
     let s = mstr(w, "session");
-    if s != "" { return s; }
-    return "laya";
+    if s == "laya" { return ""; }
+    return s;
+}
+
+// Serialize the argv payload, dropping an empty session label. Every emitted
+// call goes through here, so no path can hand the exec capability a `session`
+// key the driver will reject.
+fn wire(host, args) {
+    if args.contains("session") && args["session"] == "" { args.remove("session"); }
+    return jstr(host, args);
 }
 
 // A bind-requiring intent, with nothing to bind against yet.
@@ -1225,7 +1238,7 @@ fn observe_step(host, p, w, sid, intent, ci) {
     return #{
         status: "call", blocked: false, error: "", intent: intent,
         phase: "observe", verb: p["verb"], tool: tool, args: args,
-        args_json: jstr(host, args), risk: risk_of(tool), why: why,
+        args_json: wire(host, args), risk: risk_of(tool), why: why,
         confidence: p["confidence"], awaiting: p["verb"], target: p["target"],
         call_index: ci
     };
@@ -1252,7 +1265,7 @@ fn bind_and_act(host, p, obs, w, intent, ci) {
     return #{
         status: "call", blocked: false, error: "", intent: intent,
         phase: "act", verb: p["verb"], tool: p["tool"], args: a,
-        args_json: jstr(host, a), risk: p["risk"],
+        args_json: wire(host, a), risk: p["risk"],
         why: p["why"] + " — bound '" + p["target"] + "' to "
             + mstr(b, "element_token") + " (score " + b["score"] + ")",
         confidence: p["confidence"], address: addr,
@@ -1425,7 +1438,7 @@ fn sequence(host, ctx) {
     if p["needs_bind"] || p["verb"] == "quit_app" {
         let os = observe_step(host, p, w, sid, intent, 0);
         steps.push(#{ tool: os["tool"], args: os["args"],
-                      args_json: jstr(host, os["args"]), risk: os["risk"],
+                      args_json: wire(host, os["args"]), risk: os["risk"],
                       phase: "observe", why: os["why"] });
     }
     let e = emit(host, p["tool"], p["args"], p["why"], allow_danger);

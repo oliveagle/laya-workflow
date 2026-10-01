@@ -766,34 +766,65 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     }
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let child = cmd
+    let mut child = cmd
         .spawn()
         .map_err(|e| anyhow!("spawn {:?} failed: {e}", argv[0]))?;
 
+    let cap = c.max_output.min(policy.max_output);
+
+    // Drain stdout/stderr on their own threads *before* waiting.  A pipe holds
+    // only ~64KiB, so a child that writes more than that blocks forever inside
+    // write(): `cua-driver call list_windows` answers with ~190KiB, which is
+    // exactly how this used to hang until the timeout while try_wait() polled
+    // for an exit the child could never reach.  Each reader is bounded by the
+    // same cap the result is truncated to, so a runaway child cannot balloon
+    // memory: past the cap the reader returns and drops the handle, handing the
+    // child EPIPE rather than growing without limit.
+    fn drain(r: Option<std::process::ChildStdout>, cap: usize) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+        r.map(|mut r| {
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = r.by_ref().take(cap as u64 + 1).read_to_end(&mut buf);
+                buf
+            })
+        })
+    }
+    fn drain_err(r: Option<std::process::ChildStderr>, cap: usize) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+        r.map(|mut r| {
+            std::thread::spawn(move || {
+                use std::io::Read;
+                let mut buf = Vec::new();
+                let _ = r.by_ref().take(cap as u64 + 1).read_to_end(&mut buf);
+                buf
+            })
+        })
+    }
+    let stdout_rx = drain(child.stdout.take(), cap);
+    let stderr_rx = drain_err(child.stderr.take(), cap);
+
     // Bounded wait: poll with a deadline, then kill.
     let deadline = std::time::Instant::now() + bounded_timeout(c.timeout_ms, policy);
-    let mut child = child;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(st)) => break st,
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     let _ = child.kill();
+                    let _ = child.wait();
                     bail!("exec {:?} timed out after {}ms", argv[0], c.timeout_ms);
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => bail!("exec wait failed: {e}"),
         }
-    }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| anyhow!("exec collect failed: {e}"))?;
-    let cap = c.max_output.min(policy.max_output);
-    let stdout = truncate(String::from_utf8_lossy(&out.stdout).to_string(), cap);
-    let stderr = truncate(String::from_utf8_lossy(&out.stderr).to_string(), cap);
-    let code = out.status.code().unwrap_or(-1);
-    let exit_ok = out.status.success();
+    };
+    let out_stdout = stdout_rx.and_then(|h| h.join().ok()).unwrap_or_default();
+    let out_stderr = stderr_rx.and_then(|h| h.join().ok()).unwrap_or_default();
+    let stdout = truncate(String::from_utf8_lossy(&out_stdout).to_string(), cap);
+    let stderr = truncate(String::from_utf8_lossy(&out_stderr).to_string(), cap);
+    let code = status.code().unwrap_or(-1);
+    let exit_ok = status.success();
     Ok(json!({
         "exit_code": code,
         "ok": exit_ok,

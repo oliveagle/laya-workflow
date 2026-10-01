@@ -73,6 +73,63 @@ pub fn test_capabilities(h: &mut Harness) {
     );
     h.eq("cap: exec exit code", out["exit_code"].as_i64().unwrap(), 0);
 
+    // A child whose output overflows the ~64KiB pipe buffer must still finish.
+    // Regression: exec used to poll try_wait() and only collect afterwards, so a
+    // child writing more than one pipe-full blocked in write() forever and the
+    // call failed with a timeout.  `cua-driver call list_windows` answers with
+    // ~190KiB, which is how this surfaced in the CUA spec.
+    // 128KiB per stream: past the ~64KiB pipe buffer (so the old code wedged)
+    // but under the 256KiB default max_output (so the cap never truncates it).
+    let flood = "dd if=/dev/zero bs=65536 count=2 2>/dev/null | tr '\\0' 'x'";
+    let reg = capability::registry_from(
+        &[(
+            "flood",
+            json!({
+                "kind": "exec",
+                "argv": ["/bin/sh", "-c",
+                    &format!("{flood} >&2; {flood}")],
+                "timeout_ms": 20000,
+            }),
+        )],
+        Some(pol.clone()),
+    )
+    .unwrap();
+    match reg.call("flood", &json!({}), &json!({})) {
+        Ok(o) => {
+            h.eq("cap: exec big-stdout does not deadlock", o["exit_code"].as_i64().unwrap(), 0);
+            h.check(
+                "cap: exec big-stdout full length",
+                o["stdout"].as_str().unwrap().len() >= 128 * 1024,
+            );
+            h.check(
+                "cap: exec big-stderr full length",
+                o["stderr"].as_str().unwrap().len() >= 128 * 1024,
+            );
+        }
+        Err(e) => h.check(&format!("cap: exec big-stdout does not deadlock ({e})"), false),
+    }
+
+    // ...and a child that outruns its budget is still killed, with its partial
+    // output still collected rather than lost.
+    let reg = capability::registry_from(
+        &[(
+            "slow",
+            json!({"kind": "exec", "argv": ["/bin/sh", "-c", &format!("{flood}; sleep 30")], "timeout_ms": 5000}),
+        )],
+        Some(pol.clone()),
+    )
+    .unwrap();
+    let t0 = std::time::Instant::now();
+    let err = reg.call("slow", &json!({}), &json!({})).unwrap_err();
+    h.check(
+        &format!("cap: exec timeout still fires ({err})"),
+        err.to_string().contains("timed out"),
+    );
+    h.check(
+        "cap: exec timeout is prompt",
+        t0.elapsed().as_millis() < 20_000,
+    );
+
     // policy: host allow-list denies an unlisted host (no network involved)
     let mut pol2 = capability::Policy::default();
     pol2.allow_hosts = vec!["allowed.example".to_string()];
