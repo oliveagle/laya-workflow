@@ -297,7 +297,7 @@ struct PersistTool(Arc<LayaMemTools>);
 impl McpTool for PersistTool {
     fn name(&self) -> &str { "laya_mem_persist" }
     fn description(&self) -> &str {
-        "Append a memory (and optionally a relation) to the SQLite store, then verify the row(s) were written. Returns the verified rows."
+        "Persist an observation into the laya-mem store. Phase 4 indexes its vector for hybrid recall; Phase 5 feeds it into the in-memory episode segmenter — a flushed EPISODE row (when one fires) is reported as `episode_memory_id`."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -413,6 +413,10 @@ impl McpTool for PersistTool {
         // effort — a mock encoder never fails, and an OpenAI endpoint failure
         // must not lose the memory that was just persisted.
         let _ = embed_and_upsert(&db_path, &memory_id.to_string(), &content);
+        // Phase 5: feed the segmenter; if a boundary just flushed an EPISODE,
+        // the episode_memory_id is reported to the caller and indexed like any
+        // other memory. Disabled with LAYA_MEM_EPISODES=0.
+        let episode_memory_id = crate::laya_mem_episode::feed(&db_path, memory_id, content, &ts_esc);
 
         let verify = call_db_for_db(
             &db_path,
@@ -456,6 +460,7 @@ impl McpTool for PersistTool {
         Ok(json!({
             "memory_id": memory_id,
             "relation_id": relation_id,
+            "episode_memory_id": episode_memory_id,
             "recent_memories": verify.get("rows").cloned().unwrap_or(Value::Null),
             "recent_relations": relations_q.get("rows").cloned().unwrap_or(Value::Null),
             "auto_consolidations": auto_consolidations,
@@ -739,6 +744,9 @@ impl McpTool for StatsTool {
         // lazily; if it isn't there yet, count_rows returns 0.
         let vector_count = count("SELECT COUNT(*) AS c FROM memory_vectors");
         let vector_dim = count("SELECT dim FROM memory_vectors ORDER BY rowid DESC LIMIT 1");
+        // Phase 5: episode segmentation; on-disk EPISODE rows plus buffered ones.
+        let episode_count = count("SELECT COUNT(*) AS c FROM memories WHERE node_type = 'EPISODE'");
+        let buffered_turns = crate::laya_mem_episode::buffered_turns(&db_path) as i64;
         let audit_count = count("SELECT COUNT(*) AS c FROM audit_log");
         let consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'consolidation'");
         let auto_consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'auto_consolidation'");
@@ -755,6 +763,8 @@ impl McpTool for StatsTool {
             "total_relations": total_relations,
             "vector_count": vector_count,
             "vector_dim": vector_dim,
+            "episode_count": episode_count,
+            "buffered_turns": buffered_turns,
             "audit_count": audit_count,
             "consolidation_actions": consolidation_actions,
             "auto_consolidation_actions": auto_consolidation_actions,

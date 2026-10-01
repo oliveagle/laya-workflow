@@ -11,6 +11,7 @@ pub mod backend;
 pub mod capability;
 pub mod db;
 pub mod laya_mem;
+pub mod laya_mem_episode;
 pub mod laya_mem_util;
 pub mod laya_mem_vec;
 #[cfg(test)]
