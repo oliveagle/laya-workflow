@@ -34,7 +34,7 @@ pub fn test_persistence(h: &mut Harness) {
     // ── 1) NodeStore primitive ops: write/read/read_all/materialise/delete
     let dir = std::env::temp_dir().join("laya_persist_store_test");
     let _ = std::fs::remove_dir_all(&dir);
-    let mut store = NodeStore::open(dir.to_str().unwrap()).unwrap();
+    let store = NodeStore::open(dir.to_str().unwrap()).unwrap();
     h.check("persist: open creates dir + runs/", store.runs_dir.is_dir());
     h.check(
         "persist: empty store has no last_iteration",

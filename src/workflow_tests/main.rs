@@ -11,6 +11,7 @@
 mod capabilities;
 mod capabilities2;
 mod capabilities3;
+mod codegraph;
 mod engine;
 mod heuristics;
 mod persist;
@@ -88,6 +89,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
             "capabilities-batch2",
             capabilities2::test_capabilities_batch2,
         ),
+        ("codegraph", codegraph::test_codegraph),
         (
             "capabilities-batch3",
             capabilities3::test_capabilities_batch3,
