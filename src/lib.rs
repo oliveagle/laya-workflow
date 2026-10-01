@@ -12,6 +12,8 @@ pub mod backend;
 pub mod capability;
 pub mod db;
 pub mod laya_mem;
+pub mod codegraph;
+pub mod codegraph_util;
 pub mod laya_mem_episode;
 pub mod laya_mem_periodic;
 pub mod laya_mem_migrate;

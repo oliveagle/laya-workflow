@@ -1,0 +1,55 @@
+{
+  "name": "codegraph_stopping",
+  "dsl_version": 2,
+  "description": "Laya codegraph stopping gate. Fork of laya_mem stopping.json with code-specific question wording. Four noul judgments over the current evidence set; first-fail-on-CONTINUE implements AND-of-STOP — rules ordered contradiction > missing_evidence > evidence_sufficient so each CONTINUE_* label wins over the more general INSUFFICIENT one. The caller must set all four hint fields explicitly (evidence_status, missing_evidence, contradiction, continue_useful); the heuristic backend falls back to substring-matching the whole serialised state when a field is missing, which can cross-fire.",
+  "start": "stop_check",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "stop_check",
+      "primary_q": "evidence_sufficient",
+      "questions": {
+        "evidence_sufficient": {
+          "type": "noul",
+          "instructions": "Does the current `evidence` cover every part of `query` (entry point + call chain + supporting files) so a code-locating answer can be returned without guessing?",
+          "truthy": "Every claim has explicit code support.",
+          "falsy": "Any required symbol or file is unsupported; related files alone are insufficient.",
+          "heuristic": { "field": "evidence_status", "match_any": ["sufficient"], "p_hit": 0.95, "p_miss": 0.05 }
+        },
+        "continue_useful": {
+          "type": "noul",
+          "instructions": "Would another codegraph round (another caller hop, another FTS pass, a recent-changes lookup) fill a specific gap or resolve a conflict in the current `evidence`?",
+          "truthy": "An identifiable gap or conflict could benefit from another retrieval.",
+          "falsy": "No identifiable retrieval need remains.",
+          "heuristic": { "field": "evidence_status", "match_any": ["sufficient"], "p_hit": 0.8, "p_miss": 0.1 }
+        },
+        "missing_evidence": {
+          "type": "noul",
+          "instructions": "Is at least one symbol, file or call chain required by `query` absent from `evidence`?",
+          "truthy": "A required detail, file, qualified_name or call link is missing.",
+          "falsy": "All required facts have explicit support.",
+          "heuristic": { "field": "missing_evidence", "match_any": ["missing", "true"], "p_hit": 0.9, "p_miss": 0.05 }
+        },
+        "contradiction": {
+          "type": "noul",
+          "instructions": "Does `evidence` contain conflicting symbols, files or call chains that the supplied context cannot reconcile?",
+          "truthy": "A conflict still affects which answer is correct.",
+          "falsy": "Claims agree or differ only by explained updates.",
+          "heuristic": { "field": "contradiction", "match_any": ["contradiction", "true"], "p_hit": 0.95, "p_miss": 0.05 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "evidence_sufficient",
+        "rules": [
+          { "when": { "question": "contradiction",        "value_gte": 0.4 }, "label": "CONTINUE_CONTRADICTION" },
+          { "when": { "question": "missing_evidence",    "value_gte": 0.4 }, "label": "CONTINUE_MISSING" },
+          { "when": { "question": "evidence_sufficient", "value_lt": 0.85 }, "label": "CONTINUE_EVIDENCE_INSUFFICIENT" },
+          { "when": { "always": true },                                  "label": "STOP_EVIDENCE_OK" }
+        ]
+      }
+    }
+  ]
+}

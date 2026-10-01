@@ -105,6 +105,32 @@ pub fn laya_mem_spec_dir() -> Option<PathBuf> {
     }
 }
 
+/// Where the codegraph tool set reads its DSL specs: `$LAYA_CODEGRAPH_SPECS`
+/// → `<state>/codegraph/specs`.
+///
+/// Same pattern as [`laya_mem_spec_dir`]: a *user* override lands here; the
+/// default an installed binary runs with is the compiled-in copy under
+/// `dsl/codegraph/`.
+pub fn codegraph_spec_dir() -> Option<PathBuf> {
+    match std::env::var_os("LAYA_CODEGRAPH_SPECS").filter(|v| !v.is_empty()) {
+        Some(p) => Some(PathBuf::from(p)),
+        None => state_dir().map(|s| s.join("codegraph").join("specs")),
+    }
+}
+
+/// The codegraph SQLite DB file: `$LAYA_CODEGRAPH_DB` →
+/// `<state>/codegraph/codegraph.sqlite`.
+///
+/// This is a *separate* file from the laya-mem store — codegraph is a
+/// different domain with a different schema — but it shares the same
+/// `$LAYA_HOME` root and the same read-only `sqlite3`-CLI access path.
+pub fn codegraph_db() -> PathBuf {
+    match std::env::var_os("LAYA_CODEGRAPH_DB").filter(|v| !v.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => state_dir_or_cwd().join("codegraph").join("codegraph.sqlite"),
+    }
+}
+
 /// Chrome profile for `chrome_cdp`: `$LAYA_BROWSER_PROFILE` → `<state>/chrome`.
 pub fn browser_profile_dir() -> Option<PathBuf> {
     per_purpose("LAYA_BROWSER_PROFILE").map(|d| d.join("chrome"))

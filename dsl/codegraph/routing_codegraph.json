@@ -1,0 +1,63 @@
+{
+  "name": "codegraph_routing",
+  "dsl_version": 2,
+  "description": "Laya codegraph read-side query routing. Fork of laya_mem routing.json with code-specific question wording: 6 noul judgments allocate per-view retrieval budget over the code graph (semantic FTS / call-chain / entity lookup / recent files / multi-hop / recency). Single node, copy_keys: returns the 6 raw 0..1 scores; caller applies largest-remainder to turn them into a per-view budget. The offline heuristic backend reads 6 state hints (route_semantic, route_temporal, route_causal, route_entity, route_multi_hop_need, route_recency) — the caller MUST set all six explicitly; a missing hint falls back to substring-matching the whole serialised state and can cross-fire on other questions.",
+  "start": "route",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "semantic",
+      "questions": {
+        "semantic": {
+          "type": "noul",
+          "instructions": "Would a full-text search over symbol names / docstrings / signatures help answer `query` about the codebase?",
+          "truthy": "Symbol-name or docstring search is useful.",
+          "falsy": "No name/description search is needed.",
+          "heuristic": { "field": "route_semantic", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "temporal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require recently-changed files or the latest revision of a function?",
+          "truthy": "File mtime / recency matters.",
+          "falsy": "Code history is irrelevant to the answer.",
+          "heuristic": { "field": "route_temporal", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "causal": {
+          "type": "noul",
+          "instructions": "Does answering `query` require following the call chain (who calls X, what X calls, who extends X)?",
+          "truthy": "A call-chain or inheritance walk is needed.",
+          "falsy": "The answer does not depend on the call graph.",
+          "heuristic": { "field": "route_causal", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "entity": {
+          "type": "noul",
+          "instructions": "Does `query` name a specific symbol, file or module (entity lookup by qualified_name)?",
+          "truthy": "A specific symbol/file is being asked about.",
+          "falsy": "The query is thematic rather than a named entity.",
+          "heuristic": { "field": "route_entity", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "multi_hop_need": {
+          "type": "noul",
+          "instructions": "Does answering `query` require combining at least two distinct code-graph pieces (e.g. a caller chain of depth ≥ 2, or a caller + callee merge)?",
+          "truthy": "The question needs a graph walk of depth ≥ 2.",
+          "falsy": "One hop or a direct lookup suffices.",
+          "heuristic": { "field": "route_multi_hop_need", "match_any": ["yes", "high"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "recency_importance": {
+          "type": "noul",
+          "instructions": "Does `query` ask about the latest revision / a recent change rather than timeless code?",
+          "truthy": "Current-state recency is important.",
+          "falsy": "The answer is historically stable.",
+          "heuristic": { "field": "route_recency", "match_any": ["yes", "high"], "p_hit": 0.85, "p_miss": 0.1 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": ["semantic", "temporal", "causal", "entity", "multi_hop_need", "recency_importance"]
+      }
+    }
+  ]
+}

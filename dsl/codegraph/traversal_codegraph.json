@@ -1,0 +1,80 @@
+{
+  "name": "codegraph_traversal",
+  "dsl_version": 2,
+  "description": "Laya codegraph traversal scoring. Fork of laya_mem traversal.json with code-specific wording. 4 noul × 2 candidates (cand_0_relevance, cand_1_relevance); each candidate gets the same 4 axes (relevance, relation_usefulness, new_information, supports_current_evidence); copy_keys emits the 8 raw scores; caller applies the per-axis weights (default 0.4 / 0.2 / 0.2 / 0.2) and ranks by sum. The caller must set every candidate-* axis field explicitly; otherwise the heuristic falls back to whole-state substring matching.",
+  "start": "traverse",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "traverse",
+      "primary_q": "cand_0_relevance",
+      "questions": {
+        "cand_0_relevance": {
+          "type": "noul",
+          "instructions": "Is candidate 0 (one neighbour node or id) a relevant answer to the question, on its own?",
+          "truthy": "The candidate's signature / docstring matches the question.",
+          "falsy": "The candidate is unrelated to the question.",
+          "heuristic": { "field": "cand_0_relevance", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_0_relation_usefulness": {
+          "type": "noul",
+          "instructions": "Is the *edge* connecting candidate 0 to the current evidence (call / extends / implements / instantiates) useful for answering?",
+          "truthy": "The relation edges carry information.",
+          "falsy": "The relation is decorative or unrelated.",
+          "heuristic": { "field": "cand_0_relation_usefulness", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_0_new_information": {
+          "type": "noul",
+          "instructions": "Does candidate 0 add information not already present in `evidence`?",
+          "truthy": "The candidate adds a new fact or file.",
+          "falsy": "The candidate restates something already known.",
+          "heuristic": { "field": "cand_0_new_information", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_0_supports_current_evidence": {
+          "type": "noul",
+          "instructions": "Does candidate 0 corroborate a current candidate or strengthen an existing evidence claim?",
+          "truthy": "The candidate supports an existing claim.",
+          "falsy": "The candidate is independent of the existing evidence.",
+          "heuristic": { "field": "cand_0_supports_current_evidence", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_1_relevance": {
+          "type": "noul",
+          "instructions": "Is candidate 1 a relevant answer to the question, on its own?",
+          "truthy": "The candidate's signature / docstring matches the question.",
+          "falsy": "The candidate is unrelated to the question.",
+          "heuristic": { "field": "cand_1_relevance", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_1_relation_usefulness": {
+          "type": "noul",
+          "instructions": "Is the *edge* connecting candidate 1 useful?",
+          "truthy": "The relation edges carry information.",
+          "falsy": "The relation is decorative or unrelated.",
+          "heuristic": { "field": "cand_1_relation_usefulness", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_1_new_information": {
+          "type": "noul",
+          "instructions": "Does candidate 1 add information not already in `evidence`?",
+          "truthy": "The candidate adds a new fact or file.",
+          "falsy": "The candidate restates something already known.",
+          "heuristic": { "field": "cand_1_new_information", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        },
+        "cand_1_supports_current_evidence": {
+          "type": "noul",
+          "instructions": "Does candidate 1 corroborate or support an existing evidence claim?",
+          "truthy": "The candidate supports an existing claim.",
+          "falsy": "The candidate is independent of the existing evidence.",
+          "heuristic": { "field": "cand_1_supports_current_evidence", "match_any": ["high", "yes"], "p_hit": 0.85, "p_miss": 0.1 }
+        }
+      },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "cand_0_relevance", "cand_0_relation_usefulness", "cand_0_new_information", "cand_0_supports_current_evidence",
+          "cand_1_relevance", "cand_1_relation_usefulness", "cand_1_new_information", "cand_1_supports_current_evidence"
+        ]
+      }
+    }
+  ]
+}

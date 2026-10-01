@@ -110,6 +110,19 @@ fn send_tool_result(id: Value, structured: Value) {
     );
 }
 
+/// Tool-level error result: `isError: true` so MCP clients (and test
+/// scripts) can distinguish a tool failure from a successful empty result.
+fn send_tool_error(id: Value, msg: &str) {
+    send_response(
+        id,
+        json!({
+            "content": [{"type": "text", "text": msg}],
+            "structuredContent": { "error": msg },
+            "isError": true,
+        }),
+    );
+}
+
 fn handle_request(server_info: &ServerInfo, sets: &[Box<dyn McpToolSet>], msg: &Value) {
     let method = msg.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let id = msg.get("id").cloned().unwrap_or(Value::Null);
@@ -164,10 +177,7 @@ fn handle_request(server_info: &ServerInfo, sets: &[Box<dyn McpToolSet>], msg: &
                 None => send_error(id, -32602, &format!("unknown tool: {name}")),
                 Some(t) => match t.call(&args) {
                     Ok(v) => send_tool_result(id, v),
-                    Err(e) => send_tool_result(
-                        id,
-                        json!({ "error": format!("{e:#}") }),
-                    ),
+                    Err(e) => send_tool_error(id, &format!("{e:#}")),
                 },
             }
         }
