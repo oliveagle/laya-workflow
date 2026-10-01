@@ -67,7 +67,8 @@
           "pid": "${state.pid}",
           "window_id": "${state.window_id}",
           "observation": "${state.raw_result}",
-          "error_text": "${state.raw_error}"
+          "error_text": "${state.raw_error}",
+          "exit_code": "${state.driver_exit}"
         },
         "project": {
           "status": "/status",

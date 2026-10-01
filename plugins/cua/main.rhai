@@ -571,6 +571,20 @@ fn rank_elements(elems, target, obs, w) {
         i += 1;
     }
 
+    // An empty candidate set is a real answer, not a crash. A stale window_id
+    // makes get_window_state return `elements: []`, and indexing scored[0] on
+    // that took the whole run down with "Array index 0 out of bounds" instead
+    // of saying the window had nothing to bind against.
+    if scored.len() == 0 {
+        return #{
+            ok: false,
+            error: "the observation carried no elements to match '" + target + "' against",
+            target: target,
+            candidates_scanned: 0,
+            closest: [],
+            hint: "the window may have moved or closed; re-observe before acting"
+        };
+    }
     let best = scored[0];
     if best["score"] < min_score {
         return #{
@@ -1134,6 +1148,29 @@ fn plan_turn(host, w, log_len) {
                  why: p["why"], candidates: verb_catalogue() };
     }
 
+    // Turn 0 opens a Cua Driver session, and every later call carries its label.
+    //
+    // This is not politeness. An element_token is only meaningful inside the
+    // session whose get_window_state issued it: spent from a session-less call
+    // the driver answers `stale_element_token ... pid N has no current
+    // snapshot`, which is what a click looked like until the session existed.
+    // Starting one costs a single fast call and makes the whole 58-tool
+    // surface usable, so every run gets it rather than only the clicks.
+    if call_index == 0 && !flag(w, "session_started", false) {
+        let sargs = #{ session: sid_of(w) };
+        if !sargs.contains("session") || sargs["session"] == "" {
+            sargs["session"] = "laya";
+        }
+        return #{
+            status: "call", blocked: false, error: "", intent: intent,
+            phase: "act", verb: "start_session", tool: "start_session",
+            args: sargs, args_json: wire(host, sargs),
+            risk: risk_of("start_session"),
+            why: "open a Cua Driver session so the element tokens the next observation issues stay spendable by the act that follows",
+            confidence: "high", session: sargs["session"],
+            call_index: call_index, turn: call_index
+        };
+    }
     // quit_app addresses a pid, and the pid is not knowable from "quit
     // Safari" — it has to come from list_apps, the same deferral a click needs.
     let needs_list = p["verb"] == "quit_app" || p["verb"] == "launch";
@@ -1160,28 +1197,122 @@ fn plan_turn(host, w, log_len) {
     // blocked the run before it could bind anything.
     let raw_obs = "";
     if type_of(obs) == "string" { raw_obs = trimmed(obs); }
-    if raw_obs != "" || err_text != "" {
-        let st = classify(raw_obs + " " + err_text, 0);
+    // Classify only on evidence that the call actually failed. Scanning a
+    // *successful* payload for refusal keywords is how a perfectly healthy
+    // get_window_state came back labelled "timeout" -- its own response carries
+    // a "timeout_ms" field -- and the run aborted having learned nothing, with
+    // a remedy telling the caller to raise a timeout that was never hit.
+    //
+    // A refusal is either plain text on stderr with a non-zero exit, or a JSON
+    // object carrying a "refusal" key (kill_app answers that way, on stdout,
+    // with exit 0). A good result is JSON without one.
+    let exit_code = int_of(mget(w, "exit_code"));
+    let failed_text = trimmed(err_text);
+    if exit_code != 0 { failed_text = trimmed(failed_text + " " + raw_obs); }
+    if failed_text != "" {
+        let st = classify(failed_text, exit_code);
         if st != "ok" {
             return #{
                 status: "blocked", blocked: true, intent: intent, verb: p["verb"],
-                error: "the last Cua Driver call did not succeed (" + st + "): " + trimmed(raw_obs + " " + err_text),
+                error: "the last Cua Driver call did not succeed (" + st + ", exit "
+                    + exit_code + "): " + failed_text,
                 remedy: remedy(st), tool: "", args: #{}, args_json: "",
                 risk: "observe", call_index: call_index, turn: call_index,
                 why: "stopping: the driver refused the call, so the next one would too"
             };
         }
     }
+    if raw_obs.contains("\"refusal\"") {
+        return #{
+            status: "blocked", blocked: true, intent: intent, verb: p["verb"],
+            error: "the driver refused the call: " + raw_obs,
+            remedy: "the driver declined this action; nothing was changed",
+            tool: "", args: #{}, args_json: "",
+            risk: "observe", call_index: call_index, turn: call_index,
+            why: "stopping: the driver refused the call, so the next one would too"
+        };
+    }
 
-    if p["needs_bind"] || needs_list {
-        if !have_obs {
+    // launch_app answers with a receipt, and that receipt is the end of the
+    // name-resolution step. Re-planning against it re-entered list_and_act,
+    // which re-resolved the app name against a launch_app response instead of
+    // an app list, missed, and ended the run "no app matched 'Calculator'" --
+    // reporting failure for something that had already worked.
+    if p["verb"] == "launch" && raw_obs.contains("launch_state") {
+        let o = as_json(host, obs);
+        let lpid = int_of(mget(o, "pid"));
+        if lpid <= 0 {
+            return #{
+                status: "blocked", blocked: true, intent: intent, verb: p["verb"],
+                error: "launch_app reported no pid for '" + p["target"] + "'",
+                tool: "", args: #{}, args_json: "", risk: p["risk"],
+                why: "nothing to bring forward; refusing to guess a pid",
+                call_index: call_index, turn: call_index
+            };
+        }
+        // launch_app deliberately leaves the target in the background
+        // (self_activation_suppressed), so "open X" is not finished until the
+        // window is actually in front. Stopping here would leave the next
+        // click aimed at whatever the user was using instead.
+        let a = #{ pid: lpid };
+        return #{
+            status: "call", blocked: false, error: "", intent: intent,
+            phase: "act", verb: p["verb"], tool: "bring_to_front", args: a,
+            args_json: wire(host, a), risk: risk_of("bring_to_front"),
+            why: "launched " + mstr(o, "name") + " as pid " + lpid
+                + ", now putting its window in front",
+            confidence: p["confidence"], pid: lpid, launched: mstr(o, "name"),
+            call_index: call_index, turn: call_index
+        };
+    }
+    // The window is verified frontmost (bring_to_front read it back through an
+    // independent check). That is the whole intent; stop before the budget goes.
+    if p["verb"] == "launch" && raw_obs.contains("frontmost_pid") {
+        let o = as_json(host, obs);
+        return #{
+            status: "done", done: true, blocked: false, intent: intent,
+            verb: p["verb"], tool: "", args: #{}, args_json: "", risk: p["risk"],
+            pid: int_of(mget(o, "pid")), window_id: int_of(mget(o, "window_id")),
+            why: "opened " + p["target"] + " (pid " + int_of(mget(o, "pid"))
+                + ", window " + int_of(mget(o, "window_id")) + ") and it is the front window",
+            call_index: call_index, turn: call_index
+        };
+    }
+    // The act is the last step, not the first step of another round. Once the
+    // driver reports what it pressed, the intent is satisfied: re-observing to
+    // "confirm" only bound and pressed again, which is how one "click 7" became
+    // three clicks and spent the whole call budget. An act receipt carries a
+    // "summary" of what it did; the start_session receipt that opens a run does
+    // not, so this cannot fire on turn 1.
+    if p["needs_bind"] && raw_obs.contains("\"summary\"") {
+        return #{
+            status: "done", done: true, blocked: false, intent: intent,
+            verb: p["verb"], tool: "", args: #{}, args_json: "", risk: p["risk"],
+            why: p["verb"] + " delivered: " + trimmed(as_json(host, obs)["summary"].to_string()),
+            call_index: call_index, turn: call_index
+        };
+    }
+
+    // An observation only counts if it is the *kind* this verb needs. Turn 1 of
+    // a run receives the start_session receipt, which is text but carries no
+    // elements and no apps -- so "is there an observation" said yes and the run
+    // bound against a receipt, or looked for an app in one, and stopped.
+    let seen = #{} ;
+    if have_obs { seen = as_json(host, obs); }
+    if p["needs_bind"] {
+        if !seen.contains("elements") && !seen.contains("tree_markdown") {
             return observe_step(host, p, w, sid_of(w), intent, call_index);
         }
-        let o = as_json(host, obs);
-        if p["needs_bind"] {
-            return bind_and_act(host, p, o, w, intent, call_index);
-        }
-        return list_and_act(host, p, o, w, intent, call_index);
+        return bind_and_act(host, p, seen, w, intent, call_index);
+    }
+    // launch / quit_app address an *app*, not an element. What resolves a
+    // spoken app name to a real target is list_apps, so that is the
+    // observation. observe_step would instead ask for an element handle that
+    // neither verb can use, and the next turn would bind an app name against a
+    // desktop-wide element tree and find nothing.
+    if needs_list {
+        if !seen.contains("apps") { return list_apps_step(host, p, intent, call_index); }
+        return list_and_act(host, p, seen, w, intent, call_index);
     }
 
     let e = emit(host, p["tool"], p["args"], p["why"], allow_danger);
@@ -1195,13 +1326,13 @@ fn plan_turn(host, w, log_len) {
 }
 
 fn sid_of(w) {
-    // Empty means "do not name a session". The driver only accepts a `session`
-    // label that a `start_session` call actually created -- an unstarted label
-    // is refused outright ("session has ended; ... Call start_session"). So a
-    // made-up label is worse than none: with none the driver falls back to its
-    // own implicit session and every tool works.
+    // The session label every call in a run repeats. It has to be a label
+    // start_session actually opened: the driver refuses a session it does not
+    // know ("session has ended; call start_session"), and it scopes the
+    // element_token lifetime, so a click can only spend a token issued under the
+    // same label.
     let s = mstr(w, "session");
-    if s == "laya" { return ""; }
+    if s == "" { return "laya"; }
     return s;
 }
 
@@ -1279,6 +1410,20 @@ fn bind_and_act(host, p, obs, w, intent, ci) {
 // pid of 0 — kill_app with pid 0 is a failed call, and launch_app with an
 // empty name is a failed call, so neither is destructive by accident, but
 // neither is useful either.
+// The observation a launch or a quit needs: which apps exist, and which pid /
+// bundle_id each one answers to. Not an element tree -- an app name is not an
+// element, and searching an AX tree for one only ever produces a miss.
+fn list_apps_step(host, p, intent, ci) {
+    let args = #{};
+    return #{
+        status: "call", blocked: false, error: "", intent: intent,
+        phase: "observe", verb: p["verb"], tool: "list_apps", args: args,
+        args_json: wire(host, args), risk: risk_of("list_apps"),
+        why: "need a real pid/bundle_id for '" + p["target"] + "' before " + p["verb"],
+        confidence: p["confidence"], awaiting: p["verb"], target: p["target"],
+        call_index: ci
+    };
+}
 fn list_and_act(host, p, obs, w, intent, ci) {
     let want = norm(p["target"]);
     let apps = apps_of(obs);
@@ -1291,6 +1436,14 @@ fn list_and_act(host, p, obs, w, intent, ci) {
         let s = 0;
         if label == want { s = 100; }
         else if label.contains(want) || want.contains(label) { s = 50; }
+        // The bundle_id is the only stable identity. macOS reports one app as
+        // "Calculator" while it is stopped and "计算器" once it is running, so
+        // a name-only match resolves on one turn and misses on the next -- which
+        // is how a launch that worked ended as "no app matched 'Calculator'".
+        if s < 90 {
+            let bid = norm(mstr(a, "bundle_id"));
+            if bid != "" && (bid == want || bid.ends_with("." + want)) { s = 90; }
+        }
         if s > 0 {
             let row = #{ label: label, score: s, pid: int_of(mget(a, "pid")) };
             if mget(a, "bundle_id") != () { row["bundle_id"] = ostr(mget(a, "bundle_id")); }
@@ -1309,6 +1462,16 @@ fn list_and_act(host, p, obs, w, intent, ci) {
     }
     let best = hits[0];
     let a = p["args"];
+    if p["verb"] == "launch" {
+        // list_apps already resolved the spoken name; hand launch_app the
+        // bundle_id it answered with rather than the name we guessed from.
+        // "Calculator" and "计算器" are the same app, and only the id is
+        // unambiguous.
+        if mget(best, "bundle_id") != () && ostr(mget(best, "bundle_id")) != "" {
+            a["bundle_id"] = best["bundle_id"];
+            a.remove("name");
+        }
+    }
     if p["verb"] == "quit_app" {
         a["pid"] = best["pid"];
         if best["pid"] <= 0 {

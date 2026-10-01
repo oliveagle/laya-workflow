@@ -3522,13 +3522,90 @@ mod tests {
     // json_stringify are host methods), so they go through call_with_host
     // rather than call_of.
     fn cua(with: Value) -> Result<Value> {
-        call_with_host("cua", "plan", cua_ctx(with))
+        // These tests exercise a *verb*, and the verb is not the first thing a
+        // run does -- turn 0 opens a Cua Driver session. Default the bootstrap
+        // to done so a test reads as the single step it means to assert; the
+        // bootstrap itself is pinned by cua_opens_a_session_before_anything_else.
+        let mut ctx = cua_ctx(with);
+        if ctx["with"].get("session_started").is_none() {
+            ctx["with"]["session_started"] = json!(true);
+        }
+        call_with_host("cua", "plan", ctx)
     }
 
     fn cua_op(op: &str, with: Value) -> Result<Value> {
         let mut ctx = cua_ctx(with);
         ctx["op"] = json!(op);
         call_with_host("cua", op, ctx)
+    }
+
+    /// An element_token is only spendable inside the session whose
+    /// get_window_state issued it -- spent from a session-less call the driver
+    /// answers `stale_element_token ... has no current snapshot`. So the very
+    /// first thing a run does is open a session, and every later call repeats
+    /// its label.
+    #[test]
+    fn cua_opens_a_session_before_anything_else() {
+        let first = call_with_host("cua", "plan", cua_ctx(json!({ "intent": "click 7" }))).unwrap();
+        assert_eq!(first["tool"], json!("start_session"));
+        assert_eq!(first["args_json"], json!(r#"{"session":"laya"}"#));
+        assert_eq!(first["risk"], json!("act"));
+
+        // The label is not a one-off: the observation and the click that spends
+        // its token have to repeat it, or the token is stale on arrival.
+        let obs = cua(json!({ "intent": "click 7", "pid": 7, "window_id": 9 })).unwrap();
+        assert_eq!(obs["tool"], json!("get_window_state"));
+        assert!(
+            obs["args_json"].as_str().unwrap().contains(r#""session":"laya""#),
+            "the observation must run inside the session: {}",
+            obs["args_json"]
+        );
+
+        let act = cua(json!({
+            "intent": "click 7", "pid": 7, "window_id": 9,
+            "observation": { "elements": [{ "role": "AXButton", "label": "7",
+                                            "element_token": "s1:5",
+                                            "frame": { "x": 1, "y": 2, "w": 3, "h": 4 } }] }
+        }))
+        .unwrap();
+        assert_eq!(act["tool"], json!("click"));
+        assert_eq!(act["args_json"], json!(r#"{"element_token":"s1:5","pid":7,"session":"laya"}"#));
+    }
+
+    /// A successful call is not a refusal. get_window_state's own response
+    /// carries a "timeout_ms" field, and classifying the whole payload for
+    /// error keywords called a healthy 171-element snapshot a "timeout" -- the
+    /// run then stopped, having learned nothing, with a remedy to raise a
+    /// timeout that was never hit.
+    #[test]
+    fn cua_does_not_mistake_a_good_payload_for_a_refusal() {
+        let good = json!({
+            "intent": "click 7", "pid": 7, "window_id": 9, "exit_code": 0,
+            "observation": { "timeout_ms": 10000, "element_count": 171,
+                "elements": [{ "role": "AXButton", "label": "7",
+                                "element_token": "s1:5",
+                                "frame": { "x": 1, "y": 2, "w": 3, "h": 4 } }] }
+        });
+        let r = cua(good).unwrap();
+        assert_ne!(r["status"], json!("blocked"), "a good payload was called a refusal: {r}");
+    }
+
+    /// An empty candidate set is an answer, not a crash. A stale window_id makes
+    /// get_window_state return `elements: []`, and indexing scored[0] on that
+    /// took the whole run down.
+    #[test]
+    fn cua_reports_an_empty_observation_instead_of_crashing() {
+        let r = cua(json!({
+            "intent": "click 7", "pid": 7, "window_id": 9,
+            "observation": { "element_count": 0, "elements": [] }
+        }))
+        .unwrap();
+        assert_eq!(r["status"], json!("blocked"));
+        assert!(
+            r["error"].as_str().unwrap_or("").contains("no elements"),
+            "expected a no-elements reason, got {r}"
+        );
+        assert!(r["args_json"].as_str().unwrap_or("").is_empty(), "nothing may be clicked");
     }
 
     /// The risk table is the gate, so it is checked against the driver's own
