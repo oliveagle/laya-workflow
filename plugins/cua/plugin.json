@@ -1,0 +1,10 @@
+{
+  "name": "cua",
+  "group": "plugins",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "description": "Cua Driver (trycua/cua) decision layer for the native desktop. Cua Driver exposes 58 tools over `cua-driver call <tool> --args <json>`, and laya-workflow's Rhai host has no exec - so this plugin owns the *decision* and an `exec` capability owns the *execution*, the same split plugins/jev-planner uses with CDP. ops: `tools` (the 58-tool risk taxonomy), `plan` (a natural-language intent -> the next single Cua call, addressed against run state rather than guessed coordinates), `bind` (a target description -> the exact pid + window_id + element_token that Cua's own get_window_state returned, with scored alternatives), `inspect` (a raw Cua result -> compact JSON with base64 image payloads stripped and driver errors classified), `sequence` (an intent -> the whole ordered call plan, one call per loop turn). The risk table is the point: `observe` tools are read-only, `act` tools move the UI reversibly, and `danger` tools (kill_app, clipboard_read/write, start_recording, set_config, install_extension, replay_trajectory, end_session) are refused unless the caller passes allow_danger - a desktop driver that can force-quit an app and read the clipboard should not be one typo away from doing both."
+}

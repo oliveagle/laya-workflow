@@ -255,6 +255,16 @@ fn builtin(name: &str) -> Option<Sources> {
             include_str!("../../plugins/browser_base/main.rhai"),
             Vec::new(),
         ),
+        // Cua Driver's decision layer. Bundled for the same reason browser_base
+        // is: `cua` names an external binary, but the *policy* about which of
+        // its 58 tools may run (and which need an explicit allow_danger) is the
+        // part worth shipping, because an installed binary run from anywhere but
+        // a checkout is exactly where that policy should still apply.
+        "cua" => (
+            include_str!("../../plugins/cua/plugin.json"),
+            include_str!("../../plugins/cua/main.rhai"),
+            Vec::new(),
+        ),
         // The BDD step vocabulary, bundled for the same reason browser_base is:
         // on-disk discovery finds plugins/<name> only by walking up from the
         // cwd, so without this an installed binary - run from anywhere but a
@@ -405,6 +415,7 @@ pub fn builtin_names() -> &'static [&'static str] {
         "goofish",
         "textdigest",
         "browser_base",
+        "cua",
         // `bdd` and `goofish` were compiled in by `builtin()` but missing here, so
         // every caller that iterates this list skipped them: `plugin dir` under-
         // reported, and `install` never materialized them. For `bdd` that
@@ -1985,7 +1996,7 @@ mod tests {
             );
         }
         const EXPECTED: &[&str] = &[
-            "alphaxiv", "goofish", "textdigest", "browser_base", "bdd", "hf-trending",
+            "alphaxiv", "goofish", "textdigest", "browser_base", "cua", "bdd", "hf-trending",
             "hackernews", "arxiv", "wikipedia", "mdn", "bing", "v2ex", "crates", "pypi",
             "docsrs", "github",
         ];
@@ -3500,4 +3511,292 @@ mod tests {
         assert_eq!(tail[2]["price"], json!(20008.0));
         assert_eq!(tail[0]["price"], json!(20006.0));
     }
+
+    // ── cua: the Cua Driver decision layer ───────────────────────────────────
+
+    fn cua_ctx(with: Value) -> Value {
+        json!({ "plugin": "cua", "op": "plan", "with": with, "state": json!({}) })
+    }
+
+    // Every cua op that touches JSON takes the Host first (json_parse /
+    // json_stringify are host methods), so they go through call_with_host
+    // rather than call_of.
+    fn cua(with: Value) -> Result<Value> {
+        call_with_host("cua", "plan", cua_ctx(with))
+    }
+
+    fn cua_op(op: &str, with: Value) -> Result<Value> {
+        let mut ctx = cua_ctx(with);
+        ctx["op"] = json!(op);
+        call_with_host("cua", op, ctx)
+    }
+
+    /// The risk table is the gate, so it is checked against the driver's own
+    /// tool list rather than trusted: a tool that exists but is unclassified
+    /// fails closed, and that is only true if the table has no gaps.
+    #[test]
+    fn cua_risk_table_covers_every_tool_and_gates_the_dangerous_ones() {
+        let t = cua_op("tools", json!({})).unwrap();
+        assert_eq!(t["total"], json!(58), "cua-driver 0.31.0 exposes 58 tools");
+        let counts = &t["counts"];
+        let total = counts["observe"].as_i64().unwrap()
+            + counts["act"].as_i64().unwrap()
+            + counts["danger"].as_i64().unwrap();
+        assert_eq!(total, 58);
+        assert_eq!(counts["unknown"], json!(0), "no tool may be left unclassified");
+
+        for danger in ["kill_app", "clipboard_read", "clipboard_write", "start_recording"] {
+            let row = call_of("cua", "risk_of", vec![json!(danger)]).unwrap();
+            assert_eq!(row, json!("danger"), "{danger} must be gated");
+        }
+        // A tool the driver adds later is "unknown", never "safe".
+        assert_eq!(
+            call_of("cua", "risk_of", vec![json!("some_future_tool")]).unwrap(),
+            json!("unknown")
+        );
+    }
+
+    /// The failure this plugin exists to prevent is a *successful* destructive
+    /// call from a stray keyword, so the refusal is asserted at the plan level
+    /// and carries a reason.
+    ///
+    /// "kill Safari" plans in two steps: the pid is not knowable from the app's
+    /// name, so step one is a read-only list_apps and only step two is the
+    /// kill. Asserting the gate on step one would be asserting that looking up a
+    /// pid is dangerous.
+    #[test]
+    fn cua_refuses_danger_tools_unless_allow_danger_is_set() {
+        let apps = json!({ "apps": [{ "name": "Safari", "pid": 4242, "running": true }] });
+
+        // Step one: resolving the name to a pid. Read-only, so never gated.
+        let lookup = cua(json!({ "intent": "kill Safari" })).unwrap();
+        assert_eq!(lookup["status"], json!("call"));
+        assert_eq!(lookup["phase"], json!("observe"));
+        assert_eq!(lookup["risk"], json!("observe"));
+
+        // Step two: the kill, with the pid in hand.
+        let denied = cua(json!({ "intent": "kill Safari", "observation": apps })).unwrap();
+        assert_eq!(denied["status"], json!("blocked"));
+        assert!(denied["args_json"].as_str().unwrap_or("").is_empty(),
+            "a blocked plan must not carry an argv for the exec capability");
+        let err = denied["error"].as_str().unwrap();
+        assert!(err.contains("kill_app"), "{err}");
+        assert!(err.contains("allow_danger"), "{err}");
+
+        // And the gate is a gate, not a delete: the same intent proceeds when
+        // the caller opts in, and then it carries the resolved pid.
+        let ok = cua(json!({
+            "intent": "kill Safari", "allow_danger": true, "observation": apps
+        }))
+        .unwrap();
+        assert_eq!(ok["status"], json!("call"));
+        assert_eq!(ok["tool"], json!("kill_app"));
+        let args: Value = serde_json::from_str(ok["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(args["pid"], json!(4242), "the pid came from list_apps");
+
+        // A danger tool that needs no lookup is gated on the very first step.
+        let direct = cua(json!({ "intent": "read the clipboard" })).unwrap();
+        assert_eq!(direct["status"], json!("blocked"));
+        assert_eq!(direct["tool"], json!("clipboard_read"));
+        assert!(direct["args_json"].as_str().unwrap_or("").is_empty());
+    }
+
+    /// A click cannot be planned from the intent alone: the coordinates are not
+    /// in "click OK" and must not be invented. Plan must emit the observation
+    /// and only act once a real snapshot is fed back.
+    #[test]
+    fn cua_defers_a_click_until_an_element_is_bound() {
+        let first = cua(json!({ "intent": "click the OK button" })).unwrap();
+        assert_eq!(first["status"], json!("call"));
+        assert_eq!(first["phase"], json!("observe"));
+        assert_eq!(first["risk"], json!("observe"), "observing must be read-only");
+        let obs_tool = first["tool"].as_str().unwrap().to_string();
+
+        // No snapshot yet: still observing, and still nothing clickable.
+        let again = cua(json!({ "intent": "click the OK button" })).unwrap();
+        assert_eq!(again["tool"].as_str().unwrap(), obs_tool);
+
+        // A snapshot arrives but has no matching element: the turn ends blocked
+        // with the near-misses, and no click is emitted.
+        let miss = cua(json!({
+            "intent": "click the OK button",
+            "observation": json!({ "elements": [
+                { "element_token": "t1", "label": "Cancel" },
+                { "element_token": "t2", "label": "Apply" }
+            ]})
+        }))
+        .unwrap();
+        assert_eq!(miss["status"], json!("blocked"));
+        assert!(miss["args_json"].as_str().unwrap_or("").is_empty(),
+            "an unbound click must never reach exec");
+        assert_eq!(miss["candidates"].as_array().unwrap().len(), 2);
+
+        // A snapshot that does contain it: the plan now carries Cua's own token.
+        let hit = cua(json!({
+            "intent": "click the OK button",
+            "observation": json!({ "pid": 4242, "window_id": 77, "elements": [
+                { "element_token": "t1", "label": "Cancel" },
+                { "element_token": "t9", "label": "OK" }
+            ]})
+        }))
+        .unwrap();
+        assert_eq!(hit["status"], json!("call"));
+        assert_eq!(hit["phase"], json!("act"));
+        assert_eq!(hit["tool"], json!("click"));
+        let args: Value = serde_json::from_str(hit["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(args["element_token"], json!("t9"));
+        assert_eq!(args["pid"], json!(4242), "inherited from the observation");
+        assert!(args.get("x").is_none() && args.get("y").is_none(),
+            "a bound click must not also carry coordinates");
+    }
+
+    /// With a known window, the observation is narrowed to that window and the
+    /// screenshot is skipped — it is the largest part of the response and is
+    /// not needed to resolve a handle.
+    #[test]
+    fn cua_narrows_the_observation_when_a_window_is_known() {
+        let p = cua(json!({
+            "intent": "click OK", "pid": 99, "window_id": 5
+        }))
+        .unwrap();
+        assert_eq!(p["tool"], json!("get_window_state"));
+        let args: Value = serde_json::from_str(p["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(args["pid"], json!(99));
+        assert_eq!(args["window_id"], json!(5));
+        assert_eq!(args["include_screenshot"], json!(false));
+        assert_eq!(args["query"], json!("OK"), "the target filters the tree");
+    }
+
+    /// A dead token points at whatever now occupies that slot, so the loop is
+    /// bounded: `plan` reports done rather than re-binding forever.
+    #[test]
+    fn cua_stops_at_the_call_budget() {
+        let p = cua(json!({ "intent": "click OK", "call_index": 8, "max_calls": 8 })).unwrap();
+        assert_eq!(p["status"], json!("done"));
+        assert_eq!(p["done"], json!(true));
+        assert!(p["args_json"].as_str().unwrap_or("").is_empty());
+    }
+
+    /// "press" is a click in English and a keystroke just as often. The
+    /// remainder is the only thing that distinguishes them, and getting it
+    /// backwards sends Return to a dialog that was asked to be clicked.
+    #[test]
+    fn cua_separates_press_the_key_from_press_the_button() {
+        let key = cua(json!({ "intent": "press return" })).unwrap();
+        assert_eq!(key["tool"], json!("press_key"));
+        assert_eq!(key["args"]["key"], json!("return"));
+        assert_eq!(key["phase"], json!("act"), "a keystroke needs no binding");
+
+        // A click plans as observe-then-act, so the verb and target are what
+        // carry the decision — the tool on the first turn is the observation.
+        let btn = cua(json!({ "intent": "press the OK button" })).unwrap();
+        assert_eq!(btn["verb"], json!("click"));
+        assert_eq!(btn["phase"], json!("observe"));
+        assert_eq!(btn["target"], json!("OK"));
+
+        // "double click" contains "click": matching the bare form first would
+        // plan two single clicks, which on a list is a different action.
+        let dbl = cua(json!({ "intent": "double click Documents" })).unwrap();
+        assert_eq!(dbl["verb"], json!("double_click"));
+        assert_eq!(dbl["target"], json!("Documents"));
+    }
+
+    /// The target the binder is given is the whole label, not a phrase with the
+    /// words around it eaten once too often.
+    ///
+    /// This is a regression test for a stripper that compared against a
+    /// lowercased copy taken *before* the inner loop mutated the string, so a
+    /// duplicated filler matched twice: "the OK button" lost four characters
+    /// twice and reached the binder as "utton" — which matches no element, and
+    /// so reported a visible button as absent.
+    #[test]
+    fn cua_reduces_a_spoken_target_to_its_label() {
+        assert_eq!(
+            call_of("cua", "strip_fillers", vec![json!("the OK button")]).unwrap(),
+            json!("OK button")
+        );
+        assert_eq!(
+            call_of("cua", "strip_trailing_nouns", vec![json!("OK button")]).unwrap(),
+            json!("OK")
+        );
+        assert_eq!(
+            call_of("cua", "strip_trailing_nouns", vec![json!("Save button in the toolbar")]).unwrap(),
+            json!("Save"),
+            "both the role noun and the trailing phrase go"
+        );
+        // "double click Documents" must not lose the noun it is aiming at.
+        let dbl = cua(json!({ "intent": "double click Documents" })).unwrap();
+        assert_eq!(dbl["target"], json!("Documents"));
+
+        // And the end-to-end effect: the binder sees the label, so it binds.
+        let hit = cua(json!({
+            "intent": "click the OK button",
+            "observation": json!({ "elements": [
+                { "element_token": "t1", "label": "Cancel" },
+                { "element_token": "t9", "label": "OK" }
+            ]})
+        }))
+        .unwrap();
+        assert_eq!(hit["status"], json!("call"));
+        let args: Value = serde_json::from_str(hit["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(args["element_token"], json!("t9"));
+    }
+
+    /// An unparseable intent is reported with the grammar, because a caller
+    /// left guessing will loosen the gate instead of rephrasing.
+    #[test]
+    fn cua_reports_an_unparsed_intent_instead_of_guessing() {
+        let p = cua(json!({ "intent": "do the needful" })).unwrap();
+        assert_eq!(p["status"], json!("needs_clarification"));
+        assert!(p["args_json"].as_str().unwrap_or("").is_empty());
+        assert!(p["candidates"].as_array().unwrap().len() > 5);
+    }
+
+    /// A macOS permission refusal is plain text, not JSON, and it is the very
+    /// first thing a new user hits. Classifying it is what stops the caller
+    /// reading it as a malformed response and retrying forever.
+    #[test]
+    fn cua_classifies_the_macos_permission_gate() {
+        let raw = "permissions_pending: macOS Accessibility or Screen Recording \
+                   permission is still pending; no action started, retry after \
+                   the permission gate completes";
+        let i = cua_op("inspect", json!({ "tool": "get_screen_size", "result": raw })).unwrap();
+        assert_eq!(i["status"], json!("permission_gate"));
+        assert_eq!(i["ok"], json!(false));
+        assert!(i["remedy"].as_str().unwrap().contains("permissions grant"), "{i:?}");
+
+        // Empty stdout must classify, not raise — sub_string(0,1) on "" does.
+        let e = cua_op("inspect", json!({ "tool": "get_screen_size", "result": "" })).unwrap();
+        assert_eq!(e["status"], json!("empty"));
+    }
+
+    /// A desktop screenshot is hundreds of KB of base64. It must not land in
+    /// run state, but the fact that there was one has to survive.
+    #[test]
+    fn cua_strips_image_payloads_but_keeps_the_fact_of_one() {
+        let blob = format!("data:image/png;base64,{}", "A".repeat(2000));
+        let doc = json!({ "bounds": "0,0,1920,1080", "screenshot": blob });
+        let i = cua_op("inspect", json!({ "tool": "get_desktop_state", "result": doc })).unwrap();
+        assert_eq!(i["status"], json!("ok"));
+        let img = &i["data"]["screenshot"];
+        assert_eq!(img["image"], json!(true));
+        assert_eq!(img["bytes"], json!(blob.len() as i64));
+        assert_eq!(i["summary"]["bounds"], json!("0,0,1920,1080"));
+    }
+
+    /// `sequence` must not invent a token. A fabricated element_token resolves
+    /// to nothing and the driver clicks whatever it lands on.
+    #[test]
+    fn cua_sequence_leaves_the_element_token_to_be_bound() {
+        let s = cua_op("sequence", json!({ "intent": "click the Save button" })).unwrap();
+        assert_eq!(s["ok"], json!(true));
+        let steps = s["steps"].as_array().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["phase"], json!("observe"));
+        assert_eq!(steps[1]["phase"], json!("act"));
+        assert!(steps[1]["args"].get("element_token").is_none(),
+            "no token exists before the observation is taken");
+        assert!(s["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("op=bind")));
+    }
+
 }

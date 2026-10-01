@@ -1,0 +1,156 @@
+{
+  "name": "cua_desktop",
+  "dsl_version": 2,
+  "description": "Drive the native macOS desktop through Cua Driver (https://github.com/trycua/cua) with a natural-language intent. 意图 -> plugins/cua 决定下一步该调 Cua Driver 的哪个工具 (kind: \"plugin\")，一个 exec 能力用 `cua-driver call <tool> --args <json>` 真正执行它。--intent 传一句人话，例如 '截屏' / 'list the windows' / 'open Safari' / 'click the OK button' / 'type hello' / 'press return' / 'scroll down' / 'read the clipboard'。循环每轮做三件事：(1) decide 节点让插件把意图翻成【下一个】Cua 调用——需要点某个元素时先发一个只读观察 (observe 风险)，下一轮拿到快照再绑定 element_token 落点；(2) exec 节点执行这一条；(3) 回到 decide，带着上一步的结果。绑定失败(快照里没有匹配元素)或意图解析不出来时，插件返回 status=blocked / needs_clarification 并且**不带 args_json**，exec 拿不到 argv，所以绝不会退化成在猜测的坐标上点一下。危险工具(kill_app / clipboard_read / clipboard_write / start_recording / set_config / install_extension / replay_trajectory ...)默认被拒并给出理由，要显式传 allow_danger=true 才放行。整轮调用数由 max_calls 封顶(默认 8)，超了就 done，防止拿着过期 element_token 无限点。macOS 首次使用必须先 `cua-driver permissions grant` 授权 辅助功能 + 屏幕录制，否则每个工具都会返回 permissions_pending——插件的 inspect 会把它分类成 permission_gate 并给出这条命令。注意本 spec 只能观察桌面；它不接管鼠标，你在做别的事时它会点到别的东西上。 循环的终止有两个来源：插件在 status=blocked/needs_clarification/done 时让 decide 的 heuristic 选 B 直接 STOP；以及 max_calls 用完。驱动层报错(permissions_pending 等)也会立刻 blocked 并给出修复命令，而不是把剩下的预算耗在同一个墙上。 路由由独立的 route 节点做：question 的 heuristic 读到的是本节点 action 之前的 state，所以拿 decide 自己刚产出的 status 去卡 decide 永远慢一拍——必须由下一个节点读。step_verdict 用 GO/HALT 这种不会在别处出现的词，避免在序列化 state 里误命中。",
+  "start": "decide",
+  "max_iterations": 24,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 16777216,
+    "retries": 0
+  },
+  "capabilities": {
+    "cua": {
+      "kind": "plugin",
+      "plugin": "plugins/cua",
+      "timeout_ms": 60000,
+      "max_operations": 4000000
+    },
+    "driver": {
+      "kind": "exec",
+      "argv": [
+        "cua-driver",
+        "call",
+        "${state.step_tool}",
+        "--args",
+        "${state.step_args}"
+      ],
+      "timeout_ms": 60000,
+      "max_output": 16777216
+    }
+  },
+  "nodes": [
+    {
+      "name": "decide",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "Run the Cua Driver call the plugin planned? Answer B to stop here. Routing itself is decided by the `route` node from `step_verdict`.",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "route"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "cua",
+        "with": {
+          "op": "plan",
+          "intent": "${state.intent}",
+          "session": "${state.session}",
+          "call_index": "${state.turn}",
+          "max_calls": "${state.max_calls}",
+          "allow_danger": "${state.allow_danger}",
+          "pid": "${state.pid}",
+          "window_id": "${state.window_id}",
+          "observation": "${state.raw_result}",
+          "error_text": "${state.raw_error}"
+        },
+        "project": {
+          "status": "/status",
+          "step_tool": "/tool",
+          "step_args": "/args_json",
+          "step_risk": "/risk",
+          "step_phase": "/phase",
+          "step_why": "/why",
+          "step_error": "/error",
+          "step_verb": "/verb",
+          "step_blocked": "/blocked",
+          "step_candidates": "/candidates",
+          "step_alternatives": "/alternatives",
+          "step_matched": "/matched_text",
+          "turn": "/turn",
+          "done": "/done",
+          "cua_log": "/cua_log",
+          "driver_status": "/driver_status",
+          "step_verdict": "/verdict"
+        }
+      }
+    },
+    {
+      "name": "route",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "instructions": "The planner returned step_verdict=GO. Run it, or stop?",
+          "criteria": {
+            "A": "run the planned Cua call",
+            "B": "stop"
+          },
+          "heuristic": {
+            "field": "step_verdict",
+            "match_any": [
+              "HALT"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "exec",
+          "B": "STOP"
+        },
+        "default": "STOP"
+      }
+    },
+    {
+      "name": "exec",
+      "primary_q": "seen",
+      "questions": {
+        "seen": {
+          "type": "choice",
+          "instructions": "Continue the loop with the result of this Cua Driver call?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "decide"
+        },
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "driver",
+        "with": {
+          "op": "call"
+        },
+        "project": {
+          "raw_result": "/stdout",
+          "driver_exit": "/exit_code",
+          "argv_used": "/argv",
+          "raw_error": "/stderr"
+        }
+      }
+    }
+  ]
+}
