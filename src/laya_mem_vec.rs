@@ -106,7 +106,7 @@ pub fn encode_openai(url: &str, api_key: &str, model: &str, texts: &[&str]) -> R
 /// Create the `memory_vectors` table if missing. Kept separate from
 /// [`crate::laya_mem_util::ensure_schema`] because vectors are optional
 /// scaffolding: an old DB without them should not fail to open.
-fn ensure_vector_schema(db_path: &Path) -> Result<()> {
+pub fn ensure_vector_schema(db_path: &Path) -> Result<()> {
     call_db_for_db(
         db_path,
         json!({

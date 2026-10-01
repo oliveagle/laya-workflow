@@ -407,6 +407,11 @@ enum LayaMemCmd {
     /// Overwrite the specs in the spec dir with the embedded copies, discarding
     /// local edits.
     Restore,
+    /// Phase 7: migrate the SQLite store to the current schema version.
+    /// Backfills the vector index for every memory that does not yet have one
+    /// (i.e. rows written before the Phase-4 upgrade), bumps the
+    /// `PRAGMA user_version` stamp, and writes a `migrate_backfill` audit row.
+    Migrate,
 }
 
 /// Live engine when `--base-url` is given, otherwise the offline heuristic.
@@ -1219,6 +1224,23 @@ fn run_laya_mem(cmd: &LayaMemCmd) -> Result<()> {
         LayaMemCmd::Restore => {
             let n = laya_mem::restore_specs(&tools.spec_dir)?;
             println!("restored {n} spec(s) into {}", tools.spec_dir.display());
+            Ok(())
+        }
+        LayaMemCmd::Migrate => {
+            let before = laya_workflow::laya_mem_migrate::schema_version(&tools.db_path);
+            println!("migrating: {}", tools.db_path.display());
+            println!("  from schema_version={before} → {}",
+                laya_workflow::laya_mem_migrate::CURRENT_SCHEMA_VERSION);
+            let (total, backfilled, skipped) =
+                laya_workflow::laya_mem_migrate::backfill_vectors(&tools.db_path)?;
+            let after = laya_workflow::laya_mem_migrate::schema_version(&tools.db_path);
+            println!("  total_memories={total}");
+            println!("  vectors_backfilled={backfilled}");
+            if skipped > 0 {
+                println!("  already_indexed={skipped}");
+            }
+            println!("  schema_version now {after}");
+            println!("done");
             Ok(())
         }
     }
