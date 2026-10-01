@@ -39,7 +39,7 @@
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde_json::{json, Value};
 
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
