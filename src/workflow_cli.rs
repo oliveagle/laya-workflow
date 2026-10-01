@@ -412,6 +412,17 @@ enum LayaMemCmd {
     /// (i.e. rows written before the Phase-4 upgrade), bumps the
     /// `PRAGMA user_version` stamp, and writes a `migrate_backfill` audit row.
     Migrate,
+    /// Wall-clock periodic consolidation watcher (Phase 8). When called with no
+    /// arguments, blocks and runs sweep_once every LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS
+    /// (default 60s); with `--once`, runs a single sweep and exits (cron-friendly).
+    ConsolidateWatch {
+        /// Run a single sweep and exit (do not loop). Use from cron or a oneshot probe.
+        #[arg(long)]
+        once: bool,
+        /// Override the period (seconds). Defaults to LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS.
+        #[arg(long)]
+        period: Option<u64>,
+    },
 }
 
 /// Live engine when `--base-url` is given, otherwise the offline heuristic.
@@ -1226,6 +1237,55 @@ fn run_laya_mem(cmd: &LayaMemCmd) -> Result<()> {
             println!("restored {n} spec(s) into {}", tools.spec_dir.display());
             Ok(())
         }
+        LayaMemCmd::ConsolidateWatch { once, period } => {
+            use laya_workflow::laya_mem_periodic as periodic;
+            if let Some(p) = period {
+                std::env::set_var("LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS", p.to_string());
+            }
+            let period_secs = std::env::var("LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(60);
+            if *once {
+                let out = periodic::sweep_once(
+                    &tools.db_path,
+                    &tools.spec_dir,
+                    tools.base_url.as_deref(),
+                    periodic::min_age_secs(),
+                    periodic::max_per_sweep(),
+                    periodic::threshold(),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                return Ok(());
+            }
+            eprintln!(
+                "[laya-mem periodic] watching {} every {}s (ctrl-c to stop)",
+                tools.db_path.display(),
+                period_secs
+            );
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(period_secs));
+                match periodic::sweep_once(
+                    &tools.db_path,
+                    &tools.spec_dir,
+                    tools.base_url.as_deref(),
+                    periodic::min_age_secs(),
+                    periodic::max_per_sweep(),
+                    periodic::threshold(),
+                ) {
+                    Ok(out) => {
+                        let due = out.get("due_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let acted = out.get("actions").and_then(|v| v.as_array())
+                            .map(|a| a.len()).unwrap_or(0);
+                        eprintln!(
+                            "[laya-mem periodic] sweep: due={due} actions={acted} store={}",
+                            tools.db_path.display()
+                        );
+                    }
+                    Err(e) => eprintln!("[laya-mem periodic] sweep error: {e:#}"),
+                }
+            }
+        }
         LayaMemCmd::Migrate => {
             let before = laya_workflow::laya_mem_migrate::schema_version(&tools.db_path);
             println!("migrating: {}", tools.db_path.display());
@@ -1531,6 +1591,22 @@ fn run_mcp(cmd: &McpCmd) -> Result<()> {
                 bail!(
                     "spec dir does not exist: {} (set --spec-dir or LAYA_MEM_SPEC_DIR)",
                     mem.spec_dir.display()
+                );
+            }
+            // Wall-clock periodic consolidation (Jev-Mem slow path): when
+            // LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS > 0, spawn a detached thread
+            // that sweeps the store on a timer. Cloned before `mem` is moved
+            // into the tool-set vector below.
+            if std::env::var("LAYA_MEM_CONSOLIDATE_PERIOD_SECONDS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+                > 0
+            {
+                laya_workflow::laya_mem_periodic::spawn_background(
+                    mem.db_path.clone(),
+                    mem.spec_dir.clone(),
+                    mem.base_url.clone(),
                 );
             }
             let info = laya_workflow::mcp::ServerInfo {

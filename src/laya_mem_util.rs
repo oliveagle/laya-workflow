@@ -215,10 +215,10 @@ pub(crate) fn ensure_schema(db_path: &Path) -> Result<()> {
     // table exists. Creating them before the table would cause the very first
     // INSERT to run with no trigger in place, so row 1 is never indexed and
     // `find_similar_memories` silently returns an empty candidate list.
-    // We use the default (internal-content) FTS5 mode — the external-content
-    // form (`content='memories'`) requires `INSERT INTO ft(ft, rowid, …)
-    // VALUES('insert', …)` trigger syntax, and mixing it with plain
-    // `INSERT INTO ft(rowid, content)` silently skips indexing.
+    // We use the default (internal-content) FTS5 mode. DELETE/UPDATE triggers
+    // use direct `DELETE FROM memories_fts WHERE rowid = old.id` — the FTS5
+    // `'delete'` special-command form only works on contentless/external-content
+    // tables and fails with "SQL logic error" on internal-content tables.
     call_db_for_db(
         db_path,
         json!({
@@ -226,8 +226,10 @@ pub(crate) fn ensure_schema(db_path: &Path) -> Result<()> {
             "statements": [
                 "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tokenize='unicode61 remove_diacritics 2')",
                 "CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
-                "CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); END",
-                "CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END"
+                "DROP TRIGGER IF EXISTS memories_ad",
+                "CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN DELETE FROM memories_fts WHERE rowid = old.id; END",
+                "DROP TRIGGER IF EXISTS memories_au",
+                "CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN DELETE FROM memories_fts WHERE rowid = old.id; INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END"
             ]
         }),
     )?;
@@ -303,7 +305,7 @@ pub(crate) fn now_iso() -> String {
 /// - writes a typed relation (`SEMANTIC`/`TEMPORAL` × `REDUNDANT_WITH`/`CONTRADICTS`/...)
 /// - when `representation` ∈ {merge, promote} and `summary_content` is non-empty
 ///   AND `contradiction < threshold`, creates a SUMMARY memory with
-///   `consolidation_key=fnv1a(target|candidate)` and `source_memory_ids=[target, candidate]`
+///   `consolidation_key=fnv1a(min(target,candidate)|max(target,candidate))` (canonical pair) and `source_memory_ids=[target, candidate]`
 /// - skips the summary write if the same key already exists (dedupe)
 /// - always emits an `audit_log` row (op=`consolidation` or op=`auto_consolidation`)
 pub(crate) fn apply_consolidation(
@@ -361,6 +363,21 @@ pub(crate) fn apply_consolidation(
         }
     }
 
+    // Stamp consolidated_at on the target when a decision is made so the
+    // wall-clock sweep (laya_mem_periodic::sweep_once) and the persist
+    // auto-trigger both stop re-picking the same rows every cycle.
+    if !written_relations.is_empty() {
+        let stamp_esc = sql_escape(&now_iso());
+        let target_esc = sql_escape(target);
+        let stamp_sql = format!(
+            "UPDATE memories SET consolidated_at = '{stamp_esc}' WHERE id = '{target_esc}'"
+        );
+        let _ = call_db_for_db(
+            db_path,
+            json!({"op": "exec", "statements": [stamp_sql]}),
+        );
+    }
+
     let mut summary_memory_id: Option<i64> = None;
     let mut summary_blocked_reason: Option<String> = None;
     let allow_summarize = (representation == "merge" || representation == "promote")
@@ -379,7 +396,10 @@ pub(crate) fn apply_consolidation(
     }
 
     if allow_summarize {
-        let key = fnv1a_hex(&format!("{}|{}", target, candidate));
+        // Canonical key: sort the pair so the sweep processing (1,2) and then
+        // (2,1) does not produce two summaries for the same near-duplicate pair.
+        let (a, b) = if target < candidate { (target, candidate) } else { (candidate, target) };
+        let key = fnv1a_hex(&format!("{}|{}", a, b));
         let dup_q = format!(
             "SELECT id FROM memories WHERE consolidation_key = '{}' LIMIT 1",
             sql_escape(&key)

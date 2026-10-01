@@ -634,7 +634,7 @@ struct ConsolidateTool(Arc<LayaMemTools>);
 impl McpTool for ConsolidateTool {
     fn name(&self) -> &str { "laya_mem_consolidate" }
     fn description(&self) -> &str {
-        "Apply one periodic consolidation decision. Writes a typed consolidation relation (REDUNDANT_WITH / CONTRADICTS / OBSOLETE / RELATED_TO) between target_memory_id and candidate_id; when representation is merge/promote and a summary_content is supplied, creates a non-destructive summary memory (node_type=SUMMARY, consolidation_key=fnv1a(target+candidate), source_memory_ids=[target, candidate], consolidation_action=merge|promote). All operations emit audit_log rows. Raw evidence (target + candidate memories) is never modified — deletion of originals would violate Jev-Mem's non-destructive invariant."
+        "Apply one periodic consolidation decision. Writes a typed consolidation relation (REDUNDANT_WITH / CONTRADICTS / OBSOLETE / RELATED_TO) between target_memory_id and candidate_id; when representation is merge/promote and a summary_content is supplied, creates a non-destructive summary memory (node_type=SUMMARY, consolidation_key=fnv1a(min(target,candidate)+max(target,candidate)), source_memory_ids=[target, candidate], consolidation_action=merge|promote). All operations emit audit_log rows. Raw evidence (target + candidate memories) is never modified — deletion of originals would violate Jev-Mem's non-destructive invariant."
     }
     fn input_schema(&self) -> Value {
         json!({
