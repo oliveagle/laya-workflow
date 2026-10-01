@@ -779,6 +779,20 @@ fn parse_intent(intent, w) {
     let low = norm(s);
     let sid = sid_of(w);
 
+    // ── a keyed sequence the loop drives one turn at a time ──
+    // "calc 7+8" is not one call: the app has to exist, be in front, and then
+    // each key has to be pressed in order. The plugin plans one step per turn
+    // and the spec's decide/route/exec loop carries it, so the whole thing runs
+    // through laya-workflow rather than a shell script firing the driver.
+    if contains_any(s, ["calc ", "calculate ", "compute ", "计算 "]) {
+        let expr = strip_fillers(after_verb(s, ["calc ", "calculate ", "compute ", "计算 "]));
+        return #{
+            verb: "calc", tool: "press_key", args: #{ session: sid },
+            risk: risk_of("press_key"), confidence: "high",
+            target: expr, needs_bind: false,
+            why: "compute " + expr + " on the macOS calculator"
+        };
+    }
     // ── read-only observations ──
     if contains_any(s, ["kill ", "force quit", "force-quit", "杀掉", "结束进程"]) {
         return verb_of("quit_app", "kill_app",
@@ -917,6 +931,34 @@ fn parse_intent(intent, w) {
 // The shape every parsed intent returns. Kept in one place because a field
 // added here and forgotten in one branch is how a call ends up planned with no
 // `risk` and therefore no gate on it.
+// "7+8" -> ["7","+","8","="]. Anything not in the keypad alphabet is dropped
+// rather than guessed at, and a trailing "=" is appended so the expression
+// actually evaluates instead of sitting in the display.
+// Rhai here has no array.join, so the sequence is folded by hand.
+fn keys_text(keys) {
+    let s = "";
+    for k in keys { s += k; }
+    return s;
+}
+
+fn calc_keys(expr) {
+    let e = norm(expr);
+    let ok = "0123456789+-*/.=()x";
+    let out = [];
+    let i = 0;
+    while i < e.len() {
+        let c = e.sub_string(i, 1);
+        if !ok.contains(c) { i += 1; continue; }
+        // press_key takes letters, digits and named keys -- "*" is not one
+        // ("Unknown key name: *"), while Calculator reads "x" as multiply.
+        if c == "*" { c = "x"; }
+        out.push(c);
+        i += 1;
+    }
+    if out.len() == 0 { return out; }
+    if out[out.len() - 1] != "=" { out.push("="); }
+    return out;
+}
 fn verb_of(verb, tool, target, sid, why) {
     #{ verb: verb, tool: tool, args: #{ session: sid }, risk: risk_of(tool),
        confidence: "high", target: target, needs_bind: false, why: why }
@@ -1208,6 +1250,49 @@ fn plan_turn(host, w, log_len) {
     // with exit 0). A good result is JSON without one.
     let exit_code = int_of(mget(w, "exit_code"));
     let failed_text = trimmed(err_text);
+
+    // A focused-but-unverified bring_to_front is recoverable, not fatal: the
+    // driver names the window it *did* focus in the same refusal, so the next
+    // turn can aim at that one instead. Without this the run stopped on a
+    // ghost window that launch_app listed first while the real one sat beside
+    // it, and the generic classifier below turned a hint into a dead end.
+    if p["verb"] == "calc" && exit_code != 0 {
+        let t = failed_text + " " + raw_obs;
+        if t.contains("focused_window_id") && int_of(mget(w, "pid")) > 0 {
+            let o = as_json(host, t);
+            let fw = int_of(mget(o, "focused_window_id"));
+            let txt = "" + t;
+            if fw <= 0 {
+                let at = txt.index_of("focused_window_id");
+                if at >= 0 {
+                    let rest = txt.sub_string(at, txt.len() - at);
+                    let digits = "";
+                    let k = 0;
+                    while k < rest.len() {
+                        let ch = rest.sub_string(k, 1);
+                        if ch >= "0" && ch <= "9" { digits += ch; }
+                        else if digits != "" { break; }
+                        k += 1;
+                    }
+                    if digits != "" { fw = parse_int(digits); }
+                }
+                }
+            if fw > 0 {
+                let rpid = int_of(mget(w, "pid"));
+                let ra = #{ pid: rpid, window_id: fw, session: sid_of(w) };
+                return #{
+                    status: "call", blocked: false, error: "", intent: intent,
+                    phase: "act", verb: "calc", tool: "bring_to_front", args: ra,
+                    args_json: wire(host, ra), risk: risk_of("bring_to_front"),
+                    why: "the driver focused window " + fw + "; aiming at it",
+                    confidence: "high", pid: rpid, window_id: fw,
+                    keys_pressed: int_of(mget(w, "keys_pressed")),
+                    call_index: call_index, turn: call_index
+                };
+            }
+        }
+    }
+
     if exit_code != 0 { failed_text = trimmed(failed_text + " " + raw_obs); }
     if failed_text != "" {
         let st = classify(failed_text, exit_code);
@@ -1233,6 +1318,173 @@ fn plan_turn(host, w, log_len) {
         };
     }
 
+    // ── calc: the loop drives a keyed sequence, one turn at a time ──
+    //
+    //   turn 1  launch_app      (bundle id, so a localized app name cannot miss)
+    //   turn 2  bring_to_front  (pid + window read back from the launch receipt)
+    //   turn 3+ press_key       (one key per turn, in order)
+    //
+    // pid and window_id are threaded back through the spec's state projection
+    // because a press_key receipt carries neither -- without that, turn 4 would
+    // have forgotten which window it was typing into.
+    // ── calc: a keyed sequence the loop drives one turn at a time ──
+    //
+    //   launch_app -> (window not ready? list_windows) -> bring_to_front
+    //   -> press_key x N -> done
+    //
+    // Phase comes from what the last observation actually is, not from a turn
+    // number, because the preamble is not a fixed length: launch_app can answer
+    // `window_ready: false` with an empty `windows` array, and then the window
+    // has to be discovered through list_windows instead. Key progress is
+    // threaded back through state as `keys_pressed` because a press receipt
+    // carries neither the pid nor how many keys came before it.
+    if p["verb"] == "calc" {
+        let keys = calc_keys(p["target"]);
+        if keys.len() == 0 {
+            return #{
+                status: "needs_clarification", blocked: false, error: "",
+                intent: intent, verb: "calc", call_index: call_index,
+                why: "calc needs an expression of digits and + - * / . ( )",
+                candidates: ["calc 7+8", "calc 12*30", "calc 1.5+2"]
+            };
+        }
+        let pressed = int_of(mget(w, "keys_pressed"));
+        let cpid = int_of(mget(w, "pid"));
+        let cwid = int_of(mget(w, "window_id"));
+        let sid = sid_of(w);
+
+        // Phase 1: nothing launched yet.
+        if !raw_obs.contains("launch_state") && !raw_obs.contains("\"windows\"") && !raw_obs.contains("frontmost_pid") && !raw_obs.contains("\"summary\"") {
+            let a = #{ session: sid, bundle_id: "com.apple.calculator" };
+            return #{
+                status: "call", blocked: false, error: "", intent: intent,
+                phase: "act", verb: "calc", tool: "launch_app", args: a,
+                args_json: wire(host, a), risk: risk_of("launch_app"),
+                why: "start Calculator for " + p["target"],
+                confidence: "high", keys_pressed: 0,
+                call_index: call_index, turn: call_index
+            };
+        }
+
+        // Phase 2: a launch receipt. It names the pid, and usually the window;
+        // when the window was not ready yet, discover it instead of guessing.
+        if raw_obs.contains("launch_state") {
+            let o = as_json(host, obs);
+            let lpid = int_of(mget(o, "pid"));
+            if lpid <= 0 {
+                return #{
+                    status: "blocked", blocked: true, intent: intent, verb: "calc",
+                    error: "launch_app returned no pid for Calculator",
+                    tool: "", args: #{}, args_json: "", risk: "act",
+                    why: "nothing to type into; refusing to guess a window",
+                    call_index: call_index, turn: call_index
+                };
+            }
+            let wins = mget(o, "windows");
+            let wid = 0;
+            if type_of(wins) == "array" && wins.len() > 0 {
+                wid = int_of(mget(wins[0], "window_id"));
+            }
+            if wid > 0 {
+                let a = #{ pid: lpid, window_id: wid, session: sid };
+                return #{
+                    status: "call", blocked: false, error: "", intent: intent,
+                    phase: "act", verb: "calc", tool: "bring_to_front", args: a,
+                    args_json: wire(host, a), risk: risk_of("bring_to_front"),
+                    why: "bring the Calculator window on screen so input can reach it",
+                    confidence: "high", pid: lpid, window_id: wid, keys_pressed: 0,
+                    call_index: call_index, turn: call_index
+                };
+            }
+            let a = #{ session: sid };
+            return #{
+                status: "call", blocked: false, error: "", intent: intent,
+                phase: "observe", verb: "calc", tool: "list_windows", args: a,
+                args_json: wire(host, a), risk: risk_of("list_windows"),
+                why: "Calculator started but its window was not ready; finding it",
+                confidence: "high", pid: lpid, keys_pressed: 0,
+                call_index: call_index, turn: call_index
+            };
+        }
+
+        // Phase 3: a window list. Find this pid's on-screen window.
+        if raw_obs.contains("\"windows\"") && !raw_obs.contains("frontmost_pid") {
+            if cpid <= 0 {
+                return #{
+                    status: "blocked", blocked: true, intent: intent, verb: "calc",
+                    error: "no Calculator pid in state to match a window against",
+                    tool: "", args: #{}, args_json: "", risk: "act",
+                    why: "the launch step did not record a pid",
+                    call_index: call_index, turn: call_index
+                };
+            }
+            let o = as_json(host, obs);
+            let wins = mget(o, "windows");
+            let wid = 0;
+            let best_z = -1;
+            if type_of(wins) == "array" {
+                for win in wins {
+                    if int_of(mget(win, "pid")) != cpid { continue; }
+                    if mget(win, "is_on_screen") != true { continue; }
+                    // Several windows can be on screen and list_windows carries
+                    // no focus flag, so take the frontmost by z-order. Picking
+                    // the first instead regularly chose a sibling and
+                    // bring_to_front came back exact_window_unverified.
+                    let z = int_of(mget(win, "z_index"));
+                    if z >= best_z { best_z = z; wid = int_of(mget(win, "window_id")); }
+                }
+            }
+            if wid <= 0 {
+                return #{
+                    status: "blocked", blocked: true, intent: intent, verb: "calc",
+                    error: "Calculator (pid " + cpid + ") has no on-screen window",
+                    tool: "", args: #{}, args_json: "", risk: "act",
+                    why: "the window never became ready; nothing to type into",
+                    call_index: call_index, turn: call_index
+                };
+            }
+            let a = #{ pid: cpid, window_id: wid, session: sid };
+            return #{
+                status: "call", blocked: false, error: "", intent: intent,
+                phase: "act", verb: "calc", tool: "bring_to_front", args: a,
+                args_json: wire(host, a), risk: risk_of("bring_to_front"),
+                why: "bring the Calculator window on screen so input can reach it",
+                confidence: "high", pid: cpid, window_id: wid, keys_pressed: pressed,
+                call_index: call_index, turn: call_index
+            };
+        }
+
+        // Phase 4: focused, or mid-sequence. Press the next key.
+        if cpid <= 0 || cwid <= 0 {
+            return #{
+                status: "blocked", blocked: true, intent: intent, verb: "calc",
+                error: "no Calculator window in state; the focus step did not run",
+                tool: "", args: #{}, args_json: "", risk: "act",
+                why: "refusing to type into a window that was never identified",
+                call_index: call_index, turn: call_index
+            };
+        }
+        if pressed >= keys.len() {
+            return #{
+                status: "done", done: true, blocked: false, intent: intent,
+                verb: "calc", tool: "", args: #{}, args_json: "", risk: "act",
+                why: "pressed " + keys_text(keys) + " on Calculator",
+                pid: cpid, window_id: cwid, keys_pressed: pressed,
+                call_index: call_index, turn: call_index
+            };
+        }
+        let a = #{ pid: cpid, window_id: cwid, session: sid, key: keys[pressed] };
+        return #{
+            status: "call", blocked: false, error: "", intent: intent,
+            phase: "act", verb: "calc", tool: "press_key", args: a,
+            args_json: wire(host, a), risk: risk_of("press_key"),
+            why: "press '" + keys[pressed] + "' (" + (pressed + 1) + " of "
+                + keys.len() + ")",
+            confidence: "high", pid: cpid, window_id: cwid,
+            keys_pressed: pressed + 1,
+            call_index: call_index, turn: call_index
+        };
+    }
     // launch_app answers with a receipt, and that receipt is the end of the
     // name-resolution step. Re-planning against it re-entered list_and_act,
     // which re-resolved the app name against a launch_app response instead of
