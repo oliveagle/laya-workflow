@@ -1,0 +1,102 @@
+{
+  "name": "taobao_items",
+  "dsl_version": 2,
+  "description": "淘宝(taobao.com) 商品搜索 / 浏览 / 信息收集 / 价格监控 / 价格与标签自进化，由 Rhai 插件 websites/taobao 驱动 (kind: \"plugin\")。用 --query 传搜索词、商品链接或商品 id；插件推断模式：'iphone' 之类是搜索，'https://www.taobao.com/item?id=...' 是单件浏览，'价格监控'/'watch price' 是价格监控，'价格进化'/'fair price'/'evolve' 是自进化学习。可用 state.mode 显式指定 search|item|watch|watch_add|evolve。'价格进化'/'价格模型'/'fair price'/'evolve' 这类词是给插件的指令，不会进搜索框——淘宝把'价格进化'当成和型号一样重的词，--query '价格进化 CMP 170HX' 原样发过去会返回索尼相机和西部数据硬盘，所以只把 'CMP 170HX' 发出去；query 只有意图词没有商品时(如 '价格进化')保持原样，走不浏览的重新推导。搜索结果每条都会写成 out_dir/items/<id>.json (默认 ~/tmp/taobao)；加 browse:N 会把前 N 条打开成完整详情(描述/属性/卖家/图片)。单件浏览加 markdown 会额外存 Markdown 与图片。注意 taobao 的 /search 忽略 ?page= 与 ?sort=，翻页由插件点击页面上的页码完成，所以 count 较大时用 pages 控制；price_min/price_max 是取回后在本地过滤(站点不认这两个查询参数)。价格监控读 out_dir/watch.json 里记录的历史，每次 watch 会重新抓取被监控商品并给出 changes(new/down/up/same/gone) 与 summary，drop_pct 可设百分比阈值过滤播报。默认 watch 一次最多检查 watch_limit(20) 件，用 watch_query 过滤标题。【自进化】任何一次运行(搜索/单件/监控)都会顺手学习，结果里多一个 evolve 块：evolve.tags/evolve.vocabulary 是从商品属性里挖出来的标签词表(同义写法如 sony=索尼 会合并)，价格只在同一件商品内部比：index.json 会攒下查过的所有商品，而 '功能完好无维修' 在 ¥9200 的相机和 ¥13400 的显卡上意思完全一样，混算出来的区间回答的不是任何人的问题。所以每条语料都带 scope(采集它的那次搜索的商品，小写去标点，'CMP 170HX'/'cmp-170HX' 折叠成一个 key)，词表/同义词/共现仍然全局共享，只有价格、异常判定按 scope 收窄。evolve.scope 是本次这些区间来自哪个商品('' 表示本次没说商品)；evolve.scopes 是整个语料里每个商品各自一条区间(含没有 scope 的那些)，一眼看清各商品各多少钱。evolve.fair 是每个标签的合理价格区间(中位数 ± 稳健离散度)，evolve.deals / evolve.overpriced 是低于/高于该区间的商品(按偏离度排序)，evolve.next_feed_factor 是学到的“搜索卡片价 vs 详情页价”修正系数(证据不足时为 0 表示不修正)。三份学习结果落在 out_dir/index.json(语料)、out_dir/tags.json(标签词表)、out_dir/price_model.json(价格模型)，重复运行幂等：统计量每次从 index.json 重新推导，只有累积证据在增长。mode=evolve 且不给 query 时不抓网页，直接用 index.json 重新推导模型。state.emit_sql=true 会额外返回 sql_schema(建表 DDL) 与 sql_statements(幂等写入语句) 数组，交给引擎的 kind:\"db\" 能力落进 SQLite——见 dsl/browser/taobao_sqlite.json。SQLite 侧同样有 scope：taobao_items.scope 是每条语料的商品，taobao_scopes 表是每个商品一条区间。",
+  "start": "collect",
+  "max_iterations": 2,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}/.laya-workflow",
+      "${env.HOME}/tmp/taobao"
+    ],
+    "max_timeout_ms": 600000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "browser": {
+      "kind": "browser",
+      "endpoint": "http://127.0.0.1:9222",
+      "launch": true,
+      "startup_timeout_ms": 20000,
+      "timeout_ms": 90000,
+      "max_text": 20000
+    },
+    "taobao": {
+      "kind": "plugin",
+      "plugin": "websites/taobao",
+      "browser": "browser",
+      "timeout_ms": 540000,
+      "max_operations": 4000000
+    }
+  },
+  "nodes": [
+    {
+      "name": "collect",
+      "primary_q": "done",
+      "questions": {
+        "done": {
+          "type": "choice",
+          "instructions": "Collect the requested taobao items / price changes?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "action": {
+        "kind": "call",
+        "capability": "taobao",
+        "with": {
+          "query": "${state.query}",
+          "mode": "${state.mode}",
+          "item_url": "${state.item_url}",
+          "count": "${state.count}",
+          "pages": "${state.pages}",
+          "browse": "${state.browse}",
+          "out_dir": "${state.out_dir}",
+          "markdown": "${state.markdown}",
+          "track": "${state.track}",
+          "save_listing": "${state.save_listing}",
+          "price_min": "${state.price_min}",
+          "price_max": "${state.price_max}",
+          "watch_query": "${state.watch_query}",
+          "watch_limit": "${state.watch_limit}",
+          "drop_pct": "${state.drop_pct}",
+          "history_max": "${state.history_max}",
+          "page_budget_ms": "${state.page_budget_ms}",
+          "keep_open": "${state.keep_open}",
+          "selector": "${state.selector}",
+          "emit_sql": "${state.emit_sql}"
+        },
+        "project": {
+          "mode": "/mode",
+          "source_url": "/source_url",
+          "found_count": "/found_count",
+          "failed_count": "/failed_count",
+          "checked_count": "/checked_count",
+          "gone_count": "/gone_count",
+          "tracked_count": "/tracked_count",
+          "watch_file": "/watch_file",
+          "watch_saved": "/watch_saved",
+          "pages_visited": "/pages_visited",
+          "price_filtered_out": "/price_filtered_out",
+          "summary": "/summary",
+          "notes": "/notes",
+          "changes": "/changes",
+          "results": "/results",
+          "failures": "/failures",
+          "evolve": "/evolve",
+          "sql_schema": "/sql_schema",
+          "sql_statements": "/sql_statements"
+        }
+      }
+    }
+  ]
+}

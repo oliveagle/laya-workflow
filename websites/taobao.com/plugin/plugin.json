@@ -1,0 +1,14 @@
+{
+  "name": "taobao",
+  "group": "websites",
+  "version": "0.1.0",
+  "api": 1,
+  "entry": "main.rhai",
+  "entry_op": "run",
+  "max_operations": 4000000,
+  "pages": [
+    "search.js",
+    "item.js"
+  ],
+  "description": "taobao (淘宝) browser plugin: search the listings, browse product detail pages, collect structured item records, and keep a durable per-item price history for monitoring. Search, item and watch modes; results are JSON (plus optional Markdown + figures) under out_dir."
+}

@@ -276,7 +276,7 @@ impl Registry {
         // an unresolved `secret.`/`env.` reference. Without this a literal like
         // `"Bearer null"` (or the sentinel) reaches the request, i.e. the call is
         // made with the wrong credential instead of erroring.
-        for s in unresolved_in(&cap) {
+        if let Some(s) = unresolved_in(&cap).into_iter().next() {
             bail!("capability {name:?} has an unresolved reference: {s}");
         }
         if let Value::Object(o) = with {
