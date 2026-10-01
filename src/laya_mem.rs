@@ -142,6 +142,7 @@ impl McpToolSet for LayaMemTools {
             Arc::new(PersistTool(me.clone())),
             Arc::new(RecallTool(me.clone())),
             Arc::new(ConsolidateTool(me.clone())),
+            Arc::new(AnswerTool(me.clone())),
             Arc::new(StatsTool(me.clone())),
             Arc::new(AuditTool(me)),
         ]
@@ -699,7 +700,94 @@ impl McpTool for ConsolidateTool {
     }
 }
 
-// ─── tool: stats ───────────────────────────────────────────────────────────────────────
+// ─── tool: answer (System-Two) ─────────────────────────────────────────────
+
+/// System-Two answer synthesis (Phase 6, Jev-Mem `longmemeval_jev.py`):
+/// hybrid-recall the top-k memories for a question, then either call an
+/// OpenAI-compatible chat endpoint (`LAYA_MEM_LLM_URL` + `_MODEL` + `_API_KEY`)
+/// or fall back to a deterministic extractive answer. The full pipeline
+/// (question, evidence, answer, latency) is written to audit_log as
+/// `op='system_two_answer'`.
+struct AnswerTool(Arc<LayaMemTools>);
+
+impl McpTool for AnswerTool {
+    fn name(&self) -> &str { "laya_mem_answer" }
+    fn description(&self) -> &str {
+        "System-Two: answer a question from the memory store. Retrieves the top-k memories via hybrid recall (BM25 + dense cosine, RRF-fused), then synthesizes a concise answer — via an OpenAI-compatible LLM when LAYA_MEM_LLM_URL is set, otherwise deterministically from the best-matching evidence. Emits a system_two_answer audit row. Answers 'Information not found' when no evidence matches."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Natural-language question to answer from memory."},
+                "top_k": {"type": "integer", "default": 6},
+                "db_path": {"type": "string"}
+            },
+            "required": ["question"]
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let question = args
+            .get("question")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("laya_mem_answer: missing 'question'"))?;
+        let top_k = args.get("top_k").and_then(|v| v.as_i64()).unwrap_or(6).max(1).min(20) as usize;
+        let db_path: PathBuf = args
+            .get("db_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.0.db_path.clone());
+        ensure_schema(&db_path)?;
+
+        // Build the same FTS5 query `laya_mem_recall` would, for the BM25 side
+        // of hybrid_top_ids.
+        let tokens: Vec<String> = question
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("{}*", t))
+            .collect();
+        let fts_sql = if tokens.is_empty() {
+            "SELECT m.id FROM memories m LIMIT 0".to_string()
+        } else {
+            let fts_query = tokens.join(" OR ");
+            format!(
+                "SELECT m.id FROM memories_fts f JOIN memories m ON m.id = f.rowid WHERE memories_fts MATCH '{}' ORDER BY bm25(memories_fts) LIMIT {}",
+                fts_query.replace('\'', "''"),
+                top_k * 4,
+            )
+        };
+
+        let t0 = std::time::Instant::now();
+        let (answer, evidence) = crate::laya_mem_answer::answer_query(&db_path, question, top_k, &fts_sql)?;
+        let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        // Audit (Jev-Mem: `audit.emit("system_two_answer", …)`).
+        let _ = crate::laya_mem_util::audit_log(
+            &db_path,
+            "system_two_answer",
+            "",
+            &json!({
+                "question": question,
+                "top_k": top_k,
+                "answer": answer,
+                "evidence_rows": evidence.get("rows").and_then(|r| r.as_array()).map(|a| a.len()).unwrap_or(0),
+                "latency_ms": latency_ms,
+                "llm": std::env::var("LAYA_MEM_LLM_URL").ok().filter(|s| !s.is_empty()).is_some(),
+            }),
+        );
+
+        Ok(json!({
+            "answer": answer,
+            "evidence": evidence,
+            "latency_ms": latency_ms,
+            "db_path": db_path.display().to_string(),
+        }))
+    }
+}
+
+// ─── tool: stats ─────────────────────────────────────────────────────────────────
 
 struct StatsTool(Arc<LayaMemTools>);
 

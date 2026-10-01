@@ -6,6 +6,7 @@
 //! * `capability` — capability registry (data / local / net / proto / web / ...)
 
 pub mod accuracy;
+pub mod laya_mem_answer;
 pub mod apps;
 pub mod backend;
 pub mod capability;
