@@ -579,7 +579,7 @@ fn first_shipped_spec(dir: &std::path::Path) -> Option<String> {
 pub fn test_spec_layers(h: &mut Harness) {
     let saved_cwd = std::env::current_dir().unwrap();
     let saved_home = std::env::var_os("HOME");
-    let saved_xdg = std::env::var_os("XDG_CONFIG_HOME");
+    let saved_laya_home = std::env::var_os("LAYA_HOME");
     let saved_user = std::env::var_os("LAYA_USER_DSL_DIR");
     spec::clear_dsl_dir();
 
@@ -612,14 +612,17 @@ pub fn test_spec_layers(h: &mut Harness) {
     write(&base.join("dsl/common.json"), "ABOVE_GIT");
     write(&base.join("dsl/above_only.json"), "ABOVE_ONLY");
 
-    // user layer: <base>/home/.config/laya-workflow/dsl
+    // user layer: <base>/home/.laya-workflow/dsl
     let home = base.join("home");
-    let user_dsl = home.join(".config/laya-workflow/dsl");
+    let user_dsl = home.join(".laya-workflow/dsl");
     write(&user_dsl.join("common.json"), "USER");
     write(&user_dsl.join("only_user.json"), "USER_ONLY");
 
     std::env::set_var("HOME", &home);
-    std::env::remove_var("XDG_CONFIG_HOME");
+    // The state root is `$LAYA_HOME` → `$HOME/.laya-workflow`; clearing
+    // LAYA_HOME is what makes the fixture HOME authoritative. XDG no longer
+    // participates — the tool claims one dot-directory of its own.
+    std::env::remove_var("LAYA_HOME");
     std::env::remove_var("LAYA_USER_DSL_DIR");
     std::env::set_current_dir(&repo_work).unwrap();
 
@@ -776,9 +779,9 @@ pub fn test_spec_layers(h: &mut Harness) {
         Some(v) => std::env::set_var("HOME", v),
         None => std::env::remove_var("HOME"),
     }
-    match saved_xdg {
-        Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-        None => std::env::remove_var("XDG_CONFIG_HOME"),
+    match saved_laya_home {
+        Some(v) => std::env::set_var("LAYA_HOME", v),
+        None => std::env::remove_var("LAYA_HOME"),
     }
     match saved_user {
         Some(v) => std::env::set_var("LAYA_USER_DSL_DIR", v),

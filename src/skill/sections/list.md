@@ -5,8 +5,7 @@
 1. `--dsl-dir <path>` / `$LAYA_DSL_DIR` — a **pin** that replaces the layers;
 2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, walking up from the
    cwd and stopping at the git root (so it follows the repo's commits);
-3. **user** — `$LAYA_USER_DSL_DIR` → `$XDG_CONFIG_HOME/laya-workflow/dsl` →
-   `~/.config/laya-workflow/dsl`;
+3. **user** — `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`;
 4. **builtin** — `<crate>/dsl` (shipped with the binary).
 
 It prints the search path (low → high) plus every discoverable spec with its
@@ -16,7 +15,7 @@ spec in a lower-priority root is listed with `(shadowed by …)`:
 ```
 DSL search path (low → high; later overrides earlier):
   builtin  <crate>/dsl
-  user     ~/.config/laya-workflow/dsl  (missing)
+  user     ~/.laya-workflow/dsl  (missing)
   repo     /path/to/repo/dsl
 
 31 spec(s)  (engine dsl_version: 2):

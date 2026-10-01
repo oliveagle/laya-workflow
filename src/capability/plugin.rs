@@ -31,7 +31,7 @@
 //!
 //! Plugins are resolved in layers, highest priority first: an explicit `dir` →
 //! `$LAYA_PLUGIN_DIR/<name>` → `plugins/<name>` / `websites/*/plugin/` walking up to
-//! the git root → `~/.config/laya-workflow/{plugins,websites}` (the
+//! the git root → `~/.laya-workflow/{plugins,websites}` (the
 //! `plugin install` default) → the copy compiled into this binary. That last
 //! layer is why the bundled alphaXiv downloader still works after
 //! `sudo install`-ing a single binary.
@@ -176,6 +176,16 @@ fn split_id(id: &str) -> (&str, &str) {
 /// The plugin name inside an id (`websites/hackernews` → `hackernews`).
 fn bare_name(id: &str) -> &str {
     split_id(id).1
+}
+
+/// The name a plugin id should be *installed* under: the bare name segment.
+///
+/// Discovery reports ids as `group/name` (`websites/hackernews`), but a
+/// plugin lives in a single directory, so installing under the full id would
+/// create a `plugins/websites/` tree and then fail name validation. Exposed for
+/// `install`, which turns every discovered plugin into a directory.
+pub fn install_name_for(id: &str) -> &str {
+    bare_name(id)
 }
 
 /// The group a plugin root stands for: `websites` or `plugins` roots map to that
@@ -408,25 +418,64 @@ pub fn builtin_names() -> &'static [&'static str] {
     ]
 }
 
+/// Write a plugin compiled into the binary into `root`, returning the files written.
+///
+/// Builtin plugins are normally used straight out of the embedded copy, so this
+/// is only needed to make them *editable* — `install` does it so a machine that
+/// has the binary but no checkout still ends up with an inspectable, patchable
+/// plugin tree rather than a set that can only ever be replaced by
+/// reinstalling a different binary.
+///
+/// Returns `Ok(None)` when the plugin is not a builtin, so a caller can fall
+/// through to a different source.
+pub fn install_builtin_to(name: &str, root: &std::path::Path, force: bool) -> Result<Option<InstalledPlugin>> {
+    let Some(src) = builtin(name) else {
+        return Ok(None);
+    };
+    validate_plugin_name(name)?;
+    let dest = root.join(name);
+    if dest.exists() {
+        if !force {
+            return Ok(None);
+        }
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| anyhow!("cannot clear {}: {e}", dest.display()))?;
+    }
+    let m = Manifest::parse(&src.manifest, name)?;
+    std::fs::create_dir_all(&dest)?;
+    let mut files = 0usize;
+    let mut write = |rel: &str, body: &str| -> Result<()> {
+        let path = dest.join(rel);
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        std::fs::write(&path, body)?;
+        files += 1;
+        Ok(())
+    };
+    write("plugin.json", &src.manifest)?;
+    // `Sources::entry_name` is empty for a builtin (it is only filled in when a
+    // plugin is read off disk); the manifest is where the entry file is named.
+    write(&m.entry, &src.entry)?;
+    for (page, body) in &src.pages {
+        write(&format!("page/{page}"), body)?;
+    }
+    Ok(Some(InstalledPlugin {
+        name: name.to_string(),
+        version: m.version,
+        dest,
+        files,
+    }))
+}
+
 // ── installing plugins from a git repo ──────────────────────────────
 
-/// Per-user plugin root: `$LAYA_USER_PLUGIN_DIR` →
-/// `$XDG_CONFIG_HOME/laya-workflow/plugins` → `~/.config/laya-workflow/plugins`.
-/// Mirrors `spec::user_spec_dir()`; `plugin install` writes here unless
-/// `$LAYA_PLUGIN_DIR` (or `--root`) overrides it.
+/// Per-user plugin root: `$LAYA_USER_PLUGIN_DIR` → `~/.laya-workflow/plugins`.
+/// Mirrors `spec::user_spec_dir()` — both live under the tool's single state
+/// root; `plugin install` writes here unless `$LAYA_PLUGIN_DIR` (or `--root`)
+/// overrides it.
 pub fn user_plugin_dir() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("LAYA_USER_PLUGIN_DIR").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(d));
-    }
-    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(x).join("laya-workflow").join("plugins"));
-    }
-    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| {
-        PathBuf::from(h)
-            .join(".config")
-            .join("laya-workflow")
-            .join("plugins")
-    })
+    crate::state::user_plugin_dir()
 }
 
 /// Where `plugin install` writes: `$LAYA_PLUGIN_DIR` when set (so a checkout can
@@ -437,9 +486,8 @@ pub fn install_root() -> Result<PathBuf> {
             return Ok(PathBuf::from(dir));
         }
     }
-    user_plugin_dir().ok_or_else(|| {
-        anyhow!("cannot pick an install root: set LAYA_PLUGIN_DIR or HOME/XDG_CONFIG_HOME")
-    })
+    user_plugin_dir()
+        .ok_or_else(|| anyhow!("cannot pick an install root: set LAYA_PLUGIN_DIR or LAYA_HOME/HOME"))
 }
 
 /// The on-disk plugin search path, highest priority first (for `plugin dir`).
@@ -778,7 +826,7 @@ pub enum PluginLayer {
     /// `plugins/<name>` or `websites/<domain>/plugin/` walking up from the cwd
     /// to the git root.
     Repo,
-    /// `~/.config/laya-workflow/plugins/<name>` (where `plugin install` lands)
+    /// `~/.laya-workflow/plugins/<name>` (where `plugin install` lands)
     /// or its `websites/` sibling.
     User,
     /// The copy compiled into the binary (`include_str!`).
@@ -1850,6 +1898,65 @@ mod tests {
 
     /// A plugin root child resolves to itself (`plugins/<name>/`) or to its
     /// `plugin/` subdir (`websites/<domain>/plugin/`); nothing else counts.
+    /// `install` must be able to lay down the plugins compiled into the binary,
+    /// so a machine with the binary but no checkout still gets a usable,
+    /// editable plugin tree. Getting the entry filename from the manifest (not
+    /// from `Sources::entry_name`, which is empty for a builtin) is the part
+    /// that silently produced a directory named `main.rhai/`.
+    #[test]
+    fn install_builtin_to_writes_a_runnable_tree() {
+        let root = std::env::temp_dir().join(format!("laya-builtin-install-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+
+        let out = install_builtin_to("browser_base", &root, false)
+            .unwrap()
+            .expect("browser_base is a builtin");
+        assert_eq!(out.name, "browser_base");
+        assert_eq!(out.version, "0.1.0");
+        assert!(out.dest.join("plugin.json").is_file(), "manifest written");
+        assert!(out.dest.join("main.rhai").is_file(), "entry written");
+        assert!(out.files >= 2, "expected manifest + entry, got {}", out.files);
+
+        // A page-carrying builtin, so the page/ subdir path is covered too.
+        let out = install_builtin_to("hackernews", &root, false)
+            .unwrap()
+            .expect("hackernews is a builtin");
+        assert!(out.dest.join("main.rhai").is_file(), "entry written");
+        assert!(out.dest.join("page/front.js").is_file(), "page script written");
+        assert!(out.dest.join("page/story.js").is_file(), "page script written");
+
+        // Second call without --force keeps an existing install.
+        std::fs::write(out.dest.join("marker"), "x").unwrap();
+        assert!(
+            install_builtin_to("hackernews", &root, false).unwrap().is_none(),
+            "an existing plugin must be left alone without --force"
+        );
+        assert!(out.dest.join("marker").exists(), "kept without --force");
+        // With --force the dir is replaced, marker and all.
+        assert!(install_builtin_to("hackernews", &root, true).unwrap().is_some());
+        assert!(!out.dest.join("marker").exists(), "--force replaces the tree");
+
+        // Not a builtin: no silent empty install.
+        assert!(install_builtin_to("definitely-not-a-plugin", &root, true).unwrap().is_none());
+
+        // The written tree must actually load as a plugin — an install that
+        // produces the right filenames but an unloadable script is still broken.
+        let cap = PluginCap {
+            plugin: "browser_base".to_string(),
+            dir: root.join("browser_base").display().to_string(),
+            entry: String::new(),
+            op: String::new(),
+            browser: String::new(),
+            max_operations: 0,
+            timeout_ms: 0,
+        };
+        let src = load_sources(&cap).expect("written plugin loads");
+        assert_eq!(src.entry_name, "main.rhai");
+        assert!(src.entry.contains("fn run"), "entry body preserved");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn plugin_dir_of_finds_flat_and_nested_layouts() {
         let root = std::env::temp_dir().join(format!("laya-pdo-{}", std::process::id()));
@@ -3046,9 +3153,15 @@ mod tests {
         );
         // An explicit item mode reaches into the query the same way.
         let p = gs_plan(json!({"query": "帮我看看 1087828137579", "mode": "item"})).unwrap();
-        assert_eq!(p["item_url"], json!("https://www.goofish.com/item?id=1087828137579"));
+        assert_eq!(
+            p["item_url"],
+            json!("https://www.goofish.com/item?id=1087828137579")
+        );
         // But a search that merely mentions a long number is still a search.
-        assert_eq!(gs_plan(json!({"query": "1087828137579 的东西"})).unwrap()["mode"], json!("search"));
+        assert_eq!(
+            gs_plan(json!({"query": "1087828137579 的东西"})).unwrap()["mode"],
+            json!("search")
+        );
 
         // An explicit mode always wins over the inference.
         assert_eq!(

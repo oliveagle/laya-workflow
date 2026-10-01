@@ -152,7 +152,7 @@ pub fn dsl_dir_pinned() -> bool {
 pub enum SpecLayer {
     /// `<crate>/dsl` — the specs shipped with the engine.
     Builtin,
-    /// `~/.config/laya-workflow/dsl` (or `$XDG_CONFIG_HOME` / `$LAYA_USER_DSL_DIR`).
+    /// `~/.laya-workflow/dsl` (or `$LAYA_HOME` / `$LAYA_USER_DSL_DIR`).
     User,
     /// `.laya-workflow/dsl` or `dsl/`, found by walking up to the git root.
     /// Committed with the repo, so it travels with the code.
@@ -192,25 +192,12 @@ pub fn builtin_spec_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dsl"))
 }
 
-/// Per-user spec root: `$LAYA_USER_DSL_DIR` → `$XDG_CONFIG_HOME/laya-workflow/dsl`
-/// → `~/.config/laya-workflow/dsl`.
+/// Per-user spec root: `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`.
+///
+/// Lives under the tool's single state root, alongside the installed plugins and
+/// the laya-mem store — see [`crate::state`].
 pub fn user_spec_dir() -> Option<std::path::PathBuf> {
-    if let Some(d) = std::env::var_os("LAYA_USER_DSL_DIR").filter(|v| !v.is_empty()) {
-        return Some(std::path::PathBuf::from(d));
-    }
-    if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        return Some(
-            std::path::PathBuf::from(x)
-                .join("laya-workflow")
-                .join("dsl"),
-        );
-    }
-    std::env::var_os("HOME").filter(|v| !v.is_empty()).map(|h| {
-        std::path::PathBuf::from(h)
-            .join(".config")
-            .join("laya-workflow")
-            .join("dsl")
-    })
+    crate::state::user_dsl_dir()
 }
 
 /// The explicitly pinned root, if any.

@@ -321,13 +321,10 @@ fn touch_owned_target(endpoint: &str, id: &str) {
 }
 
 fn default_profile_dir() -> String {
-    if let Ok(dir) = std::env::var("LAYA_BROWSER_PROFILE") {
-        return dir;
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return format!("{home}/.laya-workflow/chrome");
-    }
-    ".laya-workflow/chrome".to_string()
+    crate::state::browser_profile_dir()
+        .unwrap_or_else(|| ".laya-workflow/chrome".into())
+        .display()
+        .to_string()
 }
 
 fn repo_extension_path() -> String {

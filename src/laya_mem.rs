@@ -29,8 +29,31 @@ use crate::workflow::{Decide, ResilientWorkflow};
 pub const GROUP_NAME: &str = "laya-mem";
 pub const DEFAULT_SPEC_SUBDIR: &str = "dsl/laya_mem";
 
-/// Builtin spec root: `<crate>/dsl/laya_mem` shipped in the binary.
+/// Build-time crate root, kept only as a fallback for running the test binary
+/// straight out of a checkout. A binary installed to `/usr/local/bin` has no
+/// guarantee this path still exists, which is why the specs below are compiled
+/// in rather than read from here.
 pub const PLUGIN_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
+/// The System-One specs, compiled into the binary: `(file name, contents)`.
+///
+/// These are the whole behavioural contract of the four tools, and an MCP server
+/// that cannot find them answers every call with `spec not found`. Reading them
+/// from `CARGO_MANIFEST_DIR` made that outcome depend on the *source tree*
+/// outliving the binary — `cargo install` from a checkout that is later deleted,
+/// or a release tarball, both leave an installed server with no specs at all.
+/// Embedding makes `laya-workflow mcp serve` self-sufficient wherever it is
+/// installed from.
+pub const EMBEDDED_SPECS: [(&str, &str); 8] = [
+    ("admission.json", include_str!("../dsl/laya_mem/admission.json")),
+    ("memory_type.json", include_str!("../dsl/laya_mem/memory_type.json")),
+    ("persist_memory.json", include_str!("../dsl/laya_mem/persist_memory.json")),
+    ("relation_pair.json", include_str!("../dsl/laya_mem/relation_pair.json")),
+    ("retrieve_loop.json", include_str!("../dsl/laya_mem/retrieve_loop.json")),
+    ("routing.json", include_str!("../dsl/laya_mem/routing.json")),
+    ("stopping.json", include_str!("../dsl/laya_mem/stopping.json")),
+    ("traversal.json", include_str!("../dsl/laya_mem/traversal.json")),
+];
 
 /// Construction-time state shared by all four tools.
 #[derive(Clone)]
@@ -41,10 +64,23 @@ pub struct LayaMemTools {
 }
 
 impl LayaMemTools {
-    /// Default spec_dir: the specs shipped at `<crate>/dsl/laya_mem`,
-    /// falling back to `<cwd>/dsl/laya_mem` when the binary has moved away
-    /// from its source tree.
+    /// Default spec_dir: `~/.laya-workflow/laya-mem/specs`, materialized from
+    /// [`EMBEDDED_SPECS`] on first use.
+    ///
+    /// The specs are written out rather than read straight from the embedded
+    /// copy so they stay inspectable and editable: they are the System-One
+    /// policy, and a user tuning it should be able to open the JSON. An
+    /// existing file is never overwritten, so local edits survive restarts —
+    /// `laya-workflow laya-mem specs --restore` is the way back to the shipped
+    /// versions.
     pub fn default_spec_dir() -> PathBuf {
+        if let Some(dir) = crate::state::laya_mem_spec_dir() {
+            if ensure_specs(&dir).is_ok() {
+                return dir;
+            }
+        }
+        // No writable state root (no `$HOME`): fall back to the checkout, which
+        // is also what running the test binary in-tree wants.
         let bundled = PathBuf::from(PLUGIN_MANIFEST_DIR).join(DEFAULT_SPEC_SUBDIR);
         if bundled.is_dir() {
             return bundled;
@@ -53,10 +89,7 @@ impl LayaMemTools {
     }
 
     pub fn default_db_path() -> PathBuf {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home)
-            .join(".laya-workflow")
-            .join("mem.sqlite")
+        crate::state::laya_mem_db()
     }
 
     pub fn from_env() -> Self {
@@ -458,6 +491,42 @@ impl McpTool for RecallTool {
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
+/// Write the embedded specs into `dir`, skipping any file that already exists.
+///
+/// Returns `Ok(())` when every embedded spec is present afterwards, so a
+/// partially-unwritable directory fails here (at startup) rather than later as
+/// a confusing `spec not found` in the middle of a tool call.
+pub fn ensure_specs(dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("cannot create spec dir {}", dir.display()))?;
+    for (name, body) in EMBEDDED_SPECS {
+        let path = dir.join(name);
+        if path.exists() {
+            continue;
+        }
+        std::fs::write(&path, body)
+            .with_context(|| format!("cannot write spec {}", path.display()))?;
+    }
+    for (name, _) in EMBEDDED_SPECS {
+        let path = dir.join(name);
+        if !path.is_file() {
+            bail!("spec missing after install: {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Overwrite every spec in `dir` with the embedded copy, discarding local edits.
+pub fn restore_specs(dir: &Path) -> Result<usize> {
+    std::fs::create_dir_all(dir)
+        .with_context(|| format!("cannot create spec dir {}", dir.display()))?;
+    for (name, body) in EMBEDDED_SPECS {
+        std::fs::write(dir.join(name), body)
+            .with_context(|| format!("cannot write spec {}", dir.join(name).display()))?;
+    }
+    Ok(EMBEDDED_SPECS.len())
+}
+
 fn run_spec(spec_dir: &Path, backend: &dyn Decide, name: &str, state: &Value) -> Result<Value> {
     let path = spec_dir.join(format!("{name}.json"));
     if !path.is_file() {
@@ -535,5 +604,113 @@ fn now_iso() -> String {
             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
             tm.tm_hour, tm.tm_min, tm.tm_sec
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "laya-mem-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The embedded specs are the behavioural contract of the four tools. A
+    /// silent `include_str!` typo would compile fine and only surface as
+    /// `spec not found` at the first tool call, so parse them here.
+    #[test]
+    fn embedded_specs_are_valid_dsl() {
+        for (name, body) in EMBEDDED_SPECS {
+            let v: Value = serde_json::from_str(body)
+                .unwrap_or_else(|e| panic!("{name} is not valid JSON: {e}"));
+            assert_eq!(v.get("dsl_version").and_then(Value::as_u64), Some(2), "{name}");
+            assert!(v.get("start").is_some(), "{name} has no start node");
+            assert!(v.get("nodes").and_then(Value::as_array).is_some_and(|n| !n.is_empty()),
+                "{name} has no nodes");
+        }
+    }
+
+    /// Every spec the tools actually run must be embedded — a name referenced in
+    /// `run_spec` but missing from the table is a runtime-only failure.
+    #[test]
+    fn every_referenced_spec_is_embedded() {
+        for name in ["memory_type", "admission", "routing", "stopping"] {
+            let embedded = EMBEDDED_SPECS.iter().any(|(f, _)| *f == format!("{name}.json"));
+            assert!(embedded, "{name}.json is run but not embedded");
+        }
+    }
+
+    #[test]
+    fn ensure_specs_writes_all_and_is_idempotent() {
+        let dir = tmpdir("ensure");
+        ensure_specs(&dir).unwrap();
+        for (name, body) in EMBEDDED_SPECS {
+            let got = std::fs::read_to_string(dir.join(name)).unwrap();
+            assert_eq!(got, body, "{name} content mismatch");
+        }
+        // A second call must not clobber a local edit.
+        let edited = dir.join("routing.json");
+        std::fs::write(&edited, "{\"dsl_version\":2,\"start\":\"EDITED\"}").unwrap();
+        ensure_specs(&dir).unwrap();
+        assert!(std::fs::read_to_string(&edited).unwrap().contains("EDITED"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_specs_overwrites_edits() {
+        let dir = tmpdir("restore");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("routing.json"), "{\"dsl_version\":2,\"start\":\"EDITED\"}").unwrap();
+        let n = restore_specs(&dir).unwrap();
+        assert_eq!(n, EMBEDDED_SPECS.len());
+        assert!(std::fs::read_to_string(dir.join("routing.json")).unwrap().contains("\"nodes\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The regression this whole change exists for: a binary whose source tree is
+    /// gone must still be able to serve. `default_spec_dir` has to land on a
+    /// directory holding all 8 specs, not on a compile-time path.
+    #[test]
+    fn default_spec_dir_resolves_without_the_source_tree() {
+        let dir = tmpdir("default-spec");
+        // Emulate an installed binary in a state root, with no $HOME override
+        // reachable from the checkout.
+        std::env::set_var("LAYA_MEM_SPEC_DIR", &dir);
+        let resolved = LayaMemTools::default_spec_dir();
+        assert_eq!(resolved, dir);
+        for (name, _) in EMBEDDED_SPECS {
+            assert!(resolved.join(name).is_file(), "{name} not materialized");
+        }
+        std::env::remove_var("LAYA_MEM_SPEC_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn db_path_defaults_under_the_state_root() {
+        let saved: Vec<_> = ["LAYA_MEM_SQLITE", "LAYA_HOME", "HOME"]
+            .iter()
+            .map(|v| (v.to_string(), std::env::var_os(v)))
+            .collect();
+        for (v, _) in &saved {
+            std::env::remove_var(v);
+        }
+        std::env::set_var("LAYA_HOME", "/tmp/laya-state-x");
+        assert_eq!(
+            LayaMemTools::default_db_path(),
+            PathBuf::from("/tmp/laya-state-x/laya-mem/codex.sqlite")
+        );
+        for (name, value) in saved {
+            match value {
+                Some(v) => std::env::set_var(&name, v),
+                None => std::env::remove_var(&name),
+            }
+        }
     }
 }

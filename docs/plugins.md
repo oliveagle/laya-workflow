@@ -81,7 +81,7 @@ laya-workflow plugin dir      # the install root + the search path
 (`websites/alphaxiv`) installs its `plugin/` subdir too. The installed name
 defaults to the source `plugin.json` `name` (falling back to the last path
 segment), and `--name` overrides it. `--root` overrides the install root
-(default: `$LAYA_PLUGIN_DIR`, else `~/.config/laya-workflow/plugins`). Install
+(default: `$LAYA_PLUGIN_DIR`, else `~/.laya-workflow/plugins`). Install
 is refused unless the directory (or a `plugin/` subdir of it) has a parseable
 `plugin.json` (and no `--force` is needed only when the name is not already
 present); credentials in a URL are stripped before anything is printed.
@@ -117,9 +117,9 @@ Highest priority first — an id in a higher layer shadows the same id below:
 3. `plugins/<name>/` and `websites/*/plugin/`, found by walking up from the
    cwd and stopping at the git root (this is the layer a repository commits —
    a site folder is matched by its manifest `name`);
-4. `~/.config/laya-workflow/plugins/<name>/` and
-   `~/.config/laya-workflow/websites/*/plugin/` — the `plugin install` default
-   (`$LAYA_USER_PLUGIN_DIR` / `$XDG_CONFIG_HOME` override it);
+4. `~/.laya-workflow/plugins/<name>/` and
+   `~/.laya-workflow/websites/*/plugin/` — the `plugin install` default
+   (`$LAYA_USER_PLUGIN_DIR` / `$LAYA_HOME` override it);
 5. the copy compiled into the binary (`include_str!`), so a plugin shipped with a
    release still works after `sudo install`-ing a single binary.
 

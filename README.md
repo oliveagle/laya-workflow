@@ -29,7 +29,28 @@ curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya
 # Linux amd64
 curl -L https://github.com/oliveagle/laya-workflow/releases/latest/download/laya-workflow-x86_64-unknown-linux-gnu.tar.gz | tar -xz
 sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
+
+# lay down the state root + every bundled plugin + the laya-mem specs
+laya-workflow install
 ```
+
+## Where it keeps its files
+
+One root, `~/.laya-workflow` (override with `$LAYA_HOME`):
+
+```text
+~/.laya-workflow/
+  dsl/          per-user specs          (LAYA_USER_DSL_DIR)
+  plugins/      installed plugins       (LAYA_USER_PLUGIN_DIR, `plugin install`)
+  websites/     site-scoped plugins, sibling of plugins/
+  laya-mem/     memory gate: specs/ + codex.sqlite
+  chrome/       Chrome profile for chrome_cdp
+```
+
+`laya-workflow install` creates all of it and installs every bundled plugin, so
+nothing needs a checkout afterwards. `laya-mem info` reports where the memory
+gate's specs and store resolved — the failure that matters is a server that
+starts and then answers every call with `spec not found`.
 
 ## Build from source
 
@@ -93,8 +114,8 @@ through a **layered** set of spec roots (highest priority first):
 2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, found by walking up
    from the cwd and stopping at the git root. Committed with the repo, so each
    repo's topology travels with its code.
-3. **user** — `$LAYA_USER_DSL_DIR` → `$XDG_CONFIG_HOME/laya-workflow/dsl` →
-   `~/.config/laya-workflow/dsl`. Personal, never committed.
+3. **user** — `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`. Personal, never
+   committed.
 4. **builtin** — `<crate>/dsl`, the specs shipped with the binary.
 
 The first root that defines a name wins; a same-named spec in a lower-priority
@@ -285,7 +306,7 @@ laya-workflow run --spec dsl/capabilities/script_plugin.json \
 
 Plugins resolve from an explicit `dir`, then `$LAYA_PLUGIN_DIR`, then
 `plugins/<name>` / `websites/*/plugin` walking up to the git root, then
-`~/.config/laya-workflow/plugins` / `~/.config/laya-workflow/websites` (the
+`~/.laya-workflow/plugins` / `~/.laya-workflow/websites` (the
 install default), then the copy compiled into the binary.
 `websites/alphaxiv` (natural-language alphaXiv downloader) and
 `plugins/textdigest` (offline demo) ship with the repo. Install a single plugin
@@ -363,6 +384,34 @@ laya-workflow run --spec dsl/browser/docsrs.json --query "serde"
 laya-workflow run --spec dsl/browser/github.json --query trending --state '{"since":"daily","count":5}'
 laya-workflow run --spec dsl/browser/github.json --query "BurntSushi/ripgrep"
 ```
+
+### 淘宝 / taobao.com: DDR5 商品价格监控
+
+`websites/taobao.com` mirrors the 闲鱼 reader for the Taobao search feed and detail
+pages: search a keyword, browse one listing, and keep every sighting in a durable
+`watch.json` so later runs report `new`/`up`/`down`/`same`/`gone`. The first target
+is DDR5 memory; an omitted query defaults to `DDR5 内存`, and search results
+enter `watch.json` by default (`"track": false` opts out).
+
+```bash
+# search (8 DDR5 cards are written to ~/tmp/taobao/items and watch.json)
+laya-workflow run --spec dsl/browser/taobao_item.json --query 'DDR5 内存' \
+  --state '{"count":8,"browse":0}'
+
+# re-read every tracked item; prices are persisted even when all are unchanged
+laya-workflow run --spec dsl/browser/taobao_item.json \
+  --state '{"mode":"watch","watch_limit":20,"drop_pct":1}'
+```
+
+The parser keeps price and sales in separate nodes (`priceInt`/`realSales`), reads
+the detail page's `highlightPrice` (优惠后) and `subPrice` (优惠前), and separates Taobao's
+temporary `bixi` wait page from a permanent read failure. A watch run loads one
+DDR5 search snapshot (up to five pages) first and reuses matching card prices.
+Taobao rotates promotion ids for the same listing, so an exact-title match reuses
+the card price while keeping the tracked id/url unchanged; only ids absent from
+that snapshot open detail pages. Search results are stored
+under `~/tmp/taobao` (policy-gated); `watch.json` records every price sighting and
+the watch run always saves it, including `same`.
 
 See [`docs/wikipedia.md`](./docs/wikipedia.md), [`docs/mdn.md`](./docs/mdn.md),
 [`docs/bing.md`](./docs/bing.md), [`docs/v2ex.md`](./docs/v2ex.md),

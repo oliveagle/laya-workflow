@@ -181,6 +181,23 @@ enum Cmd {
         #[command(subcommand)]
         cmd: DbCmd,
     },
+    /// Create the state root and install everything this tool bundles: every
+    /// plugin, the laya-mem specs, and the SQLite store's parent directory.
+    /// Idempotent — re-running it after a `git pull` refreshes what changed.
+    Install {
+        /// Overwrite existing installs instead of keeping them.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Only create the directories; install nothing.
+        #[arg(long, default_value_t = false)]
+        dirs_only: bool,
+    },
+    /// The laya-mem memory gate: where its specs and store live, and how to
+    /// restore the shipped specs.
+    LayaMem {
+        #[command(subcommand)]
+        cmd: LayaMemCmd,
+    },
     /// Send a local notification. On macOS this posts a real Notification Center
     /// banner (via `osascript`); it can also append to a log file and/or bell.
     Notify {
@@ -365,7 +382,7 @@ enum PluginCmd {
         /// Branch/tag/commit to check out (default: the repo's default branch).
         #[arg(long = "git-ref")]
         git_ref: Option<String>,
-        /// Install root (default: $LAYA_PLUGIN_DIR, else ~/.config/laya-workflow/plugins).
+        /// Install root (default: $LAYA_PLUGIN_DIR, else ~/.laya-workflow/plugins).
         #[arg(long)]
         root: Option<String>,
         /// Overwrite an existing install of the same name.
@@ -376,6 +393,20 @@ enum PluginCmd {
     List,
     /// Print where `plugin install` writes and the search path it lands in.
     Dir,
+}
+
+#[derive(Subcommand)]
+enum LayaMemCmd {
+    /// Print the resolved spec dir, SQLite path and backend, and check that the
+    /// specs are actually present (the failure that matters is a server that
+    /// starts and then answers every call with `spec not found`).
+    Info,
+    /// Write the embedded System-One specs into the spec dir, without touching
+    /// local edits.
+    Install,
+    /// Overwrite the specs in the spec dir with the embedded copies, discarding
+    /// local edits.
+    Restore,
 }
 
 /// Live engine when `--base-url` is given, otherwise the offline heuristic.
@@ -629,6 +660,8 @@ fn main() -> Result<()> {
             format,
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
+        Cmd::Install { force, dirs_only } => run_install(*force, *dirs_only),
+        Cmd::LayaMem { cmd } => run_laya_mem(cmd),
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
         Cmd::Server { cmd } => run_server(cmd),
@@ -1035,6 +1068,162 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
     }
 }
 
+/// `install` — lay out the state root and install everything the binary bundles.
+///
+/// This is the one command that makes a fresh machine ready. It exists because
+/// the previous arrangement had three roots (`~/.config/laya-workflow` for
+/// plugins, `~/tmp/laya_mem` for the memory store, `~/.laya-workflow/chrome`
+/// for the browser), so a working setup was the result of three unrelated
+/// manual steps, and a broken one was three separate things to diagnose.
+fn run_install(force: bool, dirs_only: bool) -> Result<()> {
+    use laya_workflow::capability::plugin as plg;
+    use laya_workflow::state as st;
+
+    let root = st::state_dir()
+        .ok_or_else(|| anyhow!("cannot pick a state root: set LAYA_HOME or HOME"))?;
+    st::ensure_dir(&root)?;
+    println!("state root: {}", root.display());
+
+    let dsl = st::user_dsl_dir().unwrap_or_else(|| root.join("dsl"));
+    let plugins = st::user_plugin_dir().unwrap_or_else(|| root.join("plugins"));
+    let websites = st::user_websites_dir().unwrap_or_else(|| root.join("websites"));
+    let mem_dir = root.join("laya-mem");
+    let chrome = st::browser_profile_dir().unwrap_or_else(|| root.join("chrome"));
+    for d in [&dsl, &plugins, &websites, &mem_dir, &chrome] {
+        st::ensure_dir(d)?;
+    }
+    println!("  dsl/          {}", dsl.display());
+    println!("  plugins/      {}", plugins.display());
+    println!("  websites/     {}", websites.display());
+    println!("  laya-mem/     {}", mem_dir.display());
+    println!("  chrome/       {}", chrome.display());
+    if dirs_only {
+        println!("\n(dirs only — nothing installed; drop --dirs-only to install plugins + specs)");
+        return Ok(());
+    }
+
+    // laya-mem's specs. Materialized from the binary, so this is what makes an
+    // installed `mcp serve` able to answer calls at all.
+    let spec_dir = laya_workflow::laya_mem::LayaMemTools::default_spec_dir();
+    if force {
+        // `--force` means "make this match the shipped version", which for the
+        // specs means overwriting local edits. Without it, ensure_specs leaves
+        // them alone — that distinction is the only reason to have both paths.
+        let n = laya_workflow::laya_mem::restore_specs(&spec_dir)?;
+        println!("\nlaya-mem specs: {} ({} file(s), restored)", spec_dir.display(), n);
+    } else {
+        laya_workflow::laya_mem::ensure_specs(&spec_dir)?;
+        println!("\nlaya-mem specs: {} ({} file(s))", spec_dir.display(), laya_workflow::laya_mem::EMBEDDED_SPECS.len());
+    }
+    println!("laya-mem store: {}", laya_workflow::laya_mem::LayaMemTools::default_db_path().display());
+
+    // Every plugin, installed into the user layer so a checkout is not required.
+    //
+    // Two sources, and both are needed: `discover_plugins` only sees what is on
+    // disk, so run outside a checkout it finds nothing, while the builtins are
+    // compiled in and so are invisible to it. Installing only the first source
+    // made `install` a no-op on a machine with just the binary — the case it
+    // most needs to work. On-disk copies win where both exist, because a repo
+    // checkout can carry plugins newer than the binary that reads them.
+    let entries = plg::discover_plugins();
+    let mut installed = 0usize;
+    let mut kept = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = Default::default();
+
+    for e in &entries {
+        let Some(src) = e.path.as_ref() else {
+            continue; // no on-disk copy
+        };
+        // Discovery reports `group/name`; a plugin is one directory, so install
+        // under the bare name (`websites/hackernews` → `plugins/hackernews`).
+        let name = plg::install_name_for(&e.name).to_string();
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if plugins.join(&name).exists() && !force {
+            kept += 1;
+            continue;
+        }
+        match plg::install_from_dir(src, &plugins, &name, force) {
+            Ok(_) => installed += 1,
+            Err(err) => failed.push(format!("{name}: {err}")),
+        }
+    }
+    let from_repo = seen.len();
+    for name in plg::builtin_names() {
+        if seen.contains(*name) {
+            continue;
+        }
+        match plg::install_builtin_to(name, &plugins, force) {
+            Ok(Some(_)) => installed += 1,
+            Ok(None) => kept += 1, // already present, or not a builtin
+            Err(err) => failed.push(format!("{name}: {err}")),
+        }
+    }
+    let total = seen.len() + plg::builtin_names()
+        .iter()
+        .filter(|n| !seen.contains(**n))
+        .count();
+    println!("\nplugins: {installed} installed, {kept} already present, {total} bundled ({from_repo} on disk, {} compiled in)", plg::builtin_names().len());
+    if !failed.is_empty() {
+        for f in &failed {
+            eprintln!("  FAILED {f}");
+        }
+        bail!("{} plugin(s) failed to install", failed.len());
+    }
+    println!("\nnext: laya-workflow plugin list   |   laya-workflow laya-mem info");
+    Ok(())
+}
+
+/// `laya-mem info | install | restore` — the memory gate's own state.
+///
+/// `info` deliberately reports per-spec presence: the failure mode this guards
+/// against is a server that starts fine and then answers every tool call with
+/// `spec not found`, which reads like a broken install rather than a missing
+/// directory.
+fn run_laya_mem(cmd: &LayaMemCmd) -> Result<()> {
+    use laya_workflow::laya_mem::{self, LayaMemTools};
+    let tools = LayaMemTools::from_env();
+    match cmd {
+        LayaMemCmd::Info => {
+            let backend = match &tools.base_url {
+                Some(u) => format!("Laya model @ {u}"),
+                None => "offline heuristic (set LAYA_BASE_URL for the real model)".to_string(),
+            };
+            println!("spec dir: {}", tools.spec_dir.display());
+            println!("store:    {}", tools.db_path.display());
+            println!("backend:  {backend}");
+            let missing: Vec<&str> = laya_mem::EMBEDDED_SPECS
+                .iter()
+                .filter(|(name, _)| !tools.spec_dir.join(name).is_file())
+                .map(|(name, _)| *name)
+                .collect();
+            if missing.is_empty() {
+                println!("specs:    all {} present", laya_mem::EMBEDDED_SPECS.len());
+            } else {
+                println!("specs:    MISSING {}", missing.join(", "));
+                println!("          fix: laya-workflow laya-mem install");
+                bail!("{} spec(s) missing from {}", missing.len(), tools.spec_dir.display());
+            }
+            if let Some(p) = tools.db_path.parent() {
+                println!("note:     the store's directory is created on first persist ({})", p.display());
+            }
+            Ok(())
+        }
+        LayaMemCmd::Install => {
+            laya_mem::ensure_specs(&tools.spec_dir)?;
+            println!("specs ready: {} ({} file(s))", tools.spec_dir.display(), laya_mem::EMBEDDED_SPECS.len());
+            Ok(())
+        }
+        LayaMemCmd::Restore => {
+            let n = laya_mem::restore_specs(&tools.spec_dir)?;
+            println!("restored {n} spec(s) into {}", tools.spec_dir.display());
+            Ok(())
+        }
+    }
+}
+
 /// Skill content: progressive disclosure of how to use laya-workflow.
 ///
 /// Layering:
@@ -1098,6 +1287,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("persist",   "Where the per-node store lives on disk (`<dir>/runs/0001.json` + `manifest.json`), how `run_persistent` / `rewind` / `replay` fit together.", "state"),
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
+        ("install",   "The state root (~/.laya-workflow), `install` (layout + every bundled plugin + the laya-mem specs), and the laya-mem memory gate (`mcp serve`, `laya-mem info`).", "overview"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("db",        "HTAP store in two modes: `kind: \"db\"` pairs SQLite (ACID) with DuckDB (analytics) over one file — `embed` (local CLIs) or `server` (`db serve` daemon, shared writer).", "orchestrate"),
@@ -1192,11 +1382,15 @@ fn print_overview() {
     println!(
         "  LAYA_DSL_DIR     pin the spec root (overrides the layered repo/user/builtin lookup)"
     );
-    println!("  LAYA_USER_DSL_DIR  per-user spec root (default: ~/.config/laya-workflow/dsl)");
+    println!("  LAYA_USER_DSL_DIR  per-user spec root (default: ~/.laya-workflow/dsl)");
     println!("  LAYA_PLUGIN_DIR  pin the plugin root (also the `plugin install` target)");
     println!(
-        "  LAYA_USER_PLUGIN_DIR  per-user plugin root (default: ~/.config/laya-workflow/plugins)"
+        "  LAYA_USER_PLUGIN_DIR  per-user plugin root (default: ~/.laya-workflow/plugins)"
     );
+    println!("  LAYA_HOME      the state root (default: ~/.laya-workflow)");
+    println!("  LAYA_MEM_SQLITE   laya-mem store (default: <state>/laya-mem/codex.sqlite)");
+    println!("  LAYA_MEM_SPEC_DIR  laya-mem specs (default: <state>/laya-mem/specs)");
+    println!("  LAYA_BASE_URL      laya-mem backend (unset = offline heuristic)");
     println!("  LAYA_TEST_PYTHON python3 binary for mock agent capability");
     println!("  LAYA_MOCK3       host:redis:nats:mqtt:smtp:s3:prom:kafka:udp");
     println!("  LAYA_AGENT_BIN_DIR  dir containing `cxgo` / `cmdgo` wrappers");
@@ -1225,6 +1419,7 @@ fn print_section(name: &str) -> Result<()> {
         "tests" => SKILL_TESTS,
         "safety" => SKILL_SAFETY,
         "plugins" => SKILL_PLUGINS,
+        "install" => SKILL_INSTALL,
         "orchestrate" => SKILL_ORCHESTRATE,
         "db" => SKILL_DB,
         "notify" => SKILL_NOTIFY,
@@ -1275,6 +1470,7 @@ static SKILL_DSL: &str = include_str!("skill/sections/dsl.md");
 static SKILL_TESTS: &str = include_str!("skill/sections/tests.md");
 static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
 static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
+static SKILL_INSTALL: &str = include_str!("skill/sections/install.md");
 static SKILL_ORCHESTRATE: &str = include_str!("skill/sections/orchestrate.md");
 static SKILL_DB: &str = include_str!("skill/sections/db.md");
 static SKILL_NOTIFY: &str = include_str!("skill/sections/notify.md");

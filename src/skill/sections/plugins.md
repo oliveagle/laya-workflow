@@ -50,7 +50,7 @@ laya-workflow plugin install <owner/repo> --path <dir> [--name N] [--git-ref R] 
 | `--name` | installed name (default: the source `plugin.json` `name`, else the last segment of `--path`) |
 | `--git-ref` | branch / tag / commit to check out |
 | `--force` | overwrite an existing install of the same name |
-| `--root` | install root (default: `$LAYA_PLUGIN_DIR`, else `~/.config/laya-workflow/plugins`) |
+| `--root` | install root (default: `$LAYA_PLUGIN_DIR`, else `~/.laya-workflow/plugins`) |
 
 Install is **refused** unless the directory (or its `plugin/` subdir) has a
 parseable `plugin.json`, and credentials in a URL are stripped before anything
@@ -82,9 +82,9 @@ Highest priority first — a name in a higher layer shadows the same name below:
 3. `plugins/<name>/` and `websites/*/plugin/`, walking up from the cwd and
    stopping at the git root (the layer a repository commits — a site folder is
    matched by its manifest `name`);
-4. `~/.config/laya-workflow/plugins/<name>/` and
-   `~/.config/laya-workflow/websites/*/plugin/` (the `plugin install` default —
-   `$LAYA_USER_PLUGIN_DIR` / `$XDG_CONFIG_HOME` override it);
+4. `~/.laya-workflow/plugins/<name>/` and
+   `~/.laya-workflow/websites/*/plugin/` (the `plugin install` default —
+   `$LAYA_USER_PLUGIN_DIR` / `$LAYA_HOME` override it);
 5. the copy compiled into the binary (`include_str!`), so a bundled plugin
    still works after `sudo install`-ing a single binary.
 

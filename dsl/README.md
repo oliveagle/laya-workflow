@@ -18,8 +18,8 @@ Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
 Spec roots are **layered**. A bare `"workflow": "name"` ref (and `list`) resolves
 against, highest priority first: an explicit pin (`--dsl-dir` / `$LAYA_DSL_DIR`,
 which replaces the rest) → **repo** `.laya-workflow/dsl/` (preferred) or `dsl/`,
-found by walking up to the git root → **user** `~/.config/laya-workflow/dsl`
-(`$LAYA_USER_DSL_DIR` / `$XDG_CONFIG_HOME` override) → **builtin** `<crate>/dsl`.
+found by walking up to the git root → **user** `~/.laya-workflow/dsl`
+(`$LAYA_USER_DSL_DIR` / `$LAYA_HOME` override) → **builtin** `<crate>/dsl`.
 This directory is the repo layer for the checkout; commit changes here so the
 topology follows the repo. The first root to define a name wins.
 See `ole_eval/README.md` for the ole-eval scenario mapping,

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The gate before you push, in about a second.
 #
-#   scripts/verify.sh              build + plugin gate + fast test suite   ~1s warm
+#   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~1s warm
 #   scripts/verify.sh --full       ... and the timeout section too         +169s
 #   scripts/verify.sh --no-build   tests only (you already built)
 #   scripts/verify.sh spec engine  only these sections
@@ -66,7 +66,27 @@ fi
 [ -x "$BIN" ] || { echo "no $BIN - run without --no-build first" >&2; exit 1; }
 [ -x "$CLI" ] || { echo "no $CLI - run without --no-build first" >&2; exit 1; }
 
-# ── 2. do the plugins still compile and still route? ─────────────────────────
+# ── 2. do the #[cfg(test)] unit tests still pass? ──────────────────────────────
+# `laya-workflow-tests` is the offline suite, but the crate also carries
+# `#[cfg(test)]` tests (state-dir resolution, the embedded laya-mem specs, plugin
+# installation). Nothing else runs them, so a change there can only be checked by
+# someone remembering `cargo test` by hand - which is how they rot.
+#
+# 100+ tests, no network, no browser: the lib target alone.
+T0=$SECONDS
+if [ "$BUILD" = 1 ] || [ ${#SECTIONS[@]} -eq 0 ]; then
+  stage "unit tests"
+  UNIT_OUT="$(cd "$ROOT" && cargo test --release -p laya-workflow --lib 2>&1)"
+  URC=$?
+  printf '%s\n' "$UNIT_OUT" | grep -E '^test result|^error' | sed 's/^/   /'
+  [ "$URC" = 0 ] || rc=1
+  printf '   [%ss]\n' "$((SECONDS-T0))"
+else
+  stage "unit tests"
+  echo "   skipped (section filter given; unit tests run only for a full gate)"
+fi
+
+# ── 3. do the plugins still compile and still route? ─────────────────────────
 # It is the only stage that can catch a plugin edit: the Rust suite never
 # executes Rhai.
 #
@@ -110,7 +130,7 @@ else
   echo "   no plugins under websites/ - skipped"
 fi
 
-# ── 3. do the BDD documents still compile into runnable specs? ───────────────
+# ── 4. do the BDD documents still compile into runnable specs? ───────────────
 # bdd/features/*.feature is hand-written; every spec under it is generated.
 # This catches a step that no longer parses, or a scenario that compiles to a
 # spec the engine rejects - both of which would otherwise surface minutes later
@@ -128,7 +148,7 @@ else
   echo "   no bdd/features/*.feature - skipped"
 fi
 
-# ── 4. the tests ─────────────────────────────────────────────────────────────
+# ── 5. the tests ─────────────────────────────────────────────────────────────
 # One section per line: read it as lines, not as one multi-line word.
 ALL=()
 while IFS= read -r line; do

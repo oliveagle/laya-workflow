@@ -16,4 +16,5 @@ pub mod optimizer;
 pub mod orchestrate;
 pub mod persist;
 pub mod spec;
+pub mod state;
 pub mod workflow;
