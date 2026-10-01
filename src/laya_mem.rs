@@ -55,9 +55,8 @@ impl LayaMemTools {
     pub fn default_db_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
         PathBuf::from(home)
-            .join("tmp")
-            .join("laya_mem")
-            .join("codex.sqlite")
+            .join(".laya-workflow")
+            .join("mem.sqlite")
     }
 
     pub fn from_env() -> Self {
