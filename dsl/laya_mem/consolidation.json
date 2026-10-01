@@ -1,0 +1,109 @@
+{
+  "name": "laya_mem_consolidation",
+  "dsl_version": 2,
+  "description": "Laya-Mem periodic non-destructive consolidation (write-side). Port of memory/jev_questions.consolidation_questions for one candidate pair (new_memory vs candidates[0]). 5 decisions: 4 noul (redundant / contradiction / obsolete / link) + 1 Choice (representation: keep_separate / merge / promote). Default threshold 0.85 per Jev-Mem's `consolidation_threshold`. Action emits one label per consolidation-link subtype when the corresponding noul crosses threshold, plus the representation choice verdict as copy_keys. Caller loops pairs N times with `pair_{i}_*` prefix to handle more than 1 candidate. Contradiction at threshold forces keep_separate (non-destructive); merge/promote only when contradiction < threshold AND the representation probability >= threshold.",
+  "start": "consolidate",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "consolidate",
+      "primary_q": "pair_0_redundant",
+      "questions": {
+        "pair_0_redundant": {
+          "type": "noul",
+          "instructions": "Compare `new_memory.content` with `candidates[0].content`. Do these observations repeat the same fact with no additional recallable detail?",
+          "truthy": "One is a duplicate or paraphrase without a new detail or time-specific update.",
+          "falsy": "They provide different details or describe distinct occurrences.",
+          "heuristic": {
+            "field": "pair_0_redundant_status",
+            "match_any": ["redundant", "duplicate", "paraphrase"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_contradiction": {
+          "type": "noul",
+          "instructions": "Compare `new_memory.content` with `candidates[0].content`. Do these accounts assert incompatible facts about the same subject at the same time?",
+          "truthy": "Claims cannot both hold at the stated time and context.",
+          "falsy": "Compatible claims, uncertainty, or a change over time that explains the difference.",
+          "heuristic": {
+            "field": "pair_0_contradiction_status",
+            "match_any": ["contradict", "conflict", "incompatible"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_obsolete": {
+          "type": "noul",
+          "instructions": "Compare `new_memory.content` with `candidates[0].content`. Does the new memory explicitly replace the candidate's previously valid fact with an updated fact?",
+          "truthy": "An explicit update supersedes the earlier fact for current-state questions.",
+          "falsy": "No explicit replacement; mere recency or a separate event is insufficient.",
+          "heuristic": {
+            "field": "pair_0_obsolete_status",
+            "match_any": ["obsolete", "supersede", "replaced", "updated fact"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_link": {
+          "type": "noul",
+          "instructions": "Compare `new_memory.content` with `candidates[0].content`. Would following a link between these observations help answer a future recall question?",
+          "truthy": "The connection supplies related, corroborating, correcting or contrasting evidence.",
+          "falsy": "There is no specific connection useful for recall.",
+          "heuristic": {
+            "field": "pair_0_link_status",
+            "match_any": ["related", "corroborat", "contrast", "useful link"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        },
+        "pair_0_representation": {
+          "type": "choice",
+          "instructions": "Compare `new_memory.content` with `candidates[0].content`. Which representation best fits the relationship between these two observations? Judge from the supplied accounts; do not assume answers to other questions.",
+          "criteria": {
+            "keep_separate": "Contradictory accounts, unique details that a combined representation would lose, or distinct facts/events without a supported general pattern.",
+            "merge": "Compatible accounts of the same fact or event can be combined without losing unique details.",
+            "promote": "Distinct repeated episodes explicitly support a stable general pattern suitable for semantic abstraction; prefer this over merge for repeated events.",
+            "uncertain": "Insufficient evidence to choose a safe combined or separate representation."
+          },
+          "heuristic": {
+            "match_any": ["keep_separate", "merge", "promote", "uncertain"],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "pair_0_redundant",
+        "rules": [
+          {
+            "when": { "question": "pair_0_contradiction", "value_gte": 0.85 },
+            "label": "CONTRADICTS"
+          },
+          {
+            "when": { "question": "pair_0_obsolete", "value_gte": 0.85 },
+            "label": "OBSOLETE"
+          },
+          {
+            "when": { "question": "pair_0_redundant", "value_gte": 0.85 },
+            "label": "REDUNDANT_WITH"
+          },
+          {
+            "when": { "question": "pair_0_link", "value_gte": 0.85 },
+            "label": "RELATED_TO"
+          },
+          {
+            "when": { "always": true },
+            "label": "KEEP_SEPARATE"
+          }
+        ]
+      }
+    }
+  ]
+}

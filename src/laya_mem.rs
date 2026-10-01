@@ -126,7 +126,10 @@ impl McpToolSet for LayaMemTools {
             Arc::new(AssessTool(me.clone())),
             Arc::new(RetrieveTool(me.clone())),
             Arc::new(PersistTool(me.clone())),
-            Arc::new(RecallTool(me)),
+            Arc::new(RecallTool(me.clone())),
+            Arc::new(ConsolidateTool(me.clone())),
+            Arc::new(StatsTool(me.clone())),
+            Arc::new(AuditTool(me)),
         ]
     }
 }
@@ -330,13 +333,13 @@ impl McpTool for PersistTool {
         let entities_json = serde_json::to_string(&entities)?;
         let type_scores_json = serde_json::to_string(&type_scores)?;
 
+        // Ensure the laya-mem schema is current (memories + relations + audit_log;
+        // FTS5 + triggers; consolidation columns). Idempotent on older DBs.
         call_db_for_db(
             &db_path,
             json!({
                 "op": "exec",
                 "statements": [
-                    "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, ts TEXT, entities TEXT, type_scores TEXT NOT NULL)",
-                    "CREATE TABLE IF NOT EXISTS relations (id INTEGER PRIMARY KEY, source TEXT, target TEXT, link_type TEXT, probability REAL)",
                     "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='id', tokenize='unicode61 remove_diacritics 2')",
                     "CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content); END",
                     "CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content); END",
@@ -344,13 +347,22 @@ impl McpTool for PersistTool {
                 ]
             }),
         )?;
+        ensure_schema(&db_path)?;
 
         let content_esc = sql_escape(content);
         let ts_esc = if ts.is_empty() { sql_escape(&now_iso()) } else { sql_escape(ts) };
         let entities_esc = sql_escape(&entities_json);
         let type_scores_esc = sql_escape(&type_scores_json);
+        let node_type_esc = sql_escape(
+            args.get("node_type").and_then(|v| v.as_str()).unwrap_or("OBSERVATION")
+        );
+        let source_memory_ids_esc = sql_escape(
+            &args.get("source_memory_ids")
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string()))
+                .unwrap_or_else(|| "[]".to_string())
+        );
         let insert_sql = format!(
-            "INSERT INTO memories (content, ts, entities, type_scores) VALUES ('{content_esc}', '{ts_esc}', '{entities_esc}', '{type_scores_esc}')"
+            "INSERT INTO memories (content, ts, entities, type_scores, node_type, source_memory_ids) VALUES ('{content_esc}', '{ts_esc}', '{entities_esc}', '{type_scores_esc}', '{node_type_esc}', '{source_memory_ids_esc}')"
         );
         let insert_result = call_db_for_db(
             &db_path,
@@ -372,10 +384,15 @@ impl McpTool for PersistTool {
                 .ok_or_else(|| anyhow!("relation.target required"))?;
             let link_type = rel.get("link_type").and_then(|v| v.as_str()).unwrap_or("SEMANTIC");
             let probability = rel.get("probability").and_then(|v| v.as_f64()).unwrap_or(1.0);
+            let link_sub_type = rel.get("link_sub_type").and_then(|v| v.as_str()).unwrap_or("");
+            let status = rel.get("status").and_then(|v| v.as_str()).unwrap_or("ACTIVE");
             let rel_sql = format!(
-                "INSERT INTO relations (source, target, link_type, probability) VALUES ('{s}', '{t}', '{lt}', {p})",
+                "INSERT INTO relations (source, target, link_type, link_sub_type, probability, status) VALUES ('{s}', '{t}', '{lt}', '{lst}', {p}, '{st}')",
                 s = sql_escape(source), t = sql_escape(target),
-                lt = sql_escape(link_type), p = probability,
+                lt = sql_escape(link_type),
+                lst = sql_escape(link_sub_type),
+                p = probability,
+                st = sql_escape(status),
             );
             let rel_result = call_db_for_db(
                 &db_path,
@@ -391,11 +408,11 @@ impl McpTool for PersistTool {
 
         let verify = call_db_for_db(
             &db_path,
-            json!({ "op": "query", "sql": "SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT 5" }),
+            json!({ "op": "query", "sql": "SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories ORDER BY id DESC LIMIT 5" }),
         )?;
         let relations_q = call_db_for_db(
             &db_path,
-            json!({ "op": "query", "sql": "SELECT id, source, target, link_type, probability FROM relations ORDER BY id DESC LIMIT 5" }),
+            json!({ "op": "query", "sql": "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations ORDER BY id DESC LIMIT 5" }),
         )?;
 
         Ok(json!({
@@ -440,6 +457,7 @@ impl McpTool for RecallTool {
             .filter(|s| !s.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| self.0.db_path.clone());
+        ensure_schema(&db_path)?;
 
         let sql = if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
             // FTS5 with prefix wildcards on every token: "graduat*" matches
@@ -452,7 +470,7 @@ impl McpTool for RecallTool {
                 .map(|t| format!("{}*", t))
                 .collect();
             if tokens.is_empty() {
-                format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}")
+                format!("SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories ORDER BY id DESC LIMIT {limit}")
             } else {
                 // OR semantics: an AND of every question term almost never
                 // matches natural phrasing ("what type of action figure"
@@ -460,12 +478,12 @@ impl McpTool for RecallTool {
                 // memories matching more/rarer terms float to the top.
                 let fts_query = tokens.join(" OR ");
                 format!(
-                    "SELECT m.id, m.content, m.ts, m.entities, m.type_scores FROM memories_fts f JOIN memories m ON m.id = f.rowid WHERE memories_fts MATCH '{}' ORDER BY bm25(memories_fts), m.id DESC LIMIT {limit}",
+                    "SELECT m.id, m.content, m.ts, m.entities, m.type_scores, m.node_type, m.consolidation_key, m.consolidation_action, m.source_memory_ids FROM memories_fts f JOIN memories m ON m.id = f.rowid WHERE memories_fts MATCH '{}' ORDER BY bm25(memories_fts), m.id DESC LIMIT {limit}",
                     fts_query.replace('\'', "''")
                 )
             }
         } else {
-            format!("SELECT id, content, ts, entities, type_scores FROM memories ORDER BY id DESC LIMIT {limit}")
+            format!("SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories ORDER BY id DESC LIMIT {limit}")
         };
         let memories = call_db_for_db(
             &db_path,
@@ -478,7 +496,7 @@ impl McpTool for RecallTool {
         if include_relations {
             let rels = call_db_for_db(
                 &db_path,
-                json!({ "op": "query", "sql": "SELECT id, source, target, link_type, probability FROM relations ORDER BY id DESC LIMIT 5" }),
+                json!({ "op": "query", "sql": "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations ORDER BY id DESC LIMIT 5" }),
             )?;
             out.as_object_mut().unwrap().insert(
                 "relations".into(),
@@ -489,6 +507,321 @@ impl McpTool for RecallTool {
     }
 }
 
+// ─── tool: consolidate ─────────────────────────────────────────────────────────
+
+/// Apply one consolidation decision between a target memory and one candidate.
+/// Caller (agent) supplies the per-noul scores and a representation verdict;
+/// this tool is the "apply" half of the System-One controller. Optional
+/// `summary_content` triggers a non-destructive merge/promote (Jev-Mem:
+/// only after System-Two summarizer returns text).
+struct ConsolidateTool(Arc<LayaMemTools>);
+
+impl McpTool for ConsolidateTool {
+    fn name(&self) -> &str { "laya_mem_consolidate" }
+    fn description(&self) -> &str {
+        "Apply one periodic consolidation decision. Writes a typed consolidation relation (REDUNDANT_WITH / CONTRADICTS / OBSOLETE / RELATED_TO) between target_memory_id and candidate_id; when representation is merge/promote and a summary_content is supplied, creates a non-destructive summary memory (node_type=SUMMARY, consolidation_key=fnv1a(target+candidate), source_memory_ids=[target, candidate], consolidation_action=merge|promote). All operations emit audit_log rows. Raw evidence (target + candidate memories) is never modified — deletion of originals would violate Jev-Mem's non-destructive invariant."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "target_memory_id": {"type": "string", "description": "Source memory id (typically the newly-written one)."},
+                "candidate_id": {"type": "string", "description": "Existing memory id being compared."},
+                "scores": {
+                    "type": "object",
+                    "properties": {
+                        "redundant": {"type": "number", "description": "P(redundant), 0..1."},
+                        "contradiction": {"type": "number", "description": "P(contradiction), 0..1."},
+                        "obsolete": {"type": "number", "description": "P(obsolete), 0..1."},
+                        "link": {"type": "number", "description": "P(link), 0..1."}
+                    }
+                },
+                "representation": {
+                    "type": "string",
+                    "enum": ["keep_separate", "merge", "promote", "uncertain"],
+                    "description": "System-One verdict (typically from laya_workflow run --spec dsl/laya_mem/consolidation.json)."
+                },
+                "consolidation_threshold": {"type": "number", "default": 0.85, "description": "Jev-Mem's threshold; noul >= threshold triggers the corresponding relation."},
+                "summary_content": {"type": "string", "description": "System-Two synthesised text. Required when representation is merge/promote."},
+                "summary_entities": {"type": "array", "items": {"type": "string"}},
+                "summary_type_scores": {"type": "object"},
+                "db_path": {"type": "string"}
+            },
+            "required": ["target_memory_id", "candidate_id", "scores", "representation"]
+        })
+    }
+
+    fn call(&self, args: &Value) -> Result<Value> {
+        let target = args.get("target_memory_id").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("laya_mem_consolidate: missing 'target_memory_id'"))?;
+        let candidate = args.get("candidate_id").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("laya_mem_consolidate: missing 'candidate_id'"))?;
+        let scores = args.get("scores").cloned().unwrap_or_else(|| json!({}));
+        let representation = args.get("representation").and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("laya_mem_consolidate: missing 'representation'"))?;
+        let threshold = args.get("consolidation_threshold").and_then(|v| v.as_f64()).unwrap_or(0.85);
+        let summary_content = args.get("summary_content").and_then(|v| v.as_str()).unwrap_or("");
+        let summary_type_scores = args.get("summary_type_scores").cloned().unwrap_or_else(|| json!({}));
+        let summary_entities = args.get("summary_entities").cloned().unwrap_or_else(|| Value::Array(Vec::new()));
+        let db_path: PathBuf = args
+            .get("db_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.0.db_path.clone());
+        ensure_parent(&db_path)?;
+        ensure_schema(&db_path)?;
+
+        let redundant = scores.get("redundant").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let contradiction = scores.get("contradiction").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let obsolete = scores.get("obsolete").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let link = scores.get("link").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+        // Determine the link sub_type + probability (priority: contradiction > obsolete > redundant > link).
+        // Mirrors memory_builder.consolidate: 'CONTRADICTS' / 'REDUNDANT_WITH' / 'OBSOLETE' / 'RELATED_TO'.
+        let (link_sub_type, link_type_label, prob) = if contradiction >= threshold {
+            ("CONTRADICTS", "SEMANTIC", contradiction)
+        } else if obsolete >= threshold {
+            ("OBSOLETE", "TEMPORAL", obsolete)
+        } else if redundant >= threshold {
+            ("REDUNDANT_WITH", "SEMANTIC", redundant)
+        } else if link >= threshold {
+            ("RELATED_TO", "SEMANTIC", link)
+        } else {
+            ("", "", 0.0)
+        };
+
+        let mut written_relations: Vec<i64> = Vec::new();
+        let mut stmts: Vec<String> = Vec::new();
+
+        if !link_sub_type.is_empty() {
+            let rel_sql = format!(
+                "INSERT INTO relations (source, target, link_type, link_sub_type, probability, status) VALUES ('{s}', '{t}', '{lt}', '{lst}', {p}, 'ACTIVE')",
+                s = sql_escape(target),
+                t = sql_escape(candidate),
+                lt = sql_escape(link_type_label),
+                lst = sql_escape(link_sub_type),
+                p = prob,
+            );
+            stmts.push(rel_sql);
+            stmts.push("SELECT last_insert_rowid() AS last_insert_rowid".to_string());
+            let res = call_db_for_db(&db_path, json!({ "op": "exec", "statements": stmts.clone() }))?;
+            stmts.clear();
+            if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
+                for row in rows {
+                    if let Some(id) = row.get("last_insert_rowid").and_then(|v| v.as_i64()) {
+                        written_relations.push(id);
+                    }
+                }
+            }
+        }
+
+        // Non-destructive merge/promote: create a summary memory if requested.
+        // Forced keep_separate when contradiction is high (>= threshold).
+        let mut summary_memory_id: Option<i64> = None;
+        let mut summary_blocked_reason: Option<String> = None;
+        let allow_summarize = (representation == "merge" || representation == "promote")
+            && contradiction < threshold
+            && !summary_content.trim().is_empty();
+        if representation == "merge" || representation == "promote" {
+            if contradiction >= threshold {
+                summary_blocked_reason = Some("contradiction>=threshold forces keep_separate (non-destructive)".to_string());
+            } else if summary_content.trim().is_empty() {
+                summary_blocked_reason = Some("summary_content required for merge/promote".to_string());
+            }
+        }
+
+        if allow_summarize {
+            // consolidation_key dedupe (Jev-Mem MemoryBuilder._consolidating + already_done check).
+            let key = fnv1a_hex(&format!("{}|{}", target, candidate));
+            let dup_q = format!(
+                "SELECT id FROM memories WHERE consolidation_key = '{}' LIMIT 1",
+                sql_escape(&key)
+            );
+            let dup = call_db_for_db(
+                &db_path,
+                json!({ "op": "query", "sql": dup_q }),
+            )?;
+            let existing_summary: Option<i64> = dup
+                .get("rows").and_then(|r| r.as_array())
+                .and_then(|a| a.first())
+                .and_then(|row| row.get("id"))
+                .and_then(|v| v.as_i64());
+            if let Some(id) = existing_summary {
+                summary_memory_id = Some(id);
+                summary_blocked_reason = Some(format!("consolidation_key={} already produced summary id={}", key, id));
+            } else {
+                let entities_json = serde_json::to_string(&summary_entities)?;
+                let type_scores_json = serde_json::to_string(&summary_type_scores)?;
+                let summary_esc = sql_escape(summary_content);
+                let ts_esc = sql_escape(&now_iso());
+                let entities_esc = sql_escape(&entities_json);
+                let type_scores_esc = sql_escape(&type_scores_json);
+                let key_esc = sql_escape(&key);
+                let action_esc = sql_escape(representation);
+                let sources_esc = sql_escape(&serde_json::to_string(&[target, candidate]).unwrap_or_else(|_| "[]".to_string()));
+                let summary_sql = format!(
+                    "INSERT INTO memories (content, ts, entities, type_scores, node_type, source_memory_ids, consolidation_key, consolidation_action, consolidated_at) VALUES ('{summary_esc}', '{ts_esc}', '{entities_esc}', '{type_scores_esc}', 'SUMMARY', '{sources_esc}', '{key_esc}', '{action_esc}', '{ts_esc}')"
+                );
+                let res = call_db_for_db(
+                    &db_path,
+                    json!({ "op": "exec", "statements": [summary_sql, "SELECT last_insert_rowid() AS last_insert_rowid".to_string()] }),
+                )?;
+                summary_memory_id = res
+                    .get("rows").and_then(|r| r.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|row| row.get("last_insert_rowid"))
+                    .and_then(|v| v.as_i64());
+            }
+        }
+
+        // Always emit an audit row, even when no relation written (keep_separate / uncertain path).
+        let audit_details = json!({
+            "target": target,
+            "candidate": candidate,
+            "scores": scores,
+            "representation": representation,
+            "threshold": threshold,
+            "link_sub_type": link_sub_type,
+            "summary_memory_id": summary_memory_id,
+            "summary_blocked_reason": summary_blocked_reason,
+        });
+        let audit_id = audit_log(&db_path, "consolidation", target, &audit_details)?;
+
+        // Read back recent relations + summary memory for verification.
+        let verify_rels = call_db_for_db(
+            &db_path,
+            json!({ "op": "query", "sql": format!(
+                "SELECT id, source, target, link_type, link_sub_type, probability, status FROM relations WHERE source IN ('{t}', '{c}') AND target IN ('{t}', '{c}') ORDER BY id DESC LIMIT 10",
+                t = sql_escape(target), c = sql_escape(candidate)) }),
+        )?;
+
+        Ok(json!({
+            "decision": representation,
+            "link_sub_type": link_sub_type,
+            "link_type": link_type_label,
+            "probability": prob,
+            "relation_ids": written_relations,
+            "summary_memory_id": summary_memory_id,
+            "summary_blocked_reason": summary_blocked_reason,
+            "audit_id": audit_id,
+            "recent_relations": verify_rels.get("rows").cloned().unwrap_or(Value::Null),
+            "db_path": db_path.display().to_string(),
+        }))
+    }
+}
+
+// ─── tool: stats ───────────────────────────────────────────────────────────────────────
+
+struct StatsTool(Arc<LayaMemTools>);
+
+impl McpTool for StatsTool {
+    fn name(&self) -> &str { "laya_mem_stats" }
+    fn description(&self) -> &str {
+        "Return memory-system statistics: total memories, summaries created via consolidation, total relations, total audit rows, and the last 5 consolidation actions. Use this to monitor consolidation activity."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "db_path": {"type": "string"}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let db_path: PathBuf = args
+            .get("db_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.0.db_path.clone());
+        ensure_schema(&db_path)?;
+
+        let count = |sql: &str| -> i64 {
+            let res = call_db_for_db(&db_path, json!({ "op": "query", "sql": sql }));
+            let rows = match res {
+                Ok(r) => r.get("rows").and_then(|a| a.as_array()).cloned().unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            rows.first()
+                .and_then(|row| row.as_object().and_then(|obj| obj.values().next().cloned()))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+        };
+
+        let total_memories = count("SELECT COUNT(*) AS c FROM memories");
+        let summary_count = count("SELECT COUNT(*) AS c FROM memories WHERE node_type = 'SUMMARY'");
+        let total_relations = count("SELECT COUNT(*) AS c FROM relations");
+        let audit_count = count("SELECT COUNT(*) AS c FROM audit_log");
+        let consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'consolidation'");
+
+        let recent_q = json!({ "op": "query", "sql": "SELECT id, ts, op, memory_id, substr(details, 1, 200) AS details FROM audit_log ORDER BY id DESC LIMIT 5" });
+        let recent = call_db_for_db(&db_path, recent_q)
+            .ok()
+            .and_then(|r| r.get("rows").cloned())
+            .unwrap_or(Value::Null);
+
+        Ok(json!({
+            "total_memories": total_memories,
+            "summary_count": summary_count,
+            "total_relations": total_relations,
+            "audit_count": audit_count,
+            "consolidation_actions": consolidation_actions,
+            "recent_audit": recent,
+            "db_path": db_path.display().to_string(),
+        }))
+    }
+}
+
+// ─── tool: audit ─────────────────────────────────────────────────────────────────────
+
+struct AuditTool(Arc<LayaMemTools>);
+
+impl McpTool for AuditTool {
+    fn name(&self) -> &str { "laya_mem_audit" }
+    fn description(&self) -> &str {
+        "Read audit_log entries. op filter (e.g. 'consolidation'), limit (default 50)."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "op": {"type": "string", "description": "Filter to one op (e.g. 'consolidation', 'persist')."},
+                "limit": {"type": "integer", "default": 50},
+                "db_path": {"type": "string"}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let db_path: PathBuf = args
+            .get("db_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.0.db_path.clone());
+        ensure_schema(&db_path)?;
+        let limit = args.get("limit").and_then(|v| v.as_i64()).unwrap_or(50).max(1).min(1000);
+        let op_filter = args.get("op").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+
+        let sql = match op_filter {
+            Some(op) => format!(
+                "SELECT id, ts, op, memory_id, details FROM audit_log WHERE op = '{}' ORDER BY id DESC LIMIT {}",
+                sql_escape(op), limit
+            ),
+            None => format!(
+                "SELECT id, ts, op, memory_id, details FROM audit_log ORDER BY id DESC LIMIT {}",
+                limit
+            ),
+        };
+        let res = call_db_for_db(&db_path, json!({ "op": "query", "sql": sql }))?;
+        Ok(json!({
+            "rows": res.get("rows").cloned().unwrap_or(Value::Null),
+            "db_path": db_path.display().to_string(),
+        }))
+    }
+}
+
+// ─── helpers ──────────────────────────────────────────────────────────
 // ─── helpers ──────────────────────────────────────────────────────────────
 
 /// Write the embedded specs into `dir`, skipping any file that already exists.
@@ -584,6 +917,121 @@ fn ensure_parent(p: &Path) -> Result<()> {
 
 fn sql_escape(s: &str) -> String {
     s.replace('\'', "''")
+}
+
+/// FNV-1a 64-bit hash, hex-formatted. Not cryptographic; only used to
+/// dedupe consolidation summaries (Jev-Mem equivalent: sha256(node_id+other_id)).
+fn fnv1a_hex(s: &str) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h)
+}
+
+/// Create / migrate the Laya-Mem schema. Idempotent: each ALTER TABLE ADD COLUMN
+/// is guarded by a PRAGMA table_info check so re-runs on older DBs add only the
+/// missing columns. Adds:
+///   memories: source_memory_ids, consolidation_key, consolidation_action,
+///             consolidated_at, node_type
+///   relations: link_sub_type, status
+///   new table audit_log: id, ts, op, memory_id, details
+fn ensure_schema(db_path: &Path) -> Result<()> {
+    let _ = call_db_for_db(
+        db_path,
+        json!({
+            "op": "exec",
+            "statements": [
+                "CREATE TABLE IF NOT EXISTS memories (id INTEGER PRIMARY KEY, content TEXT NOT NULL, ts TEXT, entities TEXT, type_scores TEXT NOT NULL)",
+                "CREATE TABLE IF NOT EXISTS relations (id INTEGER PRIMARY KEY, source TEXT, target TEXT, link_type TEXT, probability REAL)",
+                "CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY, ts TEXT, op TEXT NOT NULL, memory_id TEXT, details TEXT)"
+            ]
+        }),
+    )?;
+
+    let mem_info = call_db_for_db(
+        db_path,
+        json!({ "op": "query", "sql": "PRAGMA table_info(memories)" }),
+    )?;
+    let mut existing: Vec<String> = Vec::new();
+    if let Some(rows) = mem_info.get("rows").and_then(|v| v.as_array()) {
+        for row in rows {
+            if let Some(name) = row.get("name").and_then(|v| v.as_str()) {
+                existing.push(name.to_string());
+            }
+        }
+    }
+    let add_col = |col: &str, decl: &str| -> String {
+        format!("ALTER TABLE memories ADD COLUMN {} {}", col, decl)
+    };
+    let mem_migrations: &[(&str, &str)] = &[
+        ("source_memory_ids", "TEXT"),
+        ("consolidation_key", "TEXT"),
+        ("consolidation_action", "TEXT"),
+        ("consolidated_at", "TEXT"),
+        ("node_type", "TEXT DEFAULT 'OBSERVATION'"),
+    ];
+    let mut stmts: Vec<String> = Vec::new();
+    for (col, decl) in mem_migrations {
+        if !existing.iter().any(|n| n == col) {
+            stmts.push(add_col(col, decl));
+        }
+    }
+
+    let rel_info = call_db_for_db(
+        db_path,
+        json!({ "op": "query", "sql": "PRAGMA table_info(relations)" }),
+    )?;
+    let mut existing_rel: Vec<String> = Vec::new();
+    if let Some(rows) = rel_info.get("rows").and_then(|v| v.as_array()) {
+        for row in rows {
+            if let Some(name) = row.get("name").and_then(|v| v.as_str()) {
+                existing_rel.push(name.to_string());
+            }
+        }
+    }
+    let rel_migrations: &[(&str, &str)] = &[
+        ("link_sub_type", "TEXT"),
+        ("status", "TEXT DEFAULT 'ACTIVE'"),
+    ];
+    for (col, decl) in rel_migrations {
+        if !existing_rel.iter().any(|n| n == col) {
+            stmts.push(format!("ALTER TABLE relations ADD COLUMN {} {}", col, decl));
+        }
+    }
+    if !stmts.is_empty() {
+        call_db_for_db(db_path, json!({ "op": "exec", "statements": stmts }))?;
+    }
+    Ok(())
+}
+
+/// Append an audit_log row. Used by consolidate + future periodic hooks.
+fn audit_log(db_path: &Path, op: &str, memory_id: &str, details: &Value) -> Result<i64> {
+    let details_esc = sql_escape(&details.to_string());
+    let mem_id_esc = sql_escape(memory_id);
+    let op_esc = sql_escape(op);
+    let ts_esc = sql_escape(&now_iso());
+    let res = call_db_for_db(
+        db_path,
+        json!({
+            "op": "exec",
+            "statements": [
+                format!(
+                    "INSERT INTO audit_log (ts, op, memory_id, details) VALUES ('{ts_esc}', '{op_esc}', '{mem_id_esc}', '{details_esc}')"
+                ),
+                "SELECT last_insert_rowid() AS last_insert_rowid".to_string()
+            ]
+        }),
+    )?;
+    let id = res
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .and_then(|a| a.first())
+        .and_then(|row| row.get("last_insert_rowid"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
+    Ok(id)
 }
 
 fn now_iso() -> String {
