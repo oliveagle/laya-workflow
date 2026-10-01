@@ -55,6 +55,16 @@ pub fn user_dsl_dir() -> Option<PathBuf> {
     per_purpose("LAYA_USER_DSL_DIR").map(|d| d.join("dsl"))
 }
 
+/// Serializes tests that mutate process-wide env vars (`HOME`, `LAYA_HOME`,
+/// `LAYA_USER_DSL_DIR`, `LAYA_USER_PLUGIN_DIR`, `LAYA_MEM_SQLITE`,
+/// `LAYA_MEM_SPEC_DIR`). Parallel Rust test threads share one process, so any
+/// two tests that both touch the same variable race — which is exactly how the
+/// db-path tests started reading a `/tmp/laya-state-x` root set by a sibling
+/// thread. Every test that rewrites one of these variables must hold this lock
+/// (via [`Env`] or an explicit `.lock()`) for the whole mutation+read window.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Per-user plugin root: `$LAYA_USER_PLUGIN_DIR` → `<state>/plugins`.
 ///
 /// This is also where `plugin install` writes.
@@ -133,10 +143,15 @@ mod tests {
 
     struct Env {
         saved: Vec<(String, Option<std::ffi::OsString>)>,
+        /// Held for the struct's lifetime so sibling tests cannot interleave.
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
 
     impl Env {
         fn new() -> Self {
+            // `into_inner` also recovers a poisoned lock: a panicking sibling
+            // must not wedge every later test.
+            let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let saved = VARS
                 .iter()
                 .map(|v| (v.to_string(), std::env::var_os(v)))
@@ -144,7 +159,7 @@ mod tests {
             for v in VARS {
                 std::env::remove_var(v);
             }
-            Env { saved }
+            Env { saved, _lock }
         }
     }
 

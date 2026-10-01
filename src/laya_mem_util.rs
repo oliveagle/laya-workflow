@@ -806,6 +806,7 @@ mod tests {
     /// directory holding all 8 specs, not on a compile-time path.
     #[test]
     fn default_spec_dir_resolves_without_the_source_tree() {
+        let _lock = crate::state::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tmpdir("default-spec");
         // Emulate an installed binary in a state root, with no $HOME override
         // reachable from the checkout.
@@ -821,6 +822,7 @@ mod tests {
 
     #[test]
     fn db_path_defaults_under_the_state_root() {
+        let _lock = crate::state::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved: Vec<_> = ["LAYA_MEM_SQLITE", "LAYA_HOME", "HOME"]
             .iter()
             .map(|v| (v.to_string(), std::env::var_os(v)))

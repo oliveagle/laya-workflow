@@ -111,10 +111,15 @@ pub fn test_install(h: &mut Harness) {
     // `spec not found` is the failure this check exists to catch.
     let (ok, out) = run_in(&root, &cwd, &["laya-mem", "info"]);
     h.eq("laya-mem info: exits 0", ok, true);
+    // Built from EMBEDDED_SPECS so adding a 10th spec doesn't break this test.
+    let all_specs = format!(
+        "all {} present",
+        laya_workflow::laya_mem::EMBEDDED_SPECS.len()
+    );
     check_msg(
         h,
-        "laya-mem info: all 8 specs present",
-        out.contains("all 8 present"),
+        &format!("laya-mem info: {all_specs}"),
+        out.contains(&all_specs),
         &out,
     );
     check_msg(
