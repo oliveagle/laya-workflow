@@ -409,6 +409,11 @@ impl McpTool for PersistTool {
                 .and_then(|v| v.as_i64());
         }
 
+        // Phase 4: index the new memory's vector for semantic retrieval. Best
+        // effort — a mock encoder never fails, and an OpenAI endpoint failure
+        // must not lose the memory that was just persisted.
+        let _ = embed_and_upsert(&db_path, &memory_id.to_string(), &content);
+
         let verify = call_db_for_db(
             &db_path,
             json!({ "op": "query", "sql": "SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories ORDER BY id DESC LIMIT 5" }),
@@ -519,10 +524,14 @@ impl McpTool for RecallTool {
         } else {
             format!("SELECT id, content, ts, entities, type_scores, node_type, consolidation_key, consolidation_action, source_memory_ids FROM memories ORDER BY id DESC LIMIT {limit}")
         };
-        let memories = call_db_for_db(
-            &db_path,
-            json!({ "op": "query", "sql": sql }),
-        )?;
+        let memories = if let Some(q) = args.get("query").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+            // Hybrid: FTS5 BM25 + dense cosine → RRF fusion (Phase 4, mirrors
+            // Jev-Mem `query_engine._rrf_fusion`). The same `q` is encoded for
+            // the dense side.
+            hybrid_recall(&db_path, &sql, q, limit as usize)?
+        } else {
+            call_db_for_db(&db_path, json!({ "op": "query", "sql": sql }))?
+        };
         let mut out = json!({
             "memories": memories.get("rows").cloned().unwrap_or(Value::Null),
             "db_path": db_path.display().to_string(),
@@ -539,6 +548,72 @@ impl McpTool for RecallTool {
         }
         Ok(out)
     }
+}
+
+
+// ─── vector indexing (Phase 4) ───────────────────────────────────────────────
+
+/// Embed `content` (mock by default, OpenAI-compatible if `LAYA_MEM_EMBEDDING_URL`
+/// is set) and upsert the vector row for `memory_id`. Errors are swallowed by
+/// callers that must not fail the memory write itself.
+pub(crate) fn embed_and_upsert(db_path: &std::path::Path, memory_id: &str, content: &str) -> anyhow::Result<()> {
+    let dim = crate::laya_mem_vec::MOCK_DIM;
+    let vec = match std::env::var("LAYA_MEM_EMBEDDING_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+    {
+        Some(url) => {
+            let model = std::env::var("LAYA_MEM_EMBEDDING_MODEL")
+                .unwrap_or_else(|_| "text-embedding-3-small".to_string());
+            let key = std::env::var("LAYA_MEM_EMBEDDING_API_KEY").unwrap_or_default();
+            match crate::laya_mem_vec::encode_openai(&url, &key, &model, &[content]) {
+                Ok((mut vs, _)) if !vs.is_empty() => vs.remove(0),
+                _ => crate::laya_mem_vec::encode_mock(content, dim),
+            }
+        }
+        None => crate::laya_mem_vec::encode_mock(content, dim),
+    };
+    crate::laya_mem_vec::upsert_vector(db_path, memory_id, &vec)
+}
+
+/// Hybrid recall (Phase 4): FTS5 BM25 + dense cosine fused with RRF (k=60),
+/// mirroring Jev-Mem's `query_engine._rrf_fusion`. Returns the top-`limit`
+/// memory rows in fused order. `fts_sql` is the pre-built BM25 query (used to
+/// short-circuit the FTS side); `query` is also encoded for the dense side.
+fn hybrid_recall(
+    db_path: &std::path::Path,
+    fts_sql: &str,
+    query: &str,
+    limit: usize,
+) -> anyhow::Result<Value> {
+    let ids = crate::laya_mem_vec::hybrid_top_ids(db_path, fts_sql, query, "", limit)?;
+    if ids.is_empty() {
+        return Ok(json!({ "rows": Value::Null }));
+    }
+    // Preserve fused order via a SQLite `WITH ranked AS (VALUES ...)` CTE,
+    // then join by id. `JOIN (VALUES ...)` is rejected by some sqlite3 builds
+    // so we use a CTE explicitly.
+    let rank_rows = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| format!("('{}', {})", crate::laya_mem_util::sql_escape(id), i))
+        .collect::<Vec<_>>()
+        .join(",");
+    let in_list = ids
+        .iter()
+        .map(|id| format!("'{}'", crate::laya_mem_util::sql_escape(id)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "WITH ranked(fid, f_rnk) AS (VALUES {rank_rows}) \
+         SELECT m.id, m.content, m.ts, m.entities, m.type_scores, m.node_type, \
+         m.consolidation_key, m.consolidation_action, m.source_memory_ids \
+         FROM memories m \
+         JOIN ranked ON m.id = ranked.fid \
+         ORDER BY ranked.f_rnk"
+    );
+    let res = crate::laya_mem_util::call_db_for_db(db_path, json!({ "op": "query", "sql": sql }))?;
+    Ok(res)
 }
 
 // ─── tool: consolidate ─────────────────────────────────────────────────────────
@@ -660,6 +735,10 @@ impl McpTool for StatsTool {
         let total_memories = count("SELECT COUNT(*) AS c FROM memories");
         let summary_count = count("SELECT COUNT(*) AS c FROM memories WHERE node_type = 'SUMMARY'");
         let total_relations = count("SELECT COUNT(*) AS c FROM relations");
+        // Phase 4: vectors in the semantic index. `memory_vectors` is created
+        // lazily; if it isn't there yet, count_rows returns 0.
+        let vector_count = count("SELECT COUNT(*) AS c FROM memory_vectors");
+        let vector_dim = count("SELECT dim FROM memory_vectors ORDER BY rowid DESC LIMIT 1");
         let audit_count = count("SELECT COUNT(*) AS c FROM audit_log");
         let consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'consolidation'");
         let auto_consolidation_actions = count("SELECT COUNT(*) AS c FROM audit_log WHERE op = 'auto_consolidation'");
@@ -674,6 +753,8 @@ impl McpTool for StatsTool {
             "total_memories": total_memories,
             "summary_count": summary_count,
             "total_relations": total_relations,
+            "vector_count": vector_count,
+            "vector_dim": vector_dim,
             "audit_count": audit_count,
             "consolidation_actions": consolidation_actions,
             "auto_consolidation_actions": auto_consolidation_actions,

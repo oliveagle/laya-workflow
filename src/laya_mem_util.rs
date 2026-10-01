@@ -420,6 +420,15 @@ pub(crate) fn apply_consolidation(
                 .and_then(|a| a.first())
                 .and_then(|row| row.get("last_insert_rowid"))
                 .and_then(|v| v.as_i64());
+            // A SUMMARY row must be retrievable through recall too (Phase 4):
+            // index its vector like an observation.
+            if let Some(sid) = summary_memory_id {
+                let _ = crate::laya_mem_vec::upsert_vector(
+                    db_path,
+                    &sid.to_string(),
+                    &crate::laya_mem_vec::encode_mock(summary_content, crate::laya_mem_vec::MOCK_DIM),
+                );
+            }
         }
     }
 
@@ -482,17 +491,59 @@ pub(crate) fn find_similar_memories(
          WHERE memories_fts MATCH '{match_expr}' AND m.id <> {exclude} AND m.node_type <> 'SUMMARY' \
          ORDER BY bm25(memories_fts) LIMIT {k}",
         exclude = sql_escape(exclude_id),
-        k = top_k.max(1),
+        k = (top_k.max(1) * 4).to_string(),
     );
-    let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql }))?;
-    let mut out = Vec::new();
+    // Phase 4: the candidate list for consolidation is now hybrid — BM25 +
+    // dense cosine, fused with RRF (Jev-Mem `query_engine._rrf_fusion`). Pure
+    // token overlap misses paraphrases ("bought a car" vs "purchased a
+    // vehicle"); the dense stream catches them when the mock encoder shares
+    // slot mass on a shared token, and an OpenAI-compatible endpoint when
+    // configured makes it genuinely semantic. FTS still supplies lexical
+    // precision, so both streams are fused rather than replaced.
+    let ids = crate::laya_mem_vec::hybrid_top_ids(db_path, &sql, content, exclude_id, top_k.max(1))?;
+    if ids.is_empty() {
+        // No tokens at all (query too short) → nothing to fuse.
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Fall back to pure BM25 (dual-check, e.g. zero vectors + empty fts).
+        let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql }))?;
+        let mut out = Vec::new();
+        if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
+            for row in rows {
+                let id = row.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string()).unwrap_or_default();
+                let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if !id.is_empty() {
+                    out.push((id, content));
+                }
+            }
+        }
+        return Ok(out);
+    }
+    let id_list = ids
+        .iter()
+        .map(|id| format!("'{}'", sql_escape(id)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql2 = format!(
+        "SELECT m.id, m.content FROM memories m WHERE m.id IN ({id_list}) AND m.node_type <> 'SUMMARY'"
+    );
+    let res = call_db_for_db(db_path, json!({ "op": "query", "sql": sql2 }))?;
+    let mut row_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     if let Some(rows) = res.get("rows").and_then(|r| r.as_array()) {
         for row in rows {
             let id = row.get("id").and_then(|v| v.as_i64()).map(|n| n.to_string()).unwrap_or_default();
-            let content = row.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let c = row.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if !id.is_empty() {
-                out.push((id, content));
+                row_map.insert(id, c);
             }
+        }
+    }
+    // Preserve fused order.
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(c) = row_map.remove(&id) {
+            out.push((id, c));
         }
     }
     Ok(out)

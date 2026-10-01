@@ -12,6 +12,7 @@ pub mod capability;
 pub mod db;
 pub mod laya_mem;
 pub mod laya_mem_util;
+pub mod laya_mem_vec;
 #[cfg(test)]
 mod laya_mem_auto_tests;
 pub mod mcp;
