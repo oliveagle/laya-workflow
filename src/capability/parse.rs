@@ -368,6 +368,10 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
                 .unwrap_or(0),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(0),
         })),
+        "needle" => Ok(Capability::Needle(super::needle::NeedleCap {
+            op: def.get("op").and_then(|v| v.as_str()).unwrap_or("extract").to_string(),
+            cact: def.get("cact").and_then(|v| v.as_str()).map(|s| s.to_string()),
+        })),
         "web_fetch" | "fetch_url" => Ok(Capability::WebFetch(web::WebFetchCap {
             format: def.get("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
             headers: def.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),

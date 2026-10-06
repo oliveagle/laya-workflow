@@ -564,6 +564,26 @@ impl McpTool for RecallTool {
 /// callers that must not fail the memory write itself.
 pub(crate) fn embed_and_upsert(db_path: &std::path::Path, memory_id: &str, content: &str) -> anyhow::Result<()> {
     let dim = crate::laya_mem_vec::MOCK_DIM;
+    // Backend selection: `LAYA_MEM_EMBEDDING_BACKEND=needle` uses the on-device
+    // Cactus engine (dim 3072, no network). The OpenAI endpoint path keeps its
+    // precedence when `LAYA_MEM_EMBEDDING_URL` is set, so a caller can still
+    // point at a hosted provider.
+    if std::env::var("LAYA_MEM_EMBEDDING_BACKEND")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("needle"))
+        .unwrap_or(false)
+    {
+        match crate::laya_mem_vec::encode_needle(content) {
+            Ok(vec) => {
+                crate::laya_mem_vec::upsert_vector(db_path, memory_id, &vec)?;
+                return Ok(());
+            }
+            Err(_) => {
+                // fall through to OpenAI / mock, so a missing cact does not
+                // kill the persist call.
+            }
+        }
+    }
     let vec = match std::env::var("LAYA_MEM_EMBEDDING_URL")
         .ok()
         .filter(|s| !s.is_empty())

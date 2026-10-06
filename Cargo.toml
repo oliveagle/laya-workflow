@@ -21,6 +21,7 @@ rhai = { version = "1.26.1", features = ["serde"] }
 # `laya-tch` member; promoted to a direct dep only for `localtime_r`, so the
 # engine can render timestamps in the *user's* timezone without a date crate.
 libc = "0.2"
+libloading = "0.8"
 
 [[bin]]
 name = "laya-workflow"

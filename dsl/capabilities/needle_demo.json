@@ -1,0 +1,172 @@
+{
+  "name": "needle_demo",
+  "dsl_version": 2,
+  "description": "On-device Needle 3 demo: extract invoice, embed sentence, complete tool call via dlopen'd libneedle.so (no network).",
+  "start": "extract",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}"
+    ],
+    "max_timeout_ms": 15000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "invoice_extract": {
+      "kind": "needle",
+      "op": "extract",
+      "cact": "${env.NEEDLE3_CACT}"
+    },
+    "sentence_embed": {
+      "kind": "needle",
+      "op": "embed",
+      "cact": "${env.NEEDLE3_CACT}"
+    },
+    "tool_call": {
+      "kind": "needle",
+      "op": "complete",
+      "cact": "${env.NEEDLE3_CACT}"
+    }
+  },
+  "nodes": [
+    {
+      "name": "extract",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "embed"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "invoice_extract",
+        "with": {
+          "text": "${state.text}",
+          "tool": {
+            "type": "function",
+            "name": "invoice",
+            "description": "Record invoice vendor, total and due date from text.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "vendor": {
+                  "type": "string"
+                },
+                "total": {
+                  "type": "number"
+                },
+                "due_date": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "vendor",
+                "total",
+                "due_date"
+              ]
+            }
+          }
+        },
+        "project": {
+          "invoice": "/arguments",
+          "confidence": "/confidence"
+        }
+      }
+    },
+    {
+      "name": "embed",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "call"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "sentence_embed",
+        "with": {
+          "text": "turn on the kitchen lights"
+        },
+        "project": {
+          "embed_dim": "/dim"
+        }
+      }
+    },
+    {
+      "name": "call",
+      "primary_q": "go",
+      "questions": {
+        "go": {
+          "type": "choice",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "tool_call",
+        "with": {
+          "prompt": "what's it like in Lagos right now?",
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "description": "Get the current weather for a city.",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        },
+        "project": {
+          "weather_calls": "/function_calls",
+          "call_confidence": "/confidence"
+        }
+      }
+    }
+  ]
+}

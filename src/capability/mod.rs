@@ -42,6 +42,7 @@ pub mod store;
 pub mod sys;
 pub mod util;
 pub mod web;
+pub mod needle;
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};
@@ -123,6 +124,9 @@ pub enum Capability {
     // ── extensibility ──
     /// Run a workflow-authored **script plugin** (Rhai) on the sandboxed host.
     Plugin(plugin::PluginCap),
+    /// On-device Needle 3 model: structured extraction / embedding / tool-call.
+    /// Loads the Cactus engine via dlopen; no network, no exec. See `needle`.
+    Needle(needle::NeedleCap),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -348,6 +352,7 @@ impl Registry {
                 Capability::Plugin(c) => {
                     plugin::call_plugin(c, with, state, &self.policy, &self.caps)
                 }
+                Capability::Needle(c) => needle::call_needle(c, with, state, &self.policy),
             };
             match r {
                 Ok(v) => return Ok(v),
@@ -558,6 +563,11 @@ fn unresolved_in(cap: &Capability) -> Vec<String> {
             walk(&Value::String(c.plugin.clone()), &mut out);
             walk(&Value::String(c.dir.clone()), &mut out);
             walk(&Value::String(c.browser.clone()), &mut out);
+        }
+        Capability::Needle(c) => {
+            if let Some(cact) = &c.cact {
+                walk(&Value::String(cact.clone()), &mut out);
+            }
         }
         _ => {}
     }

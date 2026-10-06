@@ -649,3 +649,103 @@ pub fn test_capabilities_extra(h: &mut Harness) {
         5,
     );
 }
+
+pub fn test_needle(h: &mut Harness) {
+    // The on-device Needle 3 capability is exercised only when the engine and
+    // weights are actually installed; otherwise we assert the clean failure
+    // path (specs should probe it gracefully). This keeps the default suite
+    // hermetic while still proving the wiring when `needle fetch` + the cact
+    // are present.
+    let needle_lib = crate::capability::needle::find_lib().is_ok();
+    let needle_cact = crate::capability::needle::find_cact().is_ok();
+    if !needle_lib || !needle_cact {
+        h.check("needle: skipped (no libneedle.so / needle3.cact)", true);
+        return;
+    }
+
+    // extract: invoice from free text
+    let reg = capability::registry_from(
+        &[(
+            "inv",
+            json!({"kind": "needle", "op": "extract"}),
+        )],
+        None,
+    )
+    .unwrap();
+    let tool = json!({
+        "type": "function",
+        "name": "invoice",
+        "description": "Record invoice vendor, total and due date from text.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "vendor": {"type": "string"},
+                "total": {"type": "number"},
+                "due_date": {"type": "string"}
+            },
+            "required": ["vendor", "total", "due_date"]
+        }
+    });
+    let out = reg
+        .call(
+            "inv",
+            &json!({"text": "Invoice from Acme Corp, $1,200.00, due 2026-09-01", "tool": tool}),
+            &json!({}),
+        )
+        .unwrap();
+    let args = out["arguments"].clone();
+    h.eq("needle.extract invoice vendor", args["vendor"].as_str().unwrap_or(""), "Acme Corp");
+    h.eq("needle.extract invoice total", args["total"].as_f64().unwrap_or(0.0), 1200.0);
+    h.check("needle.extract has confidence", out["confidence"].is_number());
+
+    // embed: sentence -> dim + unit vector
+    let reg2 = capability::registry_from(
+        &[("emb", json!({"kind": "needle", "op": "embed"}))],
+        None,
+    )
+    .unwrap();
+    let out2 = reg2
+        .call("emb", &json!({"text": "turn on the kitchen lights"}), &json!({}))
+        .unwrap();
+    let dim = out2["dim"].as_u64().unwrap_or(0);
+    h.check("needle.embed dim is 3072", dim == 3072);
+    let vec: Vec<f64> = out2["vector"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_f64()).collect())
+        .unwrap_or_default();
+    let norm: f64 = vec.iter().map(|x| x * x).sum::<f64>().sqrt();
+    h.check("needle.embed vector normalised", (norm - 1.0).abs() < 1e-3);
+
+    // complete: tool call with confidence
+    let reg3 = capability::registry_from(
+        &[("tc", json!({"kind": "needle", "op": "complete"}))],
+        None,
+    )
+    .unwrap();
+    let out3 = reg3
+        .call(
+            "tc",
+            &json!({
+                "prompt": "what's it like in Lagos right now?",
+                "tools": [{
+                    "type": "function",
+                    "name": "get_weather",
+                    "description": "Get the current weather for a city.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                        "required": ["city"]
+                    }
+                }]
+            }),
+            &json!({}),
+        )
+        .unwrap();
+    let calls = out3["function_calls"].as_array().cloned().unwrap_or_default();
+    h.check("needle.complete returned a call", !calls.is_empty());
+    h.check(
+        "needle.complete picks the weather tool",
+        calls.first().and_then(|c| c["name"].as_str()).unwrap_or("") == "get_weather",
+    );
+    h.check("needle.complete has confidence", out3["confidence"].is_number());
+}

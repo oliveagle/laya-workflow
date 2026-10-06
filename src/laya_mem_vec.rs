@@ -101,6 +101,17 @@ pub fn encode_openai(url: &str, api_key: &str, model: &str, texts: &[&str]) -> R
     Ok((parsed.data.into_iter().map(|d| d.embedding).collect(), dim))
 }
 
+
+/// Encode one text via the on-device Needle 3 engine (`libneedle.so` C ABI,
+/// dim 3072). No network, no API key, ~10 ms per sentence on a 35 MB cact.
+pub fn encode_needle(text: &str) -> Result<Vec<f32>> {
+    let lib = crate::capability::needle::engine()?;
+    // Load the weights if not already (the C engine caches; a repeat load of
+    // the same archive is a no-op at the C level).
+    crate::capability::needle::ensure_weights(lib)?;
+    crate::capability::needle::embed_engine(text)
+}
+
 // ─── store ────────────────────────────────────────────────────────────────
 
 /// Create the `memory_vectors` table if missing. Kept separate from
@@ -276,17 +287,40 @@ pub fn rrf_fuse(lists: &[Vec<String>], k: f64) -> Vec<(String, f64)> {
 /// `exclude_id` is dropped from both streams before fusion.
 pub fn hybrid_top_ids(db_path: &Path, fts_sql: &str, query: &str, exclude_id: &str, top_k: usize) -> Result<Vec<String>> {
     let dim = MOCK_DIM;
-    let qvec = match std::env::var("LAYA_MEM_EMBEDDING_URL").ok().filter(|s| !s.is_empty()) {
-        Some(url) => {
-            let model = std::env::var("LAYA_MEM_EMBEDDING_MODEL")
-                .unwrap_or_else(|_| "text-embedding-3-small".to_string());
-            let key = std::env::var("LAYA_MEM_EMBEDDING_API_KEY").unwrap_or_default();
-            match encode_openai(&url, &key, &model, &[query]) {
-                Ok((mut vs, _)) if !vs.is_empty() => vs.remove(0),
-                _ => encode_mock(query, dim),
+    // Backend selection mirrors `laya_mem::embed_and_upsert`: `needle` wins
+    // when the caller asked for it, then OpenAI URL, then the mock fallback.
+    let needle_first = std::env::var("LAYA_MEM_EMBEDDING_BACKEND")
+        .ok()
+        .map(|v| v.eq_ignore_ascii_case("needle"))
+        .unwrap_or(false);
+    let qvec = if needle_first {
+        encode_needle(query).unwrap_or_else(|_| {
+            match std::env::var("LAYA_MEM_EMBEDDING_URL").ok().filter(|s| !s.is_empty()) {
+                Some(url) => {
+                    let model = std::env::var("LAYA_MEM_EMBEDDING_MODEL")
+                        .unwrap_or_else(|_| "text-embedding-3-small".to_string());
+                    let key = std::env::var("LAYA_MEM_EMBEDDING_API_KEY").unwrap_or_default();
+                    encode_openai(&url, &key, &model, &[query])
+                        .ok()
+                        .and_then(|(mut vs, _dim)| if vs.is_empty() { None } else { Some(vs.remove(0)) })
+                        .unwrap_or_else(|| encode_mock(query, dim))
+                }
+                None => encode_mock(query, dim),
             }
+        })
+    } else {
+        match std::env::var("LAYA_MEM_EMBEDDING_URL").ok().filter(|s| !s.is_empty()) {
+            Some(url) => {
+                let model = std::env::var("LAYA_MEM_EMBEDDING_MODEL")
+                    .unwrap_or_else(|_| "text-embedding-3-small".to_string());
+                let key = std::env::var("LAYA_MEM_EMBEDDING_API_KEY").unwrap_or_default();
+                encode_openai(&url, &key, &model, &[query])
+                    .ok()
+                    .and_then(|(mut vs, _dim)| if vs.is_empty() { None } else { Some(vs.remove(0)) })
+                    .unwrap_or_else(|| encode_mock(query, dim))
+            }
+            None => encode_mock(query, dim),
         }
-        None => encode_mock(query, dim),
     };
     // BM25 stream
     let fts_res = call_db_for_db(db_path, json!({ "op": "query", "sql": fts_sql }))?;
