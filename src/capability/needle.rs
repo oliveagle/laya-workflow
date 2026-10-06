@@ -237,3 +237,98 @@ pub fn find_cact() -> Result<PathBuf> {
     if default.exists() { return Ok(default); }
     bail!("needle3.cact not found; set $NEEDLE3_CACT or run `needle download needle3 --out ~/.laya-workflow/models`")
 }
+
+// ─── MCP tool set ─────────────────────────────────────────────────────────
+//
+// Three stdio tools an agent can call directly: `needle_extract`, `needle_embed`
+// and `needle_complete`. Registered in the same `laya-workflow mcp serve`
+// process as `laya_mem`, so an agent that already holds one store connection
+// gets the on-device model for free.
+
+/// The whole tool group; constructed per-serve from the same env vars the
+/// capability reads (`NEEDLE3_LIB_PATH`, `NEEDLE3_CACT`).
+pub struct NeedleTools;
+
+impl crate::mcp::McpToolSet for NeedleTools {
+    fn group_name(&self) -> &str {
+        "needle"
+    }
+    fn tools(&self) -> Vec<crate::mcp::DynTool> {
+        vec![
+            std::sync::Arc::new(ExtractTool),
+            std::sync::Arc::new(EmbedTool),
+            std::sync::Arc::new(CompleteTool),
+        ]
+    }
+}
+
+macro_rules! needle_schema {
+    ($($json:tt)*) => { serde_json::json!($($json)*) };
+}
+
+struct ExtractTool;
+impl crate::mcp::McpTool for ExtractTool {
+    fn name(&self) -> &str { "needle_extract" }
+    fn description(&self) -> &str {
+        "On-device structured extraction: one OpenAI-form tool schema + free text -> typed arguments (grammar-guaranteed to parse). Returns {arguments, confidence, reasoning, matched}."
+    }
+    fn input_schema(&self) -> Value {
+        needle_schema!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The free text to extract from."},
+                "tool": {"type": "object", "description": "One OpenAI-form tool schema (type/name/description/parameters)."},
+                "system": {"type": "string", "description": "Optional session facts (date, locale, device)."}
+            },
+            "required": ["text", "tool"]
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let cap = NeedleCap { op: "extract".into(), cact: None };
+        call_needle(&cap, args, &json!({}), &Policy::default())
+    }
+}
+
+struct EmbedTool;
+impl crate::mcp::McpTool for EmbedTool {
+    fn name(&self) -> &str { "needle_embed" }
+    fn description(&self) -> &str {
+        "On-device sentence embedding (dim 3072, ~10 ms, no network) through the Cactus engine. Returns {dim, vector}."
+    }
+    fn input_schema(&self) -> Value {
+        needle_schema!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "The sentence to embed."}
+            },
+            "required": ["text"]
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let cap = NeedleCap { op: "embed".into(), cact: None };
+        call_needle(&cap, args, &json!({}), &Policy::default())
+    }
+}
+
+struct CompleteTool;
+impl crate::mcp::McpTool for CompleteTool {
+    fn name(&self) -> &str { "needle_complete" }
+    fn description(&self) -> &str {
+        "On-device tool call: prompt + tools -> {function_calls, confidence, reasoning}; empty function_calls is the refusal for off-topic input."
+    }
+    fn input_schema(&self) -> Value {
+        needle_schema!({
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "The user request."},
+                "tools": {"type": "array", "items": {"type": "object"}, "description": "OpenAI-form tool schemas the engine may pick from."},
+                "system": {"type": "string", "description": "Optional session facts."}
+            },
+            "required": ["prompt"]
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let cap = NeedleCap { op: "complete".into(), cact: None };
+        call_needle(&cap, args, &json!({}), &Policy::default())
+    }
+}

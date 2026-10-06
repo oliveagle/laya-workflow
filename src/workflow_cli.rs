@@ -1614,8 +1614,9 @@ fn run_mcp(cmd: &McpCmd) -> Result<()> {
                 version: env!("CARGO_PKG_VERSION"),
             };
             let cg = laya_workflow::codegraph::CodegraphTools::from_env();
+            let nd = laya_workflow::capability::needle::NeedleTools;
             let sets: Vec<Box<dyn laya_workflow::mcp::McpToolSet>> =
-                vec![Box::new(mem), Box::new(cg)];
+                vec![Box::new(mem), Box::new(cg), Box::new(nd)];
             laya_workflow::mcp::serve_stdio(info, sets)
         }
     }

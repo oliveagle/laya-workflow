@@ -1,0 +1,86 @@
+{
+  "name": "needle_ticket",
+  "dsl_version": 2,
+  "description": "Ticket normalisation with Needle 3: classify category + urgency from free text, then extract the key entity. All on-device, no network.",
+  "start": "classify",
+  "max_iterations": 10,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "allow_paths": ["${env.HOME}"],
+    "max_timeout_ms": 15000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "cls": { "kind": "needle", "op": "extract", "cact": "${env.NEEDLE3_CACT}" },
+    "ent": { "kind": "needle", "op": "extract", "cact": "${env.NEEDLE3_CACT}" }
+  },
+  "nodes": [
+    {
+      "name": "classify",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": { "A": "entity" }, "default": "STOP" },
+      "min_confidence": 0.0,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "cls",
+        "with": {
+          "text": "${state.text}",
+          "tool": {
+            "type": "function",
+            "name": "classify_ticket",
+            "description": "Classify a support ticket into category and urgency.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "category": { "type": "string", "enum": ["billing", "technical", "feedback", "other"] },
+                "urgency": { "type": "string", "enum": ["low", "medium", "high"] }
+              },
+              "required": ["category", "urgency"]
+            }
+          }
+        },
+        "project": {
+          "category": "/arguments/category",
+          "urgency": "/arguments/urgency"
+        }
+      }
+    },
+    {
+      "name": "entity",
+      "primary_q": "go",
+      "questions": { "go": { "type": "choice", "criteria": { "A": "yes", "B": "no" } } },
+      "edge": { "condition": {}, "default": "STOP" },
+      "min_confidence": 0.0,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "ent",
+        "with": {
+          "text": "${state.text}",
+          "tool": {
+            "type": "function",
+            "name": "extract_entity",
+            "description": "Extract the customer id and order id from a support ticket.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "customer_id": { "type": "string" },
+                "order_id": { "type": "string" }
+              },
+              "required": ["customer_id", "order_id"]
+            }
+          }
+        },
+        "project": {
+          "customer_id": "/arguments/customer_id",
+          "order_id": "/arguments/order_id"
+        }
+      }
+    }
+  ]
+}
