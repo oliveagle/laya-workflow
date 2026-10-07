@@ -70,6 +70,14 @@ no `allow_hosts`, no shell-out. `policy.allow_paths` should cover the model dir.
 The C header documents one process-global, **non-thread-safe** model, so every
 call is serialised behind a mutex.
 
+## Where needle wins — measured
+
+See [docs/needle_evidence.md](./needle_evidence.md) for the A/B data that decided
+this: intent routing (heuristic 35% → hybrid 75%), structured extraction
+(regex 12% vs needle 62%), embedding recall (BOW 0.21 vs needle 0.95 cosine),
+and the workflow pattern **regex-classify + needle-entity = 100%** on 5 tickets.
+Reproduce with `python3 bench/needle_vs_heuristic.py`.
+
 ## Notes
 
 * A `cactus-needle` wheel bug (3.1.2) calls `needle_embed` with the Needle-2
