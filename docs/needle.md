@@ -171,6 +171,35 @@ Same `bench/needle_vs_heuristic.py`, same bench cases, each rung in turn:
   from this optimisation — only the wrapper cache + `mnt=80` trim, which
   both preserve output.
 
+### Hybrid DSL spec: `support_ticket_router_hybrid.json`
+
+The heuristic `category` handler missed `shipping` entirely (a delivery ticket
+fell to `other` and stopped before severity), so adding a keyword group is a
+free win. On top of that, `dsl/routing/support_ticket_router_hybrid.json`
+routes `other` to a needle fallback (`op: complete` with per-action tools +
+regex triggers, the pattern from the A/B bench) and projects the chosen tool
+name into `state.category`.
+
+Measured on 20 paraphrased intents (the bench's Scenario A set, same cases,
+10-layer and 14-layer rungs vs the 20-layer base):
+
+| rung | hybrid spec accuracy | avg latency |
+|---|---|---|
+| 20-layer (base) | 12/20 (60%) | 437 ms |
+| **14-layer** | **14/20 (70%)** | **396 ms** |
+| 10-layer | 10/20 (50%) | 292 ms |
+| 8-layer | 11/20 (55%) | 232 ms |
+| 6-layer | 10/20 (50%) | 175 ms |
+
+Baseline (heuristic only, no needle) on the same 20 intents scores 7/20 (35%)
+at ~0 ms. **14-layer hybrid is the sweet spot**: +35pt over heuristic alone,
++10pt over 20-layer needle alone, and 14/20 misses are mostly the `other`
+bucket (service praise, product Qs) where no action-tool trigger fires.
+**10-layer is the efficiency pick** when ~290 ms is affordable and 50% routing
+is acceptable. On the 5-case support-ticket set the hybrid spec reaches 4/5
+(baseline 3/5) — the one miss ("my screen is cracked" → billing) is needle's
+enum weakness, not a rung issue.
+
 
 Point the engine at a rung with the same env var it already reads:
 
