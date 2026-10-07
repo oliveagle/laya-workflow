@@ -485,6 +485,13 @@ impl Decide for HeuristicBackend {
                             "sales"
                         } else if contains_any(
                             &text,
+                            &["package", "parcel", "delivery", "deliver", "courier",
+                              "shipment", "shipping", "arrived", "arrive", "customs",
+                              "tracking"],
+                        ) {
+                            "shipping"
+                        } else if contains_any(
+                            &text,
                             &["login", "password", "access", "profile", "reset"],
                         ) {
                             "account"
@@ -496,7 +503,7 @@ impl Decide for HeuristicBackend {
                         } else {
                             "other"
                         };
-                        let keys = ["billing", "technical", "sales", "account", "hr", "other"];
+                        let keys = ["billing", "technical", "sales", "shipping", "account", "hr", "other"];
                         let mut m = Map::new();
                         for k in keys {
                             m.insert(

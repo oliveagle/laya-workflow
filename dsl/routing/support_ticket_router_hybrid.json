@@ -1,0 +1,199 @@
+{
+  "name": "support_ticket_router_hybrid",
+  "description": "Hybrid support-ticket routing: cheap heuristic substring classify first; escalate 'other' (no keyword hit) to on-device Needle 3 with per-action tools + regex triggers (the pattern the A/B bench proved: needle-only 60%, hybrid 75%).",
+  "dsl_version": 2,
+  "start": "classify",
+  "max_iterations": 20,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}"
+    ],
+    "max_timeout_ms": 20000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "cls": {
+      "kind": "needle",
+      "op": "complete",
+      "cact": "${env.NEEDLE3_CACT}"
+    }
+  },
+  "nodes": [
+    {
+      "name": "classify",
+      "primary_q": "category",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which team should handle this ticket?",
+          "criteria": {
+            "billing": "invoices, payments, refunds",
+            "technical": "bugs, outages, system errors",
+            "sales": "pricing, new contracts",
+            "other": "everything else"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "technical": "severity_probe",
+          "billing": "severity_probe"
+        },
+        "default": "needle_fallback"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "category"
+        ]
+      }
+    },
+    {
+      "name": "needle_fallback",
+      "primary_q": "cat",
+      "questions": {
+        "cat": {
+          "type": "choice",
+          "instructions": "Semantic category from the on-device model.",
+          "criteria": {
+            "billing": "money, refund, invoice, payment",
+            "technical": "crash, error, broken, bug, outage",
+            "shipping": "delivery, package, arrived, order status",
+            "other": "everything else"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "technical": "severity_probe",
+          "billing": "severity_probe",
+          "shipping": "severity_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "has_action": true,
+      "action": {
+        "kind": "call",
+        "capability": "cls",
+        "with": {
+          "system": "date: 2026-10-07; locale: en-US; this is a customer support inbox.",
+          "prompt": "${state.text}",
+          "tools": [
+            {
+              "type": "function",
+              "name": "refund_order",
+              "description": "Give the customer their money back for a purchase.",
+              "triggers": [
+                "\\b(refund|return|charge.?back)\\b",
+                "\\bmoney\\s*back\\b",
+                "\\btake\\s*(it|them)\\s*back\\b",
+                "\\b(cancel|reverse)\\s+(this\\s+)?(purchase|order|charge)\\b",
+                "\\bcredit\\s+me\\b"
+              ],
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            },
+            {
+              "type": "function",
+              "name": "fix_technical",
+              "description": "Help with a broken device, app, or connection.",
+              "triggers": [
+                "\\b(wifi|internet|bluetooth|app|software)\\b",
+                "\\b(crash|freeze|stutter|drop|pair|sign\\s*in)\\b",
+                "\\b(500|error|broken|not\\s*working|won.t)\\b"
+              ],
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "issue": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            },
+            {
+              "type": "function",
+              "name": "track_package",
+              "description": "Find where a delivery is or change its address.",
+              "triggers": [
+                "\\b(package|parcel|order|delivery|deliver|courier|shipment|track|arriv|customs)\\b"
+              ],
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "order_id": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            }
+          ]
+        },
+        "project": {
+          "category": "/function_calls/0/name"
+        }
+      }
+    },
+    {
+      "name": "severity_probe",
+      "primary_q": "severity",
+      "questions": {
+        "severity": {
+          "type": "score",
+          "instructions": "How severe is the impact?",
+          "criteria": [
+            "minor",
+            "degraded",
+            "outage"
+          ]
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "severity",
+        "rules": [
+          {
+            "when": {
+              "value_gte": 1.5
+            },
+            "label": "PAGE_ONCALL"
+          },
+          {
+            "when": {
+              "value_gte": 0.5
+            },
+            "label": "QUEUE_TODAY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "BACKLOG"
+          }
+        ]
+      }
+    }
+  ]
+}
