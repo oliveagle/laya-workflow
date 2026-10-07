@@ -71,7 +71,7 @@ fn op_extract(with: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("needle extract needs 'tool' (OpenAI-form schema)"))?;
     let tools = json!([tool]);
     let system = with.get("system").and_then(|v| v.as_str()).unwrap_or("");
-    let mnt = with.get("max_new_tokens").and_then(|v| v.as_i64()).unwrap_or(128) as i32;
+    let mnt = with.get("max_new_tokens").and_then(|v| v.as_i64()).unwrap_or(80) as i32;
     let response = run_complete(system, &tools.to_string(), text, mnt)?;
     let empty = Vec::new();
     let calls = response.get("function_calls").and_then(|v| v.as_array()).unwrap_or(&empty);

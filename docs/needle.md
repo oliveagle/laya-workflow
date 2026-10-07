@@ -98,6 +98,29 @@ reaches ~125 ms at 5/8, 6-layer hits ~95 ms but collapses to 2/8. For a quality
 budget, 14-layer is the sweet spot (same accuracy, −30% time). For a hard
 100 ms bound, 8-layer is the only rung that both stays usable and approaches it.
 
+### Tuning `max_new_tokens` — the second dial
+
+Decode is linear in output tokens, so `with.max_new_tokens` (default 80 for `extract`, 512 for `complete`) is a latency knob. Sweeping it on the same 8
+invoices, warm, same schema:
+
+| rung | mnt | avg ms | accuracy |
+|---|---|---|---|
+| 8-layer | 16 | 35 | 0/8 (truncated before any call) |
+| 8-layer | 48 | 71 | 1/8 |
+| **8-layer** | **80** | **95.5** | **5/8 — identical to mnt=128** |
+| 8-layer | 128 | 101 | 5/8 |
+| 10-layer | 64 | 99 | 3/8 (beats mnt=96 only on time) |
+| 10-layer | 96 | 130 | 6/8 |
+| 14-layer | 40 | 127 | 4/8 |
+| 20-layer | 40 | 144 | 5/8 |
+
+Below ~40 tokens the grammar-guaranteed call never finishes, so accuracy
+collapses to 0 — a floor, not a tradeoff. **8-layer + mnt=80 is the measured
+< 100 ms configuration: 95.5 ms with no accuracy loss** (the same 5/8 as
+mnt=128; the extra budget only pads reasoning). Raise `with.max_new_tokens` on
+`extract` when a schema is wide enough to need it; the default is tuned for
+the latency target, correctness can always buy it back.
+
 Point the engine at a rung with the same env var it already reads:
 
 ```sh
