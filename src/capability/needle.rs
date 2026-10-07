@@ -71,7 +71,8 @@ fn op_extract(with: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("needle extract needs 'tool' (OpenAI-form schema)"))?;
     let tools = json!([tool]);
     let system = with.get("system").and_then(|v| v.as_str()).unwrap_or("");
-    let response = run_complete(system, &tools.to_string(), text, 512)?;
+    let mnt = with.get("max_new_tokens").and_then(|v| v.as_i64()).unwrap_or(128) as i32;
+    let response = run_complete(system, &tools.to_string(), text, mnt)?;
     let empty = Vec::new();
     let calls = response.get("function_calls").and_then(|v| v.as_array()).unwrap_or(&empty);
     let suppressed = response
@@ -98,7 +99,7 @@ fn op_embed(with: &Value) -> Result<Value> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow!("needle embed needs 'text'"))?;
     let e = engine()?;
-    ensure_weights(e)?;
+    ensure_weights_cached(e)?;
     let vec = embed_engine(text)?;
     Ok(json!({
         "dim": vec.len(),
@@ -113,15 +114,22 @@ fn op_complete(with: &Value) -> Result<Value> {
         .ok_or_else(|| anyhow!("needle complete needs 'prompt'"))?;
     let tools = with.get("tools").cloned().unwrap_or(json!([]));
     let system = with.get("system").and_then(|v| v.as_str()).unwrap_or("");
-    run_complete(system, &tools.to_string(), prompt, 512)
+    let mnt = with.get("max_new_tokens").and_then(|v| v.as_i64()).unwrap_or(512) as i32;
+    run_complete(system, &tools.to_string(), prompt, mnt)
 }
 
 /// One complete round trip: engine must be loaded + initialised, then run.
+/// Weights are loaded exactly once per process (the C header says the model is
+/// process-global); `needle_init` is re-run only when `(system, tools_json)`
+/// actually changes, since re-initing an identical schema costs ~90 ms for no
+/// observable gain. Both keys are behind `GATE`, so this stays thread-safe
+/// alongside the other ops.
 fn run_complete(system: &str, tools_json: &str, text: &str, max_new_tokens: i32) -> Result<Value> {
     let e = engine()?;
-    ensure_weights(e)?;
+    ensure_weights_cached(e)?;
     let _ = e;
-    init_engine(system, tools_json)?;
+    reset_engine()?;                    // stateless: rewind any prior turn
+    init_cached(system, tools_json)?;
     let raw = complete_engine(text, max_new_tokens)?;
     serde_json::from_str(&raw)
         .map_err(|err| anyhow!("engine returned an unparseable envelope ({err}): {raw}"))
@@ -148,6 +156,7 @@ type NeedleLoad = unsafe extern "C" fn(*const u8, u64) -> i32;
 type NeedleInit = unsafe extern "C" fn(*const c_char, *const c_char, *const c_char) -> i32;
 type NeedleComplete = unsafe extern "C" fn(*const c_char, *const f32, i32, i32, *mut c_char, i32) -> i32;
 type NeedleEmbed = unsafe extern "C" fn(*const c_char, *const f32, i32, *mut f32, i32) -> i32;
+type NeedleReset = unsafe extern "C" fn();
 
 
 pub fn load_into(cact: &[u8]) -> Result<()> {
@@ -168,6 +177,35 @@ fn init_engine(system: &str, tools_json: &str) -> Result<i32> {
     let rc = unsafe { f(s.as_ptr(), t.as_ptr(), std::ptr::null()) };
     if rc < 0 { bail!("needle_init failed: {rc}"); }
     Ok(rc)
+}
+
+/// `needle_init` compiles the tool grammar and tokenises the static prefix
+/// (~90 ms). Only re-run it when `(system, tools_json)` actually differs from
+/// the last successful init. Callers hold `GATE`, so this is race-free.
+static LAST_INIT: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+fn init_cached(system: &str, tools_json: &str) -> Result<i32> {
+    let mut last = LAST_INIT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((s, t)) = last.as_ref() {
+        if s == system && t == tools_json {
+            return Ok(0);
+        }
+    }
+    let rc = init_engine(system, tools_json)?;
+    *last = Some((system.to_string(), tools_json.to_string()));
+    Ok(rc)
+}
+
+/// The Python API's stateless pattern: `needle_reset()` rewinds the conversation
+/// between independent calls so turns do not accumulate (the engine keeps every
+/// turn in-context, which slows decode and can mislead routing on later calls).
+/// Cheap (~sub-ms); callers hold `GATE`.
+fn reset_engine() -> Result<()> {
+    let e = engine()?;
+    let f: libloading::Symbol<NeedleReset> = unsafe { e.get(b"needle_reset") }
+        .map_err(|e| anyhow!("symbol needle_reset: {e}"))?;
+    unsafe { f() };
+    Ok(())
 }
 
 fn complete_engine(text: &str, max_new_tokens: i32) -> Result<String> {
@@ -198,11 +236,38 @@ pub fn embed_engine(text: &str) -> Result<Vec<f32>> {
     Ok(buf)
 }
 
+/// Load the weight archive at most once per process. `needle_load` reads and
+/// parses the full 35 MB `.cact` (~50 ms); doing that on every call is pure
+/// waste because the C header documents a single process-global model. The
+/// `OnceLock` makes the first caller pay, everyone else gets a cached flag.
+/// `OnceLock` over the load *outcome*: `Ok(())` once loaded, `Err(msg)` if the
+/// archive was missing or failed to parse. `anyhow::Error` is not `Clone`, so
+/// we cache a small enum instead of the error object itself.
+static WEIGHTS: OnceLock<Result<(), Box<str>>> = OnceLock::new();
+
+pub fn ensure_weights_cached(_e: &'static libloading::Library) -> Result<()> {
+    match WEIGHTS.get_or_init(|| {
+        let path = match find_cact() {
+            Ok(p) => p,
+            Err(e) => return Err(e.to_string().into_boxed_str()),
+        };
+        let data = match std::fs::read(&path) {
+            Ok(d) => d,
+            Err(e) => return Err(format!("cannot read {} : {e}", path.display()).into_boxed_str()),
+        };
+        match load_into(&data) {
+            Ok(()) => Ok(()),
+            Err(e) => Err(e.to_string().into_boxed_str()),
+        }
+    }) {
+        Ok(()) => Ok(()),
+        Err(msg) => Err(anyhow!("{}", msg)),
+    }
+}
+
+/// Back-compat alias (laya-mem may still call the old name).
 pub fn ensure_weights(_e: &'static libloading::Library) -> Result<()> {
-    let path = find_cact()?;
-    let data = std::fs::read(&path)
-        .map_err(|err| anyhow!("cannot read {} : {err}", path.display()))?;
-    load_into(&data)
+    ensure_weights_cached(_e)
 }
 
 pub fn find_lib() -> Result<PathBuf> {

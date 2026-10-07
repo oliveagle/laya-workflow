@@ -63,6 +63,25 @@ The capability reads an expanded `with` object:
 * `complete` — `with.prompt` (+ optional `with.tools`, `with.system`) →
   the full engine JSON (`function_calls`, `confidence`, `reasoning`).
 
+## Performance
+
+Every op pays `needle_load` once per process (35 MB cact → ~50 ms) and
+`needle_init` only when the `(system, tools)` pair actually changes (~90 ms).
+Between calls the engine rewinds the conversation (`needle_reset`) so turns do
+not accumulate and slow decode. Measured on this machine (20-layer base,
+single-threaded C++, ~366 decode tok/s):
+
+| Op | Cold (first call) | Warm (same process, same schema) |
+|---|---|---|
+| `extract` | ~400 ms | **~275 ms** |
+| `embed` (3072 d) | ~11 ms | **~11 ms** |
+| `complete` | ~280 ms | **~275 ms** |
+
+`extract` and `complete` are decode-bound — the model writes ~75 output tokens
+at 366 tok/s = ~210 ms of arithmetic. Cutting that below ~100 ms needs a
+smaller subnetwork (`needle build --layers N`, 2–20 layers), which needs JAX
+and a checkpoint; the base 20-layer `.cact` is the engine's shipped default.
+
 ## Safety
 
 The capability touches only an already-installed model file: no `allow_exec`,
