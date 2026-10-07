@@ -680,6 +680,11 @@ impl Decide for HeuristicBackend {
                 // carries `"heuristic": {"match_any": [...], "p_hit":…, "p_miss":…}`
                 // (choice) or `{"match_any": [...], "score_hit":…, "score_miss":…}`
                 // (score), evaluate it right here — no per-question Rust code.
+                // `match_mid_any` adds the ambiguous middle band (the review zone):
+                // strong-positive wins outright, otherwise a mid token yields
+                // `p_mid` (default 0.5), and only an outright miss gets `p_miss`.
+                // That three-band read-out is what lets a threshold rule's middle
+                // fallback mean "uncertain, hand to a human" rather than "no".
                 // This keeps the "new project == new JSON only" promise: the DSL
                 // author declares the tokens that indicate a hit, the engine
                 // evaluates them uniformly. Longest-first substring match on the
@@ -707,6 +712,16 @@ impl Decide for HeuristicBackend {
                         let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();
                         hit = contains_any(&target_text, &toks);
                     }
+                    // `match_mid_any`: ambiguous tokens (mid / unclear / …) that are
+                    // neither a strong hit nor a strong miss. Only consulted when the
+                    // strong signal did not fire, so the bands stay strictly ordered.
+                    let mut mid = false;
+                    if !hit {
+                        if let Some(any) = h.get("match_mid_any").and_then(|a| a.as_array()) {
+                            let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();
+                            mid = contains_any(&target_text, &toks);
+                        }
+                    }
                     if !hit {
                         if let Some(rxs) = h.get("match_regex").and_then(|a| a.as_array()) {
                             for rx in rxs.iter().filter_map(|x| x.as_str()) {
@@ -733,6 +748,16 @@ impl Decide for HeuristicBackend {
                                     .and_then(|x| x.as_f64().or_else(|| x.as_str().and_then(|sv| sv.parse::<f64>().ok())))
                                     .unwrap_or_else(|| h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.0))
                             } else if hit { h.get("score_hit").and_then(|x| x.as_f64()).unwrap_or(2.0) }
+                            else if mid {
+                                // middle band defaults to the midpoint of the two
+                                // declared anchors (2.0/0.5 -> 1.25), so an explicit
+                                // `score_mid` is an override, not a requirement.
+                                h.get("score_mid").and_then(|x| x.as_f64()).unwrap_or_else(|| {
+                                    let lo = h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5);
+                                    let hi = h.get("score_hit").and_then(|x| x.as_f64()).unwrap_or(2.0);
+                                    (lo + hi) / 2.0
+                                })
+                            }
                             else { h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5) };
                             bscore(v)
                         }
@@ -742,6 +767,7 @@ impl Decide for HeuristicBackend {
                             // compare against the string "A"/"B" (as_f64 -> 0.0), which silently
                             // triggered CONTINUE in stop-check-style specs.
                             let p = if hit { h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9) }
+                                    else if mid { h.get("p_mid").and_then(|x| x.as_f64()).unwrap_or(0.5) }
                                     else { h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.1) };
                             let mut m = Map::new();
                             m.insert("false".to_string(), serde_json::json!(1.0 - p));
@@ -750,6 +776,7 @@ impl Decide for HeuristicBackend {
                         }
                         _ => {
                             let p_b = if hit { h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9) }
+                                      else if mid { h.get("p_mid").and_then(|x| x.as_f64()).unwrap_or(0.5) }
                                       else { h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.1) };
                             bchoice(p_b)
                         }

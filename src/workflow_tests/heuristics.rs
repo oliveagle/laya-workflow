@@ -194,6 +194,53 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
             );
         }
 
+        // (6b) `match_mid_any` adds the ambiguous middle band: strong-positive
+        // still wins outright, a mid token lands on `p_mid` (default 0.5), and
+        // only an outright miss gets `p_miss`. This is what lets a threshold
+        // rule's middle fallback mean "uncertain, hand to a human" rather than
+        // silently collapsing to "no" (the two-band p_hit/p_miss shape).
+        let noul_mid = json!({
+            "q": {"type": "noul", "instructions": "x",
+                  "heuristic": {"field": "route",
+                                "match_any": ["high", "yes"],
+                                "match_mid_any": ["mid", "unclear"],
+                                "p_hit": 0.9, "p_miss": 0.1}}
+        });
+        let ask = |state: Value| {
+            be.decide(&state, &noul_mid).unwrap().answer_value("q").unwrap().as_f64().unwrap_or(-1.0)
+        };
+        h.eq("mid-band: strong hit stays at p_hit", ask(json!({"route": "high"})), 0.9);
+        h.eq("mid-band: strong miss stays at p_miss", ask(json!({"route": "low"})), 0.1);
+        h.eq("mid-band: mid token returns p_mid (0.5 default)", ask(json!({"route": "mid"})), 0.5);
+        h.eq("mid-band: unclear token also lands on p_mid", ask(json!({"route": "unclear"})), 0.5);
+        h.eq(
+            "mid-band: score honouring an explicit score_mid",
+            be.decide(&json!({"route": "mid"}), &json!({
+                "q": {"type": "score", "criteria": ["low", "mid", "high"],
+                      "heuristic": {"field": "route", "match_any": ["high"],
+                                    "match_mid_any": ["mid"],
+                                    "score_hit": 2.0, "score_mid": 1.3, "score_miss": 0.5}}
+            })).unwrap().answer_value("q").unwrap().as_f64().unwrap_or(-1.0),
+            1.3,
+        );
+        h.eq(
+            "mid-band: choice honouring p_mid on the B pole",
+            be.decide(&json!({"route": "mid"}), &json!({
+                "q": {"type": "choice", "criteria": {"A": "no", "B": "yes"},
+                      "heuristic": {"field": "route", "match_any": ["high"],
+                                    "match_mid_any": ["mid"], "p_hit": 0.9, "p_miss": 0.1}}
+            })).unwrap().prob("q", "B").unwrap_or(-1.0),
+            0.5,
+        );
+        h.check(
+            "mid-band: choice keeps a strong miss strong-negative",
+            be.decide(&json!({"route": "low"}), &json!({
+                "q": {"type": "choice", "criteria": {"A": "no", "B": "yes"},
+                      "heuristic": {"field": "route", "match_any": ["high"],
+                                    "match_mid_any": ["mid"], "p_hit": 0.9, "p_miss": 0.1}}
+            })).unwrap().prob("q", "B").unwrap_or(-1.0) < 0.2,
+        );
+
         // (7) The whole reference set now passes without any learned policy.
         let dir = std::env::temp_dir().join("laya_fix_tests");
         let _ = std::fs::remove_dir_all(&dir);
