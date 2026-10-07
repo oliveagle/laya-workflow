@@ -9,6 +9,7 @@
 //! harness, the shared helpers and the section registry.
 
 mod capabilities;
+mod computer_use;
 mod capabilities2;
 mod capabilities3;
 mod codegraph;
@@ -89,6 +90,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("quality-rubric", capabilities::test_quality_rubric),
         ("support-routing", capabilities::test_support_routing),
         ("evaluate", evaluate::test_evaluate),
+        ("computer-use", computer_use::test_computer_use),
         ("capabilities-extra", capabilities::test_capabilities_extra),
         // On-device Needle 3 integration (extract / embed / complete); skipped
         // when libneedle.so or needle3.cact is not installed.

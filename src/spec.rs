@@ -895,7 +895,7 @@ fn verdict_answers(v: &Verdict) -> Value {
 /// Dispatch a spec action descriptor to the matching built-in action.
 pub fn run_action(
     action: &Value,
-    _state: &Value,
+    state: &Value,
     v: &Verdict,
     primary: Option<&str>,
 ) -> Result<Value> {
@@ -908,7 +908,7 @@ pub fn run_action(
         Some(q) => q,
         None => {
             // only actions that read a specific answer need a question
-            if kind == "copy_keys" || kind == "none" || kind == "rubric" || kind == "combine" {
+            if kind == "copy_keys" || kind == "none" || kind == "rubric" || kind == "combine" || kind == "ui_proposal" {
                 ""
             } else {
                 bail!("action {kind:?} needs 'question' or a primary_q");
@@ -1085,6 +1085,128 @@ pub fn run_action(
                 "signal_value": p,
                 "combined": true,
             }))
+        }
+        "ui_proposal" => {
+            // Prepare stage (awesome-jev computer-use `prepare()`): turn
+            // validated answers into a bounded proposal. Code — not the model —
+            // decides what constitutes an action. `operation` picks
+            // fill/done/wait/blocked under a confidence floor; `field` and
+            // `amount` are independent answers. The observation fingerprint and
+            // surface come from state (never authored by the model), and the
+            // extracted value is the *source text* looked up by id, not the id
+            // itself. Anything below the floor yields `human_review`; wait /
+            // blocked stop the cycle. The proposal nests under "proposal" so a
+            // downstream executor node reads `${state.proposal}`.
+            let op_q = action
+                .get("operation")
+                .and_then(|x| x.as_str())
+                .unwrap_or("operation");
+            let fld_q = action.get("field").and_then(|x| x.as_str()).unwrap_or("field");
+            let amt_q = action.get("amount").and_then(|x| x.as_str()).unwrap_or("amount");
+            let floor = action
+                .get("min_confidence")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.8);
+            let surface = state
+                .get("surface")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let snapshot_hash = state
+                .get("snapshot_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let prepare = |status: &str, reason: &str, action_out: Value, extracted: Value| {
+                json!({
+                    "prepare_status": status,
+                    "proposal": {
+                        "status": status,
+                        "reason": reason,
+                        "snapshot_hash": snapshot_hash,
+                        "surface": surface,
+                        "action": action_out,
+                        "extracted": extracted,
+                    },
+                })
+            };
+            let need = |name: &str| -> Result<&crate::workflow::Decision> {
+                v.answers
+                    .get(name)
+                    .ok_or_else(|| anyhow!("ui_proposal: no answer {name:?}"))
+            };
+            let op = need(op_q)?;
+            if op.confidence < floor {
+                return Ok(prepare("human_review", "Uncertain operation", Value::Null, Value::Null));
+            }
+            let choice = op.as_str();
+            let choice: &str = choice.as_str();
+            if choice == "wait" || choice == "blocked" {
+                return Ok(prepare(
+                    choice,
+                    "A fresh observation or intervention is needed",
+                    Value::Null,
+                    Value::Null,
+                ));
+            }
+            let amt = need(amt_q)?;
+            let amt_choice = amt.as_str();
+            if amt.confidence < floor || amt_choice == "none" {
+                return Ok(prepare(
+                    "human_review",
+                    "Amount due is missing or uncertain",
+                    Value::Null,
+                    Value::Null,
+                ));
+            }
+            // Look up the extracted source text by id (the model names the
+            // source; code reads the value). Absent id → review.
+            let extracted_text = state
+                .get("snapshot")
+                .and_then(|s| s.get("texts"))
+                .and_then(|t| t.as_array())
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(amt_choice.as_str()))
+                        .and_then(|e| e.get("text"))
+                })
+                .cloned();
+            let Some(extracted_text) = extracted_text else {
+                return Ok(prepare(
+                    "human_review",
+                    "Extracted source id is absent from the observation",
+                    Value::Null,
+                    Value::Null,
+                ));
+            };
+            let extracted = json!({
+                "source_id": amt_choice,
+                "value": extracted_text,
+                "surface": surface,
+            });
+            if choice == "done" {
+                return Ok(prepare("ready", "", Value::Null, extracted));
+            }
+            // choice == "fill"
+            let fld = need(fld_q)?;
+            let fld_choice = fld.as_str();
+            if fld.confidence < floor || fld_choice == "none" {
+                return Ok(prepare(
+                    "human_review",
+                    "Field is missing or uncertain",
+                    Value::Null,
+                    Value::Null,
+                ));
+            }
+            let fill = json!({
+                "kind": "fill",
+                "target_id": fld_choice,
+                "value_key": action
+                    .get("value_key")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("billing_contact"),
+            });
+            Ok(prepare("ready", "", fill, extracted))
         }
         "gate" => {
             // Gate semantics (fail-closed): `option` is the *unsafe* answer

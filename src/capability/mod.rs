@@ -26,6 +26,7 @@
 //! by a timeout and an output-size cap.
 
 pub mod browser;
+pub mod computer_use;
 pub mod data;
 pub mod db;
 pub mod goal;
@@ -127,6 +128,9 @@ pub enum Capability {
     /// On-device Needle 3 model: structured extraction / embedding / tool-call.
     /// Loads the Cactus engine via dlopen; no network, no exec. See `needle`.
     Needle(needle::NeedleCap),
+    /// Bounded UI decision cycle (awesome-jev computer-use): fingerprint +
+    /// stale-guarded single-fill executor + independent oracle. See `computer_use`.
+    ComputerUse(computer_use::ComputerUseCap),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -353,6 +357,7 @@ impl Registry {
                     plugin::call_plugin(c, with, state, &self.policy, &self.caps)
                 }
                 Capability::Needle(c) => needle::call_needle(c, with, state, &self.policy),
+                Capability::ComputerUse(c) => computer_use::call_computer_use(c, with, state, &self.policy),
             };
             match r {
                 Ok(v) => return Ok(v),

@@ -68,6 +68,7 @@ Specs in this directory:
 | `capabilities/stateful_pipeline.json` | keyvalue + queue + cache(TTL) + cron + notify |
 | `capabilities/protocol_services.json` | tcp/udp/redis/nats/mqtt/smtp/s3/prometheus/kafka |
 | `versioned/refund_policy.v{1,2}.json` | multi-version coexistence + `name@N` pinning |
+| `capabilities/computer_use.json` | `kind: "computer_use"` — bounded UI decision cycle (awesome-jev port): fingerprint before inference, stale-guarded single fill, independent oracle |
 | `capabilities/script_plugin.json` | `kind: "plugin"` — a workflow calling a Rhai plugin (offline) |
 | `capabilities/hf_trending.json` | HuggingFace model monitor via the `websites/huggingface.co` Rhai plugin (network: `huggingface.co`) |
 | `browser/browser_singleton.json` | one Chrome CDP instance + observation extension, then real CDP input |
@@ -101,11 +102,12 @@ with `{"kind":"call","capability":"<name>","with":{…},"project":{…}}`. An ac
 also list prerequisite `"chain": [{"capability":…, "as":…}]` whose results become
 `${with.<as>…}` for later steps and the main call.
 
-50 kinds (68 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
+51 kinds (70 names incl. aliases), e.g. `tcp`, `udp`, `redis`, `nats`, `mqtt`, `smtp`, `s3`, `prometheus`,
 `kafka`, `archive`*, `pdf`*, `sql`*, and the earlier 27: `http`, `exec`*, `agent`, `shell`*, `file` (path allow-list), `sqlite`*, `db`*, `datetime`,
 `text`, `rpc`, `graphql`, `llm`, `mcp`*, `vector`, `webhook`, `sse`, `passthrough`, `json`,
 `csv`, `xml`, `markdown`, `diff`, `validate`, `math`, `hash`, `graph`, `tokenize`, `cron`,
-`keyvalue`, `cache`, `queue`, `metrics`, `notify`, and the extensibility kind
+`keyvalue`, `cache`, `queue`, `metrics`, `notify`, the bounded UI decision cycle
+`computer_use` (alias `computer-use` — see `skill --section computer-use`), and the extensibility kind
 `plugin` (alias `script`, a Rhai plugin running on the sandboxed host — see
 `docs/plugins.md`)  (* = spawns a process or touches the filesystem → gated by
 `policy.allow_exec` / `policy.allow_paths`).

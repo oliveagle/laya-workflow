@@ -1395,6 +1395,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("optimize",  "Run a Laya-driven optimizer loop: propose → evaluate → Laya continue/strategy for `steps` rounds.", "optimize"),
         ("improve",  "Accuracy self-improvement: measure decisions, learn from misses under a hold-out gate, persist the accepted policy.", "improve"),
         ("evaluate", "Evaluate a workflow against a labeled JSONL dataset (dev/holdout + slice + confusion + review queue).", "evaluate"),
+        ("computer-use", "Bounded UI decision cycle (awesome-jev): fingerprint before inference, stale-guarded single fill, independent oracle.", "computer-use"),
         ("export",    "Export a built-in app workflow as a generic JSON spec (so it can be edited and re-loaded).", "export"),
         ("state",     "List every per-node record in a NodeStore (track what ran, what it returned, the full state snapshot).", "state"),
         ("resume",   "Continue a partially-completed run from `dir/`, optionally from `--from <iter>` with the materialised state.", "resume"),
@@ -1471,6 +1472,7 @@ fn print_overview() {
     println!("  optimize       Laya-driven optimizer loop");
     println!("  improve        accuracy self-improvement under a hold-out gate");
     println!("  evaluate       score decisions on a labeled dataset (dev/holdout + slices + review queue)");
+    println!("  computer-use   bounded UI decision cycle (fingerprint + stale guard + oracle)");
     println!("  export <a>     write a built-in app as a generic JSON spec");
     println!("  validate -s S  lint a spec (graph, capabilities, policy, secrets)");
     println!("  run -s S     run a spec end-to-end");
@@ -1527,6 +1529,7 @@ fn print_section(name: &str) -> Result<()> {
         "optimize" => SKILL_OPTIMIZE,
         "improve" => SKILL_IMPROVE,
         "evaluate" => SKILL_EVALUATE,
+        "computer-use" => SKILL_COMPUTER_USE,
         "export" => SKILL_EXPORT,
         "state" => SKILL_STATE,
         "resume" => SKILL_RESUME,
@@ -1579,6 +1582,7 @@ static SKILL_DEMO: &str = include_str!("skill/sections/demo.md");
 static SKILL_OPTIMIZE: &str = include_str!("skill/sections/optimize.md");
 static SKILL_IMPROVE: &str = include_str!("skill/sections/improve.md");
 static SKILL_EVALUATE: &str = include_str!("skill/sections/evaluate.md");
+static SKILL_COMPUTER_USE: &str = include_str!("skill/sections/computer_use.md");
 static SKILL_EXPORT: &str = include_str!("skill/sections/export.md");
 static SKILL_STATE: &str = include_str!("skill/sections/state.md");
 static SKILL_RESUME: &str = include_str!("skill/sections/resume.md");

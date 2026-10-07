@@ -7,8 +7,8 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{
-    browser, data, db, goal, local, net, plugin, proto, service, store, sys, web, AgentCap,
-    Capability, ExecCap, HttpCap,
+    browser, computer_use, data, db, goal, local, net, plugin, proto, service, store, sys,
+    web, AgentCap, Capability, ExecCap, HttpCap,
 };
 
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
@@ -372,6 +372,32 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             op: def.get("op").and_then(|v| v.as_str()).unwrap_or("extract").to_string(),
             cact: def.get("cact").and_then(|v| v.as_str()).map(|s| s.to_string()),
         })),
+        "computer_use" | "computer-use" => Ok(Capability::ComputerUse(
+            computer_use::ComputerUseCap {
+                op: def
+                    .get("op")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("fingerprint")
+                    .to_string(),
+                allowed_surface: def
+                    .get("allowed_surface")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                allowed_fields: def
+                    .get("allowed_fields")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
+                    })
+                    .unwrap_or_default(),
+                expected: def.get("expected").cloned().unwrap_or(Value::Null),
+                min_confidence: def
+                    .get("min_confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.8),
+            },
+        )),
         "web_fetch" | "fetch_url" => Ok(Capability::WebFetch(web::WebFetchCap {
             format: def.get("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
             headers: def.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
