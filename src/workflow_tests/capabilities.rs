@@ -922,3 +922,96 @@ pub fn test_quality_rubric(h: &mut Harness) {
     let out3 = run_action(&noul_act, &json!({}), &v3, None).unwrap();
     h.eq("rubric: noul dimension normalizes by 1", out3["weighted_score"].as_f64().unwrap_or(-1.0), 0.9);
 }
+
+pub fn test_support_routing(h: &mut Harness) {
+    use laya_workflow::spec::run_action;
+    use laya_workflow::workflow::{Decision, Verdict};
+    use std::collections::HashMap;
+
+    // combine: choice + noul composed in code, both thresholds honoured.
+    let action = serde_json::json!({
+        "kind": "combine",
+        "choice": "department", "signal": "explicit_urgency",
+        "min_confidence": 0.8, "fallback": "other",
+        "review_label": "human_review",
+        "high_threshold": 0.85, "low_threshold": 0.15,
+    });
+    let mk_choice = |pick: &str, conf: f64| Decision {
+        answer: serde_json::json!(pick),
+        probabilities: {
+            let mut m = serde_json::Map::new();
+            m.insert("billing".to_string(), serde_json::json!(0.1));
+            m.insert("technical".to_string(), serde_json::json!(0.8));
+            m.insert("account".to_string(), serde_json::json!(0.05));
+            m.insert("other".to_string(), serde_json::json!(0.05));
+            m
+        },
+        confidence: conf,
+    };
+    let mk_noul = |p: f64| Decision {
+        answer: serde_json::json!(p),
+        probabilities: {
+            let mut m = serde_json::Map::new();
+            m.insert("true".to_string(), serde_json::json!(p));
+            m.insert("false".to_string(), serde_json::json!(1.0 - p));
+            m
+        },
+        confidence: p.max(1.0 - p),
+    };
+    let run_c = |c: &Decision, n: &Decision| {
+        let mut a = HashMap::new();
+        a.insert("department".to_string(), c.clone());
+        a.insert("explicit_urgency".to_string(), n.clone());
+        let v = Verdict { answers: a, input_tokens: 0, latency_ms: 0.0 };
+        run_action(&action, &json!({}), &v, None).unwrap()
+    };
+
+    // technical + urgency 0.93 -> route technical, urgency high
+    let o1 = run_c(&mk_choice("technical", 0.94), &mk_noul(0.93));
+    h.eq("support: confident technical routes through",
+        o1["route"].as_str().unwrap_or(""), "technical");
+    h.eq("support: explicit deadline -> high urgency",
+        o1["urgency"].as_str().unwrap_or(""), "high");
+
+    // billing + no urgency -> ordinary
+    let o2 = run_c(&mk_choice("billing", 0.91), &mk_noul(0.05));
+    h.eq("support: no urgency -> ordinary",
+        o2["urgency"].as_str().unwrap_or(""), "ordinary");
+
+    // low confidence choice -> human_review regardless of urgency
+    let o3 = run_c(&mk_choice("technical", 0.5), &mk_noul(0.9));
+    h.eq("support: low-confidence choice routes to review",
+        o3["route"].as_str().unwrap_or(""), "human_review");
+
+    // `other` -> human_review
+    let o4 = run_c(&mk_choice("other", 0.9), &mk_noul(0.5));
+    h.eq("support: other -> review",
+        o4["route"].as_str().unwrap_or(""), "human_review");
+
+    // mid-band urgency -> review
+    let o5 = run_c(&mk_choice("account", 0.9), &mk_noul(0.5));
+    h.eq("support: mid urgency -> review",
+        o5["urgency"].as_str().unwrap_or(""), "review");
+
+    // match_rules heuristic: end-to-end department classification + fallback.
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::workflow::Decide;
+    let be = HeuristicBackend;
+    let q = serde_json::json!({
+        "department": {"type": "choice", "instructions": "route",
+            "criteria": {"billing": "b", "technical": "t", "account": "a", "other": "o"},
+            "heuristic": {"field": "message", "match_rules": {
+                "billing": ["invoice", "refund", "payment"],
+                "technical": ["crash", "export", "bug"],
+                "account": ["login", "log in", "account"],
+            }, "p_hit": 0.94, "fallback": "other"}}
+    });
+    let v_t = be.decide(&json!({"message": "the export crashes"}), &q).unwrap();
+    h.eq("match_rules: export crash -> technical",
+        v_t.answer_value("department").unwrap().as_str().unwrap_or(""), "technical");
+    let v_o = be.decide(&json!({"message": "please explain the weather"}), &q).unwrap();
+    h.eq("match_rules: no token -> fallback other",
+        v_o.answer_value("department").unwrap().as_str().unwrap_or(""), "other");
+    h.check("match_rules: fallback is low-confidence",
+        v_o.confidence("department").unwrap_or(1.0) < 0.8);
+}

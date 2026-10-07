@@ -1,0 +1,97 @@
+{
+  "name": "support_routing",
+  "dsl_version": 2,
+  "description": "Port of awesome-jev support-routing: classify a support request into a department via Choice, and ask a separate Noul about explicitly-stated urgency - the two questions are atomic and independent. Code (rules) combines them: department confidence < 0.8 or a pick of `other` routes to human_review; urgency uses the dual-threshold band (>=0.85 high, <=0.15 ordinary, in-between review) rather than a forced yes/no.",
+  "start": "classify",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "classify",
+      "primary_q": "department",
+      "questions": {
+        "department": {
+          "type": "choice",
+          "instructions": "Which team should handle the customer's primary request in message? Choose other if unclear or outside the options.",
+          "criteria": {
+            "billing": "Invoices, charged amounts, refunds, or payment methods.",
+            "technical": "Application failures, outages, or integration bugs.",
+            "account": "Login, account access, or account profile changes.",
+            "other": "No clear primary request, overlapping requests, or none of the teams fit."
+          },
+          "heuristic": {
+            "field": "message",
+            "match_rules": {
+              "billing": [
+                "invoice",
+                "charged",
+                "refund",
+                "payment method",
+                "credit card",
+                "bill"
+              ],
+              "technical": [
+                "crash",
+                "outage",
+                "export",
+                "integration",
+                "bug",
+                "broken",
+                "error",
+                "500"
+              ],
+              "account": [
+                "login",
+                "log in",
+                "log into",
+                "account",
+                "password",
+                "sign in",
+                "profile",
+                "locked out"
+              ]
+            },
+            "p_hit": 0.94,
+            "fallback": "other"
+          }
+        },
+        "explicit_urgency": {
+          "type": "noul",
+          "instructions": "Does message explicitly describe a time-critical operational impact or deadline? Judge the words, not the department.",
+          "truthy": "Explicit deadline or ongoing work blocked by the issue.",
+          "falsy": "No explicit time-critical impact or deadline.",
+          "heuristic": {
+            "field": "message",
+            "match_any": [
+              "due today",
+              "deadline",
+              "today",
+              "urgent",
+              "asap",
+              "blocked",
+              "cannot deliver",
+              "before sprint"
+            ],
+            "p_hit": 0.93,
+            "p_miss": 0.1
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "combine",
+        "choice": "department",
+        "signal": "explicit_urgency",
+        "min_confidence": 0.8,
+        "fallback": "other",
+        "review_label": "human_review",
+        "high_threshold": 0.85,
+        "low_threshold": 0.15
+      }
+    }
+  ]
+}

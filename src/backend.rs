@@ -724,6 +724,57 @@ impl Decide for HeuristicBackend {
                         (serde_json::json!("none"), m, 0.55)
                     }
                 }
+                // multi-class routing: `heuristic.match_rules` maps each
+                // choice option to a list of trigger tokens; the first option
+                // whose tokens appear in the field/text wins (option at p_hit,
+                // the rest at p_miss). No hit at all fails safe to the option
+                // named by `fallback` (default "other"), mirroring awesome-jev's
+                // support-routing "choose other if unclear". This is the
+                // declarative offline analog of a named per-question handler:
+                // new project == new JSON, no Rust.
+                _ if qdef.get("heuristic").and_then(|h| h.get("match_rules")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let rules = h.get("match_rules").and_then(|m| m.as_object()).cloned().unwrap_or_default();
+                    let p_hit = h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9);
+                    let p_miss = h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.02);
+                    let fallback = h.get("fallback").and_then(|x| x.as_str()).unwrap_or("other");
+                    let target_text: String = h.get("field").and_then(|f| f.as_str())
+                        .and_then(|k| state.get(k))
+                        .map(|v| match v {
+                            Value::String(sv) => sv.clone(),
+                            other => other.to_string(),
+                        })
+                        .unwrap_or_else(|| text.clone());
+                    let mut pick: Option<String> = None;
+                    for (opt, toks_v) in &rules {
+                        let toks: Vec<&str> = toks_v
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                            .unwrap_or_default();
+                        if !toks.is_empty() && contains_any(&target_text, &toks) {
+                            pick = Some(opt.clone());
+                            break;
+                        }
+                    }
+                    let matched = pick.is_some();
+                    let chosen = pick.unwrap_or_else(|| fallback.to_string());
+                    let conf = if matched {
+                        p_hit
+                    } else {
+                        // Failing safe to `fallback` is a *no-match* verdict, not
+                        // a confident one: confidences it below a 0.8 floor so a
+                        // `combine`/threshold rule sends it to review instead of
+                        // routing it as though the message clearly fit `other`.
+                        h.get("p_fallback")
+                            .and_then(|x| x.as_f64())
+                            .unwrap_or(0.6)
+                    };
+                    let mut m = Map::new();
+                    for opt in rules.keys() {
+                        m.insert(opt.clone(), serde_json::json!(if *opt == chosen { conf } else { p_miss }));
+                    }
+                    (serde_json::json!(chosen), m, conf)
+                }
                 _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
                     // `match_any`: literal substring needles (word-boundary aware).

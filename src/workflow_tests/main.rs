@@ -86,6 +86,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),
         ("quality-rubric", capabilities::test_quality_rubric),
+        ("support-routing", capabilities::test_support_routing),
         ("capabilities-extra", capabilities::test_capabilities_extra),
         // On-device Needle 3 integration (extract / embed / complete); skipped
         // when libneedle.so or needle3.cact is not installed.

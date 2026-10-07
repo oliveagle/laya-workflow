@@ -908,7 +908,7 @@ pub fn run_action(
         Some(q) => q,
         None => {
             // only actions that read a specific answer need a question
-            if kind == "copy_keys" || kind == "none" || kind == "rubric" {
+            if kind == "copy_keys" || kind == "none" || kind == "rubric" || kind == "combine" {
                 ""
             } else {
                 bail!("action {kind:?} needs 'question' or a primary_q");
@@ -1029,6 +1029,61 @@ pub fn run_action(
                 "weighted_score": composite,
                 "uncertain_dimensions": uncertain,
                 "min_confidence": conf_floor,
+            }))
+        }
+        "combine" => {
+            // Route + signal composition (awesome-jev support-routing):
+            // `choice` names a choice answer and `signal` a noul answer; code
+            // combines them. The choice routes unless its confidence is below
+            // `min_confidence` (default 0.8) or it picked `fallback`
+            // (default "other") — then it routes to `review_label` (default
+            // human_review). The noul is bucketed by dual thresholds:
+            // >= high_threshold -> high, <= low_threshold -> ordinary,
+            // otherwise -> review. Neither question depends on the other's
+            // result; all combination lives here, in code.
+            let cq = action
+                .get("choice")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| anyhow!("action combine: needs 'choice'"))?;
+            let sq = action
+                .get("signal")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| anyhow!("action combine: needs 'signal'"))?;
+            let c = v
+                .answers
+                .get(cq)
+                .ok_or_else(|| anyhow!("action combine: no answer {cq:?}"))?;
+            let s = v
+                .answers
+                .get(sq)
+                .ok_or_else(|| anyhow!("action combine: no answer {sq:?}"))?;
+            let floor = action.get("min_confidence").and_then(|x| x.as_f64()).unwrap_or(0.8);
+            let fallback = action.get("fallback").and_then(|x| x.as_str()).unwrap_or("other");
+            let review_label = action.get("review_label").and_then(|x| x.as_str()).unwrap_or("human_review");
+            let hi = action.get("high_threshold").and_then(|x| x.as_f64()).unwrap_or(0.85);
+            let lo = action.get("low_threshold").and_then(|x| x.as_f64()).unwrap_or(0.15);
+            let choice = c.as_str();
+            let needs_review = c.confidence < floor || choice == fallback;
+            let route = if needs_review { review_label.to_string() } else { choice.clone() };
+            let p = s.as_f64();
+            let urgency = if p >= hi {
+                "high".to_string()
+            } else if p <= lo {
+                "ordinary".to_string()
+            } else {
+                "review".to_string()
+            };
+            Ok(json!({
+                "route": route,
+                "urgency": urgency,
+                "reason": if needs_review {
+                    format!("{cq}: confidence {:.3} below {floor} or picked {fallback:?}", c.confidence)
+                } else {
+                    format!("{cq} clears the confidence floor ({floor})")
+                },
+                "choice_confidence": c.confidence,
+                "signal_value": p,
+                "combined": true,
             }))
         }
         "gate" => {
