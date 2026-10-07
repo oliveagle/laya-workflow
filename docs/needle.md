@@ -82,7 +82,10 @@ single-threaded C++, ~366 decode tok/s):
 `extract`/`complete` are decode-bound: the 20-layer base writes ~70 output
 tokens at ~370 tok/s ≈ 200 ms of arithmetic. The vendor ships `needle build
 --layers N` (2–20) which slices the checkpoint into a faster subnetwork.
-Measured on this machine (same schema, warm, `extract`):
+Measured on this machine (same schema, warm, `extract`); the first table
+used the old `max_new_tokens=128` default, the table after it re-measures with
+the latency-tuned default of 80:
+
 
 | rung | size | warm extract | decode tok/s | Scenario-B accuracy (8 invoices) |
 |---|---|---|---|---|
@@ -120,6 +123,14 @@ collapses to 0 — a floor, not a tradeoff. **8-layer + mnt=80 is the measured
 mnt=128; the extra budget only pads reasoning). Raise `with.max_new_tokens` on
 `extract` when a schema is wide enough to need it; the default is tuned for
 the latency target, correctness can always buy it back.
+
+The number above is the raw engine round trip. Through the real Rust wrapper
+(`needle_extract` behind a persistent `laya-workflow mcp serve`, 8-layer +
+default mnt=80) the same 8 invoices measure n=40: **avg 92.7 ms, p50 91.4 ms,
+85 % of calls under 100 ms** (min 77.8, p90 101.9, max 118.6 — the tail is
+system scheduling on a shared box). The same run on 14-layer is avg 179 ms
+(0/40 under 100 ms) — so the < 100 ms claim is specific to the 8-layer rung,
+and 14-layer remains the quality pick when ~180 ms is affordable.
 
 Point the engine at a rung with the same env var it already reads:
 
