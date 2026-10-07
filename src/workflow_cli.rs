@@ -70,6 +70,30 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         score_only: bool,
     },
+    /// Evaluate a workflow against a labeled JSONL dataset (dev/holdout,
+    /// slice breakdowns, confusion matrix, review queue). Port of the
+    /// awesome-jev `evaluations/run.py` pattern.
+    Evaluate {
+        /// Path to the workflow spec JSON (must declare an `evaluation` block)
+        #[arg(long)]
+        spec: String,
+        /// Path to the labeled JSONL dataset
+        #[arg(long)]
+        dataset: String,
+        /// Which split to run: development | holdout | all
+        #[arg(long, default_value = "all")]
+        split: String,
+        /// Comma-separated list of valid department keys (dataset validation)
+        #[arg(long, default_value = "billing,technical,account,other")]
+        departments: String,
+        /// Write the summary JSON to this path (parent dirs created)
+        #[arg(long)]
+        output: Option<String>,
+        /// Refuse to evaluate holdout if the spec hash differs from the
+        /// recorded one in <output>.fingerprint (freeze config first).
+        #[arg(long, default_value_t = false)]
+        freeze: bool,
+    },
     /// Export a built-in app workflow as a generic JSON spec
     Export { app: String },
     /// Run a workflow defined by a JSON spec (generic, no recompilation)
@@ -478,6 +502,14 @@ fn main() -> Result<()> {
                 .collect();
             run_optimize(backend.as_ref(), &label, *steps, strats)
         }
+        Cmd::Evaluate {
+            spec,
+            dataset,
+            split,
+            departments,
+            output,
+            freeze,
+        } => run_evaluate(cli.base_url.as_deref(), spec, dataset, split, departments, output.as_deref(), *freeze),
         Cmd::Improve {
             dir,
             rounds,
@@ -1362,6 +1394,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("demo",      "Run the built-in composition demo (`gate → triage` chain) on whatever backend is selected.", "demo"),
         ("optimize",  "Run a Laya-driven optimizer loop: propose → evaluate → Laya continue/strategy for `steps` rounds.", "optimize"),
         ("improve",  "Accuracy self-improvement: measure decisions, learn from misses under a hold-out gate, persist the accepted policy.", "improve"),
+        ("evaluate", "Evaluate a workflow against a labeled JSONL dataset (dev/holdout + slice + confusion + review queue).", "evaluate"),
         ("export",    "Export a built-in app workflow as a generic JSON spec (so it can be edited and re-loaded).", "export"),
         ("state",     "List every per-node record in a NodeStore (track what ran, what it returned, the full state snapshot).", "state"),
         ("resume",   "Continue a partially-completed run from `dir/`, optionally from `--from <iter>` with the materialised state.", "resume"),
@@ -1437,6 +1470,7 @@ fn print_overview() {
     println!("  demo           run a built-in composition demo");
     println!("  optimize       Laya-driven optimizer loop");
     println!("  improve        accuracy self-improvement under a hold-out gate");
+    println!("  evaluate       score decisions on a labeled dataset (dev/holdout + slices + review queue)");
     println!("  export <a>     write a built-in app as a generic JSON spec");
     println!("  validate -s S  lint a spec (graph, capabilities, policy, secrets)");
     println!("  run -s S     run a spec end-to-end");
@@ -1492,6 +1526,7 @@ fn print_section(name: &str) -> Result<()> {
         "demo" => SKILL_DEMO,
         "optimize" => SKILL_OPTIMIZE,
         "improve" => SKILL_IMPROVE,
+        "evaluate" => SKILL_EVALUATE,
         "export" => SKILL_EXPORT,
         "state" => SKILL_STATE,
         "resume" => SKILL_RESUME,
@@ -1543,6 +1578,7 @@ static SKILL_DESCRIBE: &str = include_str!("skill/sections/describe.md");
 static SKILL_DEMO: &str = include_str!("skill/sections/demo.md");
 static SKILL_OPTIMIZE: &str = include_str!("skill/sections/optimize.md");
 static SKILL_IMPROVE: &str = include_str!("skill/sections/improve.md");
+static SKILL_EVALUATE: &str = include_str!("skill/sections/evaluate.md");
 static SKILL_EXPORT: &str = include_str!("skill/sections/export.md");
 static SKILL_STATE: &str = include_str!("skill/sections/state.md");
 static SKILL_RESUME: &str = include_str!("skill/sections/resume.md");
@@ -1801,6 +1837,85 @@ fn run_improve(dir: &str, rounds: usize, score_only: bool) -> Result<()> {
             after.total,
             after.accuracy * 100.0
         );
+    }
+    Ok(())
+}
+
+/// Evaluate a workflow against a labeled JSONL dataset (dev/holdout + slice
+/// breakdowns + confusion matrix + review queue). Port of awesome-jev's
+/// `evaluations/run.py`: only the ticket message reaches the workflow; the
+/// split and expected labels stay out of the decision path.
+fn run_evaluate(
+    base_url: Option<&str>,
+    spec_path: &str,
+    dataset_path: &str,
+    split: &str,
+    departments_csv: &str,
+    output: Option<&str>,
+    freeze: bool,
+) -> Result<()> {
+    use laya_workflow::evaluate;
+
+    let spec_text = std::fs::read_to_string(spec_path)?;
+    let spec_json: Value = serde_json::from_str(&spec_text)?;
+    let fingerprint = evaluate::config_sha256(&spec_json)?;
+    let departments: Vec<&str> =
+        departments_csv.split(',').map(str::trim).collect();
+
+    // holdout freeze: refuse an evaluation against a *changed* spec
+    if freeze && split == "holdout" {
+        if let Some(out_path) = output {
+            let fp_path = format!("{out_path}.fingerprint");
+            if std::path::Path::new(&fp_path).exists() {
+                let recorded = std::fs::read_to_string(&fp_path)?.trim().to_string();
+                if recorded != fingerprint {
+                    bail!(
+                        "holdout evaluation refused: spec hash changed (recorded {recorded} vs now {fingerprint}); \
+                         tune only on development cases, then author a fresh holdout"
+                    );
+                }
+            }
+        }
+    }
+
+    let cases = evaluate::load_dataset(dataset_path, &departments)?;
+    let selected: Vec<_> = cases
+        .iter()
+        .filter(|c| split == "all" || c.split == split)
+        .cloned()
+        .collect();
+    if selected.is_empty() {
+        bail!("no cases match split {split:?}");
+    }
+
+    let wf = laya_workflow::spec::load_file(spec_path)?;
+    let (backend, _label) = make_backend(base_url);
+    let summary = evaluate::evaluate(&selected, &departments, |message| {
+        let state = serde_json::json!({ "message": message });
+        let out = wf.run(backend.as_ref(), &state)?;
+        // redact before the summary sees it (same invariant as `run`)
+        let redacted = out.to_json();
+        let redacted = laya_workflow::capability::secret::redact(&redacted);
+        Ok(redacted)
+    })?;
+
+    let text = serde_json::to_string_pretty(&summary)?;
+    if let Some(out_path) = output {
+        if let Some(parent) = std::path::Path::new(out_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // never overwrite: refuse if the file already exists
+        if std::path::Path::new(out_path).exists() {
+            bail!("output {out_path} already exists; use a new directory per run");
+        }
+        std::fs::write(out_path, format!("{text}\n"))?;
+        // record the config fingerprint for the freeze rule
+        let fp_path = format!("{out_path}.fingerprint");
+        std::fs::write(&fp_path, format!("{fingerprint}\n"))?;
+        println!("wrote {out_path}");
+        println!("fingerprint {fingerprint} -> {fp_path}");
+    } else {
+        println!("{text}");
     }
     Ok(())
 }

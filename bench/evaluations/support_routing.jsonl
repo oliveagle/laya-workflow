@@ -1,0 +1,6 @@
+{"id":"t-1","split":"development","slice":"clear-technical","message":"Our CSV export crashes every time. We cannot deliver the report due today.","expected_department":"technical","expected_urgency":"high","require_review":false}
+{"id":"t-2","split":"development","slice":"clear-billing","message":"Please refund the double charge on my invoice.","expected_department":"billing","expected_urgency":"ordinary","require_review":false}
+{"id":"t-3","split":"development","slice":"clear-account","message":"I cannot log into my account.","expected_department":"account","expected_urgency":"ordinary","require_review":false}
+{"id":"t-4","split":"holdout","slice":"clear-technical","message":"The integration with the payment API is broken, error 500 on every call.","expected_department":"technical","expected_urgency":"ordinary","require_review":false}
+{"id":"t-5","split":"holdout","slice":"ambiguous","message":"How do I do a thing?","expected_department":"other","expected_urgency":"ordinary","require_review":true}
+{"id":"t-6","split":"holdout","slice":"clear-billing","message":"I was charged twice for the same invoice last month.","expected_department":"billing","expected_urgency":"high","require_review":false}

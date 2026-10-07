@@ -13,6 +13,7 @@ mod capabilities2;
 mod capabilities3;
 mod codegraph;
 mod engine;
+mod evaluate;
 mod heuristics;
 mod persist;
 mod secrets;
@@ -87,6 +88,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("span-selection", capabilities::test_span_selection),
         ("quality-rubric", capabilities::test_quality_rubric),
         ("support-routing", capabilities::test_support_routing),
+        ("evaluate", evaluate::test_evaluate),
         ("capabilities-extra", capabilities::test_capabilities_extra),
         // On-device Needle 3 integration (extract / embed / complete); skipped
         // when libneedle.so or needle3.cact is not installed.
