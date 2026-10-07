@@ -851,7 +851,11 @@ fn bchoice(p_b: f64) -> (Value, Map<String, Value>, f64) {
     m.insert("A".to_string(), serde_json::json!(1.0 - p_b));
     m.insert("B".to_string(), serde_json::json!(p_b));
     let ans = if p_b >= 0.5 { "B" } else { "A" };
-    (serde_json::json!(ans), m, p_b.max(1.0 - p_b))
+    // 3-decimal confidence: `1.0 - 0.6/3.0` etc. produce 0.7999999999999999,
+    // which then compared against a 0.8 confidence floor as "uncertain" in
+    // composite-scoring specs. Rounding makes the clean boundary a boundary.
+    let conf = (p_b.max(1.0 - p_b) * 1000.0).round() / 1000.0;
+    (serde_json::json!(ans), m, conf)
 }
 
 /// ordinal score with a triangular-ish distribution around the value.
@@ -866,7 +870,9 @@ fn bscore(value: f64) -> (Value, Map<String, Value>, f64) {
         }
         m.insert(i.to_string(), serde_json::json!(w));
     }
-    (serde_json::json!(value), m, best.1)
+    // Same 3-decimal confidence as bchoice — see the comment there.
+    let conf = (best.1 * 1000.0).round() / 1000.0;
+    (serde_json::json!(value), m, conf)
 }
 
 /// Default for choice questions not explicitly handled: first criteria key.

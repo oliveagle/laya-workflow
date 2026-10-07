@@ -908,7 +908,7 @@ pub fn run_action(
         Some(q) => q,
         None => {
             // only actions that read a specific answer need a question
-            if kind == "copy_keys" || kind == "none" {
+            if kind == "copy_keys" || kind == "none" || kind == "rubric" {
                 ""
             } else {
                 bail!("action {kind:?} needs 'question' or a primary_q");
@@ -970,6 +970,65 @@ pub fn run_action(
                 "action_answer": d.answer,
                 "label": label,
                 "confidence": d.confidence,
+            }))
+        }
+        "rubric" => {
+            // Composite scoring (awesome-jev quality-rubric): several ordered
+            // score dimensions, each normalised to 0..1 by dividing by
+            // `levels - 1` (a Score is a probability-weighted position in its
+            // rubric — NOT a probability itself), then combined with per-dimension
+            // weights, all in code. If any dimension's confidence is below the
+            // floor, the composite is withheld (`status: human_review`) instead
+            // of reporting a number built on uncertain inputs.
+            let dims = action
+                .get("dimensions")
+                .and_then(|d| d.as_array())
+                .ok_or_else(|| anyhow!("action rubric: missing 'dimensions'"))?;
+            let conf_floor = action
+                .get("min_confidence")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.8);
+            let mut normalized = Map::new();
+            let mut uncertain = Vec::new();
+            let mut score_sum = 0.0f64;
+            let mut weight_sum = 0.0f64;
+            let mut low_conf = false;
+            for dim in dims.iter().filter_map(|d| d.as_object()) {
+                let qname = dim
+                    .get("question")
+                    .and_then(|x| x.as_str())
+                    .ok_or_else(|| anyhow!("rubric dimension needs 'question'"))?;
+                let weight = dim.get("weight").and_then(|x| x.as_f64()).unwrap_or(1.0);
+                let levels = dim
+                    .get("levels")
+                    .and_then(|x| x.as_u64())
+                    .ok_or_else(|| anyhow!("rubric dimension {qname:?} needs 'levels'"))?
+                    .max(2) as f64;
+                let d = v
+                    .answers
+                    .get(qname)
+                    .ok_or_else(|| anyhow!("rubric: no answer {qname:?}"))?;
+                if d.confidence < conf_floor {
+                    low_conf = true;
+                    uncertain.push(qname.to_string());
+                }
+                let raw = d.as_f64();
+                let norm = (raw / (levels - 1.0)).clamp(0.0, 1.0);
+                normalized.insert(qname.to_string(), json!({ "raw": raw, "normalized": norm }));
+                score_sum += norm * weight;
+                weight_sum += weight;
+            }
+            let composite = if low_conf || weight_sum <= 0.0 {
+                None
+            } else {
+                Some(score_sum / weight_sum)
+            };
+            Ok(json!({
+                "status": if low_conf { "human_review" } else { "scored" },
+                "normalized": normalized,
+                "weighted_score": composite,
+                "uncertain_dimensions": uncertain,
+                "min_confidence": conf_floor,
             }))
         }
         "gate" => {

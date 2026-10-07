@@ -859,3 +859,66 @@ pub fn test_span_selection(h: &mut Harness) {
     h.eq("e2e: single candidate selected",
         out_single.state["billing_contact"].as_str().unwrap_or(""), "candidate_0");
 }
+
+pub fn test_quality_rubric(h: &mut Harness) {
+    use laya_workflow::backend::noul;
+    use laya_workflow::spec::run_action;
+    use laya_workflow::workflow::{Decision, Verdict};
+    use std::collections::HashMap;
+
+    let mk_decision = |answer: f64, conf: f64| Decision {
+        answer: serde_json::json!(answer),
+        probabilities: {
+            let mut m = serde_json::Map::new();
+            m.insert("0".to_string(), serde_json::json!(0.1));
+            m.insert("1".to_string(), serde_json::json!(0.8));
+            m.insert("2".to_string(), serde_json::json!(0.1));
+            m
+        },
+        confidence: conf,
+    };
+    let action = serde_json::json!({
+        "kind": "rubric", "min_confidence": 0.8,
+        "dimensions": [
+            {"question": "usefulness", "levels": 3, "weight": 0.6},
+            {"question": "clarity", "levels": 4, "weight": 0.4},
+        ]
+    });
+
+    // high-confidence: usefulness 1.8/2=0.9, clarity 2.6/3=0.8667,
+    // 0.6*0.9 + 0.4*0.8667 = 0.8867 (matches awesome-jev's expected 0.8867)
+    let mut ans = HashMap::new();
+    ans.insert("usefulness".to_string(), mk_decision(1.8, 0.93));
+    ans.insert("clarity".to_string(), mk_decision(2.6, 0.87));
+    let v = Verdict { answers: ans, input_tokens: 0, latency_ms: 0.0 };
+    let out = run_action(&action, &json!({}), &v, None).unwrap();
+    h.eq("rubric: scored", out["status"].as_str().unwrap_or(""), "scored");
+    h.eq("rubric: usefulness normalized 0.9", out["normalized"]["usefulness"]["normalized"].as_f64().unwrap_or(-1.0), 0.9);
+    h.check("rubric: clarity normalized ~0.8667",
+        (out["normalized"]["clarity"]["normalized"].as_f64().unwrap_or(-1.0) - 0.8666666666666667).abs() < 1e-9);
+    h.check("rubric: weighted ~0.8867",
+        (out["weighted_score"].as_f64().unwrap_or(-1.0) - 0.8866666666666667).abs() < 1e-9);
+
+    // low-confidence on one dimension -> composite withheld (human_review)
+    let mut ans2 = HashMap::new();
+    ans2.insert("usefulness".to_string(), mk_decision(1.8, 0.93));
+    ans2.insert("clarity".to_string(), mk_decision(2.6, 0.5));
+    let v2 = Verdict { answers: ans2, input_tokens: 0, latency_ms: 0.0 };
+    let out2 = run_action(&action, &json!({}), &v2, None).unwrap();
+    h.eq("rubric: low-confidence withholds score", out2["status"].as_str().unwrap_or(""), "human_review");
+    h.check("rubric: composite is null when withheld", out2["weighted_score"].is_null());
+    h.check("rubric: names the uncertain dimension",
+        out2["uncertain_dimensions"].as_array().map(|a| a.len()).unwrap_or(0) == 1);
+
+    // noul is a valid rubric input too (levels=2 => /1 = raw)
+    let noul_act = serde_json::json!({
+        "kind": "rubric", "min_confidence": 0.8,
+        "dimensions": [{"question": "is_clear", "levels": 2, "weight": 1.0}]
+    });
+    let d = noul(0.9);
+    let mut ans3 = HashMap::new();
+    ans3.insert("is_clear".to_string(), d);
+    let v3 = Verdict { answers: ans3, input_tokens: 0, latency_ms: 0.0 };
+    let out3 = run_action(&noul_act, &json!({}), &v3, None).unwrap();
+    h.eq("rubric: noul dimension normalizes by 1", out3["weighted_score"].as_f64().unwrap_or(-1.0), 0.9);
+}

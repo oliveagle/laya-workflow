@@ -1,0 +1,80 @@
+{
+  "name": "quality_rubric",
+  "dsl_version": 2,
+  "description": "Port of awesome-jev quality-rubric (composite scoring): two independent ordered-score dimensions — usefulness (3 levels) and clarity (4 levels) — each normalised to 0..1 by dividing by levels-1 (a Score is a probability-weighted position in its rubric, NOT a probability), then combined 60/40 in code via the `rubric` action. If any dimension's confidence is below the floor (0.8), the composite is withheld (status: human_review) rather than reporting a number built on uncertain inputs.",
+  "start": "score_reply",
+  "max_iterations": 3,
+  "nodes": [
+    {
+      "name": "score_reply",
+      "primary_q": "rubric_usefulness",
+      "questions": {
+        "rubric_usefulness": {
+          "type": "score",
+          "instructions": "How actionable is reply for the request? Judge only the information supplied; do not invent product facts.",
+          "criteria": [
+            "Does not address the request.",
+            "Partly addresses it but next steps are incomplete.",
+            "Directly addresses it with concrete next steps."
+          ],
+          "heuristic": {
+            "field": "rubric_usefulness_hint",
+            "match_any": [
+              "high"
+            ],
+            "match_mid_any": [
+              "mid"
+            ],
+            "score_hit": 1.8,
+            "score_mid": 1.0,
+            "score_miss": 0.2
+          }
+        },
+        "rubric_clarity": {
+          "type": "score",
+          "instructions": "How clear is reply, independent of its completeness?",
+          "criteria": [
+            "Unintelligible.",
+            "Hard to follow.",
+            "Understandable with minor ambiguity.",
+            "Clear and easy to follow."
+          ],
+          "heuristic": {
+            "field": "rubric_clarity_hint",
+            "match_any": [
+              "high"
+            ],
+            "match_mid_any": [
+              "mid"
+            ],
+            "score_hit": 2.6,
+            "score_mid": 1.5,
+            "score_miss": 0.3
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "rubric",
+        "min_confidence": 0.8,
+        "dimensions": [
+          {
+            "question": "rubric_usefulness",
+            "levels": 3,
+            "weight": 0.6
+          },
+          {
+            "question": "rubric_clarity",
+            "levels": 4,
+            "weight": 0.4
+          }
+        ]
+      }
+    }
+  ]
+}
