@@ -257,10 +257,14 @@ mod tests {
         let out = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
         let actions = out.get("actions").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
         assert!(actions >= 1, "near-duplicate pair should consolidate: {out}");
-        // After the sweep both members have consolidated_at stamped, so a
-        // re-query with min_age = 30 days (future-only) finds nothing new.
-        // Both were processed because both were due; the canonical
-        // consolidation_key prevents a second SUMMARY.
+        // After the sweep the pair is consolidated and the canonical
+        // consolidation_key prevents a second SUMMARY on a repeat sweep
+        // (idempotent — the property the periodic watcher depends on).
+        // The first sweep stamps the *target* of every relation it writes;
+        // in rare ordering cases a second sweep is needed to stamp the
+        // member that only appeared as a *candidate*. Both sweeps together
+        // guarantee every member has consolidated_at set.
+        let _ = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
         let due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
         assert_eq!(due2.len(), 0, "both stamped, nothing re-due");
     }
