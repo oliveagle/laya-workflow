@@ -132,6 +132,46 @@ system scheduling on a shared box). The same run on 14-layer is avg 179 ms
 (0/40 under 100 ms) — so the < 100 ms claim is specific to the 8-layer rung,
 and 14-layer remains the quality pick when ~180 ms is affordable.
 
+### Does the speed-up cost accuracy? Full A/B by rung
+
+Same `bench/needle_vs_heuristic.py`, same bench cases, each rung in turn:
+
+| scenario | 20-layer (base) | 14-layer | 10-layer | 8-layer | 6-layer |
+|---|---|---|---|---|---|
+| A  needle-only routing | 12/20 (60%) | 12/20 | 12/20 | 12/20 | 12/20 |
+| A  hybrid (heuristic → needle) | 15/20 (75%) | **18/20 (90%)** | 16/20 (80%) | 16/20 (80%) | 16/20 (80%) |
+| B  needle-only full-record | 5/8 (62%) | 4/8 (50%) | 2/8 (25%) | 4/8 (50%) | 0/8 (0%) |
+| B  hybrid (regex → needle) | 5/8 (62%) | 4/8 (50%) | 2/8 (25%) | 4/8 (50%) | 1/8 (12%) |
+| D  needle classify | 1/5 (20%) | 1/5 | 1/5 | 1/5 | 1/5 |
+| D  needle entity extract | **5/5 (100%)** | 4/5 (80%) | 2/5 (40%) | 1/5 (20%) | 1/5 (20%) |
+| D  needle full workflow | 1/5 (20%) | 1/5 (20%) | 1/5 (20%) | 0/5 (0%) | 0/5 (0%) |
+| D  hybrid (regex classify + needle entity) | **5/5 (100%)** | 4/5 (80%) | 2/5 (40%) | 1/5 (20%) | 1/5 (20%) |
+| C  embedding avg cosine (semantic) | 0.95 | 0.94 | 0.93 | 0.93 | 0.93 |
+| C  embedding avg cosine (lexical) | 0.95 | 0.96 | 0.96 | 0.96 | 0.95 |
+
+**What this means:**
+
+* Routing (A) is **not hurt** — needle-alone is identical 12/20 across every
+  rung, and hybrid actually scores *better* on 14-layer (90%) because one fewer
+  heuristic miss gets rescued. Only 6-layer dips slightly on hybrid A.
+* Embedding (C) is **not hurt** — cosine stays at 0.93–0.96, well above BOW's
+  0.17–0.42, so `LAYA_MEM_EMBEDDING_BACKEND=needle` is safe on any rung.
+* Structured extraction (B full-record, D entity) **is hurt by depth**:
+  14-layer drops 5/8 → 4/8, 8-layer drops to 4/8 with entity collapsing to
+  1/5 (the model fills fields from the wrong parts of the prompt), and 6-layer
+  is 0/8. **If you use needle for structured extraction, stay on the 20-layer
+  base or 14-layer at most** — the sub-100 ms 8-layer rung is for routing
+  or embedding, not for extraction.
+* Enum classification (D classify 1/5) was already the model's weakest
+  surface and is unchanged across rungs.
+* **The default is still the 20-layer base** (`needle3.cact`); the sub-100ms
+  number above requires the explicit
+  `NEEDLE3_CACT=~/.laya-workflow/models/needle3_8l.cact` switch. So a
+  user who does not opt in to a rung sees **no accuracy change at all**
+  from this optimisation — only the wrapper cache + `mnt=80` trim, which
+  both preserve output.
+
+
 Point the engine at a rung with the same env var it already reads:
 
 ```sh

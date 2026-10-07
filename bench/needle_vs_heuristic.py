@@ -447,7 +447,8 @@ for text,truth in zip(invoice_texts,INV_LABELS):
         hyb_b2+=1
     else:
         r_ne=needle_extract(text, INVOICE_TOOL)
-        nn={"vendor":r_ne.get("arguments",{}).get("vendor"),"total":norm_total(r_ne.get("arguments",{}).get("total")),"due_date":norm_date(r_ne.get("arguments",{}).get("due_date"))}
+        args_ne=r_ne.get("arguments") or {}
+        nn={"vendor":args_ne.get("vendor"),"total":norm_total(args_ne.get("total")),"due_date":norm_date(args_ne.get("due_date"))}
         ok_ne=all(matchers[k](nn[k],truth[k]) for k in truth)
         if ok_ne: hyb_b2+=1
         hyb_b_cost+=1
