@@ -1,0 +1,146 @@
+{
+  "name": "span_selection",
+  "dsl_version": 2,
+  "description": "Port of awesome-jev span-selection (pre-parsed value extraction): a regex extracts email-shaped candidates with stable ids and byte offsets (text.spans); then a Choice question whose criteria are materialised from state.candidates at decide time (criteria.from_state) picks one id — or `none`. Code re-slices the real value from the extracted list via json.pick_by; the model never generates an address. Routing: none -> not_found; any picked id -> selected (value + offsets re-derived from the source text).",
+  "start": "extract",
+  "max_iterations": 6,
+  "capabilities": {
+    "spans": {
+      "kind": "text",
+      "op": "spans",
+      "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
+    },
+    "pick_candidate": {
+      "kind": "json",
+      "op": "pick_by"
+    }
+  },
+  "nodes": [
+    {
+      "name": "extract",
+      "primary_q": "has_text",
+      "questions": {
+        "has_text": {
+          "type": "choice",
+          "instructions": "Is there source text to scan?",
+          "criteria": {
+            "A": "no",
+            "B": "yes"
+          },
+          "heuristic": {
+            "field": "text",
+            "match_any": [
+              "@"
+            ]
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "select"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "spans",
+        "with": {
+          "text": "${state.text}"
+        },
+        "project": {
+          "candidates": "/candidates",
+          "candidate_count": "/count"
+        }
+      }
+    },
+    {
+      "name": "select",
+      "primary_q": "billing_contact",
+      "questions": {
+        "billing_contact": {
+          "type": "choice",
+          "instructions": "Which candidate email address is explicitly identified by text as the billing contact? Select none when the text does not establish exactly one.",
+          "criteria": {
+            "from_state": "candidates",
+            "id_key": "id",
+            "value_key": "value",
+            "none": "No candidate is explicitly identified as the billing contact, or the wording is ambiguous."
+          },
+          "heuristic": {
+            "answer_field": "selected_id"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "none": "not_found"
+        },
+        "default": "pick"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "billing_contact"
+        ]
+      }
+    },
+    {
+      "name": "pick",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "proceed",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "call",
+        "capability": "pick_candidate",
+        "with": {
+          "array": "${state.candidates}",
+          "id": "${state.billing_contact}",
+          "id_key": "id"
+        },
+        "project": {
+          "selected": "/item"
+        }
+      }
+    },
+    {
+      "name": "not_found",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "proceed",
+          "criteria": {
+            "A": "yes"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 1,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "billing_contact"
+        ]
+      }
+    }
+  ]
+}

@@ -690,6 +690,40 @@ impl Decide for HeuristicBackend {
                 // evaluates them uniformly. Longest-first substring match on the
                 // serialised state, case-insensitive (same helper as the named
                 // handlers above).
+                // span-selection / pre-parsed value extraction: the state
+                // carries a previously-computed answer id (e.g. from a
+                // `selected_id` field populated by a state_fn or a prior
+                // action). The heuristic backend trusts that field, giving a
+                // deterministic offline verdict so the routing graph can be
+                // exercised end-to-end without a live model. Fail closed: an
+                // unknown id or a missing field stays "none" with low
+                // confidence rather than silently picking the first candidate.
+                _ if qdef.get("heuristic").and_then(|h| h.get("answer_field")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let field = h.get("answer_field").and_then(|v| v.as_str()).unwrap_or("");
+                    let chosen = state.get(field).and_then(|v| v.as_str()).unwrap_or("none");
+                    let keys: Vec<String> = qdef
+                        .get("criteria")
+                        .and_then(|c| c.as_object())
+                        .map(|o| o.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let known = keys.iter().any(|k| k == chosen);
+                    if known {
+                        let mut m = Map::new();
+                        for k in &keys {
+                            m.insert(k.clone(), serde_json::json!(if k == chosen { 0.92 } else { 0.02 }));
+                        }
+                        (serde_json::json!(chosen), m, 0.92)
+                    } else {
+                        // Not a valid option — fall back to `none` at low
+                        // confidence so the threshold's review branch fires.
+                        let mut m = Map::new();
+                        for k in &keys {
+                            m.insert(k.clone(), serde_json::json!(if k == "none" { 0.55 } else { 0.2 }));
+                        }
+                        (serde_json::json!("none"), m, 0.55)
+                    }
+                }
                 _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
                     // `match_any`: literal substring needles (word-boundary aware).

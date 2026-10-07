@@ -168,6 +168,98 @@ pub type ActionFn = std::sync::Arc<dyn Fn(&Value, &Verdict) -> Result<Value> + S
 /// Merges fan-out branch results into a single payload.
 pub type MergeFn = std::sync::Arc<dyn Fn(&[BranchResult]) -> Value + Send + Sync>;
 
+
+/// Materialise a `from_state` choice criteria at decide time.
+///
+/// A choice question's criteria is normally a static map. With
+/// `{"criteria": {"from_state": "candidates", "value_key": "value",
+///  "id_key": "id", "none": "..."}}`, the engine builds the criteria map
+/// from one `state[from_state]` array: one entry per candidate (id from
+/// `id_key` or generated `candidate_{i}`), plus the `none` option. This is
+/// the "code extracts candidates, model selects from them" half of
+/// pre-parsed value extraction (awesome-jev span-selection) — the model
+/// never generates a value, it only picks an id.
+///
+/// Limits match awesome-jev's recipe: zero candidates is an error
+/// (nothing to select; branch on `candidates` length before this node),
+/// and >254 is rejected rather than silently truncated because Choice's
+/// option list must leave room for `none`.
+pub fn expand_criteria_from_state(state: &Value, questions: &Value) -> Result<Value> {
+    let Some(qs) = questions.as_object() else {
+        return Ok(questions.clone());
+    };
+    let mut out = Map::new();
+    for (qid, qdef) in qs {
+        let Some(crit_obj) = qdef.get("criteria").and_then(|c| c.as_object()) else {
+            out.insert(qid.clone(), qdef.clone());
+            continue;
+        };
+        let Some(source) = crit_obj.get("from_state").and_then(|v| v.as_str()) else {
+            out.insert(qid.clone(), qdef.clone());
+            continue;
+        };
+        let id_key = crit_obj.get("id_key").and_then(|v| v.as_str()).unwrap_or("id");
+        let value_key = crit_obj
+            .get("value_key")
+            .and_then(|v| v.as_str())
+            .unwrap_or("value");
+        let none_desc = crit_obj
+            .get("none")
+            .and_then(|v| v.as_str())
+            .unwrap_or("No candidate is clearly identified.");
+        let empty: Vec<Value> = Vec::new();
+        let array = state.get(source).and_then(|v| v.as_array()).unwrap_or(&empty);
+        let n = array.len();
+        if n == 0 {
+            // Zero candidates: nothing to select from. Rather than aborting
+            // the whole run, fail closed to a criteria map that only offers
+            // `none` — the model (or heuristic) answers "none", which routes
+            // to the not-found branch. Matches awesome-jev's "zero candidates
+            // stop locally" behaviour.
+            let mut criteria = Map::new();
+            criteria.insert("none".to_string(), Value::String(none_desc.to_string()));
+            let mut new_qdef = qdef.as_object().cloned().unwrap_or_default();
+            new_qdef.insert("criteria".to_string(), Value::Object(criteria));
+            new_qdef.insert("_from_state".to_string(), json!(source));
+            new_qdef.insert("_empty_candidates".to_string(), json!(true));
+            out.insert(qid.clone(), Value::Object(new_qdef));
+            continue;
+        }
+        if n > 254 {
+            return Err(anyhow!(
+                "question {qid:?}: criteria.from_state={source:?} produced {n} candidates (>254); prefilter the input — Choice's options must leave room for `none`"
+            ));
+        }
+        let mut criteria = Map::new();
+        for (i, item) in array.iter().enumerate() {
+            let id = item
+                .get(id_key)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("candidate_{i}"));
+            let value = item
+                .get(value_key)
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                })
+                .unwrap_or_default();
+            criteria.insert(
+                id.clone(),
+                Value::String(format!(
+                    "Select the exact candidate entry {id} from state.{source} (value: {value})."
+                )),
+            );
+        }
+        criteria.insert("none".to_string(), Value::String(none_desc.to_string()));
+        let mut new_qdef = qdef.as_object().cloned().unwrap_or_default();
+        new_qdef.insert("criteria".to_string(), Value::Object(criteria));
+        new_qdef.insert("_from_state".to_string(), json!(source));
+        out.insert(qid.clone(), Value::Object(new_qdef));
+    }
+    Ok(Value::Object(out))
+}
+
 /// A Laya scheduling node: ask typed questions, then route by the primary answer.
 #[derive(Clone)]
 pub struct WorkflowNode {
@@ -241,7 +333,8 @@ impl WorkflowNode {
     /// Ask the backend, resolve the edge, and classify the resulting action.
     pub fn run<B: Decide + ?Sized>(&self, backend: &B, state: &Value) -> Result<NodeResult> {
         let t0 = Instant::now();
-        let verdict = backend.decide(&self.backend_state(state), &self.questions)?;
+        let questions = expand_criteria_from_state(state, &self.questions)?;
+        let verdict = backend.decide(&self.backend_state(state), &questions)?;
         let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         let primary = self.primary()?;

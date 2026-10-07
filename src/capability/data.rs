@@ -31,7 +31,7 @@ pub(super) fn get_text(with: &Value, key: &str) -> Result<String> {
 
 #[derive(Clone, Debug, Default)]
 pub struct JsonCap {
-    /// `pick` | `merge` | `patch` | `path_set` | `flatten` | `sort_keys`
+    /// `pick` | `merge` | `patch` | `path_set` | `flatten` | `sort_keys` | `pick_by`
     pub op: String,
 }
 
@@ -107,8 +107,39 @@ pub fn call_json(c: &JsonCap, with: &Value, _state: &Value) -> Result<Value> {
             let src = with.get("value").cloned().unwrap_or_else(|| json!({}));
             Ok(json!({ "capability": "json", "op": "sort_keys", "text": stable_json(&src) }))
         }
+        // span-selection helper: return the one array element whose `id_key`
+        // equals `id`. Pairs with `text.spans` + criteria.from_state — after
+        // the model picks a candidate id, code re-slices the real value from
+        // the extracted list; the model never emits a value/address itself.
+        "pick_by" => {
+            let arr = with
+                .get("array")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| anyhow!("json.pick_by needs 'array'"))?;
+            let id_key = with
+                .get("id_key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("id");
+            let id = with
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("json.pick_by needs 'id'"))?;
+            let hit = arr.iter().find(|e| {
+                e.get(id_key).and_then(|v| v.as_str()) == Some(id)
+            });
+            match hit {
+                Some(item) => Ok(json!({
+                    "capability": "json", "op": "pick_by",
+                    "found": true, "id": id, "item": item,
+                })),
+                None => Ok(json!({
+                    "capability": "json", "op": "pick_by",
+                    "found": false, "id": id, "item": Value::Null,
+                })),
+            }
+        }
         other => {
-            bail!("json op {other:?} unsupported (pick|merge|patch|path_set|flatten|sort_keys)")
+            bail!("json op {other:?} unsupported (pick|merge|patch|path_set|flatten|sort_keys|pick_by)")
         }
     }
 }

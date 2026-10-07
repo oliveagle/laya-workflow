@@ -136,7 +136,7 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 
 #[derive(Clone, Debug, Default)]
 pub struct TextCap {
-    /// `extract` | `replace` | `split` | `length` | `upper` | `lower` | `trim`
+    /// `extract` | `spans` | `replace` | `split` | `length` | `upper` | `lower` | `trim`
     /// | `hash` | `base64_encode` | `base64_decode` | `json_get`
     pub op: String,
     pub pattern: String,
@@ -186,6 +186,35 @@ pub fn call_text(c: &TextCap, with: &Value, state: &Value) -> Result<Value> {
                 .collect();
             let count = caps.len();
             Ok(json!({ "capability": "text", "op": "extract", "matches": caps, "count": count }))
+        }
+        "spans" => {
+            // span-selection extraction: every regex match becomes a candidate
+            // with `id` (stable ordinal), the original substring, and the
+            // byte-based start/end offsets. This is the "code extracts, model
+            // selects" half of pre-parsed value extraction — a downstream
+            // choice question offers these ids (plus `none`) and the model
+            // never generates an address/value itself.
+            let rx = regex_lite::Regex::new(&pat)
+                .map_err(|e| anyhow!("text.spans bad pattern: {e}"))?;
+            let candidates: Vec<Value> = rx
+                .captures_iter(&input)
+                .enumerate()
+                .map(|(i, m)| {
+                    let m = m.get(0).expect("match 0 always present");
+                    json!({
+                        "id": format!("candidate_{i}"),
+                        "value": m.as_str(),
+                        "start": m.start(),
+                        "end": m.end(),
+                    })
+                })
+                .collect();
+            let count = candidates.len();
+            Ok(json!({
+                "capability": "text", "op": "spans",
+                "candidates": candidates, "count": count,
+                "text": input,
+            }))
         }
         "replace" => {
             let rx = regex_lite::Regex::new(&pat)

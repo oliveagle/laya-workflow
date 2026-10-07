@@ -749,3 +749,113 @@ pub fn test_needle(h: &mut Harness) {
     );
     h.check("needle.complete has confidence", out3["confidence"].is_number());
 }
+
+pub fn test_span_selection(h: &mut Harness) {
+    use laya_workflow::capability;
+    use laya_workflow::workflow::{expand_criteria_from_state, Decide};
+    use laya_workflow::backend::HeuristicBackend;
+
+    // 1) text.spans extracts candidates with id / value / byte offsets.
+    let reg = capability::registry_from(
+        &[("spans", json!({"kind": "text", "op": "spans", "pattern": r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"}))],
+        None,
+    )
+    .unwrap();
+    let src = "For product questions contact help@example.org. For billing questions email invoices@example.org.";
+    let out = reg.call("spans", &json!({"text": src}), &json!({})).unwrap();
+    let cands = out["candidates"].as_array().cloned().unwrap_or_default();
+    h.eq("spans: two candidates", cands.len(), 2);
+    h.eq("spans: id ordinal", cands[0]["id"].as_str().unwrap_or(""), "candidate_0");
+    h.eq("spans: first value", cands[0]["value"].as_str().unwrap_or(""), "help@example.org");
+    h.eq("spans: start offset", cands[0]["start"].as_u64().unwrap_or(0), 30);
+    let v1 = cands[1]["value"].as_str().unwrap_or("");
+    let s1 = cands[1]["start"].as_u64().unwrap_or(0) as usize;
+    let e1 = cands[1]["end"].as_u64().unwrap_or(0) as usize;
+    h.eq("spans: value re-slices from source", &src[s1..e1], v1);
+
+    // 2) json.pick_by returns the element whose id matches.
+    let pick = capability::registry_from(
+        &[("pick", json!({"kind": "json", "op": "pick_by"}))],
+        None,
+    )
+    .unwrap();
+    let p = pick
+        .call("pick", &json!({"array": cands, "id": "candidate_1", "id_key": "id"}), &json!({}))
+        .unwrap();
+    h.eq("pick_by: found", p["found"].as_bool().unwrap_or(false), true);
+    h.eq("pick_by: value", p["item"]["value"].as_str().unwrap_or(""), "invoices@example.org");
+    let miss = pick
+        .call("pick", &json!({"array": cands, "id": "candidate_9", "id_key": "id"}), &json!({}))
+        .unwrap();
+    h.eq("pick_by: missing -> not found", miss["found"].as_bool().unwrap_or(true), false);
+
+    // 3) expand_criteria_from_state materialises criteria from a state array.
+    let questions = json!({"bc": {"type": "choice", "instructions": "pick",
+        "criteria": {"from_state": "candidates", "id_key": "id", "value_key": "value",
+                     "none": "nothing"}}});
+    let state = json!({"candidates": cands});
+    let expanded = expand_criteria_from_state(&state, &questions).unwrap();
+    let crit = expanded["bc"]["criteria"].as_object().cloned().unwrap_or_default();
+    h.check("from_state: candidate_0 present", crit.contains_key("candidate_0"));
+    h.check("from_state: candidate_1 present", crit.contains_key("candidate_1"));
+    h.check("from_state: none present", crit.contains_key("none"));
+    h.check("from_state: option text names the id",
+        crit["candidate_1"].as_str().unwrap_or("").contains("candidate_1"));
+
+    // 3b) zero candidates fail-closes to a none-only criteria map.
+    let empty_exp = expand_criteria_from_state(&json!({"candidates": []}), &questions).unwrap();
+    let empty_crit = empty_exp["bc"]["criteria"].as_object().cloned().unwrap_or_default();
+    h.eq("from_state: empty -> only none", empty_crit.len(), 1);
+    h.check("from_state: empty -> none present", empty_crit.contains_key("none"));
+    h.check("from_state: empty marked", empty_exp["bc"]["_empty_candidates"].as_bool().unwrap_or(false));
+
+    // 3c) heuristic answer_field gives a deterministic offline selection.
+    let be = HeuristicBackend;
+    let q_af = json!({"bc": {"type": "choice", "instructions": "pick",
+        "criteria": {"from_state": "candidates", "id_key": "id", "value_key": "value",
+                     "none": "nothing"},
+        "heuristic": {"answer_field": "selected_id"}}});
+    // The engine materialises from_state criteria before decide (WorkflowNode::run);
+    // mirror that so the heuristic sees real option ids.
+    let q_af_mat = expand_criteria_from_state(&json!({"candidates": cands}), &q_af).unwrap();
+    let v_af = be.decide(&json!({"candidates": cands, "selected_id": "candidate_1"}), &q_af_mat).unwrap();
+    h.eq("answer_field: picks the state field id",
+        v_af.answer_value("bc").unwrap().as_str().unwrap_or(""), "candidate_1");
+    let v_bad = be.decide(&json!({"candidates": cands, "selected_id": "candidate_9"}), &q_af_mat).unwrap();
+    h.eq("answer_field: unknown id fails closed to none",
+        v_bad.answer_value("bc").unwrap().as_str().unwrap_or(""), "none");
+
+    // 4) end-to-end: the span_selection spec routes selected / not_found.
+    use laya_workflow::spec::load_file;
+    
+    let run_e2e = |text: &str, sid: &str| {
+        let wf = load_file("dsl/capabilities/span_selection.json").unwrap();
+        let reg = laya_workflow::capability::Registry::from_spec(
+            &serde_json::from_str(&std::fs::read_to_string("dsl/capabilities/span_selection.json").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let mut backend = laya_workflow::backend::HeuristicBackend;
+        let mut state = json!({"text": text, "selected_id": sid});
+        let payload = wf.run(&mut backend, &mut state).unwrap();
+        let _ = reg;
+        payload
+    };
+    let out_selected = run_e2e(src, "candidate_1");
+    h.eq("e2e: billing_contact is candidate_1",
+        out_selected.state["billing_contact"].as_str().unwrap_or(""), "candidate_1");
+    h.eq("e2e: selected value re-sliced",
+        out_selected.state["selected"]["value"].as_str().unwrap_or(""), "invoices@example.org");
+
+    let out_none = run_e2e(src, "none");
+    h.eq("e2e: none routes to not_found",
+        out_none.state["billing_contact"].as_str().unwrap_or(""), "none");
+    h.check("e2e: none leaves no selection",
+        out_none.state["selected"].is_null());
+
+    let out_empty = run_e2e("no email here", "candidate_0");
+    h.eq("e2e: zero candidates -> none",
+        out_empty.state["billing_contact"].as_str().unwrap_or(""), "none");
+    let out_single = run_e2e("hello single@x.io", "candidate_0");
+    h.eq("e2e: single candidate selected",
+        out_single.state["billing_contact"].as_str().unwrap_or(""), "candidate_0");
+}
