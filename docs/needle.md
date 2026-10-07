@@ -77,10 +77,35 @@ single-threaded C++, ~366 decode tok/s):
 | `embed` (3072 d) | ~11 ms | **~11 ms** |
 | `complete` | ~280 ms | **~275 ms** |
 
-`extract` and `complete` are decode-bound — the model writes ~75 output tokens
-at 366 tok/s = ~210 ms of arithmetic. Cutting that below ~100 ms needs a
-smaller subnetwork (`needle build --layers N`, 2–20 layers), which needs JAX
-and a checkpoint; the base 20-layer `.cact` is the engine's shipped default.
+### The < 100 ms target: build a smaller rung
+
+`extract`/`complete` are decode-bound: the 20-layer base writes ~70 output
+tokens at ~370 tok/s ≈ 200 ms of arithmetic. The vendor ships `needle build
+--layers N` (2–20) which slices the checkpoint into a faster subnetwork.
+Measured on this machine (same schema, warm, `extract`):
+
+| rung | size | warm extract | decode tok/s | Scenario-B accuracy (8 invoices) |
+|---|---|---|---|---|
+| 20-layer (base `needle3.cact`) | 35 MB | ~250 ms | 370 | 7/8 |
+| 14-layer | 49 MB W4 | ~180 ms | 530 | 7/8 |
+| 10-layer | 37 MB W4 | ~160 ms | 610 | 6/8 |
+| **8-layer** | 27 MB W4 | **~125 ms** | 760 | 5/8 |
+| 6-layer | 17 MB W4 | **~95 ms** | 1070 | 2/8 |
+
+**There is no free lunch.** Hitting < 100 ms needs an 8-layer (or smaller) rung,
+but accuracy drops with depth: 14-layer keeps the base's 7/8 at ~180 ms, 8-layer
+reaches ~125 ms at 5/8, 6-layer hits ~95 ms but collapses to 2/8. For a quality
+budget, 14-layer is the sweet spot (same accuracy, −30% time). For a hard
+100 ms bound, 8-layer is the only rung that both stays usable and approaches it.
+
+Point the engine at a rung with the same env var it already reads:
+
+```sh
+export NEEDLE3_CACT=~/.laya-workflow/models/needle3_8l.cact
+```
+
+The rungs are built once from the `.safetensors` checkpoint (242 MB download,
+`jax` + `flax` needed for the build, not for inference).
 
 ## Safety
 
