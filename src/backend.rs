@@ -77,6 +77,17 @@ pub fn verdict_from_response(raw: &Value) -> Result<Verdict> {
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0),
             ),
+            "boolean" => {
+                let p = ans.get("probability").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let mut probs = Map::new();
+                probs.insert("false".to_string(), serde_json::json!(1.0 - p));
+                probs.insert("true".to_string(), serde_json::json!(p));
+                let conf = ans
+                    .get("confidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(p.max(1.0 - p));
+                (serde_json::json!(p), probs, conf)
+            }
             "noul" => {
                 let p = ans.get("noul").and_then(|v| v.as_f64()).unwrap_or(0.0);
                 let mut probs = Map::new();
@@ -179,7 +190,7 @@ fn prose_words(state: &Value) -> usize {
 /// explicitly says no reply is needed. Multi-word needles still match as
 /// substrings (they carry their own context), but single words must sit on a
 /// word boundary.
-fn contains_any(s: &str, needles: &[&str]) -> bool {
+pub(crate) fn contains_any(s: &str, needles: &[&str]) -> bool {
     let l = s.to_lowercase();
     needles.iter().any(|n| {
         let n = n.to_lowercase();

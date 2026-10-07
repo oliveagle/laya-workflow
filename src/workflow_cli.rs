@@ -222,6 +222,12 @@ enum Cmd {
         #[command(subcommand)]
         cmd: LayaMemCmd,
     },
+    /// abide rule enforcement: compile AGENTS.md rules into a rubric, check a
+    /// diff against it, and audit the checks. Port of coldteadotai/abide.
+    Abide {
+        #[command(subcommand)]
+        cmd: AbideCmd,
+    },
     /// Send a local notification. On macOS this posts a real Notification Center
     /// banner (via `osascript`); it can also append to a log file and/or bell.
     Notify {
@@ -246,6 +252,75 @@ enum Cmd {
         /// Also emit a terminal bell.
         #[arg(long, default_value_t = false)]
         bell: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AbideCmd {
+    /// Create `.abide/` with a valid empty rubric + `.abideignore`.
+    Init,
+    /// Validate a rubric file's structure (default `.abide/rubric.json`).
+    Validate {
+        /// Rubric file to validate (default: `<root>/.abide/rubric.json`).
+        #[arg(long)]
+        file: Option<String>,
+    },
+    /// Judge a diff against the rubric and print the hook-output JSON
+    /// (`{kind: silent|notice|block}`). Offline by default; `--base-url`
+    /// judges with a live Jev model instead of the offline heuristics.
+    Check {
+        /// Rubric file (default: `<root>/.abide/rubric.json`).
+        #[arg(long)]
+        file: Option<String>,
+        /// Phase to judge: edit (per hunk) or turn (whole change).
+        #[arg(long, default_value = "edit")]
+        phase: String,
+        /// Single-file hunk text read from this file. Requires --file-path.
+        #[arg(long)]
+        diff_file: Option<String>,
+        /// Repo-relative path of the file when using --diff-file.
+        #[arg(long)]
+        file_path: Option<String>,
+        /// Multi-file diff as JSON: a `{file,text}` object or array.
+        #[arg(long)]
+        diff_json: Option<String>,
+        /// The user's task, given to the model as state.
+        #[arg(long)]
+        task: Option<String>,
+        /// Live Jev model endpoint (e.g. http://127.0.0.1:8400). Omit for offline.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Session id recorded in events.jsonl.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Prompt/turn id recorded in events.jsonl.
+        #[arg(long)]
+        prompt_id: Option<String>,
+        /// Repo root to look up .abide/ from (default: walk up from cwd).
+        #[arg(long)]
+        root: Option<String>,
+    },
+    /// Summarise `.abide/events.jsonl` (checks, blocks, per-rule bands).
+    Report {
+        /// Repo root holding `.abide/` (default: walk up from cwd).
+        #[arg(long)]
+        root: Option<String>,
+    },
+    /// Pretty-print every `.abide/events.jsonl` entry.
+    Audit {
+        /// Repo root holding `.abide/` (default: walk up from cwd).
+        #[arg(long)]
+        root: Option<String>,
+    },
+    /// Emit the prompt that turns AGENTS.md / CLAUDE.md into a rubric. Run the
+    /// printed prompt in an agent session inside the repo, then `abide check`.
+    Compile {
+        /// Repo root to read AGENTS.md from (default: walk up from cwd).
+        #[arg(long)]
+        root: Option<String>,
+        /// Also write `.abide/rubric.json` scaffold first (via `init`).
+        #[arg(long, default_value_t = false)]
+        init: bool,
     },
 }
 
@@ -709,6 +784,7 @@ fn main() -> Result<()> {
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
         Cmd::Install { force, dirs_only } => run_install(*force, *dirs_only),
+        Cmd::Abide { cmd } => run_abide(cmd),
         Cmd::LayaMem { cmd } => run_laya_mem(cmd),
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
@@ -1519,6 +1595,7 @@ fn print_overview() {
 
 fn print_section(name: &str) -> Result<()> {
     let body = match name {
+        "abide" => SKILL_ABIDE,
         "overview" => SKILL_OVERVIEW,
         "validate" => SKILL_VALIDATE,
         "run" => SKILL_RUN,
@@ -1572,6 +1649,7 @@ fn print_recipe(name: &str) -> Result<()> {
     Ok(())
 }
 
+static SKILL_ABIDE: &str = include_str!("skill/sections/abide.md");
 static SKILL_OVERVIEW: &str = include_str!("skill/sections/overview.md");
 static SKILL_VALIDATE: &str = include_str!("skill/sections/validate.md");
 static SKILL_RUN: &str = include_str!("skill/sections/run.md");
@@ -1979,5 +2057,131 @@ mod tests {
     fn query_shorthand_requires_object_state() {
         let err = run_state("[]", Some("jev ai")).unwrap_err().to_string();
         assert!(err.contains("JSON object"), "unexpected error: {err}");
+    }
+}
+
+/// Walk up from cwd to find the repo root (matching abide's findRepoRoot).
+fn abide_repo_root() -> std::path::PathBuf {
+    laya_workflow::abide::find_repo_root(&std::env::current_dir().unwrap_or_default())
+}
+
+fn run_abide(cmd: &AbideCmd) -> Result<()> {
+    use laya_workflow::abide as ab;
+    match cmd {
+        AbideCmd::Init => {
+            let dir = ab::cmd_init(&abide_repo_root())?;
+            println!("created {}", dir.display());
+            println!("next: `laya-workflow abide compile` to build a rubric from AGENTS.md");
+            Ok(())
+        }
+        AbideCmd::Validate { file } => {
+            let path = file
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| ab::rubric_path(&abide_repo_root()));
+            match ab::read_rubric(&path) {
+                ab::RubricRead::Ok { rubric, .. } => {
+                    println!(
+                        "ok: {} rules across {} source{}",
+                        rubric.rules.len(),
+                        rubric.sources.len(),
+                        if rubric.sources.len() == 1 { "" } else { "s" }
+                    );
+                    Ok(())
+                }
+                ab::RubricRead::Missing { path } => anyhow::bail!("no rubric at {}", path.display()),
+                ab::RubricRead::Invalid { path, issues } => {
+                    eprintln!("invalid rubric at {}:", path.display());
+                    for issue in &issues {
+                        eprintln!("  - {issue}");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        AbideCmd::Check {
+            file,
+            phase,
+            diff_file,
+            file_path,
+            diff_json,
+            task,
+            base_url,
+            session_id,
+            prompt_id,
+            root,
+        } => {
+            let repo = root
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(abide_repo_root);
+            let rubric_file = file
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| ab::rubric_path(&repo));
+            let phase = match phase.as_str() {
+                "edit" => ab::RuleWhen::Edit,
+                "turn" => ab::RuleWhen::Turn,
+                other => anyhow::bail!("--phase must be `edit` or `turn`, got {other:?}"),
+            };
+            let diffs = match (diff_file, file_path, diff_json) {
+                (Some(path), Some(relative), None) => {
+                    let text = std::fs::read_to_string(path)?;
+                    vec![ab::FileDiff {
+                        file: relative.clone(),
+                        text,
+                    }]
+                }
+                (None, None, Some(raw)) => ab::parse_diff_json(raw)?,
+                (None, None, None) => anyhow::bail!(
+                    "no diff given: pass --diff-json <JSON> or --diff-file <PATH> --file-path <REL>"
+                ),
+                _ => anyhow::bail!(
+                    "--diff-file requires --file-path; --diff-json cannot be combined with them"
+                ),
+            };
+            let input = ab::CheckCliInput {
+                root: repo.clone(),
+                rubric_file,
+                phase,
+                file_diffs: diffs,
+                task: task.clone(),
+                base_url: base_url.clone(),
+                session_id: session_id.clone(),
+                prompt_id: prompt_id.clone(),
+            };
+            let output = ab::cmd_check(&input)?;
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            // Hook callers want exit 0 even on block: stdout carries the signal.
+            Ok(())
+        }
+        AbideCmd::Report { root } => {
+            let repo = root
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(abide_repo_root);
+            let summary = ab::cmd_report(&repo)?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+            Ok(())
+        }
+        AbideCmd::Audit { root } => {
+            let repo = root
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(abide_repo_root);
+            ab::cmd_audit(&repo)
+        }
+        AbideCmd::Compile { root, init } => {
+            let repo = root
+                .as_deref()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(abide_repo_root);
+            if *init {
+                ab::cmd_init(&repo)?;
+                eprintln!("scaffold: {}", ab::rubric_path(&repo).display());
+            }
+            print!("{}", ab::compile_prompt(&repo));
+            Ok(())
+        }
     }
 }

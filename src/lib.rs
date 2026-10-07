@@ -5,6 +5,7 @@
 //! * `apps`       — the four Laya apps (agent gate, email triage, moderation, drafts)
 //! * `capability` — capability registry (data / local / net / proto / web / ...)
 
+pub mod abide;
 pub mod accuracy;
 pub mod evaluate;
 pub mod laya_mem_answer;

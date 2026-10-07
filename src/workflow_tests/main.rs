@@ -8,6 +8,7 @@
 //! `capabilities*`, `secrets`, `timeouts`, `heuristics`); this file owns the
 //! harness, the shared helpers and the section registry.
 
+mod abide;
 mod capabilities;
 mod computer_use;
 mod capabilities2;
@@ -68,6 +69,14 @@ pub fn q(v: &[(&str, &str)]) -> Value {
 
 fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
     &[
+        ("abide-schema", abide::test_abide_schema),
+        ("abide-probability", abide::test_abide_probability_and_band),
+        ("abide-glob", abide::test_abide_glob),
+        ("abide-runner", abide::test_abide_runner),
+        ("abide-check-offline", abide::test_abide_check_offline),
+        ("abide-hook-output", abide::test_abide_hook_output),
+        ("abide-events", abide::test_abide_events),
+        ("abide-compile-prompt", abide::test_abide_compile_prompt),
         ("edge", engine::test_edge),
         ("node", engine::test_node),
         ("workflow", engine::test_workflow),

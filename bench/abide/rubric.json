@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "compiledAt": "2026-10-08T00:00:00Z",
+  "sources": [{ "path": "AGENTS.md", "sha": "demo", "scope": "**" }],
+  "thresholds": { "act": 0.8, "flag": 0.5 },
+  "rules": [
+    {
+      "id": "no-stdout-noise",
+      "text": "Hook output must only ever print the host's JSON. Never print anything else to stdout.",
+      "source": { "path": "AGENTS.md", "line": 12 },
+      "when": "edit",
+      "check": {
+        "type": "model",
+        "question": {
+          "type": "boolean",
+          "instructions": "Does this edit write anything but the expected JSON to stdout?",
+          "criteria": { "true": "writes stray text to stdout", "false": "only writes the expected JSON" },
+          "heuristic": { "match_any": ["println!", "console.log"], "p_violated": 0.95, "p_ok": 0.05 }
+        }
+      },
+      "status": "active"
+    },
+    {
+      "id": "no-silent-swallow",
+      "text": "A failure in the check must never be swallowed silently: log it to events.jsonl and exit 0.",
+      "source": { "path": "AGENTS.md", "line": 24 },
+      "when": "turn",
+      "check": {
+        "type": "model",
+        "question": {
+          "type": "choice",
+          "instructions": "How does this change handle a check failure?",
+          "criteria": {
+            "logs": "records the error in events.jsonl",
+            "swallow": "catches and ignores it silently"
+          },
+          "violating": ["swallow"],
+          "heuristic": { "match_any": ["unwrap()", "unwrap_or_default()"], "p_violated": 0.9, "p_ok": 0.05 }
+        }
+      },
+      "status": "active"
+    }
+  ]
+}
