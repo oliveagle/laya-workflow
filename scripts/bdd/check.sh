@@ -89,25 +89,25 @@ python3 "$HERE/doc_check.py" "$BIN"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
-python3 "$HERE/transpile.py" "${features[@]}" --out "$out" >/dev/null
-
-n=0
-bad=()
-for spec in "$out"/*.json; do
-  n=$((n + 1))
-  if ! "$BIN" validate --spec "$spec" >/dev/null 2>&1; then
-    bad+=("$(basename "$spec")")
-  fi
-done
-
-if [ ${#bad[@]} -gt 0 ]; then
-  echo "bdd check: ${#bad[@]}/$n generated specs failed validation:" >&2
-  for b in "${bad[@]}"; do
-    echo "  $b" >&2
-    "$BIN" validate --spec "$out/$b" 2>&1 | head -5 | sed 's/^/    /' >&2 || true
-  done
+# The unified accuracy gate: every scenario compiles, every generated spec
+# passes the real `validate`, per-feature step coverage must be 100%, and an
+# empty selection is an error (a typo'd tag must not report success). This is
+# scripts/bdd/build.py — the same command an agent runs before committing a
+# .feature edit, so the gate and the daily loop cannot drift.
+if ! python3 "$HERE/build.py" "${features[@]}" --bin "$BIN" --out "$out" >/dev/null 2> "$out/build.err"; then
+  echo "bdd check: the build gate failed:" >&2
+  cat "$out/build.err" >&2
   exit 1
 fi
+
+n="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))) if False else 0)' 2>/dev/null || true)"
+# Recover the scenario count from the build's manifest the cheap way:
+n="$(python3 - "$out" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1] + "/manifest.json"))
+print(len(m["scenarios"]))
+PY
+)"
 
 # The probes are not generated, so they are not in "$out" - but they are the
 # specs the runner actually executes, and a broken one used to look green.
@@ -131,4 +131,4 @@ if [ ${#probe_bad[@]} -gt 0 ]; then
   exit 1
 fi
 
-echo "$n/$n scenarios compile and validate, $probes/$probes probe specs validate"
+echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate"

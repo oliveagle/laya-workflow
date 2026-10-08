@@ -209,6 +209,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("features", nargs="*", help="feature files (default: all of bdd/features)")
     ap.add_argument("--filter", help="only features whose path contains this substring")
+    ap.add_argument("--tags", help="only scenarios carrying this tag (e.g. @production)")
+    ap.add_argument("--profile", choices=["local", "production"], default="local",
+                    help="local = hermetic fixture server + headless Chrome; "
+                         "production = real target (--base-url/$BDD_BASE_URL, @production scenarios)")
+    ap.add_argument("--base-url", help="(production) external target URL; no fixture server")
     ap.add_argument("--bin", help="path to the laya-workflow binary")
     ap.add_argument("--port", type=int, default=0,
                     help="CDP port (0 = pick a free one; only set this with --jobs 1)")
@@ -235,6 +240,16 @@ def main(argv: list[str] | None = None) -> int:
         print("no feature files selected", file=sys.stderr)
         return 1
 
+    profile = args.profile
+    base_url = (args.base_url or os.environ.get("BDD_BASE_URL")
+                if profile == "production" else None)
+    if profile == "production" and not base_url:
+        print("bdd: --profile production needs --base-url (or $BDD_BASE_URL) — "
+              "production integration tests run against a real target, never the "
+              "local fixture server", file=sys.stderr)
+        return 1
+    tag_filter = args.tags[1:] if (args.tags or "").startswith("@") else args.tags
+
     # Compile everything first: a broken document should cost zero browser time.
     plan: list[tuple[gherkin.Feature, gherkin.Scenario, dict, dict]] = []
     for path in paths:
@@ -245,12 +260,29 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         config = transpile.load_config(path)
         for scenario in feature.scenarios:
+            tags = scenario.tags or []
+            # production runs only @production-tagged scenarios unless --tags
+            # narrows further; --tags on the local profile lets a developer run
+            # one slice (e.g. @smoke) without editing anything.
+            if profile == "production" and not any(
+                    t == "production" or t.startswith("production(") for t in tags):
+                continue
+            if tag_filter and not any(
+                    t == tag_filter or t.startswith(tag_filter + "(") for t in tags):
+                continue
             try:
                 spec = transpile.compile_scenario(feature, scenario, config, CHROME_WRAPPER)
             except Exception as e:  # noqa: BLE001 - surface the step error verbatim
                 print(f"error: {os.path.basename(path)} :: {scenario.name}: {e}", file=sys.stderr)
                 return 1
             plan.append((feature, scenario, spec, config))
+
+    if not plan:
+        why = (f"no scenario tagged @{ 'production' if profile == 'production' else (tag_filter or '?') }"
+               if (profile == "production" or tag_filter)
+               else "no scenarios found")
+        print(f"error: {why} — an empty plan must not report success", file=sys.stderr)
+        return 1
 
     binary = pick_binary(args.bin)
     os.makedirs(args.out, exist_ok=True)
@@ -284,8 +316,14 @@ def main(argv: list[str] | None = None) -> int:
     # (a killed run leaves a Chrome behind), and leaking it makes every later
     # run slower, so cleanup cannot depend on reaching the end of the script.
     try:
-        with fixture_server(FIXTURE_DIR) as base_url:
-            print(f"bdd: fixtures {base_url}  ({os.path.relpath(FIXTURE_DIR, ROOT)})")
+        fixture_ctx = (contextlib.nullcontext(enter_result=base_url)
+                       if profile == "production"
+                       else fixture_server(FIXTURE_DIR))
+        with fixture_ctx as base_url:
+            if profile == "production":
+                print(f"bdd: profile production  base_url {base_url}  (no local fixtures)")
+            else:
+                print(f"bdd: fixtures {base_url}  ({os.path.relpath(FIXTURE_DIR, ROOT)})")
             for w, (port, prof) in enumerate(endpoints):
                 print(f"bdd: cdp[{w}]   127.0.0.1:{port} headless  ({prof})")
             print("bdd: headless chrome\n")
@@ -369,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
                 for t in threads:
                     t.join()
 
-                # The hand-written spec runs on the same endpoint and the same fixture,
+            # The hand-written spec runs on the same endpoint and the same fixture,
             # so it costs one scenario's worth of Chrome and proves the plugin is
             # usable without the transpiler.
             # The same shape, but driven through the multi-step plugin instead of
@@ -377,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
             # the report has to contain the stop of the workflow, or a spec that
             # exits 0 after doing nothing would read the same as one that went
             # open -> wait_htmx -> assert -> done.
-            if os.path.isfile(BROWSER_BASE_PROBE):
+            if profile != "production" and os.path.isfile(BROWSER_BASE_PROBE):
                 # `htmx.html`, not `index.html`: the fixture index has no htmx,
                 # so wait_htmx burns its full 15000ms and reports htmx_loaded:
                 # false - which the spec did not check, so it passed anyway and
@@ -405,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
                           "must run all four nodes AND get htmx_loaded: true "
                           "from the wait it demonstrates", file=sys.stderr)
 
-            if os.path.isfile(HANDWRITTEN_SPEC):
+            if profile != "production" and os.path.isfile(HANDWRITTEN_SPEC):
                 started = time.monotonic()
                 rc, out = run_scenario(
                     binary, HANDWRITTEN_SPEC,
@@ -425,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
             # "the assertion did not hold" here, so `rc == 0` is the failure
             # being reported as a pass - the exact inversion a green-only
             # suite cannot express.
-            if os.path.isfile(RELEASE_PROBE):
+            if profile != "production" and os.path.isfile(RELEASE_PROBE):
                 started = time.monotonic()
                 rc, out = run_scenario(
                     binary, RELEASE_PROBE,
@@ -462,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
                 (RETRY_PROBE, True, (),
                  "must win a race it cannot win in one attempt"),
             ):
+                if profile == "production":
+                    break  # local-fixture probes have no meaning against a real deployment
                 if not os.path.isfile(probe):
                     continue
                 started = time.monotonic()
