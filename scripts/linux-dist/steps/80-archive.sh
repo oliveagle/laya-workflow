@@ -1,7 +1,7 @@
 #!/bin/bash
 # 打成 4 个产物 + 写 SHA256SUMS / MANIFEST。
-#   $DIST_OUT/laya-linux-cpu-x86_64-0.8.0.{zip,tar.gz}
-#   $DIST_OUT/laya-plugins-0.8.0.{zip,tar.gz}
+#   $DIST_OUT/laya-linux-cpu-x86_64-0.9.0.{zip,tar.gz}
+#   $DIST_OUT/laya-plugins-0.9.0.{zip,tar.gz}
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 step "80/80 打包"

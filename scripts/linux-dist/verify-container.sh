@@ -5,8 +5,8 @@
 #           → apps → 插件包 → 停引擎 → 卸载
 set -uo pipefail
 
-ZIP=${1:-/dist/laya-linux-cpu-x86_64-0.8.0.zip}
-PLUGZIP=${2:-/dist/laya-plugins-0.8.0.zip}
+ZIP=${1:-/dist/laya-linux-cpu-x86_64-0.9.0.zip}
+PLUGZIP=${2:-/dist/laya-plugins-0.9.0.zip}
 TARGZ=${3:-}
 PKGDIR=/work/verify
 PREFIX=/root/bin

@@ -1,7 +1,7 @@
 #!/bin/bash
 # 组装 staging 目录（还没压缩）。两个包：
-#   $STAGE_MAIN     laya-linux-cpu-x86_64-0.8.0
-#   $STAGE_PLUGINS  laya-plugins-0.8.0
+#   $STAGE_MAIN     laya-linux-cpu-x86_64-0.9.0
+#   $STAGE_PLUGINS  laya-plugins-0.9.0
 source "$(dirname "${BASH_SOURCE[0]}")/../common.sh"
 
 step "70/80 组装 staging"

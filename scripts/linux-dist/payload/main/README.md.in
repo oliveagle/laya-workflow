@@ -3,8 +3,8 @@
 解压即用。不需要联网，不需要编译，不需要 CUDA。
 
 ```bash
-tar xzf laya-linux-cpu-x86_64-0.8.0.tar.gz      # 或 unzip
-cd laya-linux-cpu-x86_64-0.8.0
+tar xzf laya-linux-cpu-x86_64-0.9.0.tar.gz      # 或 unzip
+cd laya-linux-cpu-x86_64-0.9.0
 ./install.sh
 laya-engine smoke
 ```
@@ -144,7 +144,7 @@ export LD_LIBRARY_PATH=$PWD/lib/libtorch/lib
 
 ```bash
 # A. 插件包（另一个 zip）
-tar xzf laya-plugins-0.8.0.tar.gz && cd laya-plugins-0.8.0 && ./install.sh
+tar xzf laya-plugins-0.9.0.tar.gz && cd laya-plugins-0.9.0 && ./install.sh
 
 # B. 从二进制内置副本装（19 个插件，都编译进 laya-workflow 了）
 laya-workflow install          # 加 --force 覆盖已有的

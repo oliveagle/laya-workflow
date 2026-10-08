@@ -4,8 +4,8 @@
 但其实**不装也能跑** —— 工作流引擎和真模型决策都不依赖插件。
 
 ```bash
-tar xzf laya-plugins-0.8.0.tar.gz
-cd laya-plugins-0.8.0
+tar xzf laya-plugins-0.9.0.tar.gz
+cd laya-plugins-0.9.0
 ./install.sh            # -> ~/.laya-workflow/plugins + ~/.laya-workflow/laya-mem/specs
 ```
 

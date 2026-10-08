@@ -15,7 +15,7 @@ DIST_OUT=${LAYA_DIST_OUT:-$HOME/ole/dist/laya}
 EXTRA_PLUGIN_DIR=${LAYA_EXTRA_PLUGIN_DIR:-$HOME/.laya-workflow/plugins}
 
 # ---------------------------------------------------------------- 版本 / 外部依赖
-PKG_VERSION=0.8.0                    # 跟 Cargo.toml workspace.version 一致
+PKG_VERSION=0.9.0                    # 跟 Cargo.toml workspace.version 一致
 PKG_NAME=laya-linux-cpu-x86_64
 PLUGIN_PKG_NAME=laya-plugins
 

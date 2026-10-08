@@ -1,5 +1,5 @@
 # source 这个文件，就能在当前 shell 里直接用 laya（不装进 PATH 也行）
-#   . /解压路径/laya-linux-cpu-x86_64-0.8.0/env.sh
+#   . /解压路径/laya-linux-cpu-x86_64-0.9.0/env.sh
 _laya_env_src="${BASH_SOURCE:-$0}"
 _laya_pkg=$(cd "$(dirname "$_laya_env_src")" && pwd)
 
