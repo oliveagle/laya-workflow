@@ -38,11 +38,35 @@ cargo build --release
 
 # benchmark (median / p90 latency + an f16 GEMM probe)
 ./target/release/laya-mlx --request ../laya-tch/mlx/examples/ref_request.json --bench 20
+
+# HTTP server: model loaded once, kept in memory (this is what the
+# extensions/jev-webmcp side panel talks to)
+./target/release/laya-mlx --serve --port 8400
 ```
 
 The checkpoint is resolved from `$LAYA_MLX_MODEL_DIR`, then `$LAYA_MODEL_DIR`,
 then the local Hugging Face cache (`models--*laya-mlx*/snapshots/*`); or pass
 `--model-dir DIR`.
+
+### `--serve` (HTTP)
+
+`laya-mlx --serve` starts a Jev-compatible local server with the model loaded
+once and kept resident (default `127.0.0.1:8400`; `--host` / `--port` to
+change):
+
+| endpoint | method | body / response |
+| --- | --- | --- |
+| `/v1/systemone` | POST | `{"state": ..., "questions": {...}}` → `{"model", "answers", "usage", "ms"}` |
+| `/health` | GET | `{"ok": true, "model": "laya-mlx", "device": "mlx (gpu)"}` |
+
+The model runs in a single dedicated worker thread (created and used there, so
+no MLX type crosses a thread boundary); connection threads hand requests over
+a channel and answers come back on one-shot channels. Responses carry CORS
+headers and use `Connection: close`. Errors are `{"detail": "..."}` with 400 /
+404 / 405 / 500 / 503 / 504.
+
+Consumed by `extensions/jev-webmcp` (the WebMCP side panel): set the server
+URL in its settings, default `http://127.0.0.1:8400`.
 
 ## Correctness
 
