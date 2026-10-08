@@ -1,0 +1,148 @@
+{
+  "quality_gate": {
+    "fail": "FAIL",
+    "warn": "WARN",
+    "note": "NOTE",
+    "pass": "PASS"
+  },
+  "security_scan": {
+    "critical": "QUARANTINE_CRITICAL",
+    "critical_tcp": "QUARANTINE_CRITICAL",
+    "high": "QUARANTINE_HIGH",
+    "whitelisted": "CLEAN",
+    "binary": "SKIP",
+    "clean": "CLEAN"
+  },
+  "commit_msg_gate": {
+    "empty": "FAIL_EMPTY",
+    "short": "FAIL_TOO_SHORT",
+    "placeholder": "FAIL_PLACEHOLDER",
+    "pass": "PASS"
+  },
+  "version_gate": {
+    "stable": "PASS_STABLE",
+    "rc": "PASS_RC",
+    "bad_format": "FAIL_INVALID_VERSION",
+    "no_tag": "FAIL_TAG_UNREACHABLE",
+    "diverged": "FAIL_ORIGIN_DIVERGED",
+    "dirty": "FAIL_DIRTY_TREE",
+    "clean": "PASS_STABLE"
+  },
+  "skill_publish_gate": {
+    "pass": "PASS",
+    "fail_struct": "FAIL_STRUCTURE",
+    "fail_lines": "FAIL_LINE_COUNT",
+    "fail_ph": "FAIL_PLACEHOLDER",
+    "fail_links": "FAIL_LINKS"
+  },
+  "workflow_guardian": {
+    "ok": "OK",
+    "fail_task": "FAIL_TASK_LAYER",
+    "warn_know": "WARN_KNOWLEDGE_LAYER",
+    "fail_collab": "FAIL_COLLABORATION_LAYER"
+  },
+  "project_structure_guard": {
+    "fail": "FAIL",
+    "warn": "WARN",
+    "ok": "OK",
+    "missing": "FAIL"
+  },
+  "htmx_app_lint": {
+    "fail_yaml": "FAIL_YAML_SCHEMA",
+    "fail_tpls": "FAIL_TEMPLATES_MISSING",
+    "fail_parse": "FAIL_TEMPLATE_PARSE",
+    "warn_bb": "WARN",
+    "pass": "PASS"
+  },
+  "coding_env_check": {
+    "fail": "FAIL",
+    "warn": "WARN",
+    "perfect": "PERFECT",
+    "missing": "FAIL"
+  },
+  "mlu270_smoke": {
+    "fail_tool": "FAIL",
+    "fail_smoke": "FAIL",
+    "warn_ver": "WARN",
+    "pass": "PASS"
+  },
+  "bitx_wrapper_test": {
+    "fail": "FAIL",
+    "warn": "WARN",
+    "pass": "PASS",
+    "missing": "FAIL"
+  },
+  "zero_leftover_gate": {
+    "leftover": "LEFTOVER",
+    "untracked": "LEFTOVER",
+    "submod": "WARN",
+    "allow": "ALLOW",
+    "clean": "CLEAN"
+  },
+  "commit_push_precheck": {
+    "fail_user": "FAIL_NO_GIT_USER",
+    "fail_author": "FAIL_AUTHOR_CHECK",
+    "clean": "NO_CHANGES",
+    "dirty": "PASS",
+    "missing": "NO_CHANGES"
+  },
+  "rebase_push_gate": {
+    "fail_fetch": "FAIL_FETCH",
+    "no_commit": "NO_COMMIT",
+    "fail_rebase": "FAIL_REBASE_CONFLICT",
+    "fail_secret": "FAIL_SECRET_BLOCK",
+    "pass": "PASS"
+  },
+  "task_quality_gate": {
+    "fail_compile": "FAIL",
+    "fail_test": "FAIL",
+    "fail_linecov": "FAIL",
+    "fail_branchcov": "FAIL",
+    "fail_ph": "FAIL",
+    "fail_oversize": "FAIL",
+    "fail_agentsmd": "FAIL",
+    "fail_secret": "FAIL",
+    "fail_sql": "FAIL",
+    "warn_naming": "WARN",
+    "pass": "PASS",
+    "pass_agents500": "PASS",
+    "fail_agents501": "FAIL",
+    "pass_no_branch": "PASS"
+  },
+  "ssl_certificate_expiry": {
+    "ok": "OK",
+    "warn": "WARN_RENEW",
+    "warn0": "WARN_RENEW",
+    "expired": "EXPIRED",
+    "unreadable": "FAIL_UNREADABLE",
+    "forced": "RENEW_FORCED",
+    "ok30": "OK"
+  },
+  "memory_type": {
+    "episodic": "TYPE_EPISODIC",
+    "semantic": "TYPE_SEMANTIC",
+    "procedural": "TYPE_PROCEDURAL",
+    "preference": "TYPE_PREFERENCE",
+    "other": "TYPE_OTHER"
+  },
+  "admission": {
+    "store": "ALLOW",
+    "drop": "BLOCK",
+    "review": "CONFIRM"
+  },
+  "relation_pair": {
+    "entity": "LINK_ENTITY",
+    "semantic": "LINK_SEMANTIC",
+    "causes": "LINK_CAUSAL_OUT",
+    "none": "LINK_NONE"
+  },
+  "stopping": {
+    "sufficient": "STOP_EVIDENCE_OK",
+    "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT",
+    "contradiction": "CONTINUE_CONTRADICTION"
+  },
+  "retrieve_loop": {
+    "sufficient": "STOP_EVIDENCE_OK",
+    "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT"
+  }
+}

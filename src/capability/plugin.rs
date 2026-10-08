@@ -35,7 +35,6 @@
 //! `plugin install` default) → the copy compiled into this binary. That last
 //! layer is why the bundled alphaXiv downloader still works after
 //! `sudo install`-ing a single binary.
-
 use anyhow::{anyhow, bail, Result};
 use rhai::{Dynamic, Engine, EvalAltResult, Position, Scope};
 use serde_json::{json, Value};
@@ -43,18 +42,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
 use super::util;
 use super::{
     bounded_timeout, browser, check_host, secret, stringify, truncate, Capability, Policy,
 };
-
 /// Name of the bundled alphaXiv downloader plugin.
 pub const ALPHAXIV_PLUGIN: &str = "alphaxiv";
-
 /// Name of the bundled 闲鱼 / goofish.com plugin (search, browse, watch).
 pub const GOOFISH_PLUGIN: &str = "goofish";
-
 /// A `kind: "plugin"` capability: which plugin to load and how to bound it.
 #[derive(Clone, Debug, Default)]
 pub struct PluginCap {
@@ -77,12 +72,10 @@ pub struct PluginCap {
     /// capability / policy default).
     pub timeout_ms: u64,
 }
-
 /// The plugin API version this engine implements. A `plugin.json` may declare
 /// `"api": 1`; anything else is refused, so a plugin written for a newer host
 /// fails loudly instead of half-working.
 pub const PLUGIN_API: u64 = 1;
-
 #[derive(Clone, Debug)]
 struct Manifest {
     name: String,
@@ -94,7 +87,6 @@ struct Manifest {
     entry_op: String,
     max_operations: u64,
 }
-
 impl Manifest {
     /// The plugin's canonical id: `group/name` when it declares a group, else
     /// the bare `name`.
@@ -105,7 +97,6 @@ impl Manifest {
             format!("{}/{}", self.group, self.name)
         }
     }
-
     fn parse(src: &str, fallback: &str) -> Result<Manifest> {
         let v: Value = serde_json::from_str(src)
             .map_err(|e| anyhow!("plugin {fallback:?} has an invalid plugin.json: {e}"))?;
@@ -152,7 +143,6 @@ impl Manifest {
         })
     }
 }
-
 /// The raw text of a plugin: manifest, entry script, its page scripts, and the
 /// entry file's name (after any `entry` override, for messages).
 #[derive(Debug)]
@@ -163,7 +153,6 @@ struct Sources {
     pages: Vec<(String, String)>,
     dir: Option<PathBuf>,
 }
-
 /// Plugins compiled into this binary (one layer of the resolution order).
 /// Split a plugin id into `(group, name)`; a bare name has an empty group.
 fn split_id(id: &str) -> (&str, &str) {
@@ -172,12 +161,10 @@ fn split_id(id: &str) -> (&str, &str) {
         None => ("", id.trim()),
     }
 }
-
 /// The plugin name inside an id (`websites/hackernews` → `hackernews`).
 fn bare_name(id: &str) -> &str {
     split_id(id).1
 }
-
 /// The name a plugin id should be *installed* under: the bare name segment.
 ///
 /// Discovery reports ids as `group/name` (`websites/hackernews`), but a
@@ -187,7 +174,6 @@ fn bare_name(id: &str) -> &str {
 pub fn install_name_for(id: &str) -> &str {
     bare_name(id)
 }
-
 /// The group a plugin root stands for: `websites` or `plugins` roots map to that
 /// class, any other root name yields no default group.
 fn root_class(root: &std::path::Path) -> Option<&str> {
@@ -197,7 +183,6 @@ fn root_class(root: &std::path::Path) -> Option<&str> {
         _ => None,
     }
 }
-
 /// Resolve a child's canonical id from its manifest, defaulting the group to the
 /// root's class when the manifest omits one (e.g. `websites/<domain>/plugin/`
 /// with no `"group"` still reads as `websites/<name>`).
@@ -210,7 +195,6 @@ fn child_id(manifest: &Manifest, root: &std::path::Path) -> String {
         None => manifest.name.clone(),
     }
 }
-
 fn builtin(name: &str) -> Option<Sources> {
     let (manifest, entry, pages): (&str, &str, Vec<(&str, &str)>) = match name {
         ALPHAXIV_PLUGIN => (
@@ -406,7 +390,6 @@ fn builtin(name: &str) -> Option<Sources> {
         dir: None,
     })
 }
-
 /// Bare names of the plugins compiled into this binary (their grouped ids come
 /// from each bundled `plugin.json` and are reported by [`discover_plugins`]).
 pub fn builtin_names() -> &'static [&'static str] {
@@ -436,7 +419,6 @@ pub fn builtin_names() -> &'static [&'static str] {
         "github",
     ]
 }
-
 /// Write a plugin compiled into the binary into `root`, returning the files written.
 ///
 /// Builtin plugins are normally used straight out of the embedded copy, so this
@@ -486,9 +468,7 @@ pub fn install_builtin_to(name: &str, root: &std::path::Path, force: bool) -> Re
         files,
     }))
 }
-
 // ── installing plugins from a git repo ──────────────────────────────
-
 /// Per-user plugin root: `$LAYA_USER_PLUGIN_DIR` → `~/.laya-workflow/plugins`.
 /// Mirrors `spec::user_spec_dir()` — both live under the tool's single state
 /// root; `plugin install` writes here unless `$LAYA_PLUGIN_DIR` (or `--root`)
@@ -496,7 +476,6 @@ pub fn install_builtin_to(name: &str, root: &std::path::Path, force: bool) -> Re
 pub fn user_plugin_dir() -> Option<PathBuf> {
     crate::state::user_plugin_dir()
 }
-
 /// Where `plugin install` writes: `$LAYA_PLUGIN_DIR` when set (so a checkout can
 /// pin installs next to the repo), otherwise the per-user plugin root.
 pub fn install_root() -> Result<PathBuf> {
@@ -508,12 +487,10 @@ pub fn install_root() -> Result<PathBuf> {
     user_plugin_dir()
         .ok_or_else(|| anyhow!("cannot pick an install root: set LAYA_PLUGIN_DIR or LAYA_HOME/HOME"))
 }
-
 /// The on-disk plugin search path, highest priority first (for `plugin dir`).
 pub fn plugin_search_path() -> Vec<(PluginLayer, PathBuf)> {
     plugin_roots()
 }
-
 /// A plugin name becomes a directory, so it must be a single, safe segment.
 pub fn validate_plugin_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
@@ -538,7 +515,6 @@ pub fn validate_plugin_name(name: &str) -> Result<()> {
     }
     Ok(())
 }
-
 /// Normalize a plugin directory *inside* a repo: no leading `/`, no `..`, not
 /// empty. Returns the cleaned, `/`-separated path.
 pub fn normalize_subdir(path: &str) -> Result<String> {
@@ -553,7 +529,6 @@ pub fn normalize_subdir(path: &str) -> Result<String> {
     }
     Ok(p.to_string())
 }
-
 /// Turn a repo reference into a clone URL. Accepts `owner/repo`,
 /// `https://github.com/owner/repo[.git]`, an `ssh://`/`git@` URL, or any URL that
 /// already carries a scheme (passed through unchanged).
@@ -572,7 +547,6 @@ pub fn repo_clone_url(repo: &str) -> Result<String> {
     }
     bail!("repo {repo:?} must be `owner/repo` or a git URL (https://, ssh://, git@)")
 }
-
 /// Strip any `user:token@` credentials from a URL before printing it.
 pub fn redact_url(url: &str) -> String {
     match url.find("://") {
@@ -588,7 +562,6 @@ pub fn redact_url(url: &str) -> String {
         None => url.to_string(),
     }
 }
-
 /// What a successful install produced.
 #[derive(Clone, Debug)]
 pub struct InstalledPlugin {
@@ -597,7 +570,6 @@ pub struct InstalledPlugin {
     pub dest: PathBuf,
     pub files: usize,
 }
-
 /// Copy a plugin tree `src` into `root/<name>`. Requires a readable, parseable
 /// `plugin.json`. Refuses to overwrite an existing install unless `force`.
 pub fn install_from_dir(
@@ -633,7 +605,6 @@ pub fn install_from_dir(
         files,
     })
 }
-
 /// Recursively copy regular files (skipping a top-level `.git`) from `src` to
 /// `dst`, creating directories as needed. Returns the file count. Symlinks and
 /// other special files are skipped on purpose.
@@ -658,7 +629,6 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path, skip_git: bool) -> Re
     }
     Ok(files)
 }
-
 /// One discoverable plugin and the layer it resolves from.
 #[derive(Clone, Debug)]
 pub struct PluginEntry {
@@ -668,7 +638,6 @@ pub struct PluginEntry {
     pub description: String,
     pub path: Option<PathBuf>,
 }
-
 /// Discover every plugin visible to the engine, highest layer first, each name
 /// appearing once (a higher layer shadows lower ones).
 pub fn discover_plugins() -> Vec<PluginEntry> {
@@ -735,7 +704,6 @@ pub fn discover_plugins() -> Vec<PluginEntry> {
     }
     out
 }
-
 /// Default plugin name for an install: a bare `plugin/` subdir takes its parent
 /// folder's name (`websites/alphaxiv.org/plugin` → `alphaxiv.org`), otherwise
 /// the last segment of the checkout path. The manifest `name` normally wins.
@@ -756,7 +724,6 @@ fn plugin_name_fallback(plugin_dir: &std::path::Path, sub: &str) -> String {
         .unwrap_or("")
         .to_string()
 }
-
 /// Clone **only** `subdir` from `repo` (a sparse, blob-filtered checkout) into a
 /// temp dir, then install it as plugin `name`. Nothing outside `subdir` is
 /// materialised on disk.
@@ -834,7 +801,6 @@ pub fn install_from_git(
     std::fs::remove_dir_all(&tmp).ok();
     result
 }
-
 /// Which layer a plugin was resolved from, highest priority first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginLayer {
@@ -851,7 +817,6 @@ pub enum PluginLayer {
     /// The copy compiled into the binary (`include_str!`).
     Builtin,
 }
-
 impl PluginLayer {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -863,7 +828,6 @@ impl PluginLayer {
         }
     }
 }
-
 /// Candidate on-disk plugin roots, highest priority first: `$LAYA_PLUGIN_DIR` →
 /// `plugins/` and `websites/` up to the git root → the per-user install root
 /// (with its `websites/` sibling).
@@ -896,7 +860,6 @@ fn plugin_roots() -> Vec<(PluginLayer, PathBuf)> {
     }
     roots
 }
-
 /// The directory a plugin root child actually stores the plugin in: the child
 /// itself (`plugins/<name>/`), or its `plugin/` subdirectory — the layout of a
 /// site folder (`websites/<domain>/plugin/`). `None` when the child holds no
@@ -911,7 +874,6 @@ fn plugin_dir_of(child: &std::path::Path) -> Option<PathBuf> {
     }
     None
 }
-
 /// The plugin directory under `root` that provides `name`: a child named after
 /// the plugin (`plugins/<name>/`), or a site folder whose plugin sits in a
 /// `plugin/` subdir and whose `plugin.json` declares that name
@@ -963,7 +925,6 @@ fn plugin_dir_in(root: &std::path::Path, id: &str) -> Option<PathBuf> {
     }
     None
 }
-
 /// Load every page script under `<dir>/page/` (sorted). Missing is fine.
 fn read_pages(dir: &std::path::Path) -> Vec<(String, String)> {
     let mut pages = Vec::new();
@@ -982,7 +943,6 @@ fn read_pages(dir: &std::path::Path) -> Vec<(String, String)> {
     pages.sort();
     pages
 }
-
 fn read_dir_sources(
     dir: &std::path::Path,
     fallback: &str,
@@ -1013,7 +973,6 @@ fn read_dir_sources(
         dir: Some(dir.to_path_buf()),
     })
 }
-
 /// A single `.rhai` file used as its own plugin — no directory and no
 /// `plugin.json` needed. The `name` is the file stem, `entry_op` defaults to
 /// `run`, and a sibling `page/` directory (if any) is still picked up.
@@ -1047,7 +1006,6 @@ fn read_file_sources(file: &std::path::Path, fallback: &str) -> Result<Sources> 
         dir: parent.map(std::path::Path::to_path_buf),
     })
 }
-
 fn load_sources(cap: &PluginCap) -> Result<Sources> {
     let dir = cap.dir.trim();
     let entry = cap.entry.trim();
@@ -1091,9 +1049,7 @@ fn load_sources(cap: &PluginCap) -> Result<Sources> {
         )
     })
 }
-
 // ── the host handle a plugin can call ───────────────────────────────
-
 struct HostState {
     pages: Vec<(String, String)>,
     dir: Option<PathBuf>,
@@ -1105,7 +1061,6 @@ struct HostState {
     opened: Vec<String>,
     keep_open: bool,
 }
-
 impl HostState {
     fn browser_host(&self) -> Result<browser::BrowserHost<'_>> {
         let cap = self.browser.as_ref().ok_or_else(|| {
@@ -1125,12 +1080,10 @@ impl HostState {
         })
     }
 }
-
 /// The value a plugin sees as `host`. Shared by `Arc<Mutex<..>>` so the
 /// (cloned) handle passed into the script keeps one piece of state.
 #[derive(Clone)]
 struct Host(Arc<Mutex<HostState>>);
-
 impl Host {
     fn with<T>(&self, f: impl FnOnce(&mut HostState) -> Result<T>) -> Result<T> {
         let mut guard = self
@@ -1140,22 +1093,18 @@ impl Host {
         f(&mut guard)
     }
 }
-
 fn rt(e: impl std::fmt::Display) -> Box<EvalAltResult> {
     Box::new(EvalAltResult::ErrorRuntime(
         e.to_string().into(),
         Position::NONE,
     ))
 }
-
 fn to_dyn(v: Value) -> Result<Dynamic, Box<EvalAltResult>> {
     rhai::serde::to_dynamic(v).map_err(|e| rt(format!("value is not script-representable: {e}")))
 }
-
 fn from_dyn(v: Dynamic) -> Result<Value, Box<EvalAltResult>> {
     rhai::serde::from_dynamic::<Value>(&v).map_err(|e| rt(format!("value is not JSON: {e}")))
 }
-
 /// Build the sandboxed engine and register the whole host surface.
 ///
 /// Everything a plugin can reach is registered *here*; the language itself
@@ -1174,12 +1123,10 @@ fn build_engine(max_operations: u64) -> Engine {
     for sym in ["eval", "import", "print", "debug", "Fn"] {
         let _ = engine.disable_symbol(sym);
     }
-
     // ── logs (redacted) ──
     engine.register_fn("log", |_h: &mut Host, msg: &str| {
         eprintln!("[plugin] {}", secret::redact_str(msg));
     });
-
     // ── pure host utilities ──
     engine.register_fn(
         "now",
@@ -1248,7 +1195,6 @@ fn build_engine(max_operations: u64) -> Engine {
             .map_err(rt)
         },
     );
-
     // ── browser: the engine's own primitives, not a second implementation ──
     engine.register_fn(
         "browser_open",
@@ -1393,12 +1339,9 @@ fn build_engine(max_operations: u64) -> Engine {
             to_dyn(v)
         },
     );
-
     engine
 }
-
 // ── entry points ────────────────────────────────────────────────────
-
 /// Run a named built-in plugin (no spec-level capability needed).
 ///
 /// `preopened` is how the browser capability's `op: "alphaxiv"` shim hands the
@@ -1416,7 +1359,6 @@ pub fn run_named(
     };
     run(&cap, with, state, policy, None, preopened)
 }
-
 /// Run a `kind: "plugin"` capability, resolving its browser handle from the
 /// same spec's capability registry.
 pub fn call_plugin(
@@ -1438,7 +1380,6 @@ pub fn call_plugin(
     }
     Ok(value)
 }
-
 fn run(
     cap: &PluginCap,
     with: &Value,
@@ -1459,7 +1400,6 @@ fn run(
     } else {
         manifest.max_operations
     };
-
     // Resolve the browser handle: either the caller already opened one, or the
     // plugin names a `chrome_cdp` capability in the same spec.
     let (browser_cap, endpoint, timeout) = match preopened {
@@ -1497,7 +1437,6 @@ fn run(
             _ => (None, None, bounded_timeout(cap.timeout_ms, policy)),
         },
     };
-
     let host = Host(Arc::new(Mutex::new(HostState {
         pages: sources.pages.clone(),
         dir: sources.dir.clone(),
@@ -1511,7 +1450,6 @@ fn run(
             .and_then(Value::as_bool)
             .unwrap_or(false),
     })));
-
     let engine = build_engine(limit);
     let ast = engine.compile(&sources.entry).map_err(|e| {
         anyhow!(
@@ -1519,7 +1457,6 @@ fn run(
             cap.plugin
         )
     })?;
-
     // Pick the op: an explicit request that exists in the script, else the
     // manifest's entry op.
     let wanted = if cap.op.trim().is_empty() {
@@ -1538,14 +1475,12 @@ fn run(
         .find(|f| f.name.to_string() == op)
         .map(|f| f.params.len())
         .ok_or_else(|| anyhow!("plugin {:?} defines no {op:?} function", cap.plugin))?;
-
     let ctx = json!({
         "plugin": manifest.id(),
         "op": op,
         "with": with,
         "state": state,
     });
-
     let mut scope = Scope::new();
     scope.push("host", host.clone());
     let ctx_dyn = to_dyn(ctx.clone()).map_err(|e| anyhow!("{e}"))?;
@@ -1560,7 +1495,6 @@ fn run(
         engine.call_fn(&mut scope, &ast, op.as_str(), (ctx_dyn,))
     }
     .map_err(|e| anyhow!("plugin {:?} {op}() failed: {e}", cap.plugin))?;
-
     let result = {
         let json = from_dyn(value).map_err(|e| anyhow!("plugin {:?}: {e}", cap.plugin))?;
         match json {
@@ -1568,7 +1502,6 @@ fn run(
             other => json!({ "value": other }),
         }
     };
-
     // The engine closes what the plugin opened — never the plugin itself.
     let (opened, keep_open, endpoint, timeout) = host
         .with(|st| {
@@ -1592,14 +1525,542 @@ fn run(
             }
         }
     }
-
     Ok(result)
 }
-
+/// Plugin registry check: every bundled plugin must appear in the registry that
+/// documents it, and every row in the registry must point at a plugin that ships.
+///
+/// `docs/plugins.md` (the reference) and `src/skill/sections/plugins.md` (the
+/// section the skill loads) drift from each other, so both are checked in
+/// either direction. The scope is `plugins/` only — those four directories are
+/// the tool plugins, which is the surface where "a standard plugin" is the
+/// actual question. The `websites/` tree grows faster and several entries are
+/// named differently from the registry, so a full sweep is a nuisance rather
+/// than a gate.
+///
+/// Returns the number of problems; 0 means green. Printed unconditionally so
+/// the CI log says something when nothing is wrong.
+pub fn registry_check() -> Result<u32> {
+    use regex_lite::Regex;
+    use std::path::Path;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let plugin_dir = root.join("plugins");
+    let registries = [
+        root.join("docs").join("plugins.md"),
+        root.join("src").join("skill").join("sections").join("plugins.md"),
+    ];
+    fn has_manifest(d: &Path) -> bool {
+        d.join("plugin.json").is_file() || d.join("plugin").join("plugin.json").is_file()
+    }
+    let shipped: Vec<String> = if !plugin_dir.is_dir() {
+        Vec::new()
+    } else {
+        let mut names: Vec<String> = std::fs::read_dir(&plugin_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir() && has_manifest(&e.path()))
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .map(|n| format!("plugins/{n}"))
+            .collect();
+        names.sort();
+        names
+    };
+    if shipped.is_empty() {
+        println!("plugin registry: no plugins/ with a plugin.json - skipped");
+        return Ok(0);
+    }
+    // `## Bundled plugins` table rows look like: | `plugins/<name>` | ...
+    let row_re = Regex::new(r"(?m)^\| `(?P<name>plugins/[A-Za-z0-9_.-]+)`").unwrap();
+    let mut problems: Vec<String> = Vec::new();
+    for path in &registries {
+        let rel = path.strip_prefix(root).unwrap_or(path).display().to_string();
+        if !path.is_file() {
+            problems.push(format!(
+                "{rel} is missing, so nothing registers the plugins"
+            ));
+            continue;
+        }
+        let text = std::fs::read_to_string(path)?;
+        let listed: std::collections::BTreeSet<String> = row_re
+            .captures_iter(&text)
+            .filter_map(|c| c.name("name").map(|m| m.as_str().to_string()))
+            .collect();
+        if listed.is_empty() {
+            problems.push(format!(
+                "{rel} has no `## Bundled plugins` table any more - \
+                 restore it, or delete this check rather than letting it rot"
+            ));
+            continue;
+        }
+        for name in &shipped {
+            if !listed.contains(name) {
+                problems.push(format!(
+                    "{rel} does not list {name}, which ships. A plugin that is \
+                     not in the registry is a plugin nobody can find"
+                ));
+            }
+        }
+        for name in &listed {
+            if !shipped.contains(name) {
+                problems.push(format!(
+                    "{rel} lists {name}, which does not ship (no plugin.json). \
+                     Either the directory was renamed or the row is stale"
+                ));
+            }
+        }
+    }
+    if !problems.is_empty() {
+        eprintln!("plugin registry: {} problem(s):", problems.len());
+        for p in &problems {
+            eprintln!("  {p}");
+        }
+        return Ok(problems.len() as u32);
+    }
+    println!(
+        "plugin registry: {} bundled plugin(s) listed in {} registries, no stale rows",
+        shipped.len(),
+        registries.len()
+    );
+    Ok(0)
+}
+// ── Rhai plugin gate (Rust port of scripts/rhai/{compile,harness,check_feishu}.py + check.sh) ──
+//
+// All four stages now run in this binary. The old toolchain spawned itself
+// with a hand-built JSON spec per probe, which cost a process start and a
+// file write per check. In-process: `compile_check` uses the same engine
+// `run()` builds, `harness_run` uses the same `call_plugin` path the workflow
+// runner takes, and the fold/feishu stages still spawn the engine binary
+// (they are full engine runs, not plugin-only) the way check.sh did.
+use std::path::Path;
+/// Compile a single `.rhai` file's source through the engine the workflow
+/// runner uses. Returns `Ok(None)` when the file parses, or
+/// `Ok(Some(error_message))` on failure (the same message `run()` would raise
+/// as `plugin ... did not compile: ...`).
+pub fn compile_check(path: &Path) -> Result<Option<String>> {
+    let src = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("{}: cannot read: {e}", path.display()))?;
+    let engine = build_engine(0);
+    match engine.compile(&src) {
+        Ok(_ast) => Ok(None),
+        Err(e) => Ok(Some(format!("{}", e))),
+    }
+}
+/// Run the `body` against the real plugin, after the real plugin's library
+/// (everything above the first `fn run(`). The result is the plugin's
+/// return value (a map for `#{ ok: true }`-style bodies). This is the
+/// in-process equivalent of `laya-workflow plugin check --run`.
+pub fn harness_run(plugin_path: &Path, body: &str) -> Result<Value> {
+    let raw = std::fs::read_to_string(plugin_path)
+        .map_err(|e| anyhow!("{}: cannot read: {e}", plugin_path.display()))?;
+    let head_end = raw
+        .lines()
+        .position(|l| l.starts_with("fn run(") || l.starts_with("fn "))
+        .ok_or_else(|| anyhow!("{}: no top-level `fn `", plugin_path.display()))?;
+    // The real `fn run(` line is the one we replace. If `head_end` landed on
+    // a different `fn` first (some plugins define helpers after run), keep
+    // scanning forward so the harness keeps the user's chosen `run`.
+    let run_at = raw
+        .lines()
+        .enumerate()
+        .skip(head_end)
+        .find(|(_, l)| l.starts_with("fn run("))
+        .map(|(i, _)| i)
+        .unwrap_or(head_end);
+    let head = raw
+        .lines()
+        .take(run_at)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body_text = if body.trim_start().starts_with("fn ") {
+        body.to_string()
+    } else {
+        format!("fn run(host, ctx) {{\n{body}\n}}\n")
+    };
+    let combined = format!("{head}\n{body_text}");
+    // The plugin capability is happy running a bare `.rhai` file via `dir`
+    // (see `read_file_sources`): it synthesises a minimal manifest and
+    // resolves a sibling `page/` if any. So a temp file is enough.
+    let tmp = std::env::temp_dir().join(format!(
+        "laya-rhai-harness-{}-{}",
+        std::process::id(),
+        plugin_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("harness")
+    ));
+    std::fs::write(&tmp, &combined)
+        .map_err(|e| anyhow!("cannot write {}: {e}", tmp.display()))?;
+    let cap = PluginCap {
+        plugin: String::new(),
+        dir: tmp.to_string_lossy().into_owned(),
+        entry: String::new(),
+        op: String::new(),
+        browser: String::new(),
+        max_operations: 0,
+        timeout_ms: 60_000,
+    };
+    let policy = Policy {
+        allow_exec: true,
+        allow_hosts: Vec::new(),
+        allow_paths: vec![
+            format!("${{env.HOME}}/.laya-workflow"),
+            format!("${{env.HOME}}/tmp"),
+        ],
+        max_timeout_ms: 120_000,
+        max_output: 1 << 23,
+        retries: 0,
+    };
+    let with = json!({});
+    let state = json!({});
+    let res = call_plugin(&cap, &with, &state, &policy, &HashMap::new());
+    let _ = std::fs::remove_file(&tmp);
+    res
+}
+/// The full plugin gate: compile every shipped `.rhai`, assert the goofish
+/// intent routing still classifies, and (when the engine binary is runnable
+/// out of `target/release`) run the fold + feishu integration checks.
+///
+/// Returns the number of problems (0 = green). Mirrors `laya-workflow plugin check`.
+pub fn gate() -> Result<u32> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut problems: u32 = 0;
+    let mut n_files: u32 = 0;
+    // ── 1. every shipped .rhai still parses ─────────────────────────────────
+    let mut rhai_files: Vec<PathBuf> = Vec::new();
+    for entry in walkdir(root.join("websites")) {
+        if entry.extension().and_then(|e| e.to_str()) == Some("rhai") {
+            rhai_files.push(entry);
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(root.join("plugins")) {
+        for e in rd.flatten() {
+            let d = e.path();
+            if d.is_dir() {
+                let main = d.join("main.rhai");
+                if main.is_file() {
+                    rhai_files.push(main);
+                }
+            }
+        }
+    }
+    rhai_files.sort();
+    for f in &rhai_files {
+        n_files += 1;
+        match compile_check(f) {
+            Ok(None) => {}
+            Ok(Some(err)) => {
+                eprintln!("plugin gate: compile FAILED: {}", f.display());
+                eprintln!("  {err}");
+                problems += 1;
+            }
+            Err(e) => {
+                eprintln!("plugin gate: read FAILED: {}: {e}", f.display());
+                problems += 1;
+            }
+        }
+    }
+    // ── 2. intent routing on goofish (in-process) ──────────────────────────
+    let goofish = root.join("websites").join("goofish.com").join("plugin").join("main.rhai");
+    if goofish.is_file() {
+        let body = r#"let a = plan(#{ query: "价格进化 CMP 170HX" });
+let b = plan(#{ query: "价格进化" });
+let c = plan(#{ query: "索尼 A7M4" });
+#{ ok: a.mode == "evolve" && a.query == "CMP 170HX" && scope_of(a.query) == "cmp170hx"
+   && b.mode == "evolve" && b.query == "价格进化" && strip_intent(b.query) == ""
+   && c.mode == "search" && c.query == "索尼 A7M4" }"#;
+        match harness_run(&goofish, body) {
+            Ok(v) => {
+                if v.get("ok") == Some(&Value::Bool(true)) {
+                    println!("plugin gate: intent routing ok (evolve keeps the noun, drops the verb; plain search untouched)");
+                } else {
+                    eprintln!("plugin gate: intent routing regressed: {v}");
+                    problems += 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("plugin gate: harness failed: {e}");
+                problems += 1;
+            }
+        }
+    } else {
+        eprintln!("plugin gate: goofish plugin missing, skipping routing");
+    }
+    // ── 3. goofish fold (must not browse when given only an intent word) ──
+    let spec = root.join("dsl").join("browser").join("goofish_item.json");
+    if spec.is_file() {
+        problems += fold_gate(&spec, root)?;
+    } else {
+        eprintln!("plugin gate: goofish_item.json missing, skipping fold");
+    }
+    // ── 4. feishu unread routing (full engine run on the fixture) ──────────
+    if let Err(e) = feishu_gate(root) {
+        eprintln!("plugin gate: feishu: {e}");
+        problems += 1;
+    }
+    println!(
+        "plugin gate: {n_files} .rhai compiled, {} problems",
+        problems
+    );
+    Ok(problems)
+}
+fn walkdir(dir: PathBuf) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walkdir(p));
+            } else if p.is_file() {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+fn fold_gate(spec: &Path, root: &Path) -> Result<u32> {
+    // Resolve the spec's last allow_paths entry, expanding ${env.HOME} the way
+    // the engine does (serde_json treats unresolved references as errors, so
+    // the user has set $HOME — we only need to substitute the prefix).
+    let spec_text = std::fs::read_to_string(spec)?;
+    let v: Value = serde_json::from_str(&spec_text)?;
+    let raw_path = v["policy"]["allow_paths"]
+        .as_array()
+        .and_then(|a| a.last())
+        .and_then(|x| x.as_str())
+        .unwrap_or("${env.HOME}/tmp")
+        .to_string();
+    let home = std::env::var("HOME").unwrap_or_default();
+    let allow = raw_path.replace("${env.HOME}", &home);
+    let scratch = std::path::PathBuf::from(allow).join(".check");
+    if scratch.exists() {
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+    std::fs::create_dir_all(&scratch)?;
+    // Copy the real corpus in if it is present, so the fold has something to
+    // learn from (and, more importantly, the items-count check is meaningful).
+    let corpus = std::path::PathBuf::from(format!("{}/tmp/goofish", home));
+    for f in ["index.json", "watch.json"] {
+        let src = corpus.join(f);
+        if src.is_file() {
+            std::fs::copy(&src, scratch.join(f)).ok();
+        }
+    }
+    let before = item_count(&scratch.join("index.json"));
+    let state = json!({ "mode": "evolve", "out_dir": scratch.to_string_lossy() });
+    let state_arg = serde_json::to_string(&state)?;
+    let exe = std::env::current_exe()?;
+    let out = std::process::Command::new(exe)
+        .args([
+            "run", "--spec", spec.to_string_lossy().as_ref(),
+            "--query", "价格进化", "--state", &state_arg,
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()?;
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let after = item_count(&scratch.join("index.json"));
+    let browsed = before != after;
+    println!(
+        "plugin gate: fold corpus {} -> {} items{}",
+        before,
+        after,
+        if browsed { "  <-- IT BROWSED" } else { " (no browsing)" }
+    );
+    if !out.status.success() {
+        eprintln!("plugin gate: fold engine run failed (rc={:?})", out.status.code());
+        for line in combined.lines().rev().take(20) {
+            eprintln!("  {line}");
+        }
+        return Ok(1);
+    }
+    if browsed {
+        return Ok(1);
+    }
+    Ok(0)
+}
+fn item_count(path: &Path) -> usize {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.get("items").and_then(Value::as_array).cloned())
+        .map(|a| a.len())
+        .unwrap_or(0)
+}
+fn feishu_gate(root: &Path) -> Result<()> {
+    let plugin = root.join("websites").join("feishu.com").join("plugin").join("classify.rhai");
+    let collect = root.join("websites").join("feishu.com").join("plugin").join("collect.sh");
+    let fixture = root.join("scripts").join("rhai").join("fixtures").join("feishu_unread.json");
+    if !plugin.is_file() || !fixture.is_file() {
+        return Ok(()); // nothing to gate; the file paths are repo-relative
+    }
+    // Failed collection must say so. The dangerous outcome is a digest that
+    // reports "you have nothing unread" because the token expired.
+    let bad_input = json!({ "ok": false, "err": "token expired" });
+    let bad = run_feishu(&plugin, &bad_input)?;
+    if bad.get("ok") != Some(&Value::Bool(false))
+        || !bad.get("error").and_then(Value::as_str).unwrap_or("").contains("token expired")
+    {
+        anyhow::bail!("a failed collection was not reported (got {:?})", bad.get("ok"));
+    }
+    if bad.get("digest").is_some() {
+        anyhow::bail!("a failed collection still produced a digest");
+    }
+    // collect.sh --print-knobs guard: a null / empty page_size must default
+    // to 15/20, and explicit values must be respected.
+    for (given, want) in [("null", "15/20"), ("", "15/20"), ("20", "20/20"), ("20", "20/50")] {
+        let args: Vec<&str> = if want == "20/20" {
+            vec!["--print-knobs", given, given]
+        } else if want.ends_with("/50") {
+            vec!["--print-knobs", given, "50"]
+        } else {
+            vec!["--print-knobs", given, ""]
+        };
+        let out = std::process::Command::new("sh")
+            .arg(&collect)
+            .args(&args)
+            .output()?;
+        let got = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if got != want {
+            anyhow::bail!("collect.sh knobs {args:?} resolved to {got:?}, want {want:?}");
+        }
+    }
+    let fx_text = std::fs::read_to_string(&fixture)?;
+    let fx: Value = serde_json::from_str(&fx_text)?;
+    let res = run_feishu(&plugin, &fx)?;
+    if res.get("ok") != Some(&Value::Bool(true)) {
+        anyhow::bail!("classifier returned {:?}", res.get("error"));
+    }
+    let buckets = res.get("buckets").and_then(Value::as_object);
+    let mut got: HashMap<String, String> = HashMap::new();
+    if let Some(b) = buckets {
+        for (_bucket, items) in b {
+            if let Some(arr) = items.as_array() {
+                for it in arr {
+                    if let (Some(mid), Some(bucket)) = (it.get("message_id").and_then(Value::as_str),
+                                                       it.get("bucket").and_then(Value::as_str)) {
+                        got.insert(mid.to_string(), bucket.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let mut fails: Vec<String> = Vec::new();
+    if let Some(chats) = fx.get("chats").and_then(Value::as_array) {
+        for c in chats {
+            let want = c.get("_expect").and_then(Value::as_str).unwrap_or("");
+            let note = c.get("_note").and_then(Value::as_str).unwrap_or("");
+            if let Some(unread) = c.get("unread").and_then(Value::as_array).and_then(|a| a.first()) {
+                if let Some(mid) = unread.get("message_id").and_then(Value::as_str) {
+                    if got.get(mid).map(String::as_str) != Some(want) {
+                        let snippet = unread
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .chars()
+                            .take(60)
+                            .collect::<String>();
+                        fails.push(format!("   {} ({}): want {}, got {}\n      {}",
+                            mid, note, want, got.get(mid).cloned().unwrap_or_default(), snippet));
+                    }
+                }
+            }
+        }
+        if let Some(total) = res.get("total").and_then(Value::as_u64) {
+            if total as usize != chats.len() {
+                fails.push(format!("   total: want {}, got {}", chats.len(), total));
+            }
+        }
+    }
+    let digest = res.get("digest").and_then(Value::as_array).cloned().unwrap_or_default();
+    if digest.len() > 5 {
+        fails.push(format!("   digest has {} entries, cap is 5", digest.len()));
+    }
+    if let Some(first) = digest.first() {
+        if first.get("bucket").and_then(Value::as_str) != Some("mention") {
+            fails.push(format!("   digest does not lead with the mention: {:?}",
+                first.get("bucket")));
+        }
+    }
+    for x in &digest {
+        if x.get("link").is_none() {
+            fails.push(format!("   digest entry has no link: {:?}",
+                x.get("text").and_then(Value::as_str).unwrap_or("").chars().take(40).collect::<String>()));
+            break;
+        }
+    }
+    if !fails.is_empty() {
+        for f in &fails {
+            eprintln!("{f}");
+        }
+        anyhow::bail!("feishu routing: {} FAIL", fails.len());
+    }
+    println!("plugin gate: feishu ok (collect guard + bucket assertions + digest cap)");
+    Ok(())
+}
+fn run_feishu(plugin: &Path, collected: &Value) -> Result<Value> {
+    let spec = json!({
+        "name": "feishu_classify_check", "dsl_version": 2, "start": "p",
+        "max_iterations": 1,
+        "policy": {
+            "allow_exec": false, "allow_hosts": [],
+            "allow_paths": ["${env.HOME}/tmp"],
+            "max_timeout_ms": 60000, "max_output": 8388608, "retries": 0
+        },
+        "capabilities": {
+            "p": {
+                "kind": "plugin", "dir": plugin.to_string_lossy(),
+                "timeout_ms": 60000, "max_operations": 200000
+            }
+        },
+        "nodes": [{
+            "name": "p", "edge": { "condition": {}, "default": "STOP" },
+            "action": {
+                "kind": "call", "capability": "p",
+                "with": { "collected": collected },
+                "project": {
+                    "ok": "/ok", "total": "/total", "buckets": "/buckets",
+                    "digest": "/digest", "error": "/error"
+                }
+            },
+            "primary_q": "done",
+            "questions": { "done": { "type": "choice",
+                "instructions": "ok?", "criteria": { "A": "yes", "B": "no" } } }
+        }]
+    });
+    let tmp = std::env::temp_dir().join(format!("laya-feishu-{}.json", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_string(&spec)?)?;
+    let exe = std::env::current_exe()?;
+    let out = std::process::Command::new(exe)
+        .args([
+            "run", "--spec", tmp.to_string_lossy().as_ref(),
+            "--state", "{}",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()?;
+    let _ = std::fs::remove_file(&tmp);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    if !out.status.success() {
+        anyhow::bail!("feishu engine run failed (rc={:?}): {}",
+            out.status.code(),
+            combined.chars().rev().take(400).collect::<String>().chars().rev().collect::<String>());
+    }
+    let start = combined.find('{').ok_or_else(|| anyhow!("no JSON in engine output: {}", &combined[..combined.len().min(200)]))?;
+    let v: Value = serde_json::from_str(&combined[start..])
+        .map_err(|e| anyhow!("invalid JSON from engine: {e}"))?;
+    v.get("result").and_then(|r| r.get("result")).cloned()
+        .ok_or_else(|| anyhow!("no result in engine output: {}", &combined[..combined.len().min(200)]))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn test_host() -> Host {
         Host(Arc::new(Mutex::new(HostState {
             pages: builtin(ALPHAXIV_PLUGIN).unwrap().pages,
@@ -1612,7 +2073,6 @@ mod tests {
             keep_open: false,
         })))
     }
-
     /// Compile one bundled plugin and return `(engine, ast, host)` for a direct
     /// call — the same engine the host builds, minus the browser/network calls,
     /// so the *script's* behaviour is what gets asserted.
@@ -1624,7 +2084,6 @@ mod tests {
             .unwrap_or_else(|e| panic!("compile {plugin}: {e}"));
         (engine, ast, test_host())
     }
-
     /// Call `name` with JSON args (host injected into scope, not as an arg).
     fn call_of(plugin: &str, name: &str, args: Vec<Value>) -> Result<Value> {
         let (engine, ast, host) = harness(plugin);
@@ -1671,7 +2130,6 @@ mod tests {
         .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
-
     /// Call a function whose first parameter is the host handle.
     fn call_with_host(plugin: &str, name: &str, arg: Value) -> Result<Value> {
         let (engine, ast, host) = harness(plugin);
@@ -1682,7 +2140,6 @@ mod tests {
             .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
-
     /// Call a function whose first parameter is the host handle, with 2 more args.
     fn call_host2(plugin: &str, name: &str, a: Value, b: Value) -> Result<Value> {
         let (engine, ast, host) = harness(plugin);
@@ -1701,7 +2158,6 @@ mod tests {
             .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
-
     /// Call a function whose first parameter is the host handle, with 4 more
     /// args (`observe(host, wdata, rec, now, hist_max)` and friends).
     fn call_host4(
@@ -1730,30 +2186,24 @@ mod tests {
             .map_err(|e| anyhow!("{name}(): {e}"))?;
         from_dyn(out).map_err(|e| anyhow!("{e}"))
     }
-
     fn call(name: &str, args: Vec<Value>) -> Result<Value> {
         call_of(ALPHAXIV_PLUGIN, name, args)
     }
-
     /// Call a bundled goofish function with JSON args and no host interaction.
     fn gs(name: &str, args: Vec<Value>) -> Result<Value> {
         call_of(GOOFISH_PLUGIN, name, args)
     }
-
     fn gs_plan(with: Value) -> Result<Value> {
         gs("plan", vec![with])
     }
-
     fn plan(with: Value) -> Result<Value> {
         call("plan", vec![with])
     }
-
     /// `opt_bool(args, key, default)`: the switch that decides whether the
     /// downloader asks alphaXiv to generate a missing AI Overview.
     fn opt_bool(with: Value, key: &str, dflt: bool) -> Result<Value> {
         call("opt_bool", vec![with, json!(key), json!(dflt)])
     }
-
     #[test]
     fn overview_generation_switch_is_opt_out_and_null_safe() {
         // Absent → the caller's default.
@@ -1810,7 +2260,6 @@ mod tests {
             );
         }
     }
-
     /// The wait is charged on the wall clock, and its helpers read a page result
     /// without trusting its shape.
     #[test]
@@ -1849,7 +2298,6 @@ mod tests {
             json!(5017)
         );
     }
-
     #[test]
     fn bundled_plugin_loads_and_parses() {
         let src = builtin(ALPHAXIV_PLUGIN).expect("bundled plugin");
@@ -1875,7 +2323,6 @@ mod tests {
             .iter()
             .any(|(_, s)| s.contains("api.alphaxiv.org")));
     }
-
     /// A `websites/<domain>/plugin/` folder is found by the plugin *name* its
     /// `plugin.json` declares, not by the domain folder name.
     #[test]
@@ -1891,7 +2338,6 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dir.join("main.rhai"), "fn run(host, ctx) { #{ ok: true } }").unwrap();
-
         // Found by the manifest name (`websites/<domain>/plugin/` → `example`).
         assert_eq!(
             plugin_dir_in(&root, "example").as_deref(),
@@ -1903,7 +2349,6 @@ mod tests {
             Some(dir.as_path())
         );
         assert!(plugin_dir_in(&root, "nope").is_none());
-
         // A tool plugin stays flat (`plugins/<name>/`) and still resolves.
         let tool = root.join("mini");
         std::fs::create_dir_all(&tool).unwrap();
@@ -1914,7 +2359,6 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).ok();
     }
-
     /// A plugin root child resolves to itself (`plugins/<name>/`) or to its
     /// `plugin/` subdir (`websites/<domain>/plugin/`); nothing else counts.
     /// `install` must be able to lay down the plugins compiled into the binary,
@@ -1926,7 +2370,6 @@ mod tests {
     fn install_builtin_to_writes_a_runnable_tree() {
         let root = std::env::temp_dir().join(format!("laya-builtin-install-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-
         let out = install_builtin_to("browser_base", &root, false)
             .unwrap()
             .expect("browser_base is a builtin");
@@ -1935,7 +2378,6 @@ mod tests {
         assert!(out.dest.join("plugin.json").is_file(), "manifest written");
         assert!(out.dest.join("main.rhai").is_file(), "entry written");
         assert!(out.files >= 2, "expected manifest + entry, got {}", out.files);
-
         // A page-carrying builtin, so the page/ subdir path is covered too.
         let out = install_builtin_to("hackernews", &root, false)
             .unwrap()
@@ -1943,7 +2385,6 @@ mod tests {
         assert!(out.dest.join("main.rhai").is_file(), "entry written");
         assert!(out.dest.join("page/front.js").is_file(), "page script written");
         assert!(out.dest.join("page/story.js").is_file(), "page script written");
-
         // Second call without --force keeps an existing install.
         std::fs::write(out.dest.join("marker"), "x").unwrap();
         assert!(
@@ -1954,10 +2395,8 @@ mod tests {
         // With --force the dir is replaced, marker and all.
         assert!(install_builtin_to("hackernews", &root, true).unwrap().is_some());
         assert!(!out.dest.join("marker").exists(), "--force replaces the tree");
-
         // Not a builtin: no silent empty install.
         assert!(install_builtin_to("definitely-not-a-plugin", &root, true).unwrap().is_none());
-
         // The written tree must actually load as a plugin — an install that
         // produces the right filenames but an unloadable script is still broken.
         let cap = PluginCap {
@@ -1972,10 +2411,8 @@ mod tests {
         let src = load_sources(&cap).expect("written plugin loads");
         assert_eq!(src.entry_name, "main.rhai");
         assert!(src.entry.contains("fn run"), "entry body preserved");
-
         let _ = std::fs::remove_dir_all(&root);
     }
-
     /// `builtin_names()` and the `builtin()` match are two hand-maintained lists
     /// of the same thing, and they drifted: `bdd` and `goofish` were compiled
     /// into the binary but absent from `builtin_names()`, so `plugin dir`
@@ -2010,7 +2447,6 @@ mod tests {
              match without being listed, so `install` would skip it"
         );
     }
-
     /// Every builtin must be installable to a tree that loads, since `install`
     /// is the only way an installed binary gets an editable plugin.
     #[test]
@@ -2035,7 +2471,6 @@ mod tests {
         assert_eq!(count, builtin_names().len());
         let _ = std::fs::remove_dir_all(&root);
     }
-
     #[test]
     fn plugin_dir_of_finds_flat_and_nested_layouts() {
         let root = std::env::temp_dir().join(format!("laya-pdo-{}", std::process::id()));
@@ -2043,20 +2478,17 @@ mod tests {
         std::fs::create_dir_all(&flat).unwrap();
         std::fs::write(flat.join("plugin.json"), "{}").unwrap();
         assert_eq!(plugin_dir_of(&flat).as_deref(), Some(flat.as_path()));
-
         let site = root.join("example.com");
         let nested = site.join("plugin");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join("plugin.json"), "{}").unwrap();
         assert_eq!(plugin_dir_of(&site).as_deref(), Some(nested.as_path()));
         assert_eq!(plugin_dir_of(&nested).as_deref(), Some(nested.as_path()));
-
         let bare = root.join("nothing");
         std::fs::create_dir_all(&bare).unwrap();
         assert!(plugin_dir_of(&bare).is_none());
         std::fs::remove_dir_all(&root).ok();
     }
-
     /// The install name falls back to the site folder for a bare `plugin/`
     /// subdir, and to the path's last segment otherwise.
     #[test]
@@ -2069,7 +2501,6 @@ mod tests {
         let plain = std::path::Path::new("/tmp/clone/plugins/v2ex");
         assert_eq!(plugin_name_fallback(plain, "plugins/v2ex"), "v2ex");
     }
-
     /// A plugin id is `group/name`; resolution accepts the grouped id, and the
     /// group may come from the manifest or from the root class (`websites`).
     #[test]
@@ -2090,7 +2521,6 @@ mod tests {
             "fn run(host, ctx) { #{ ok: true } }",
         )
         .unwrap();
-
         assert_eq!(
             plugin_dir_in(&websites, "websites/example").as_deref(),
             Some(site.as_path())
@@ -2101,7 +2531,6 @@ mod tests {
         );
         assert!(plugin_dir_in(&websites, "plugins/example").is_none());
         assert!(plugin_dir_in(&websites, "websites/nope").is_none());
-
         // No manifest group: the root class still names the group.
         let site2 = websites.join("other.org").join("plugin");
         std::fs::create_dir_all(&site2).unwrap();
@@ -2110,7 +2539,6 @@ mod tests {
             plugin_dir_in(&websites, "websites/other").as_deref(),
             Some(site2.as_path())
         );
-
         // `child_id` / `Manifest::id` agree with what resolution accepts.
         let m = Manifest::parse(r#"{"name":"example","group":"websites"}"#, "example").unwrap();
         assert_eq!(m.id(), "websites/example");
@@ -2120,7 +2548,6 @@ mod tests {
         assert_eq!(child_id(&bare, &websites), "websites/other");
         std::fs::remove_dir_all(&base).ok();
     }
-
     /// From the crate root, a bundled site plugin resolves off
     /// `websites/<domain>/plugin/` on disk (not from the compiled-in copy)
     /// under its short id.
@@ -2142,7 +2569,6 @@ mod tests {
             dir.display()
         );
     }
-
     #[test]
     fn resolves_plugins_in_layers() {
         // An explicit dir wins and is read from disk.
@@ -2163,7 +2589,6 @@ mod tests {
         assert_eq!(Manifest::parse(&src.manifest, "mini").unwrap().name, "mini");
         assert!(src.entry.contains("fn run"));
         std::fs::remove_dir_all(&dir).ok();
-
         // An unknown name is a hard error naming the layers it searched.
         let missing = PluginCap {
             plugin: "no-such-plugin".to_string(),
@@ -2172,7 +2597,6 @@ mod tests {
         let err = load_sources(&missing).unwrap_err().to_string();
         assert!(err.contains("no-such-plugin"), "{err}");
     }
-
     /// A *tiny* plugin that only returns its inputs proves the host path
     /// end-to-end without touching a browser.
     #[test]
@@ -2213,7 +2637,6 @@ mod tests {
         assert!(out["now"].as_str().unwrap().ends_with('Z'));
         std::fs::remove_dir_all(&dir).ok();
     }
-
     /// A bare `.rhai` file is a plugin in its own right: no directory and no
     /// `plugin.json`. Reachable either by `dir` = the file or by `entry` = the
     /// file (with no name/dir).
@@ -2228,7 +2651,6 @@ mod tests {
         )
         .unwrap();
         let path = file.display().to_string();
-
         for cap in [
             PluginCap {
                 dir: path.clone(),
@@ -2243,7 +2665,6 @@ mod tests {
             assert_eq!(out["hi"], json!("there"));
             assert_eq!(out["op"], json!("run")); // entry_op defaults to `run`
         }
-
         let src = load_sources(&PluginCap {
             dir: path,
             ..Default::default()
@@ -2255,7 +2676,6 @@ mod tests {
         assert_eq!(m.entry_op, "run");
         std::fs::remove_dir_all(&dir).ok();
     }
-
     /// The capability's `entry` really selects which file a directory plugin
     /// compiles (the manifest only supplies the default).
     #[test]
@@ -2287,7 +2707,6 @@ mod tests {
         assert_eq!(out["which"], json!("alt"));
         std::fs::remove_dir_all(&dir).ok();
     }
-
     #[test]
     fn plugin_language_has_no_escape_hatches() {
         let engine = build_engine(0);
@@ -2305,7 +2724,6 @@ mod tests {
             .eval::<Dynamic>("let i = 0; while true { i += 1; }")
             .is_err());
     }
-
     #[test]
     fn plan_infers_mode_from_natural_language() {
         // Bare search phrase → search, save the top paper.
@@ -2313,7 +2731,6 @@ mod tests {
         assert_eq!(p["mode"], json!("search"));
         assert_eq!(p["count"], json!(1));
         assert_eq!(p["target_url"], json!(""));
-
         // Trending keywords (english + chinese) → the explore feed.
         for q in [
             "trending",
@@ -2326,36 +2743,30 @@ mod tests {
             assert_eq!(p["mode"], json!("trending"), "query {q:?}");
             assert_eq!(p["count"], json!(10), "query {q:?}");
         }
-
         // A paper URL in the query → direct save, no listing.
         let url = "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer";
         let p = plan(json!({"query": url})).unwrap();
         assert_eq!(p["mode"], json!("url"));
         assert_eq!(p["target_url"], json!(url));
-
         // `paper_url` wins even when the query reads like a keyword.
         let p = plan(json!({"query": "whatever", "paper_url": url})).unwrap();
         assert_eq!(p["mode"], json!("url"));
         assert_eq!(p["target_url"], json!(url));
-
         // Explicit mode + count.
         let p = plan(json!({"query": "diffusion", "mode": "trending", "count": 3})).unwrap();
         assert_eq!(p["mode"], json!("trending"));
         assert_eq!(p["count"], json!(3));
-
         // Trending pages through the feed API, so its count can reach hundreds…
         let p = plan(json!({"query": "trending", "count": 100})).unwrap();
         assert_eq!(p["count"], json!(100));
         // …but never unbounded.
         let p = plan(json!({"query": "trending", "count": 100_000})).unwrap();
         assert_eq!(p["count"], json!(500));
-
         // Search still has only one rendered page of cards.
         let p = plan(json!({"query": "diffusion", "mode": "search", "count": 99})).unwrap();
         assert_eq!(p["mode"], json!("search"));
         assert_eq!(p["count"], json!(10));
     }
-
     #[test]
     fn plan_rejects_empty_and_bad_inputs() {
         assert!(plan(json!({})).is_err());
@@ -2367,7 +2778,6 @@ mod tests {
         let err = plan(json!({})).unwrap_err().to_string();
         assert!(err.contains("alphaxiv needs 'query'"), "{err}");
     }
-
     #[test]
     fn interval_is_restricted() {
         for (given, want) in [
@@ -2392,7 +2802,6 @@ mod tests {
             json!("7 Days")
         );
     }
-
     #[test]
     fn localizes_abs_urls() {
         let u = "https://www.alphaxiv.org/abs/2609.recurrent-looped-transformer";
@@ -2427,7 +2836,6 @@ mod tests {
             json!("https://arxiv.org/abs/2307.12307")
         );
     }
-
     #[test]
     fn detects_paper_urls_and_trending_words() {
         let truthy = |f: &str, s: &str| call(f, vec![json!(s)]).unwrap() == json!(true);
@@ -2449,7 +2857,6 @@ mod tests {
         assert!(!truthy("is_trending", "llm memory"));
         assert!(!truthy("is_trending", "attention is all you need"));
     }
-
     #[test]
     fn plugin_kind_parses_from_a_spec() {
         let spec = json!({
@@ -2467,7 +2874,6 @@ mod tests {
         let alias = json!({"capabilities": {"s": {"kind": "script", "plugin": "x"}}});
         assert!(super::super::Registry::from_spec(&alias).is_ok());
     }
-
     #[test]
     fn plugin_name_and_subdir_validation() {
         for ok in ["alphaxiv", "a.b-c_1"] {
@@ -2488,7 +2894,6 @@ mod tests {
             assert!(normalize_subdir(bad).is_err(), "{bad:?}");
         }
     }
-
     #[test]
     fn repo_refs_normalize_to_clone_urls() {
         assert_eq!(
@@ -2520,7 +2925,6 @@ mod tests {
             "https://github.com/o/r.git"
         );
     }
-
     #[test]
     fn installs_a_plugin_tree_from_a_local_dir() {
         let base =
@@ -2539,14 +2943,12 @@ mod tests {
         // A stray .git dir is skipped, never copied.
         std::fs::create_dir_all(src.join(".git")).unwrap();
         std::fs::write(src.join(".git/HEAD"), "x").unwrap();
-
         let out = install_from_dir(&src, &root, "demo", false).unwrap();
         assert_eq!(out.version, "1.2.3");
         assert_eq!(out.files, 3); // plugin.json + main.rhai + page/p.js
         assert!(root.join("demo/plugin.json").is_file());
         assert!(root.join("demo/page/p.js").is_file());
         assert!(!root.join("demo/.git").exists());
-
         // No silent overwrite…
         let err = install_from_dir(&src, &root, "demo", false)
             .unwrap_err()
@@ -2554,15 +2956,12 @@ mod tests {
         assert!(err.contains("already installed"), "{err}");
         // …unless forced.
         assert!(install_from_dir(&src, &root, "demo", true).is_ok());
-
         // A source without plugin.json is refused.
         let empty = base.join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         assert!(install_from_dir(&empty, &root, "nope", false).is_err());
-
         std::fs::remove_dir_all(&base).ok();
     }
-
     #[test]
     fn discovery_lists_bundled_plugins_once() {
         let found = discover_plugins();
@@ -2583,7 +2982,6 @@ mod tests {
         assert!(!ax.version.is_empty());
         assert!(!ax.description.is_empty());
     }
-
     #[test]
     fn host_file_io_is_policy_gated() {
         let dir = std::env::temp_dir().join(format!("laya-plugin-fs-{}", std::process::id()));
@@ -2625,7 +3023,6 @@ mod tests {
         .to_string();
         assert!(err.contains("allow_paths"), "{err}");
         assert!(!dir.join("out").exists());
-
         // With the root allowed the parents are created and text round-trips.
         let mut policy = Policy::default();
         policy.allow_paths = vec![dir.display().to_string()];
@@ -2643,7 +3040,6 @@ mod tests {
         assert!(dir.join("out/deep/x.txt").is_file());
         std::fs::remove_dir_all(&dir).ok();
     }
-
     #[test]
     fn bundled_browser_base_compiles_and_guards() {
         let src = builtin("browser_base").expect("bundled browser_base plugin");
@@ -2667,7 +3063,6 @@ mod tests {
         let guard = call_with_host("browser_base", "run", json!({ "with": {} }));
         assert!(guard.is_err(), "run() must reject direct invocation");
     }
-
     fn bundled_v2ex_compiles_and_plans() {
         let src = builtin("v2ex").expect("bundled v2ex plugin");
         let m = Manifest::parse(&src.manifest, "v2ex").unwrap();
@@ -2676,7 +3071,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["list.js", "topic.js"]);
-
         let p = |v: Value| call_of("v2ex", "plan", vec![v]).unwrap();
         // No query -> the hot tab.
         assert_eq!(p(json!({}))["mode"], json!("hot"));
@@ -2703,7 +3097,6 @@ mod tests {
             json!(100)
         );
     }
-
     #[test]
     fn bundled_crates_compiles_and_plans() {
         let src = builtin("crates").expect("bundled crates plugin");
@@ -2713,7 +3106,6 @@ mod tests {
         assert!(build_engine(0).compile(&src.entry).is_ok());
         let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["search.js"]);
-
         let p = |v: Value| call_of("crates", "plan", vec![v]).unwrap();
         assert!(call_of("crates", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "serde" }));
@@ -2739,7 +3131,6 @@ mod tests {
         .is_err());
         assert!(call_of("crates", "plan", vec![json!({ "mode": "crate" })]).is_err());
     }
-
     #[test]
     fn bundled_pypi_compiles_and_plans() {
         let src = builtin("pypi").expect("bundled pypi plugin");
@@ -2750,7 +3141,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["project.js", "search.js"]);
-
         let p = |v: Value| call_of("pypi", "plan", vec![v]).unwrap();
         assert!(call_of("pypi", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "requests" }));
@@ -2770,7 +3160,6 @@ mod tests {
         .is_err());
         assert!(call_of("pypi", "plan", vec![json!({ "mode": "project" })]).is_err());
     }
-
     #[test]
     fn bundled_docsrs_compiles_and_plans() {
         let src = builtin("docsrs").expect("bundled docsrs plugin");
@@ -2780,7 +3169,6 @@ mod tests {
         assert!(build_engine(0).compile(&src.entry).is_ok());
         let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["search.js"]);
-
         let p = |v: Value| call_of("docsrs", "plan", vec![v]).unwrap();
         assert!(call_of("docsrs", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "serde" }));
@@ -2801,7 +3189,6 @@ mod tests {
         .is_err());
         assert!(call_of("docsrs", "plan", vec![json!({ "mode": "crate" })]).is_err());
     }
-
     #[test]
     fn bundled_github_compiles_and_plans() {
         let src = builtin("github").expect("bundled github plugin");
@@ -2812,7 +3199,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["repo.js", "trending.js"]);
-
         let p = |v: Value| call_of("github", "plan", vec![v]).unwrap();
         // No query -> today's trending repositories.
         let t = p(json!({}));
@@ -2844,7 +3230,6 @@ mod tests {
         .is_err());
         assert!(call_of("github", "plan", vec![json!({ "mode": "repo" })]).is_err());
     }
-
     #[test]
     fn bundled_wikipedia_compiles_and_plans() {
         let src = builtin("wikipedia").expect("bundled wikipedia plugin");
@@ -2854,7 +3239,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["clean.js", "search.js"]);
-
         let p = |v: Value| call_of("wikipedia", "plan", vec![v]).unwrap();
         assert!(call_of("wikipedia", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "transformer neural network" }));
@@ -2878,7 +3262,6 @@ mod tests {
         // An unsupported mode fails loudly.
         assert!(call_of("wikipedia", "plan", vec![json!({ "mode": "nope" })]).is_err());
     }
-
     #[test]
     fn bundled_mdn_compiles_and_plans() {
         let src = builtin("mdn").expect("bundled mdn plugin");
@@ -2886,7 +3269,6 @@ mod tests {
         assert_eq!(m.name, "mdn");
         assert!(build_engine(0).compile(&src.entry).is_ok());
         assert!(src.pages.is_empty());
-
         let p = |v: Value| call_of("mdn", "plan", vec![v]).unwrap();
         assert!(call_of("mdn", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "fetch api" }));
@@ -2913,7 +3295,6 @@ mod tests {
         // An unsupported mode fails loudly.
         assert!(call_of("mdn", "plan", vec![json!({ "mode": "nope" })]).is_err());
     }
-
     #[test]
     fn bundled_bing_compiles_and_plans() {
         let src = builtin("bing").expect("bundled bing plugin");
@@ -2922,7 +3303,6 @@ mod tests {
         assert!(build_engine(0).compile(&src.entry).is_ok());
         let names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["search.js"]);
-
         let p = |v: Value| call_of("bing", "plan", vec![v]).unwrap();
         assert!(call_of("bing", "plan", vec![json!({})]).is_err());
         let s = p(json!({ "query": "typescript ai framework" }));
@@ -2941,7 +3321,6 @@ mod tests {
         )
         .is_err());
     }
-
     /// The arXiv reader's site logic is pure in `plan`, so it is unit-testable
     /// without a browser; a bad Rhai edit is caught here, not at run time.
     #[test]
@@ -2954,7 +3333,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["abs.js", "search.js"]);
-
         let p = |v: Value| call_of("arxiv", "plan", vec![v]).unwrap();
         // No query at all cannot be planned.
         assert!(call_of("arxiv", "plan", vec![json!({})]).is_err());
@@ -2978,7 +3356,6 @@ mod tests {
         // An unsupported mode fails loudly.
         assert!(call_of("arxiv", "plan", vec![json!({ "mode": "nope" })]).is_err());
     }
-
     /// The HN reader's site logic is pure in `plan`, so it is unit-testable
     /// without a browser; a bad Rhai edit is caught here, not at run time.
     #[test]
@@ -2991,7 +3368,6 @@ mod tests {
         let mut names: Vec<_> = src.pages.iter().map(|(n, _)| n.as_str()).collect();
         names.sort();
         assert_eq!(names, ["front.js", "story.js"]);
-
         let p = |v: Value| call_of("hackernews", "plan", vec![v]).unwrap();
         // No query -> the top feed, default 30 rows.
         let t = p(json!({}));
@@ -3022,7 +3398,6 @@ mod tests {
         // An unsupported mode fails loudly.
         assert!(call_of("hackernews", "plan", vec![json!({ "mode": "nope" })]).is_err());
     }
-
     #[test]
     fn bundled_hf_trending_compiles_and_plans() {
         // A compile failure (bad Rhai syntax) must be caught here, not at run time.
@@ -3031,7 +3406,6 @@ mod tests {
         assert_eq!(m.name, "hf-trending");
         assert_eq!(m.entry_op, "run");
         assert!(build_engine(0).compile(&src.entry).is_ok());
-
         let p = |v: Value| call_of("hf-trending", "plan", vec![v]).unwrap();
         // No query → the trending feed, default 10.
         let t = p(json!({}));
@@ -3063,7 +3437,6 @@ mod tests {
         .is_err());
         assert!(call_of("hf-trending", "plan", vec![json!({ "mode": "search" })]).is_err());
     }
-
     #[test]
     fn hf_trending_builds_the_api_url() {
         let plan = |v: Value| call_of("hf-trending", "plan", vec![v]).unwrap();
@@ -3085,7 +3458,6 @@ mod tests {
         let s = url(json!({ "query": "llm memory" }));
         assert!(s.contains("search=llm%20memory"), "{s}");
     }
-
     #[test]
     fn hf_trending_renders_timestamps_in_the_users_zone() {
         // A pinned offset makes the rendering deterministic (no machine zone).
@@ -3101,7 +3473,6 @@ mod tests {
         let d = call_of("hf-trending", "plan", vec![json!({})]).unwrap();
         assert_eq!(d["tz_offset_minutes"], json!(null));
         assert_eq!(d["tz"], json!(""));
-
         // Upstream UTC → the same instant in the caller's zone (offset-exact).
         let at =
             |iso: Value, off: i64| call_host2("hf-trending", "local_iso", iso, json!(off)).unwrap();
@@ -3116,7 +3487,6 @@ mod tests {
         // Unparseable / empty input yields "" so the raw field stays authoritative.
         assert_eq!(at(json!(""), 0), json!(""));
         assert_eq!(at(json!("not-a-date"), 0), json!(""));
-
         // The report's short form drops the zone and the seconds.
         assert_eq!(
             call_of(
@@ -3128,9 +3498,7 @@ mod tests {
             json!("2026-09-24 11:39")
         );
     }
-
     // ── goofish / 闲鱼 ──────────────────────────────────────────────────────
-
     /// The goofish plugin resolves from the compiled-in copy and carries the two
     /// page scripts its op depends on.
     #[test]
@@ -3156,18 +3524,15 @@ mod tests {
             assert!(js.contains("resolve(state)"), "{name} resolves nothing");
         }
     }
-
     /// One query string decides which of the four behaviours runs, so the
     /// classification is pinned here rather than only in a live run.
     #[test]
     fn goofish_plan_infers_the_mode_from_the_query() {
         let mode = |with: Value| gs_plan(with).unwrap()["mode"].as_str().unwrap().to_string();
-
         // A keyword is a search, and it stays the search phrase.
         let p = gs_plan(json!({"query": "索尼 A7M4"})).unwrap();
         assert_eq!(p["mode"], json!("search"));
         assert_eq!(p["query"], json!("索尼 A7M4"));
-
         // A full /search URL is unwrapped back to its `q=` term, still
         // percent-encoded: the engine has `urlencode` but no decoder, so the
         // term goes back into the URL verbatim rather than being decoded and
@@ -3183,7 +3548,6 @@ mod tests {
             json!(false),
             "a typed keyword still goes through urlencode"
         );
-
         // An item URL browses that one product…
         let p = gs_plan(json!({"query": "https://www.goofish.com/item?id=1085216610239"})).unwrap();
         assert_eq!(p["mode"], json!("item"));
@@ -3192,7 +3556,6 @@ mod tests {
             p["item_url"],
             json!("https://www.goofish.com/item?id=1085216610239")
         );
-
         // …and so does a bare 12-13 digit id, normalized to the item URL.
         let p = gs_plan(json!({"query": "1085216610239"})).unwrap();
         assert_eq!(p["mode"], json!("item"));
@@ -3201,7 +3564,6 @@ mod tests {
             json!("https://www.goofish.com/item?id=1085216610239")
         );
         assert_eq!(p["query"], json!(""), "the id is not a search phrase");
-
         // A URL asked for as a search is still one item, unless `count` says
         // otherwise — the caller explicitly wants a listing then.
         let p = gs_plan(
@@ -3210,7 +3572,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p["mode"], json!("search"));
-
         // Price monitoring, and adding to it, are their own modes.
         for q in ["价格监控", "监控价格", "watch price", "降价提醒"] {
             assert_eq!(mode(json!({ "query": q })), "watch", "{q}");
@@ -3241,7 +3602,6 @@ mod tests {
             gs_plan(json!({"query": "1087828137579 的东西"})).unwrap()["mode"],
             json!("search")
         );
-
         // An explicit mode always wins over the inference.
         assert_eq!(
             mode(json!({"query": "价格监控", "mode": "search"})),
@@ -3252,7 +3612,6 @@ mod tests {
             "item",
             "the mode is case-normalized"
         );
-
         // `item_url` / `id` are accepted as their own args, as the spec passes
         // them; a keyword still defaults to 20 rows and an item to 1.
         let p = gs_plan(json!({"item_url": "1071111102831"})).unwrap();
@@ -3265,7 +3624,6 @@ mod tests {
             "an interpolated count arrives as a string"
         );
     }
-
     /// Prices cross the boundary in three shapes: as JSON integers, as JSON
     /// floats, and as strings out of the hand-editable watch file. `onum`
     /// normalizes all three — and the integer case is the one that used to
@@ -3285,7 +3643,6 @@ mod tests {
         assert_eq!(n(json!("价格面议")), json!(0.0));
         assert_eq!(n(json!("")), json!(0.0));
         assert_eq!(n(json!("abc")), json!(0.0));
-
         // The option readers agree, which is what makes `--state '{"price_min":
         // 15000}'` filter instead of silently defaulting to 0.
         let f =
@@ -3308,7 +3665,6 @@ mod tests {
         assert_eq!(i(json!({"pages": "2"}), "pages"), json!(2));
         assert_eq!(i(json!({}), "pages"), json!(7));
         assert_eq!(i(json!({"pages": null}), "pages"), json!(7));
-
         // The price band itself: goofish ignores ?priceMin=/?priceMax= on
         // /search, so the band is applied to what came back.
         let ok = |row: Value, lo: f64, hi: f64| {
@@ -3328,7 +3684,6 @@ mod tests {
         assert!(ok(json!({"price": 0}), 15000.0, 22000.0));
         assert!(ok(json!({"price": "¥13800"}), 15000.0, 0.0));
     }
-
     /// A whole-number price must print without float noise (`¥20500`, not
     /// `¥20500.0`) and a fraction must keep its two decimals.
     #[test]
@@ -3348,7 +3703,6 @@ mod tests {
         // 1.38 * 10000 is 13799.999999999998 in binary floating point.
         assert_eq!(f(13799.999999999998), "13800");
     }
-
     /// The same picture is spelled two ways on the two paths that meet: the
     /// carousel carries the site's rendition, save_article records the thumbnail
     /// it downloaded. Matching on the whole url left six of seven images
@@ -3372,7 +3726,6 @@ mod tests {
             key(downloaded),
             key("https://img.alicdn.com/bao/uploaded/i2/2222253586975/O1CN01ZLUTCv2LLqI2Yc4y_!!1-xy_item.jpg_.webp")
         );
-
         let capture = json!({"images": [
             {"name": "img-1.webp", "url": downloaded, "ok": true},
             {"name": "img-2.webp", "url": "https://img.alicdn.com/other.png", "ok": true}
@@ -3398,7 +3751,6 @@ mod tests {
             json!("")
         );
     }
-
     /// `observe` has to hand the store back with the call. Rhai maps are value
     /// types: writing `wdata["items"]` inside the function updates a local copy
     /// that is dropped on return, and a price monitor that quietly forgets every
@@ -3426,7 +3778,6 @@ mod tests {
                 .unwrap()["price"]
                 .clone()
         };
-
         // First sighting: "new", and the item really is in the returned store.
         let first = observe(empty.clone(), rec(json!(20500)), now.clone());
         assert_eq!(first["change"]["direction"], json!("new"));
@@ -3434,7 +3785,6 @@ mod tests {
         assert_eq!(first["change"]["old_price"], json!(null));
         assert_eq!(price_of(&first["data"], "1085216610239"), json!(20500.0));
         assert_eq!(first["data"]["items"].as_array().unwrap().len(), 1);
-
         // A drop is the headline case: same price type, new number.
         let dropped = observe(first["data"].clone(), rec(json!(19800)), later.clone());
         let ch = &dropped["change"];
@@ -3444,7 +3794,6 @@ mod tests {
         assert_eq!(ch["delta"], json!(-700.0));
         assert_eq!(ch["delta_pct"], json!(-3.41));
         assert_eq!(price_of(&dropped["data"], "1085216610239"), json!(19800.0));
-
         // Unchanged, and the sighting still lands in the history.
         let same = observe(dropped["data"].clone(), rec(json!(19800)), later.clone());
         assert_eq!(same["change"]["direction"], json!("same"));
@@ -3453,7 +3802,6 @@ mod tests {
         assert_eq!(entry["seen_count"], json!(3));
         assert_eq!(entry["history"].as_array().unwrap().len(), 3);
         assert_eq!(entry["last_seen"], later["rfc3339"]);
-
         // A first sighting without a number is "unknown", not a zero price.
         let priceless = observe(
             empty.clone(),
@@ -3463,7 +3811,6 @@ mod tests {
         );
         assert_eq!(priceless["change"]["direction"], json!("new"));
         assert_eq!(priceless["data"]["items"][0]["price"], json!(null));
-
         // Gone beats any price comparison, and the stale price is dropped: a
         // delisted page has none, and a monitor that keeps quoting one is
         // reporting fiction.
@@ -3475,7 +3822,6 @@ mod tests {
         assert_eq!(gone["change"]["direction"], json!("gone"));
         assert_eq!(gone["data"]["items"][0]["price"], json!(null));
         assert_eq!(gone["data"]["items"][0]["status"], json!("gone"));
-
         // A dead id seen for the first time is "gone", not "new".
         let never = observe(
             empty.clone(),
@@ -3485,7 +3831,6 @@ mod tests {
             now.clone(),
         );
         assert_eq!(never["change"]["direction"], json!("gone"));
-
         // history_max bounds the file: it keeps the newest points, drops the
         // oldest, and still counts every sighting.
         let mut store = first["data"].clone();
@@ -3511,13 +3856,10 @@ mod tests {
         assert_eq!(tail[2]["price"], json!(20008.0));
         assert_eq!(tail[0]["price"], json!(20006.0));
     }
-
     // ── cua: the Cua Driver decision layer ───────────────────────────────────
-
     fn cua_ctx(with: Value) -> Value {
         json!({ "plugin": "cua", "op": "plan", "with": with, "state": json!({}) })
     }
-
     // Every cua op that touches JSON takes the Host first (json_parse /
     // json_stringify are host methods), so they go through call_with_host
     // rather than call_of.
@@ -3535,7 +3877,6 @@ mod tests {
         }
         call_with_host("cua", "plan", ctx)
     }
-
     fn cua_op(op: &str, with: Value) -> Result<Value> {
         let mut ctx = cua_ctx(with);
         ctx["op"] = json!(op);
@@ -3728,7 +4069,6 @@ mod tests {
         assert_eq!(a["element_token"], json!("s1:5"));
         assert!(a.get("x").is_none() && a.get("y").is_none());
     }
-
     /// A successful call is not a refusal. get_window_state's own response
     /// carries a "timeout_ms" field, and classifying the whole payload for
     /// error keywords called a healthy 171-element snapshot a "timeout" -- the
@@ -3746,7 +4086,6 @@ mod tests {
         let r = cua(good).unwrap();
         assert_ne!(r["status"], json!("blocked"), "a good payload was called a refusal: {r}");
     }
-
     /// An empty candidate set is an answer, not a crash. A stale window_id makes
     /// get_window_state return `elements: []`, and indexing scored[0] on that
     /// took the whole run down.
@@ -3764,7 +4103,6 @@ mod tests {
         );
         assert!(r["args_json"].as_str().unwrap_or("").is_empty(), "nothing may be clicked");
     }
-
     /// The risk table is the gate, so it is checked against the driver's own
     /// tool list rather than trusted: a tool that exists but is unclassified
     /// fails closed, and that is only true if the table has no gaps.
@@ -3778,7 +4116,6 @@ mod tests {
             + counts["danger"].as_i64().unwrap();
         assert_eq!(total, 58);
         assert_eq!(counts["unknown"], json!(0), "no tool may be left unclassified");
-
         for danger in ["kill_app", "clipboard_read", "clipboard_write", "start_recording"] {
             let row = call_of("cua", "risk_of", vec![json!(danger)]).unwrap();
             assert_eq!(row, json!("danger"), "{danger} must be gated");
@@ -3789,7 +4126,6 @@ mod tests {
             json!("unknown")
         );
     }
-
     /// The failure this plugin exists to prevent is a *successful* destructive
     /// call from a stray keyword, so the refusal is asserted at the plan level
     /// and carries a reason.
@@ -3801,13 +4137,11 @@ mod tests {
     #[test]
     fn cua_refuses_danger_tools_unless_allow_danger_is_set() {
         let apps = json!({ "apps": [{ "name": "Safari", "pid": 4242, "running": true }] });
-
         // Step one: resolving the name to a pid. Read-only, so never gated.
         let lookup = cua(json!({ "intent": "kill Safari" })).unwrap();
         assert_eq!(lookup["status"], json!("call"));
         assert_eq!(lookup["phase"], json!("observe"));
         assert_eq!(lookup["risk"], json!("observe"));
-
         // Step two: the kill, with the pid in hand.
         let denied = cua(json!({ "intent": "kill Safari", "observation": apps })).unwrap();
         assert_eq!(denied["status"], json!("blocked"));
@@ -3816,7 +4150,6 @@ mod tests {
         let err = denied["error"].as_str().unwrap();
         assert!(err.contains("kill_app"), "{err}");
         assert!(err.contains("allow_danger"), "{err}");
-
         // And the gate is a gate, not a delete: the same intent proceeds when
         // the caller opts in, and then it carries the resolved pid.
         let ok = cua(json!({
@@ -3827,7 +4160,6 @@ mod tests {
         assert_eq!(ok["tool"], json!("kill_app"));
         let args: Value = serde_json::from_str(ok["args_json"].as_str().unwrap()).unwrap();
         assert_eq!(args["pid"], json!(4242), "the pid came from list_apps");
-
         // A danger tool that needs no lookup is gated on the very first step.
         let direct = cua(json!({ "intent": "read the clipboard" })).unwrap();
         assert_eq!(direct["status"], json!("blocked"));
@@ -3845,11 +4177,9 @@ mod tests {
         assert_eq!(first["phase"], json!("observe"));
         assert_eq!(first["risk"], json!("observe"), "observing must be read-only");
         let obs_tool = first["tool"].as_str().unwrap().to_string();
-
         // No snapshot yet: still observing, and still nothing clickable.
         let again = cua(json!({ "intent": "click the OK button" })).unwrap();
         assert_eq!(again["tool"].as_str().unwrap(), obs_tool);
-
         // A snapshot arrives but has no matching element: the turn ends blocked
         // with the near-misses, and no click is emitted.
         let miss = cua(json!({
@@ -3894,7 +4224,6 @@ mod tests {
             "token and pixel addressing are alternative modes");
         assert_eq!(hit["address"]["element_token"], json!("t9"));
     }
-
     /// With a known window, the observation is narrowed to that window and the
     /// screenshot is skipped — it is the largest part of the response and is
     /// not needed to resolve a handle.
@@ -3912,7 +4241,6 @@ mod tests {
         assert!(args["screenshot_out_file"].as_str().unwrap().contains("laya"));
         assert_eq!(args["query"], json!("OK"), "the target filters the tree");
     }
-
     /// A dead token points at whatever now occupies that slot, so the loop is
     /// bounded: `plan` reports done rather than re-binding forever.
     #[test]
@@ -3922,7 +4250,6 @@ mod tests {
         assert_eq!(p["done"], json!(true));
         assert!(p["args_json"].as_str().unwrap_or("").is_empty());
     }
-
     /// "press" is a click in English and a keystroke just as often. The
     /// remainder is the only thing that distinguishes them, and getting it
     /// backwards sends Return to a dialog that was asked to be clicked.
@@ -3956,21 +4283,18 @@ mod tests {
         assert_eq!(done["tool"], json!(""));
         assert!(done["why"].as_str().unwrap().contains("Pressed escape"));
         assert_eq!(key["phase"], json!("act"), "a keystroke needs no binding");
-
         // A click plans as observe-then-act, so the verb and target are what
         // carry the decision — the tool on the first turn is the observation.
         let btn = cua(json!({ "intent": "press the OK button" })).unwrap();
         assert_eq!(btn["verb"], json!("click"));
         assert_eq!(btn["phase"], json!("observe"));
         assert_eq!(btn["target"], json!("OK"));
-
         // "double click" contains "click": matching the bare form first would
         // plan two single clicks, which on a list is a different action.
         let dbl = cua(json!({ "intent": "double click Documents" })).unwrap();
         assert_eq!(dbl["verb"], json!("double_click"));
         assert_eq!(dbl["target"], json!("Documents"));
     }
-
     /// The target the binder is given is the whole label, not a phrase with the
     /// words around it eaten once too often.
     ///
@@ -3997,7 +4321,6 @@ mod tests {
         // "double click Documents" must not lose the noun it is aiming at.
         let dbl = cua(json!({ "intent": "double click Documents" })).unwrap();
         assert_eq!(dbl["target"], json!("Documents"));
-
         // And the end-to-end effect: the binder sees the label, so it binds.
         let hit = cua(json!({
             "intent": "click the OK button",
@@ -4018,7 +4341,6 @@ mod tests {
         assert_eq!(args["x"], json!(20.0));
         assert_eq!(args["y"], json!(15.0));
     }
-
     /// An unparseable intent is reported with the grammar, because a caller
     /// left guessing will loosen the gate instead of rephrasing.
     #[test]
@@ -4028,7 +4350,6 @@ mod tests {
         assert!(p["args_json"].as_str().unwrap_or("").is_empty());
         assert!(p["candidates"].as_array().unwrap().len() > 5);
     }
-
     /// A macOS permission refusal is plain text, not JSON, and it is the very
     /// first thing a new user hits. Classifying it is what stops the caller
     /// reading it as a malformed response and retrying forever.
@@ -4041,12 +4362,10 @@ mod tests {
         assert_eq!(i["status"], json!("permission_gate"));
         assert_eq!(i["ok"], json!(false));
         assert!(i["remedy"].as_str().unwrap().contains("permissions grant"), "{i:?}");
-
         // Empty stdout must classify, not raise — sub_string(0,1) on "" does.
         let e = cua_op("inspect", json!({ "tool": "get_screen_size", "result": "" })).unwrap();
         assert_eq!(e["status"], json!("empty"));
     }
-
     /// A desktop screenshot is hundreds of KB of base64. It must not land in
     /// run state, but the fact that there was one has to survive.
     #[test]
@@ -4060,7 +4379,6 @@ mod tests {
         assert_eq!(img["bytes"], json!(blob.len() as i64));
         assert_eq!(i["summary"]["bounds"], json!("0,0,1920,1080"));
     }
-
     /// `sequence` must not invent a token. A fabricated element_token resolves
     /// to nothing and the driver clicks whatever it lands on.
     #[test]
@@ -4075,5 +4393,4 @@ mod tests {
             "no token exists before the observation is taken");
         assert!(s["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("op=bind")));
     }
-
 }

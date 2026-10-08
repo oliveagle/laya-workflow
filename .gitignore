@@ -1,16 +1,12 @@
 /target/
 laya-mlx/target/
 
-# reference/ ONNX weights (~5GB) — regenerate with reference/laya/export_onnx.py
-reference/**/*.onnx
-reference/**/*.onnx.data
-
 # local secrets
 .env
 .env.*
 *.secrets.json
 
-# __pycache__ from reference/laya
+# python artifacts (defensive; repo has no python)
 __pycache__/
 *.pyc
 

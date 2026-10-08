@@ -1,6 +1,0 @@
-{
-  "vocab_size": 50368,
-  "max_seq_len": 512,
-  "num_markers": 32,
-  "marker_token_id": 50367
-}

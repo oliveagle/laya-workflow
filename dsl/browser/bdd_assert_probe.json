@@ -1,7 +1,7 @@
 {
   "name": "bdd_assert_probe",
   "dsl_version": 2,
-  "description": "A hand-written spec that uses the `bdd` plugin directly - no Gherkin, no transpiler, no .feature file. It exists to keep that claim honest: the assertion vocabulary is a standard plugin, so anything the BDD suite can say, a spec written by hand can say too. scripts/bdd/run.py executes this against the same fixture the scenarios use, so if the plugin ever stops being usable outside the transpiler, this goes red.",
+  "description": "A hand-written spec that uses the `bdd` plugin directly - no Gherkin, no transpiler, no .feature file. It exists to keep that claim honest: the assertion vocabulary is a standard plugin, so anything the BDD suite can say, a spec written by hand can say too. laya-workflow bdd run executes this against the same fixture the scenarios use, so if the plugin ever stops being usable outside the transpiler, this goes red.",
   "start": "open",
   "max_iterations": 9,
   "convergence_window": 3,

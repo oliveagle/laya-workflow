@@ -1,4 +1,4 @@
-# Executed by: scripts/bdd/run.py
+# Executed by: laya-workflow bdd run
 # State required: base_url
 #
 # `release` is the sixth op, and it was the only one no scenario ran - it

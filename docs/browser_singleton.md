@@ -121,13 +121,14 @@ be required for ordinary resource hygiene.
 Run the bundled one-command smoke demo:
 
 ```bash
-python3 bench/browser_demo.py
+laya-workflow browser-demo
 ```
 
-It starts a temporary localhost page, supplies the required state, opens a tab in
-the singleton Chrome, observes elements, types with real CDP key events, and
-shows the extension badges. It prints `typed: 15` and `badges: true`; the owned
-tab is closed automatically when the helper exits.
+It starts a temporary localhost page (served by the binary itself), supplies the
+required state, opens a tab in the singleton Chrome, observes elements, types
+with real CDP key events, and shows the extension badges. It prints `typed: 15`
+and `badges: true`; the owned tab is closed automatically when the helper exits.
+Requires a Chrome/CDP backend on 127.0.0.1:9222.
 
 For the same workflow without the helper, `state.url` is mandatory:
 

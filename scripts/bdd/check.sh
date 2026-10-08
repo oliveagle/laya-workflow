@@ -7,12 +7,15 @@
 # the failures that would otherwise surface minutes later as a red browser test
 # - a step that no longer parses, a step that now compiles to the wrong op, and
 # a scenario that compiles to a spec `validate` rejects. It needs no Chrome and no network, which is why it is
-# safe in CI; the CDP run in scripts/bdd/run.py is the separate local gate,
+# safe in CI; the CDP run in `laya-workflow bdd run` is the separate local gate,
 # because CI installs no browser.
 #
 # Both scripts/verify.sh and .github/workflows/ci.yml call this, so there is
 # one definition of "the BDD documents are still buildable" rather than two
 # that can drift.
+#
+# The checks live in the Rust binary (`laya-workflow bdd <check|build>`), the
+# port of the former scripts/bdd/*.py toolchain — no Python involved.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,9 +37,9 @@ fi
 # `validate --spec` for a file that does not exist, prints "0 passed, 0 failed"
 # and exits 0. Hand it the test binary and every validation below passes without
 # reading a single spec - which is exactly what scripts/verify.sh did, for as
-# long as the bdd checks have existed. It surfaced only because
-# args_probe_check.py asserts on an expected *failure*: all fifteen of its rows
-# "succeeded" under verify.sh while refusing correctly on their own.
+# long as the bdd checks have existed. It surfaced only because the args probe
+# asserts on an expected *failure*: all fifteen of its rows "succeeded" under
+# verify.sh while refusing correctly on their own.
 #
 # So check the binary before trusting it, loudly, once.
 _absent="$(mktemp -d)/absent.json"
@@ -64,27 +67,27 @@ fi
 # needs no Chrome and catches the quietest failure there is - a step that
 # compiles to a *different* assertion than the document says, which leaves the
 # run green while the document stops meaning what it says.
-python3 "$HERE/vocabulary_check.py"
+"$BIN" bdd vocabulary-check
 
 # The hand-written probe specs are gated separately, because `validate` is the
 # wrong tool for them: measured, a probe whose edge names a node that does not
 # exist *passes* `validate` and fails at run time with error_node_missing and a
 # zero exit code. `laya-workflow validate` is still run over them below - it is
-# cheap - but probe_check.py is what actually holds them together.
-python3 "$HERE/probe_check.py"
+# cheap - but probe-check is what actually holds them together.
+"$BIN" bdd probe-check
 
 # The plugin's argument-validation errors, which the four browser probes above
 # cannot reach. Needs no Chrome either, so it belongs in this file and not in
-# run.py. 15 binary invocations, ~25ms, and it fails if the plugin grows an
-# error message that nothing pins.
-python3 "$HERE/args_probe_check.py" "$BIN"
+# the runner. 15 runs, ~25ms, and it fails if the plugin grows an error message
+# that nothing pins.
+"$BIN" bdd args-probe-check
 
 # The numbers bdd/README.md quotes, recomputed from the gates above. A count
 # nobody recomputes goes stale on the next edit - measured: the headline said
 # "5 scenarios" when bdd/features/ transpiles to 22, and the quoted vocabulary
 # block had lost four clauses to an edit. Same reason as the rest of this file:
 # no Chrome, no network, and CI runs it.
-python3 "$HERE/doc_check.py" "$BIN"
+"$BIN" bdd doc-check
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
@@ -92,22 +95,18 @@ trap 'rm -rf "$out"' EXIT
 # The unified accuracy gate: every scenario compiles, every generated spec
 # passes the real `validate`, per-feature step coverage must be 100%, and an
 # empty selection is an error (a typo'd tag must not report success). This is
-# scripts/bdd/build.py — the same command an agent runs before committing a
-# .feature edit, so the gate and the daily loop cannot drift.
-if ! python3 "$HERE/build.py" "${features[@]}" --bin "$BIN" --out "$out" >/dev/null 2> "$out/build.err"; then
+# `laya-workflow bdd build` - the same command an agent runs before committing
+# a .feature edit, so the gate and the daily loop cannot drift.
+if ! "$BIN" bdd build "${features[@]}" --out "$out" >/dev/null 2> "$out/build.err"; then
   echo "bdd check: the build gate failed:" >&2
   cat "$out/build.err" >&2
   exit 1
 fi
 
-n="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))) if False else 0)' 2>/dev/null || true)"
-# Recover the scenario count from the build's manifest the cheap way:
-n="$(python3 - "$out" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1] + "/manifest.json"))
-print(len(m["scenarios"]))
-PY
-)"
+# Recover the scenario count from the build the cheap way: one spec file per
+# selected scenario. (The manifest has the same count; counting spec files
+# needs no JSON tooling.)
+n="$(find "$out/spec" -maxdepth 1 -name '*.json' | wc -l)"
 
 # The probes are not generated, so they are not in "$out" - but they are the
 # specs the runner actually executes, and a broken one used to look green.

@@ -1,5 +1,10 @@
 # 目标：为 laya-tch 增加 macOS MLX 推理后端（Phase 1：MLX 设备路径 + 真实 GPU 计算冒烟 + 基准），在 Apple Silicon 上用 MLX(Metal GPU) 跑通真实前向计算并给出性能数据
 
+> **已过时（2026-10-08）**：Phase 1 的 Python MLX 运行时（`laya-tch/mlx/*.py`）已被
+> 原生 Rust 实现取代并删除——现在是 `laya-mlx/` crate（Apple MLX via `mlx-rs`，无 Python）。
+> 本文件作为历史目标记录保留；实际构建/测试/MLX 用法见 `laya-tch/README.md` 与 `laya-mlx/README.md`。
+
+
 ## 背景
 
 - 现状：`laya-tch` 只支持 CPU / CUDA（`tch-rs` / libtorch）。在 macOS Apple Silicon 上

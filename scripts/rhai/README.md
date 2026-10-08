@@ -8,20 +8,20 @@ feedback loop that costs **0.33s**.
 
 | tool | what it answers | cost |
 |---|---|---|
-| `compile.py plugin.rhai` | does it parse? | 0.07s |
-| `compile.py plugin.rhai --bisect` | which *block* is the parse error in? | 0.09s |
-| `harness.py plugin.rhai --body '…' --run` | what does this one helper return? | 0.15s |
-| `probe.py` | what does this Rhai build even support? | 0.25s, once |
+| `laya-workflow plugin compile plugin.rhai` | does it parse? | 0.07s |
+| `laya-workflow plugin compile plugin.rhai --bisect` | which *block* is the parse error in? | 0.09s |
+| `laya-workflow plugin check plugin.rhai --body "…"` | what does this one helper return? | 0.15s |
+| `laya-workflow plugin check --probe` | what does this Rhai build even support? | 0.25s, once |
 | `check.sh` | the whole gate: parse → routing → learn | 0.33s |
 | `check.sh --cargo` | …and the Rust tests, when `src/**` changed | +1s warm |
 
 ## The loop
 
 ```sh
-scripts/rhai/check.sh                 # after every edit
-scripts/rhai/compile.py <plugin> --bisect   # only when it does not compile
-scripts/rhai/harness.py <plugin> --run --body '#{ x: my_helper(2) }'
-python3 scripts/rhai/probe.py         # once per session, not once per question
+laya-workflow plugin check                 # after every edit
+laya-workflow plugin compile <plugin> --bisect   # only when it does not compile
+laya-workflow plugin check <plugin> --run --body '#{ x: my_helper(2) }'
+laya-workflow plugin check         # once per session, not once per question
 cargo test --release                  # once, at the end, only if src/** changed
 laya-workflow run --spec dsl/browser/goofish_item.json --query "…"   # once, last
 ```
@@ -30,7 +30,7 @@ Order matters: the cheap stages fail first, the expensive one runs once.
 
 ## Why each piece exists
 
-**`compile.py`** — `laya-workflow run` is the only compiler, but running a whole
+`laya-workflow run` (and `laya-workflow plugin compile` for syntax-only checks) — `laya-workflow run` is the only compiler, but running a whole
 workflow to learn "does this parse" throws away the entire run. This drives the
 plugin capability alone. `--bisect` exists because the parser *recovers*: a
 stray `)` three hundred lines from anything real is reported as
@@ -42,12 +42,12 @@ then halves in. Verified against an injected `let bogus = 1);`: window 1935–19
 reported line marked, **9 compiles, 0.09s**. Doing that by hand was 7 tool calls
 and three throwaway scripts.
 
-**`harness.py`** — a plugin is one file with `fn run(host, ctx)` at the bottom
+The plugin loader (Rhai runtime) — a plugin is one file with `fn run(host, ctx)` at the bottom
 and a library above it. This keeps the library verbatim and swaps in your own
 `run`, so "does my helper do what I think" is a 0.15s call instead of a 23s
 browse, and it tests the *real* helpers rather than a copy that can drift.
 
-**`probe.py`** — this Rhai build is not the one in the docs. Every fact below was
+**`laya-workflow plugin check --probe`** — this Rhai build is not the one in the docs. Every fact below was
 re-derived by trial and error during one session, which is exactly the cost this
 file exists to end. One question per file, so a construct the build rejects does
 not kill the run; three outcomes kept apart (`OK` / `NO-COMPILE` / `NO-RUNTIME`)
@@ -77,7 +77,7 @@ intent word leaked into a search term.
 - **Heredocs in this shell are flaky.** zsh intermittently fails with
   `parse error near '<'`, even inside `<<'EOF'`, and a swallowed terminator
   leaves the target file half-written. After any heredoc write, verify:
-  `bash -n f.sh` or `python3 -c "import ast; ast.parse(open(f).read())"`.
+  `bash -n f.sh`.
 - **`cargo test` once, at the end.** The 87 Rust tests do not execute Rhai, so
   running them before touching `src/**` tests nothing you wrote.
 - The engine enforces `policy.allow_paths`; a scratch dir outside it fails with

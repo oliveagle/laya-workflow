@@ -498,13 +498,13 @@ stays in `devine_int`). Nothing here is devine- or site-specific:
 * `laya-workflow server ensure | start [--daemon] | stop | status [--port N]
   [--command C] [--health-path P]` — generic local HTTP server lifecycle for any
   command and port. Liveness = "the port answers HTTP at all" (2xx–5xx), so a
-  plain `python3 -m http.server` counts as up even on a default `/healthz` 404;
+  a plain static server (e.g. `laya-workflow mock serve --web`) counts as up even on a default `/healthz` 404;
   pass `--health-path` when the server has a real health endpoint. `ensure` /
   `start` print `BASE=<url>` for the workflow to capture (and `start` without
   `--daemon` stays in the foreground until Ctrl-C / SIGTERM); state files live
   under `/tmp/laya-ensure-server-<port>.{pid,base,log}`.
 
-`scripts/laya-ensure-chrome.sh` and `scripts/laya-ensure-server.py` are now thin
+`scripts/laya-ensure-chrome.sh` and `laya-workflow server` are now thin
 shims that `exec` those two subcommands — kept only as stable, repo-relative
 entry points for existing callers (e.g. `devine_int`). New callers should use
 the subcommands directly; that requires `laya-workflow` on `PATH` (override the

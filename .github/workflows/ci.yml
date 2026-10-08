@@ -53,8 +53,8 @@ jobs:
       # bdd/features/*.feature is hand-written; every spec under it is
       # generated. Catches a step that stopped parsing, or a scenario that
       # compiles to a spec the engine rejects. Deliberately Chrome-free - the
-      # CDP run in scripts/bdd/run.py is the local gate, because this runner
-      # installs no browser.
+      # CDP run in `laya-workflow bdd run` is the local gate, because this
+      # runner installs no browser.
       - name: BDD documents compile and validate
         run: ./scripts/bdd/check.sh ./target/debug/laya-workflow
 
@@ -62,14 +62,13 @@ jobs:
       # CI needs its own step. The registry is the table that says which
       # plugins ship; it had drifted from plugins/ in both directions.
       - name: Bundled plugins are in the registry
-        run: python3 ./scripts/plugin_registry_check.py
+        run: ./target/debug/laya-workflow plugin registry-check
 
   integration:
     name: tests + DSL smoke (mock services)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      LAYA_TEST_PYTHON: python3
       LAYA_MOCK_URL: http://127.0.0.1:8791
       LAYA_WEB_PORT: "8793"
       LAYA_MOCK3: 127.0.0.1:6380:4223:1884:2526:9000:9091:8083:9999
@@ -87,11 +86,14 @@ jobs:
       - name: Start mock services (protocols + web)
         run: bench/mock_services.sh start
 
-      - name: Start mock servers (8791 score/agent + 8792 rpc/agent)
+      - name: Start mock servers (8791 + 8792, one port serves all HTTP routes)
         run: |
-          for PORT in 8791 8792; do
-            python3 bench/mock_server.py --port "$PORT" > /tmp/mock_server_$PORT.log 2>&1 &
-          done
+          ./target/release/laya-workflow mock serve --score 8791 --agent 8791 \
+            --rpc 8791 --graphql 8791 --chat 8791 --mcp 8791 --vector 8791 \
+            --webhook 8791 > /tmp/mock_8791.log 2>&1 &
+          ./target/release/laya-workflow mock serve --score 8792 --agent 8792 \
+            --rpc 8792 --graphql 8792 --chat 8792 --mcp 8792 --vector 8792 \
+            --webhook 8792 > /tmp/mock_8792.log 2>&1 &
           for PORT in 8791 8792; do
             for i in $(seq 1 40); do
               curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
@@ -100,8 +102,8 @@ jobs:
             done
             curl -sf -o /dev/null -X POST -H 'content-type: application/json' \
               -d '{"text":"ping"}' "http://127.0.0.1:$PORT/score" || {
-                echo "mock_server $PORT did not become ready" >&2
-                cat /tmp/mock_server_$PORT.log >&2 || true
+                echo "mock serve $PORT did not become ready" >&2
+                cat /tmp/mock_$PORT.log >&2 || true
                 exit 1
               }
           done
@@ -111,7 +113,7 @@ jobs:
         run: ./target/release/laya-workflow-tests
 
       - name: DSL smoke (mocked backend)
-        run: python3 bench/dsl_smoke.py
+        run: ./target/release/laya-workflow dsl smoke
 
       - name: CLI smoke (offline backend)
         run: |

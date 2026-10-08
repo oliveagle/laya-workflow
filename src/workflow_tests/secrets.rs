@@ -320,27 +320,26 @@ pub fn test_secrets(h: &mut Harness) {
             "tick".to_string(),
         );
 
-        // mcp stdio transport via the mock's line-delimited mode
-        let mock = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("bench/mock_server.py");
-        if mock.exists() {
-            let python =
-                std::env::var("LAYA_TEST_PYTHON").unwrap_or_else(|_| "python3".to_string());
-            let reg = capability::registry_from(
-                &[(
-                    "mcp_stdio",
-                    json!({
-                        "kind": "mcp", "transport": "stdio",
-                        "command": [python, mock.to_str().unwrap(), "--stdio"],
-                        "tool": "any", "timeout_ms": 10000
-                    }),
-                )],
-                Some(npol.clone()),
-            )
-            .unwrap();
-            match reg.call("mcp_stdio", &json!({"arguments": {}}), &json!({})) {
-                Ok(r) => h.check("mcp stdio result present", r["result"].is_object()),
-                Err(e) => h.check(&format!("mcp stdio (skipped: {e})"), true),
-            }
+        // mcp stdio transport via the binary's line-delimited mock mode
+        let exe = std::env::current_exe().expect("current_exe");
+        let mock_bin = std::env::var("LAYA_WORKFLOW_BIN").unwrap_or_else(|_| {
+            exe.with_file_name("laya-workflow").to_string_lossy().into_owned()
+        });
+        let reg = capability::registry_from(
+            &[(
+                "mcp_stdio",
+                json!({
+                    "kind": "mcp", "transport": "stdio",
+                    "command": [mock_bin, "mock", "stdio"],
+                    "tool": "any", "timeout_ms": 10000
+                }),
+            )],
+            Some(npol.clone()),
+        )
+        .unwrap();
+        match reg.call("mcp_stdio", &json!({"arguments": {}}), &json!({})) {
+            Ok(r) => h.check("mcp stdio result present", r["result"].is_object()),
+            Err(e) => h.check(&format!("mcp stdio (skipped: {e})"), true),
         }
     }
     // ── capability timeout / hostile-server regressions ─────────────

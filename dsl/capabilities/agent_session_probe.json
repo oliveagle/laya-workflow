@@ -6,7 +6,10 @@
   "max_iterations": 5,
   "policy": {
     "allow_exec": true,
-    "allow_hosts": ["127.0.0.1", "localhost"],
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
     "max_timeout_ms": 10000,
     "max_output": 65536
   },
@@ -21,7 +24,11 @@
     "app_server_stdio": {
       "kind": "agent",
       "transport": "stdio",
-      "command": ["python3", "bench/mock_server.py", "--stdio"],
+      "command": [
+        "laya-workflow",
+        "mock",
+        "stdio"
+      ],
       "session": "probe-stdio",
       "timeout_ms": 10000
     }
@@ -40,12 +47,19 @@
           }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "action": {
         "kind": "call",
         "capability": "app_server",
-        "with": { "text": "${state.text}" },
-        "project": { "agent_output": "/body/output" }
+        "with": {
+          "text": "${state.text}"
+        },
+        "project": {
+          "agent_output": "/body/output"
+        }
       }
     }
   ]

@@ -650,26 +650,11 @@ async fn health() -> &'static str {
     "ok"
 }
 
-/// Whether an importable MLX runtime is present. macOS only; on other platforms
-/// the MLX backend does not exist, so this is always `false`.
+/// Whether an MLX-capable host is present: Apple Silicon macOS (aarch64).
+/// Pure runtime fact; no external process is probed.
 fn mlx_runtime_available() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let python = std::env::var("LAYA_MLX_PYTHON").unwrap_or_else(|_| "python3".to_string());
-        std::process::Command::new(python)
-            .args(["-c", "import mlx.core"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        false
-    }
+    cfg!(target_os = "macos") && std::env::consts::ARCH == "aarch64"
 }
-
 /// Resolve the compute backend (`cpu`, `cuda[:N]`, `mlx` or `auto`).
 ///
 /// The pure rules live in [`laya_tch::device::resolve`]; here we just gather the
@@ -677,11 +662,11 @@ fn mlx_runtime_available() -> bool {
 /// Silicon. CUDA is verified before the model is loaded, so a CPU-only libtorch
 /// surfaces a clear error at startup instead of an opaque panic from `aten`.
 ///
-/// The tch engine cannot *execute* the MLX backend in Phase 1 (MLX compute lives
-/// in the separate Python runtime under `laya-tch/mlx/`), so `auto` must only
-/// select backends this engine can actually run: if the pure resolver prefers
-/// `mlx` under `auto`, we degrade to CUDA when available, else CPU. An explicit
-/// `--device mlx` is still honoured and produces the guidance error in `main`.
+/// The tch engine cannot *execute* the MLX backend (MLX compute lives in the
+/// native Rust `laya-mlx` crate), so `auto` must only select backends this
+/// engine can actually run: if the pure resolver prefers `mlx` under `auto`, we
+/// degrade to CUDA when available, else CPU. An explicit `--device mlx` is still
+/// honoured and produces the guidance error in `main`.
 fn resolve_backend(flag: &str) -> Result<laya_tch::device::Backend> {
     let cuda_available = tch::Cuda::is_available();
     let env = laya_tch::device::DeviceEnv {
@@ -703,7 +688,7 @@ fn resolve_backend(flag: &str) -> Result<laya_tch::device::Backend> {
         };
         eprintln!(
             "[laya-tch] auto: MLX runtime is present but the tch engine cannot serve it; \
-             using {fallback}. Use the Python MLX runtime (`laya-tch/mlx/`) for MLX, or pass \
+             using {fallback}. Use the native Rust `laya-mlx` crate for MLX inference, or pass \
              `--device mlx` for details."
         );
         return Ok(fallback);
@@ -729,7 +714,7 @@ async fn main() -> Result<()> {
             "--device {backend} selects the Apple MLX backend. The tch engine (HTTP/--once) \
              runs on libtorch and cannot execute MLX; the native MLX implementation is the \
              Rust crate `laya-mlx` (`cd laya-mlx && cargo build --release`, then \
-             `./target/release/laya-mlx --request laya-tch/mlx/examples/ref_request.json`). \
+             `./target/release/laya-mlx --request laya-mlx/examples/ref_request.json`). \
              Re-run the tch engine with `--device cpu` (or `cuda` where available)."
         ),
     };

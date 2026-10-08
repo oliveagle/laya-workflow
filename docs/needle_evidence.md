@@ -4,7 +4,7 @@ Every number on this page was measured on one machine (x86_64 Linux, 2026-10-07)
 running the real `target/release/laya-workflow` binary through `mcp serve` —
 the same FFI path a workflow spec uses. No synthetic scores, no estimates.
 
-**Reproduce:** `python3 bench/needle_vs_heuristic.py`
+**Reproduce:** `./target/release/laya-workflow bench needle-vs-heuristic`
 
 ---
 

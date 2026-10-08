@@ -14,11 +14,11 @@ bdd/*.feature  ── build ──┼─ 测试        manifest.json           (
 
 | 命令 | 干什么 |
 |---|---|
-| `scripts/bdd/build.py <features...>` | 本地：编译所有场景 + validate 每个 spec + 100% 覆盖检查 |
-| `scripts/bdd/build.py --assist` | 同上，并对词汇表外的步骤打印 needle 建议（只建议，不编译） |
-| `scripts/bdd/build.py --profile production --base-url https://app.example.com` | 只跑 `@production` 场景，输出 `it.manifest.json` |
-| `scripts/bdd/run.py [--profile production] [--base-url URL]` | 真浏览器执行（需要 Chrome） |
-| `scripts/bdd/check.sh [laya-workflow]` | CI 门禁（vocabulary + probe + args + doc + build.py 严格编译） |
+| `laya-workflow bdd build <features...>` | 本地：编译所有场景 + validate 每个 spec + 100% 覆盖检查 |
+| `laya-workflow bdd build --assist` | 同上，并对词汇表外的步骤打印 needle 建议（只建议，不编译） |
+| `laya-workflow bdd build --profile production --base-url https://app.example.com` | 只跑 `@production` 场景，输出 `it.manifest.json` |
+| `laya-workflow bdd run [--profile production] [--base-url URL]` | 真浏览器执行（需要 Chrome） |
+| `scripts/bdd/check.sh [laya-workflow]` | CI 门禁（vocabulary + probe + args + doc + `laya-workflow bdd build` 严格编译） |
 
 准确率门禁：词汇表外 step = 编译错误；生成的 spec 必过 `laya-workflow validate`；每 feature
 覆盖率必须 100%（默认）；空选择（0 场景被选）= 错误；needle 只做建议、永不自动编译。
@@ -26,8 +26,7 @@ bdd/*.feature  ── build ──┼─ 测试        manifest.json           (
 ## 前置条件
 
 - `laya-workflow` 二进制（`cargo build --release --locked -p laya-workflow`，或下载 release tarball 装到 PATH）
-- `python3`（用于 build.py / run.py / check.sh）
-- Chrome（`scripts/bdd/chrome-headless.sh` 会自己找，没有时本机 `run.py` 起不来——但 `build.py` 不需要 Chrome，所以**编译/validate/覆盖率本机就能跑**）
+- Chrome（`scripts/bdd/chrome-headless.sh` 会自己找，没有时本机 `laya-workflow bdd run` 起不来——但 `laya-workflow bdd build` 不需要 Chrome，所以**编译/validate/覆盖率本机就能跑**）
 
 ## 完整例子：用户登录冒烟测试
 
@@ -60,7 +59,7 @@ Feature: User login smoke
     And the element "#login-button" is visible
 ```
 
-每个 step 必须是 `scripts/bdd/steps.py` 里**已有**的词汇；`<base_url>` 是运行期注入
+每个 step 必须是 `laya-workflow bdd vocabulary-check` 里**已有**的词汇；`<base_url>` 是运行期注入
 的占位符（本地 = 本地 fixture 服务地址，生产 = `--base-url`）。两个 tag： `@smoke`
 让场景每次都跑；`@production` 让场景只在生产 IT 里跑。
 
@@ -69,7 +68,7 @@ Feature: User login smoke
 ### 1) 本地构建（不需要 Chrome）
 
 ```bash
-python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
+laya-workflow bdd build bdd/examples/login_smoke.feature \
   --bin ./target/release/laya-workflow --out /tmp/bdd-example
 ```
 
@@ -85,7 +84,7 @@ python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
 ### 2) 生产 IT 计划
 
 ```bash
-python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
+laya-workflow bdd build bdd/examples/login_smoke.feature \
   --profile production --base-url https://app.example.com \
   --bin ./target/release/laya-workflow --out /tmp/bdd-example-it
 ```
@@ -111,7 +110,7 @@ python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
 {
   "name": "bdd_user_login_smoke_successful_login_with_valid_credentials",
   "dsl_version": 2,
-  "description": "Generated from login_smoke.feature by scripts/bdd/transpile.py. ...",
+  "description": "Generated from login_smoke.feature by laya-workflow bdd transpile. ...",
   "start": "s0",
   "max_iterations": 10,
   "policy": { "allow_exec": true, "allow_hosts": ["127.0.0.1","localhost"], ... },
@@ -226,7 +225,7 @@ python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
 | `--tags @no-such-tag` 选 0 个场景 | exit 1（"empty plan must not report success"） |
 | `--assist` 给出的 needle 建议 | **绝不自动编译**；`conf ≥ 0.5` 标 LIKELY，< 0.5 标 guess |
 
-示例：把 `Then the heading "#hero" should be displayed` 加到 feature 里，build.py 会说：
+示例：把 `Then the heading "#hero" should be displayed` 加到 feature 里，`laya-workflow bdd build` 会说：
 
 ```
 errors:
@@ -240,13 +239,13 @@ specs 0  validated 0
 
 ```bash
 # 本地：fixture server + headless Chrome
-python3 scripts/bdd/run.py                                    # 全部 bdd/features/*.feature
-python3 scripts/bdd/run.py bdd/examples/login_smoke.feature    # 单个 feature
-python3 scripts/bdd/run.py --tags @smoke                       # 只跑带 @smoke tag 的
-python3 scripts/bdd/run.py --filter page_smoke                 # 按 feature 文件名子串
+laya-workflow bdd run                                    # 全部 bdd/features/*.feature
+laya-workflow bdd run bdd/examples/login_smoke.feature    # 单个 feature
+laya-workflow bdd run --tags @smoke                       # 只跑带 @smoke tag 的
+laya-workflow bdd run --filter page_smoke                 # 按 feature 文件名子串
 
 # 生产集成测试（真目标，无本地 fixture）
-python3 scripts/bdd/run.py bdd/examples/login_smoke.feature \
+laya-workflow bdd run bdd/examples/login_smoke.feature \
   --profile production --base-url https://app.example.com
 ```
 
@@ -259,23 +258,23 @@ scripts/bdd/check.sh ./target/release/laya-workflow
 
 ## 想加一个新 step？
 
-1. 写 `.feature`，先 `build.py` 看它是否已经认识——绝大多数情况都认识。
-2. 不认识时 `build.py --assist`：对每个未匹配 step 打印 `op + 置信度`。
-3. 真正正确的做法是**扩展 `scripts/bdd/steps.py`**（`scripts/bdd/vocabulary_check.py` 自动检查 op 映射）。
+1. 写 `.feature`，先 ``laya-workflow bdd build`` 看它是否已经认识——绝大多数情况都认识。
+2. 不认识时 ``laya-workflow bdd build` --assist`：对每个未匹配 step 打印 `op + 置信度`。
+3. 真正正确的做法是**扩展 `laya-workflow bdd vocabulary-check`**（`laya-workflow bdd vocabulary-check` 自动检查 op 映射）。
 4. 不正确的做法：把 needle 建议直接 paste 到 spec 里——研究（`docs/bdd_to_needle.md`）实测基础模型对生造措辞全字段准确率 ~40%，强自动编译会静默通过不正确的 spec。
 
 ```bash
 # 1. 写 feature
 # 2. 跑带 --assist 的 build
-python3 scripts/bdd/build.py bdd/examples/my.feature --assist --out /tmp/x
+laya-workflow bdd build bdd/examples/my.feature --assist --out /tmp/x
 # 3. 看建议（例：Then the heading "#hero" should be displayed -> op=type conf=0.06 guess）
-# 4. 在 steps.py 加规则：_THEN 表加一行 (re.compile(r'^the heading (?P<sel>.+) should be (visible|displayed)$'), 'assert', 'visible')
-# 5. 重跑：build.py exit 0，coverage 100%
+# 4. 在 `plugins/bdd/main.rhai` 加规则：_THEN 表加一行 (re.compile(r'^the heading (?P<sel>.+) should be (visible|displayed)$'), 'assert', 'visible')
+# 5. 重跑：`laya-workflow bdd build` exit 0，coverage 100%
 ```
 
 ## 下一步
 
 - **更深入维护说明**：`bdd/AGENT.md`（agent 维护循环、规则、错误→动作表）
 - **BDD skill**：已装到 codex + opencode（`~/.codex/skills/bdd/SKILL.md`），新会话里说"维护 BDD"会自动加载
-- **可行性研究**：`docs/bdd_to_needle.md` + `bench/bdd_to_needle.py`（为什么 needle 不当主路径）
+- **可行性研究**：`docs/bdd_to_needle.md` + `laya-workflow bench bdd-to-needle`（为什么 needle 不当主路径）
 - **CI 门禁**：`scripts/bdd/check.sh` 已经被 CI 跑；`scripts/verify.sh` 调用它

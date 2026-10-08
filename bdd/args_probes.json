@@ -2,7 +2,7 @@
   "_comment": [
     "The plugin's argument-validation errors, as a table instead of 15 near-identical",
     "spec files. Each row is a (with, message) pair the plugin must actually produce.",
-    "scripts/bdd/args_probe_check.py materialises a spec from each row, runs it, and",
+    "laya-workflow bdd args-probe-check materialises a spec from each row, runs it, and",
     "requires a non-zero exit whose output contains `must_contain`.",
     "",
     "Measured, every row here is rejected before the plugin touches CDP, so none of",

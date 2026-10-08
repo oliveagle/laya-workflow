@@ -164,6 +164,12 @@ enum Cmd {
     },
     /// List every spec found across the layered DSL roots (repo → user → builtin)
     List,
+    /// DSL smoke: validate every spec under dsl/ and run the labelled sample
+    /// states against the expected labels. Replaces laya-workflow dsl smoke.
+    Dsl {
+        #[command(subcommand)]
+        cmd: DslCmd,
+    },
     /// Manage Rhai plugins: install one from a git repo, list them, show where
     /// they are looked up. See `skill --section plugins`.
     Plugin {
@@ -222,11 +228,66 @@ enum Cmd {
         #[command(subcommand)]
         cmd: LayaMemCmd,
     },
-    /// abide rule enforcement: compile AGENTS.md rules into a rubric, check a
-    /// diff against it, and audit the checks. Port of coldteadotai/abide.
+    /// BDD: compile a `.feature` into a workflow spec, with accuracy as the
+    /// hard gate. `bdd build` replaces laya-workflow bdd build; the sub-checks
+    /// replace their scripts/bdd/*_check.py counterparts.
+    Bdd {
+        #[command(subcommand)]
+        cmd: BddCmd,
+    },
+    /// Rule enforcement: compile AGENTS.md rules into a rubric, check a diff
+    /// against it, and audit the checks. Port of coldteadotai/abide.
+    Rules {
+        #[command(subcommand)]
+        cmd: RulesCmd,
+    },
+    /// Hidden back-compat alias for `rules` (previously `abide`).
+    #[command(hide = true)]
     Abide {
         #[command(subcommand)]
-        cmd: AbideCmd,
+        cmd: RulesCmd,
+    },
+    /// Offline mock services: serve the protocol/HTTP mocks the integration
+    /// tests need (`mock serve`), or the line-delimited JSON stdio agent
+    /// (`mock stdio`). Replaces laya-workflow mock serve and laya-workflow mock serve.
+    Mock {
+        #[command(subcommand)]
+        cmd: MockCmd,
+    },
+    /// Bench / diagnostic tools (Rust ports of bench/*.py).
+    Bench {
+        #[command(subcommand)]
+        cmd: BenchCmd,
+    },
+    /// `feishu-collect [chats_limit] [page_size] [--print-knobs]` — feed the
+    /// JSON from `lark-cli im +chat-list` on stdin, get the unread digest on
+    /// stdout. Replaces the inline `python3 -c` in the Feishu plugin collect.sh.
+    FeishuCollect {
+        /// Up to N chats to fetch.
+        #[arg(name = "chats_limit", default_value = "15")]
+        chats_limit: String,
+        /// Up to N messages per chat to consider for unread detection.
+        #[arg(name = "page_size", default_value = "20")]
+        page_size: String,
+        /// Print resolved knobs and exit (plugin check contract).
+        #[arg(long, default_value_t = false)]
+        print_knobs: bool,
+    },
+    /// Run the singleton-Chrome demo against a temporary localhost page
+    /// served by the binary itself. Replaces bench/browser_demo.py.
+    BrowserDemo {
+        /// Optional demo site root (default <manifest>/bench/demo-site).
+        #[arg(long)]
+        site: Option<String>,
+        /// Optional port (default: first free of 18777..18787).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Optional spec override (default dsl/browser/browser_singleton.json).
+        #[arg(long)]
+        spec: Option<String>,
+        /// Text to type into the demo page.
+        #[arg(long)]
+        text: Option<String>,
     },
     /// Send a local notification. On macOS this posts a real Notification Center
     /// banner (via `osascript`); it can also append to a log file and/or bell.
@@ -256,7 +317,239 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum AbideCmd {
+enum BddCmd {
+    /// Build every artifact a BDD document drives, with accuracy as the hard
+    /// gate: compile + validate + 100% coverage + empty-plan error.
+    Build {
+        /// Feature files (default: all of bdd/features/*.feature).
+        #[arg(name = "features", num_args = 0..)]
+        features: Vec<String>,
+        /// Output dir for generated artifacts.
+        #[arg(long, default_value = "target/bdd-build")]
+        out: String,
+        /// local = hermetic fixtures; production = real target (--base-url).
+        #[arg(long, default_value = "local")]
+        profile: String,
+        /// Keep only scenarios with this tag (e.g. @production).
+        #[arg(long)]
+        filter: Option<String>,
+        /// (production) run every scenario, not just @production-tagged ones.
+        #[arg(long, default_value_t = false)]
+        all: bool,
+        /// Minimum per-feature step coverage % (default 100 = accuracy-first).
+        #[arg(long, default_value_t = 100.0)]
+        coverage_min: f64,
+        /// Skip the `validate` gate (for docs/demo only).
+        #[arg(long, default_value_t = false)]
+        no_validate: bool,
+        /// Production base URL (default $BDD_BASE_URL).
+        #[arg(long)]
+        base_url: Option<String>,
+        /// What to emit: all | spec | manifest | coverage.
+        #[arg(long, default_value = "all")]
+        emit: String,
+        /// For out-of-vocabulary steps, print a needle suggestion + confidence.
+        #[arg(long, default_value_t = false)]
+        assist: bool,
+    },
+    /// Compile a `.feature` into a laya-workflow spec (no gate).
+    Transpile {
+        /// Feature files.
+        #[arg(name = "features", num_args = 1..)]
+        features: Vec<String>,
+        /// Write generated specs into this directory.
+        #[arg(long)]
+        out: Option<String>,
+        /// List scenarios, generate nothing.
+        #[arg(long, default_value_t = false)]
+        list: bool,
+        /// Generate, verify each spec is well-formed, write nothing.
+        #[arg(long, default_value_t = false)]
+        check: bool,
+        /// Chrome wrapper that forces headless.
+        #[arg(long)]
+        chrome_bin: Option<String>,
+    },
+    /// Prove the step vocabulary maps each step to the op it is supposed to run.
+    VocabularyCheck,
+    /// Check the hand-written BDD probe specs without Chrome.
+    ProbeCheck,
+    /// Run the bdd plugin's argument-validation errors and hold the list complete.
+    ArgsProbeCheck,
+    /// Keep the numbers bdd/README.md quotes honest.
+    DocCheck,
+    /// Execute compiled scenarios against a real headless Chrome over CDP.
+    /// Local profile = hermetic fixture server; production = external target.
+    Run {
+        /// Feature files (default: all of bdd/features/*.feature).
+        #[arg(name = "features", num_args = 0..)]
+        features: Vec<String>,
+        /// Only features whose path contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Only scenarios carrying this tag (e.g. @production).
+        #[arg(long)]
+        tags: Option<String>,
+        /// local = hermetic fixtures; production = real target (--base-url).
+        #[arg(long, default_value = "local")]
+        profile: String,
+        /// Production base URL (default $BDD_BASE_URL).
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Pin the CDP port (serial only).
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        /// Maximum concurrent scenarios (currently serial by design).
+        #[arg(long, default_value_t = 1)]
+        jobs: usize,
+        /// Per-scenario timeout in seconds.
+        #[arg(long, default_value_t = 180)]
+        timeout_secs: u64,
+        /// Keep the generated specs in --out.
+        #[arg(long, default_value_t = false)]
+        keep: bool,
+        /// Output dir for generated specs.
+        #[arg(long, default_value = "target/bdd-specs")]
+        out: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MockCmd {
+    /// Serve the offline mock services (Redis/NATS/MQTT/SMTP/S3/Prom/Kafka/
+    /// HTTP score+agent/web/UDP/RPC/GraphQL/chat/MCP/vector/webhook) on the
+    /// ports requested. Prints `{"ready": true, "listeners": {...}}` once every
+    /// listener answers, so a launcher can wait for the line instead of
+    /// sleeping. Replaces laya-workflow mock serve and laya-workflow mock serve.
+    Serve {
+        /// Redis protocol mock port.
+        #[arg(long, default_value_t = 0)]
+        redis: u16,
+        /// NATS protocol mock port.
+        #[arg(long, default_value_t = 0)]
+        nats: u16,
+        /// MQTT protocol mock port.
+        #[arg(long, default_value_t = 0)]
+        mqtt: u16,
+        /// SMTP protocol mock port.
+        #[arg(long, default_value_t = 0)]
+        smtp: u16,
+        /// UDP echo mock port.
+        #[arg(long, default_value_t = 0)]
+        udp: u16,
+        /// S3-style HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        s3: u16,
+        /// Prometheus-style HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        prom: u16,
+        /// Kafka-style mock port.
+        #[arg(long, default_value_t = 0)]
+        kafka: u16,
+        /// Generic web HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        web: u16,
+        /// Score HTTP endpoint port.
+        #[arg(long, default_value_t = 0)]
+        score: u16,
+        /// Agent HTTP endpoint port.
+        #[arg(long, default_value_t = 0)]
+        agent: u16,
+        /// RPC HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        rpc: u16,
+        /// GraphQL HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        graphql: u16,
+        /// Chat HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        chat: u16,
+        /// MCP HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        mcp: u16,
+        /// Vector HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        vector: u16,
+        /// Webhook HTTP mock port.
+        #[arg(long, default_value_t = 0)]
+        webhook: u16,
+    },
+    /// Run the line-delimited JSON agent on stdin/stdout (the stdio transport
+    /// mock used by integration tests). Replaces `mock_server.py --stdio`.
+    Stdio,
+}
+
+#[derive(Subcommand)]
+enum BenchCmd {
+    /// Side-by-side: offline heuristic backend vs live laya-tch @ /v1/systemone
+    /// on the same laya_mem specs. Replaces bench/backend_comparison.py.
+    BackendComparison {
+        /// laya-tch base URL; empty string skips the live run.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Skip the offline heuristic run.
+        #[arg(long, default_value_t = false)]
+        skip_heuristic: bool,
+        /// Skip the live laya-tch run.
+        #[arg(long, default_value_t = false)]
+        skip_live: bool,
+    },
+    /// jev semantic gate vs GBNF structural gate on candidate memory records.
+    /// Replaces bench/jev_vs_gbnf.py (pure logic, no model needed).
+    JevVsGbnf {
+        /// Write the markdown report to this path (in addition to stdout).
+        #[arg(long)]
+        md_out: Option<String>,
+    },
+    /// Probe: can the on-device Needle 3 compile Gherkin BDD steps into spec
+    /// JSON? Replaces bench/bdd_to_needle.py (requires ~/.laya-workflow/models/
+    /// needle3.cact).
+    BddToNeedle,
+    /// A/B bench: Needle 3 vs offline heuristics on routing / extraction /
+    /// embedding / end-to-end. Replaces bench/needle_vs_heuristic.py.
+    NeedleVsHeuristic,
+    /// GBNF-strict stress: mutate a corpus of /system_one payloads and probe
+    /// the rejection + invariant surface of a live laya-tch. Replaces
+    /// bench/gbnf_strict_stress.py.
+    GbnfStress {
+        /// laya-tch base URL.
+        #[arg(long, default_value = "http://127.0.0.1:8400")]
+        base_url: String,
+        /// Requests per mutation class.
+        #[arg(long, default_value_t = 10)]
+        n_per_class: usize,
+        /// PRNG seed (deterministic corpus).
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+        /// Write the markdown report to this path (in addition to stdout).
+        #[arg(long)]
+        out: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DslCmd {
+    /// Validate every spec under dsl/ (or --dsl-dir), then run the sample
+    /// states recorded in bench/dsl_smoke_states.json against the labels in
+    /// bench/dsl_smoke_expect.json. Exit 1 on any validate or label failure.
+    Smoke {
+        /// Pin the dsl root instead of <manifest>/dsl.
+        #[arg(long)]
+        dsl_dir: Option<String>,
+        /// Live laya-tch base-url; omit for the offline heuristic backend.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Only run specs whose file stem contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Quiet: only failures + the final summary line.
+        #[arg(long, default_value_t = false)]
+        quiet: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesCmd {
     /// Create `.abide/` with a valid empty rubric + `.abideignore`.
     Init,
     /// Validate a rubric file's structure (default `.abide/rubric.json`).
@@ -313,7 +606,7 @@ enum AbideCmd {
         root: Option<String>,
     },
     /// Emit the prompt that turns AGENTS.md / CLAUDE.md into a rubric. Run the
-    /// printed prompt in an agent session inside the repo, then `abide check`.
+    /// printed prompt in an agent session inside the repo, then `rules check`.
     Compile {
         /// Repo root to read AGENTS.md from (default: walk up from cwd).
         #[arg(long)]
@@ -492,6 +785,21 @@ enum PluginCmd {
     List,
     /// Print where `plugin install` writes and the search path it lands in.
     Dir,
+    /// Every bundled plugin must appear in both registries that document it,
+    /// and every row must point at a plugin that ships. Replaces the former
+    /// laya-workflow plugin registry-check; exit 1 on any problem.
+    RegistryCheck,
+    /// Compile a single `.rhai` file through the engine, exit 1 on a parse
+    /// error. Replaces laya-workflow plugin compile.
+    Compile {
+        /// The .rhai file to compile-check.
+        #[arg(name = "file")]
+        file: std::path::PathBuf,
+    },
+    /// The full plugin gate: compile every shipped .rhai, assert the goofish
+    /// intent routing, and run the fold + feishu integration checks.
+    /// Replaces laya-workflow plugin check.
+    Check,
 }
 
 #[derive(Subcommand)]
@@ -784,7 +1092,45 @@ fn main() -> Result<()> {
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
         Cmd::Install { force, dirs_only } => run_install(*force, *dirs_only),
-        Cmd::Abide { cmd } => run_abide(cmd),
+        Cmd::Bdd { cmd } => run_bdd(cmd),
+        Cmd::Mock { cmd } => run_mock(cmd),
+        Cmd::Dsl { cmd } => run_dsl(cmd),
+        Cmd::Bench { cmd } => run_bench(cmd),
+        Cmd::BrowserDemo {
+            site,
+            port,
+            spec,
+            text,
+        } => {
+            let _ = laya_workflow::browser_demo::run(
+                &laya_workflow::browser_demo::BrowserDemoOptions {
+                    site: site.clone(),
+                    port: *port,
+                    spec: spec.clone(),
+                    text: text.clone(),
+                },
+            )?;
+            Ok(())
+        }
+        Cmd::FeishuCollect {
+            chats_limit,
+            page_size,
+            print_knobs,
+        } => {
+            let mut a = Vec::new();
+            if *print_knobs {
+                a.push("--print-knobs".to_string());
+                a.push(chats_limit.clone());
+                a.push(page_size.clone());
+            } else {
+                a.push(chats_limit.clone());
+                a.push(page_size.clone());
+            }
+            laya_workflow::feishu_collect::run(&a)?;
+            Ok(())
+        }
+        Cmd::Rules { cmd } => run_rules(cmd),
+        Cmd::Abide { cmd } => run_rules(cmd),
         Cmd::LayaMem { cmd } => run_laya_mem(cmd),
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
@@ -1189,6 +1535,33 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
             println!("  {:<8} {}", "builtin", plg::builtin_names().join(", "));
             Ok(())
         }
+        PluginCmd::RegistryCheck => {
+            let problems = plg::registry_check()?;
+            if problems > 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        PluginCmd::Compile { file } => {
+            match plg::compile_check(file) {
+                Ok(None) => {
+                    eprintln!("ok: {} compiles", file.display());
+                    Ok(())
+                }
+                Ok(Some(err)) => {
+                    eprintln!("error: {}: {err}", file.display());
+                    std::process::exit(1)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        PluginCmd::Check => {
+            let problems = plg::gate()?;
+            if problems > 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1480,6 +1853,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("install",   "The state root (~/.laya-workflow), `install` (layout + every bundled plugin + the laya-mem specs), and the laya-mem memory gate (`mcp serve`, `laya-mem info`).", "overview"),
+        ("rules",     "Rule enforcement: compile AGENTS.md rules into `.abide/rubric.json`, judge diffs against it, audit events. Hidden back-compat alias: `abide`.", "rules"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("db",        "HTAP store in two modes: `kind: \"db\"` pairs SQLite (ACID) with DuckDB (analytics) over one file — `embed` (local CLIs) or `server` (`db serve` daemon, shared writer).", "orchestrate"),
@@ -1559,6 +1933,7 @@ fn print_overview() {
     println!("  replay -s S -d D -iter N");
     println!("                 re-run a single iter in place from its state_before");
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
+    println!("  rules i|v|c|r|a  enforce AGENTS.md rules: init / validate / check / report / audit (alias: `abide`)");
     println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  db s|e|st|p    serve/ensure/status/stop the HTAP SQLite+DuckDB daemon");
@@ -1585,7 +1960,6 @@ fn print_overview() {
     println!("  LAYA_MEM_SQLITE   laya-mem store (default: <state>/laya-mem/codex.sqlite)");
     println!("  LAYA_MEM_SPEC_DIR  laya-mem specs (default: <state>/laya-mem/specs)");
     println!("  LAYA_BASE_URL      laya-mem backend (unset = offline heuristic)");
-    println!("  LAYA_TEST_PYTHON python3 binary for mock agent capability");
     println!("  LAYA_MOCK3       host:redis:nats:mqtt:smtp:s3:prom:kafka:udp");
     println!("  LAYA_AGENT_BIN_DIR  dir containing `cxgo` / `cmdgo` wrappers");
     println!("  LAYA_GOAL_DIR    allow-list root for goal_runner goal docs");
@@ -1595,7 +1969,8 @@ fn print_overview() {
 
 fn print_section(name: &str) -> Result<()> {
     let body = match name {
-        "abide" => SKILL_ABIDE,
+        "rules" => SKILL_RULES,
+        "abide" => SKILL_RULES,
         "overview" => SKILL_OVERVIEW,
         "validate" => SKILL_VALIDATE,
         "run" => SKILL_RUN,
@@ -1649,7 +2024,7 @@ fn print_recipe(name: &str) -> Result<()> {
     Ok(())
 }
 
-static SKILL_ABIDE: &str = include_str!("skill/sections/abide.md");
+static SKILL_RULES: &str = include_str!("skill/sections/rules.md");
 static SKILL_OVERVIEW: &str = include_str!("skill/sections/overview.md");
 static SKILL_VALIDATE: &str = include_str!("skill/sections/validate.md");
 static SKILL_RUN: &str = include_str!("skill/sections/run.md");
@@ -1740,6 +2115,186 @@ fn run_mcp(cmd: &McpCmd) -> Result<()> {
     }
 }
 
+fn run_mock(cmd: &MockCmd) -> Result<()> {
+    match cmd {
+        MockCmd::Serve {
+            redis,
+            nats,
+            mqtt,
+            smtp,
+            udp,
+            s3,
+            prom,
+            kafka,
+            web,
+            score,
+            agent,
+            rpc,
+            graphql,
+            chat,
+            mcp,
+            vector,
+            webhook,
+        } => laya_workflow::mock::run_serve(&laya_workflow::mock::MockOptions {
+            redis: *redis,
+            nats: *nats,
+            mqtt: *mqtt,
+            smtp: *smtp,
+            udp: *udp,
+            s3: *s3,
+            prom: *prom,
+            kafka: *kafka,
+            web: *web,
+            score: *score,
+            agent: *agent,
+            rpc: *rpc,
+            graphql: *graphql,
+            chat: *chat,
+            mcp: *mcp,
+            vector: *vector,
+            webhook: *webhook,
+        }),
+        MockCmd::Stdio => laya_workflow::mock::run_stdio(),
+    }
+}
+
+fn run_bench(cmd: &BenchCmd) -> Result<()> {
+    match cmd {
+        BenchCmd::BackendComparison {
+            base_url,
+            skip_heuristic,
+            skip_live,
+        } => laya_workflow::bench::backend_comparison(
+            &laya_workflow::bench::BackendComparisonOptions {
+                base_url: base_url.clone(),
+                skip_heuristic: *skip_heuristic,
+                skip_live: *skip_live,
+            },
+        )?,
+        BenchCmd::JevVsGbnf { md_out } => {
+            laya_workflow::bench_probe::jev_vs_gbnf(
+                &laya_workflow::bench_probe::JevVsGbnfOptions { md_out: md_out.clone() },
+            )?;
+        }
+        BenchCmd::BddToNeedle => {
+            laya_workflow::bench_probe::bdd_to_needle(
+                &laya_workflow::bench_probe::BddToNeedleOptions { quiet: false },
+            )?;
+        }
+        BenchCmd::NeedleVsHeuristic => {
+            laya_workflow::bench_probe::needle_vs_heuristic(
+                &laya_workflow::bench_probe::NeedleVsHeuristicOptions { quiet: false },
+            )?;
+        }
+        BenchCmd::GbnfStress {
+            base_url,
+            n_per_class,
+            seed,
+            out,
+        } => {
+            laya_workflow::bench::gbnf_stress(&laya_workflow::bench::GbnfStressOptions {
+                base_url: base_url.clone(),
+                n_per_class: *n_per_class,
+                seed: *seed,
+                out: out.clone(),
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn run_dsl(cmd: &DslCmd) -> Result<()> {
+    match cmd {
+        DslCmd::Smoke {
+            dsl_dir,
+            base_url,
+            filter,
+            quiet,
+        } => {
+            laya_workflow::dsl_smoke::run(&laya_workflow::dsl_smoke::DslSmokeOptions {
+                dsl_dir: dsl_dir.clone(),
+                base_url: base_url.clone(),
+                filter: filter.clone(),
+                quiet: *quiet,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn run_bdd(cmd: &BddCmd) -> Result<()> {
+    use laya_workflow::bdd;
+    let code = match cmd {
+        BddCmd::Build {
+            features,
+            out,
+            profile,
+            filter,
+            all,
+            coverage_min,
+            no_validate,
+            base_url,
+            emit,
+            assist,
+        } => bdd::build(&bdd::BuildOptions {
+            features: features.clone(),
+            out: out.clone(),
+            profile: profile.clone(),
+            filter: filter.clone(),
+            all: *all,
+            coverage_min: *coverage_min,
+            no_validate: *no_validate,
+            base_url: base_url.clone(),
+            emit: Some(emit.clone()),
+            assist: *assist,
+        })?,
+        BddCmd::Transpile {
+            features,
+            out,
+            list,
+            check,
+            chrome_bin,
+        } => bdd::transpile_cli(
+            features,
+            out.as_deref(),
+            *list,
+            *check,
+            chrome_bin.as_deref(),
+        )?,
+        BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
+        BddCmd::ProbeCheck => bdd::check_probes()?,
+        BddCmd::ArgsProbeCheck => bdd::check_args_probes()?,
+        BddCmd::DocCheck => bdd::check_doc()?,
+        BddCmd::Run {
+            features,
+            filter,
+            tags,
+            profile,
+            base_url,
+            port,
+            jobs,
+            timeout_secs,
+            keep,
+            out,
+        } => bdd::run(&bdd::RunOptions {
+            features: features.clone(),
+            filter: filter.clone(),
+            tags: tags.clone(),
+            profile: profile.clone(),
+            base_url: base_url.clone(),
+            port: *port,
+            jobs: *jobs,
+            timeout_secs: *timeout_secs,
+            keep: *keep,
+            out: out.clone(),
+        })?,
+    };
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
 fn app_workflow(app: &str) -> Result<ResilientWorkflow> {
     match app {
         "agent_gate" => Ok(apps::agent_gate::workflow()),
@@ -1804,8 +2359,7 @@ fn run_apps(backend: &dyn Decide, label: &str) -> Result<()> {
             action,
             r["label"].as_str().unwrap_or(""),
             r["latency_ms"].as_f64().unwrap_or(0.0),
-            &text[..text.len().min(44)]
-        );
+            &text[..text.len().min(44)]);
     }
 
     println!("== App 4: draft_scorer ==");
@@ -2065,16 +2619,16 @@ fn abide_repo_root() -> std::path::PathBuf {
     laya_workflow::abide::find_repo_root(&std::env::current_dir().unwrap_or_default())
 }
 
-fn run_abide(cmd: &AbideCmd) -> Result<()> {
+fn run_rules(cmd: &RulesCmd) -> Result<()> {
     use laya_workflow::abide as ab;
     match cmd {
-        AbideCmd::Init => {
+        RulesCmd::Init => {
             let dir = ab::cmd_init(&abide_repo_root())?;
             println!("created {}", dir.display());
-            println!("next: `laya-workflow abide compile` to build a rubric from AGENTS.md");
+            println!("next: `laya-workflow rules compile` to build a rubric from AGENTS.md");
             Ok(())
         }
-        AbideCmd::Validate { file } => {
+        RulesCmd::Validate { file } => {
             let path = file
                 .as_deref()
                 .map(std::path::PathBuf::from)
@@ -2099,7 +2653,7 @@ fn run_abide(cmd: &AbideCmd) -> Result<()> {
                 }
             }
         }
-        AbideCmd::Check {
+        RulesCmd::Check {
             file,
             phase,
             diff_file,
@@ -2155,7 +2709,7 @@ fn run_abide(cmd: &AbideCmd) -> Result<()> {
             // Hook callers want exit 0 even on block: stdout carries the signal.
             Ok(())
         }
-        AbideCmd::Report { root } => {
+        RulesCmd::Report { root } => {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
@@ -2164,14 +2718,14 @@ fn run_abide(cmd: &AbideCmd) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
         }
-        AbideCmd::Audit { root } => {
+        RulesCmd::Audit { root } => {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
                 .unwrap_or_else(abide_repo_root);
             ab::cmd_audit(&repo)
         }
-        AbideCmd::Compile { root, init } => {
+        RulesCmd::Compile { root, init } => {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)

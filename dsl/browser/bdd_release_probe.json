@@ -1,7 +1,7 @@
 {
   "name": "bdd_release_probe",
   "dsl_version": 2,
-  "description": "A hand-written spec that releases the same page twice, and is required to FAIL. The first release closes a real tab. The second has nothing to close, which is the state the Gherkin vocabulary cannot reach: `I release the page` sets the compiler's has-no-page state, so a second release there is a compile error, not a run. This spec exists so the plugin's honesty is tested and not merely asserted - `bdd.release` used to return `released: true` unconditionally, which meant a release of a target that never existed looked exactly like one that worked. scripts/bdd/run.py runs this and requires a non-zero exit naming the target.",
+  "description": "A hand-written spec that releases the same page twice, and is required to FAIL. The first release closes a real tab. The second has nothing to close, which is the state the Gherkin vocabulary cannot reach: `I release the page` sets the compiler's has-no-page state, so a second release there is a compile error, not a run. This spec exists so the plugin's honesty is tested and not merely asserted - `bdd.release` used to return `released: true` unconditionally, which meant a release of a target that never existed looked exactly like one that worked. laya-workflow bdd run runs this and requires a non-zero exit naming the target.",
   "start": "open",
   "max_iterations": 9,
   "convergence_window": 3,

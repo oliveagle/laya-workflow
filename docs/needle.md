@@ -134,7 +134,7 @@ and 14-layer remains the quality pick when ~180 ms is affordable.
 
 ### Does the speed-up cost accuracy? Full A/B by rung
 
-Same `bench/needle_vs_heuristic.py`, same bench cases, each rung in turn:
+Same `laya-workflow bench needle-vs-heuristic`, same bench cases, each rung in turn:
 
 | scenario | 20-layer (base) | 14-layer | 10-layer | 8-layer | 6-layer |
 |---|---|---|---|---|---|
@@ -223,7 +223,7 @@ See [docs/needle_evidence.md](./needle_evidence.md) for the A/B data that decide
 this: intent routing (heuristic 35% → hybrid 75%), structured extraction
 (regex 12% vs needle 62%), embedding recall (BOW 0.21 vs needle 0.95 cosine),
 and the workflow pattern **regex-classify + needle-entity = 100%** on 5 tickets.
-Reproduce with `python3 bench/needle_vs_heuristic.py`.
+Reproduce with `./target/release/laya-workflow bench needle-vs-heuristic`.
 
 ## Notes
 

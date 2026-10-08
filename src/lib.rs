@@ -6,6 +6,8 @@
 //! * `capability` — capability registry (data / local / net / proto / web / ...)
 
 pub mod abide;
+pub mod bdd;
+pub mod mock;
 pub mod accuracy;
 pub mod evaluate;
 pub mod laya_mem_answer;
@@ -13,6 +15,11 @@ pub mod apps;
 pub mod backend;
 pub mod capability;
 pub mod db;
+pub mod browser_demo;
+pub mod feishu_collect;
+pub mod bench;
+pub mod bench_probe;
+pub mod dsl_smoke;
 pub mod laya_mem;
 pub mod codegraph;
 pub mod codegraph_util;

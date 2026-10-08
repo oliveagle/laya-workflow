@@ -1,11 +1,11 @@
 # User login smoke test — demonstrates the unified BDD pipeline.
 #
-#   local:      python3 scripts/bdd/build.py bdd/examples/login_smoke.feature
-#   prod IT:    python3 scripts/bdd/build.py bdd/examples/login_smoke.feature \
+#   local:      laya-workflow bdd build bdd/examples/login_smoke.feature
+#   prod IT:    laya-workflow bdd build bdd/examples/login_smoke.feature \
 #                 --profile production --base-url https://app.example.com
-#   with assist:python3 scripts/bdd/build.py bdd/examples/login_smoke.feature --assist
+#   with assist:laya-workflow bdd build bdd/examples/login_smoke.feature --assist
 #
-# All steps use the standard vocabulary (scripts/bdd/steps.py), so the build's
+# All steps use the standard vocabulary (laya-workflow bdd vocabulary-check), so the build's
 # 100% coverage gate holds. <base_url> is supplied at run time: the local
 # profile injects the fixture server URL, the production profile injects
 # --base-url. Tags: @smoke = always run, @production = prod IT only.

@@ -1,6 +1,6 @@
 # Production integration tests: executed with
-#   python3 scripts/bdd/build.py --profile production --base-url https://app.example.com
-#   python3 scripts/bdd/run.py --profile production --base-url https://app.example.com
+#   laya-workflow bdd build --profile production --base-url https://app.example.com
+#   laya-workflow bdd run --profile production --base-url https://app.example.com
 #
 # `@production` is the tag that selects a scenario for the production profile.
 # `--profile production` refuses to run without an external --base-url, never
@@ -8,7 +8,7 @@
 # `@production` (a typo'd tag must not silently ship zero integration tests).
 Feature: Production integration smoke
   A smoke suite against a real deployment. Steps use the standard vocabulary
-  (scripts/bdd/steps.py) so the build's 100% coverage bar holds; `<base_url>`
+  (laya-workflow bdd vocabulary-check) so the build's 100% coverage bar holds; `<base_url>`
   is supplied at run time from --base-url / $BDD_BASE_URL.
 
   @production

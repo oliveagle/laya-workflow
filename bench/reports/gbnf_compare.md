@@ -66,11 +66,11 @@ in both modes. No regression.
 ```bash
 # strict OFF
 laya-tch --port 8400 --host 127.0.0.1 --model-dir ~/models/convaiinnovations--laya --device cpu &
-python3 bench/gbnf_strict_stress.py --base-url http://127.0.0.1:8400 --seed 42 --out bench/reports/gbnf_off.md
+./target/release/laya-workflow bench gbnf-stress --base-url http://127.0.0.1:8400 --seed 42 --out bench/reports/gbnf_off.md
 
 # strict ON
 pkill -f "laya-tch.*--port 8400"
 laya-tch --port 8400 --host 127.0.0.1 --model-dir ~/models/convaiinnovations--laya --device cpu --gbnf-strict &
-python3 bench/gbnf_strict_stress.py --base-url http://127.0.0.1:8400 --seed 42 --out bench/reports/gbnf_on.md
+./target/release/laya-workflow bench gbnf-stress --base-url http://127.0.0.1:8400 --seed 42 --out bench/reports/gbnf_on.md
 ```
 

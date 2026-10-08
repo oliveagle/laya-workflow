@@ -181,9 +181,9 @@ answers whether anything needs a reply.
 
 ### The gate
 
-`scripts/rhai/check_feishu.py` asserts the routing against
+`laya-workflow plugin check` asserts the routing against
 `scripts/rhai/fixtures/feishu_unread.json` (7 messages, one per bucket, shaped
-from real `lark-cli` output) and runs inside `scripts/rhai/check.sh`. It has to
+from real `lark-cli` output) and runs inside `laya-workflow plugin check`. It has to
 *execute* the plugin: this Rhai build ships no `replace`, `replace_all`, `strip`
 or array `clone`, and a missing builtin is a runtime `Function not found` that
 compiles clean and then fails on the first real message.

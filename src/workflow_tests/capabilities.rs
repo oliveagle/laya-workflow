@@ -183,25 +183,28 @@ pub fn test_capabilities(h: &mut Harness) {
         capability::Registry::from_spec(&json!({"capabilities": {"z": {"kind": "nope"}}})).is_err(),
     );
 
-    // codex-style stdio agent (line-delimited JSON) via a local python mock
-    let mock = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("bench/mock_server.py");
-    let python = std::env::var("LAYA_TEST_PYTHON").unwrap_or_else(|_| "python3".to_string());
-    if mock.exists() {
-        let mut pol3 = capability::Policy::default();
-        pol3.allow_exec = true;
-        let reg = capability::registry_from(
-            &[(
-                "agent",
-                json!({
-                    "kind": "agent", "transport": "stdio",
-                    "command": [python, mock.to_str().unwrap(), "--stdio"],
-                    "session": "t1", "timeout_ms": 10000
-                }),
-            )],
-            Some(pol3),
-        )
-        .unwrap();
-        match reg.call("agent", &json!({"ask": "hello"}), &json!({})) {
+    // codex-style stdio agent (line-delimited JSON) via the Rust binary
+    let exe = std::env::current_exe().expect("current_exe");
+    let mock_bin = std::env::var("LAYA_WORKFLOW_BIN").unwrap_or_else(|_| {
+        // integration tests run from target/<profile>/laya-workflow-tests;
+        // the binary sits in the same dir as laya-workflow.
+        exe.with_file_name("laya-workflow").to_string_lossy().into_owned()
+    });
+    let mut pol3 = capability::Policy::default();
+    pol3.allow_exec = true;
+    let reg = capability::registry_from(
+        &[(
+            "agent",
+            json!({
+                "kind": "agent", "transport": "stdio",
+                "command": [mock_bin, "mock", "stdio"],
+                "session": "t1", "timeout_ms": 10000
+            }),
+        )],
+        Some(pol3),
+    )
+    .unwrap();
+    match reg.call("agent", &json!({"ask": "hello"}), &json!({})) {
             Ok(r) => {
                 h.eq(
                     "cap: stdio agent reply",
@@ -221,7 +224,6 @@ pub fn test_capabilities(h: &mut Harness) {
                 h.check(&format!("cap: stdio agent reply (skipped: {e})"), true);
             }
         }
-    }
 
     // `call` action kind end-to-end through a spec (exec capability, no network)
     let call_spec = json!({

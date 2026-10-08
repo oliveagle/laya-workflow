@@ -1,5 +1,5 @@
 //! Local resource orchestration — the Rust home of the old
-//! `scripts/laya-ensure-chrome.sh` / `scripts/laya-ensure-server.py` helpers.
+//! `scripts/laya-ensure-chrome.sh` / `laya-workflow server` helpers.
 //!
 //! These are the generic, repo-agnostic primitives a workflow reaches for
 //! *before* it drives a browser: guarantee a browser backend is up (a CDP

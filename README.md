@@ -14,8 +14,7 @@ containing everything the workflow engine needs:
   point `--model-dir` at a local checkout
   (e.g. `~/models/convaiinnovations--laya`).
 - [`laya-mlx/`](./laya-mlx) — **`laya-mlx`** native MLX (Apple GPU) inference in
-  Rust, via `mlx-rs`. The macOS high-performance path for the decision model
-  (see also `laya-tch/mlx/`). Separate crate (its own workspace): `cd laya-mlx &&
+  Rust, via `mlx-rs`. The macOS high-performance path for the decision model. Separate crate (its own workspace): `cd laya-mlx &&
   cargo build --release`.
 
 ## Install
@@ -108,7 +107,7 @@ gate, and prints what it skipped so the cost is visible rather than surprising.
 
 The plugin gate compiles **all 14** `websites/*/plugin/main.rhai`, not a sample:
 the Rust suite executes none of them, so a gate that compiled one would report
-a broken taobao plugin as green. It also runs `scripts/rhai/check.sh`, which
+a broken taobao plugin as green. It also runs `laya-workflow plugin check`, which
 executes goofish to assert routing and the price-model fold — behaviour, not
 syntax, which is why it stays a separate step.
 
@@ -122,7 +121,8 @@ Editing a plugin (`websites/*/plugin/main.rhai`)? Start at
 loop there costs 0.33s.
 
 That loop compiles plugins by *running* them through the engine, which is why
-`compile.py` names a host that cannot resolve in `policy.allow_hosts`: an empty
+`laya-workflow plugin compile` names a host that cannot resolve in
+`policy.allow_hosts`: an empty
 list means "allow everything" (`check_host`, `src/capability/mod.rs`), so
 huggingface's `run()` really did make 11 live HTTP calls — 4.9s of a 5.6s gate,
 and a red gate whenever the network was down. Syntax errors are raised by
@@ -130,8 +130,8 @@ and a red gate whenever the network was down. Syntax errors are raised by
 
 ## DSL
 
-Specs live under `dsl/`, organised by domain. See `bench/dsl_smoke.py` for
-end-to-end smoke tests (`python3 bench/dsl_smoke.py`).
+Specs live under `dsl/`, organised by domain. See `laya-workflow dsl smoke` for
+end-to-end smoke tests (`laya-workflow dsl smoke`).
 
 A bare `"workflow": "<name>"` reference — and `laya-workflow list` — resolves
 through a **layered** set of spec roots (highest priority first):

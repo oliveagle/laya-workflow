@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 fn fixtures() -> Option<(Value, Value)> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../laya-tch/mlx/tests");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
     let cases = std::fs::read_to_string(dir.join("parity_cases.json")).ok()?;
     let expected = std::fs::read_to_string(dir.join("parity_expected.json")).ok()?;
     Some((serde_json::from_str(&cases).ok()?, serde_json::from_str(&expected).ok()?))

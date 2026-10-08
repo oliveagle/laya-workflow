@@ -3,7 +3,7 @@
 Native **Rust** MLX inference for the Laya decision model — a direct
 implementation on Apple MLX via [`mlx-rs`](https://crates.io/crates/mlx-rs).
 
-This is the Rust counterpart of the Python runtime under `../laya-tch/mlx/`:
+This is the native Rust port of the upstream `laya-mlx` architecture (Apple MLX / Metal GPU). It owns the same request/response shape and the same frozen parity fixture, with no Python anywhere in the loop:
 the full **ModernBERT-large encoder + 2-layer decision head + marker scorer +
 action head**, the tokenizer, the prompt builder and the temperature
 calibration, all running on the **Metal GPU** with no Python in the loop.
@@ -34,10 +34,10 @@ cargo build --release
 
 ```bash
 # one-shot inference (same request/response shape as /v1/systemone)
-./target/release/laya-mlx --request ../laya-tch/mlx/examples/ref_request.json
+./target/release/laya-mlx --request ./examples/ref_request.json
 
 # benchmark (median / p90 latency + an f16 GEMM probe)
-./target/release/laya-mlx --request ../laya-tch/mlx/examples/ref_request.json --bench 20
+./target/release/laya-mlx --request ./examples/ref_request.json --bench 20
 
 # HTTP server: model loaded once, kept in memory (this is what the
 # extensions/jev-webmcp side panel talks to)
@@ -90,7 +90,7 @@ median of 25, Apple M4 GPU:
 | Python (`laya-tch/mlx`, MLX GPU) | ~71 ms |
 | **Rust (`laya-mlx`, MLX GPU)** | **~71 ms** |
 
-The Rust and Python runtimes are on par (ratio ≈ 1.0×).
+The Rust runtime matches the historical Python reference (ratio ≈ 1.0×).
 
 > **Root cause of the earlier 1.6× regression.** The first Rust port ran at
 > ~110 ms because `mlx_rs::nn::gelu` funnels through `mlx_gelu`, which returns

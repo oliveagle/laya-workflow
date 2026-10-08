@@ -1045,7 +1045,7 @@ pub fn flag_notice(phase: RuleWhen, flagged: &[Violation], files: &[String]) -> 
         RuleWhen::Turn => "turn",
     };
     format!(
-        "Abide: uncertain about {}{on} ({phase_label}). Not sent to the agent. Details in .abide/events.jsonl.",
+        "rules: uncertain about {}{on} ({phase_label}). Not sent to the agent. Details in .abide/events.jsonl.",
         list.join(", ")
     )
 }
@@ -1379,7 +1379,7 @@ pub fn compile_prompt(root: &Path) -> String {
     };
     let bodies_text = bodies.join("\n\n");
     format!(
-        "You are compiling {sources_list} into a machine-checkable rubric for the abide rule-enforcement tool.\n\
+        "You are compiling {sources_list} into a machine-checkable rubric for the rules rule-enforcement tool.\n\
 \n\
 Read the instruction files below, then write `.abide/rubric.json` at the repo root.\n\
 \n\
@@ -1420,7 +1420,7 @@ pub fn cmd_init(root: &Path) -> Result<PathBuf> {
         let rubric = Rubric {
             version: RUBRIC_VERSION,
             compiled_at: now_iso(),
-            compiled_by: Some("laya-workflow abide init".to_string()),
+            compiled_by: Some("laya-workflow rules init".to_string()),
             sources: vec![],
             thresholds: None,
             rules: vec![],
@@ -1429,7 +1429,7 @@ pub fn cmd_init(root: &Path) -> Result<PathBuf> {
     }
     let ignore = dir.join(".abideignore");
     if !ignore.exists() {
-        std::fs::write(&ignore, "# Paths abide never checks, one glob per line.\n# .env\n# *.key\n")?;
+        std::fs::write(&ignore, "# Paths rules never checks, one glob per line.\n# .env\n# *.key\n")?;
     }
     Ok(dir)
 }
@@ -1483,7 +1483,7 @@ pub fn cmd_check(input: &CheckCliInput) -> Result<HookOutput> {
     let rubric = match read {
         RubricRead::Ok { rubric, .. } => rubric,
         RubricRead::Missing { path } => {
-            bail!("no rubric at {} — run `abide init` then `abide compile`", path.display())
+            bail!("no rubric at {} — run `rules init` then `rules compile`", path.display())
         }
         RubricRead::Invalid { path, issues } => {
             bail!("invalid rubric at {}: {}", path.display(), issues.join("; "))

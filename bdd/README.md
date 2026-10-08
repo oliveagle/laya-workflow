@@ -1,21 +1,21 @@
 # BDD documents, executed by laya-workflow against real Chrome
 
 A Gherkin `.feature` file is the source of truth for a browser scenario.
-`scripts/bdd/transpile.py` compiles each `Scenario` into a laya-workflow
-spec, and `scripts/bdd/run.py` runs those specs against a real headless Chrome
+`laya-workflow bdd transpile` compiles each `Scenario` into a laya-workflow
+spec, and `laya-workflow bdd run` runs those specs against a real headless Chrome
 over CDP. Nothing in the assertion path is judged by a language model: the
 expression runs in the page, the result is compared key-by-key, and a mismatch
 throws and fails the run.
 
 ```bash
-python3 scripts/bdd/run.py                    # every scenario, real Chrome
-python3 scripts/bdd/run.py --filter outline   # one feature, by substring
-python3 scripts/bdd/run.py --keep             # keep the generated specs
-python3 scripts/bdd/transpile.py bdd/features/*.feature --list
+laya-workflow bdd run                    # every scenario, real Chrome
+laya-workflow bdd run --filter outline   # one feature, by substring
+laya-workflow bdd run --keep             # keep the generated specs
+laya-workflow bdd transpile bdd/features/*.feature --list
 ```
 
 Current state: **22 scenarios, all green in ~8s**, hermetic — the only HTTP
-traffic is a local fixture server on a random port. `scripts/bdd/doc_check.py`
+traffic is a local fixture server on a random port. `laya-workflow bdd doc-check`
 keeps every count on this page recomputed from the gates themselves.
 
 ## How a Scenario becomes a spec
@@ -46,7 +46,7 @@ registration step, and no checkout needed: it is also compiled into the binary
 as a built-in, so a spec that says `"plugin": "bdd"` resolves from a shipped
 executable as well as from a working tree. It is listed in the repo's own
 `## Bundled plugins` registry in both `docs/plugins.md` and
-`src/skill/sections/plugins.md`, and `scripts/plugin_registry_check.py` fails
+`src/skill/sections/plugins.md`, and `laya-workflow plugin registry-check` fails
 the build if a plugin under `plugins/` is missing from either — see "The
 registry is a gate" below. It is the reason the assertion
 vocabulary is reusable: the *meaning* of a `Then` lives in Rhai, not in the
@@ -75,12 +75,12 @@ existed — reads as the mistake it is. It used to return `released: true`
 unconditionally, which made it the one op in the set that could not fail, and
 therefore had nothing in it worth testing.
 `dsl/browser/bdd_release_probe.json` is the hand-written spec that holds it to
-that, and `run.py` runs it as a *required failure* — see "A test that has to
+that, and `laya-workflow bdd run` runs it as a *required failure* — see "A test that has to
 fail" below.
 
 That it is a *standard* plugin is checked, not asserted:
 `dsl/browser/bdd_assert_probe.json` is a hand-written spec — no Gherkin, no
-transpiler — that drives the same ops, and `scripts/bdd/run.py` runs it against
+transpiler — that drives the same ops, and `laya-workflow bdd run` runs it against
 the same fixture as the scenarios. If the vocabulary ever stops being usable
 outside the compiler, that row goes red.
 
@@ -91,7 +91,7 @@ Those two lists — the ops and the assertions — are not only documentation, t
 are the *error messages*. `bdd: unknown op 'x' (open | navigate | …)` and
 `bdd.assert: unknown assertion 'x' (…)` are how someone finds out what exists
 after they have already got something wrong, so they drift silently when the
-vocabulary grows. `vocabulary_check.py` reads the dispatch out of
+vocabulary grows. `laya-workflow bdd vocabulary-check` reads the dispatch out of
 `plugins/bdd/main.rhai` and compares it to both messages, in both directions:
 an op the plugin handles but the message omits, and an op the message
 advertises but the plugin does not handle. All three drift shapes were
@@ -127,7 +127,7 @@ that makes a timeout look like it gave up early.
 
 Anything not in this table is a compile error. A BDD step that quietly becomes
 a no-op is a test that always passes, which is worse than a hard error — and
-so is a step that quietly becomes the *wrong* step. `scripts/bdd/vocabulary_check.py`
+so is a step that quietly becomes the *wrong* step. `laya-workflow bdd vocabulary-check`
 pins every step in the table to the op it is supposed to run, and runs in the
 default gate with no Chrome:
 
@@ -160,7 +160,7 @@ load-bearing enough to have its own `@expected_failure` scenario, because
 `I release the page` is the one step that changes what a *later* step may do:
 it closes the tab, so the compiler moves to its has-no-page state and any
 following step is a compile error rather than a CDP failure at run time. Both
-halves of that are pinned in `vocabulary_check.py`.
+halves of that are pinned in `laya-workflow bdd vocabulary-check`.
 
 **Then** — `the page title contains "<text>"` · `the page url contains "<text>"` ·
 `the element "<selector>" is visible` ·
@@ -199,7 +199,7 @@ the declared text has to appear in the failure, or the scenario is reported
 ```
 
 A bare `@expected_failure` is a hard error, checked **without Chrome** by
-`vocabulary_check.py`, so it cannot be reintroduced in a commit that CI accepts.
+`laya-workflow bdd vocabulary-check`, so it cannot be reintroduced in a commit that CI accepts.
 
 ```
   PASS           page_smoke.feature :: A page that loads is assertable  [0]
@@ -223,7 +223,7 @@ So a plugin could be written, compiled, gated, run and shipped while being
 invisible to the one document whose job is to say what exists. `bdd` was the
 one this file is about.
 
-`scripts/plugin_registry_check.py` compares the directories under `plugins/`
+`laya-workflow plugin registry-check` compares the directories under `plugins/`
 against both tables, in both directions — a plugin that ships and is not
 listed, and a row pointing at a directory that no longer exists. It runs in
 `scripts/verify.sh` *and* as its own CI step, because CI does not invoke
@@ -246,7 +246,7 @@ refuses to compile that — after a release the compiler knows there is no page,
 so the second release is a compile error, not a run.
 
 So the probe is hand-written (`dsl/browser/bdd_release_probe.json`) and
-`run.py` inverts the verdict for it: `rc == 0` is the *failure*, and the run
+`laya-workflow bdd run` inverts the verdict for it: `rc == 0` is the *failure*, and the run
 has to name the target it could not close or it does not count. A green-only
 suite cannot express that, and here it is not hypothetical — measured with the
 pre-fix `release` compiled in:
@@ -341,7 +341,7 @@ callers, so they cannot drift:
 * `scripts/verify.sh` — the pre-push gate.
 * `.github/workflows/ci.yml` — a step in the offline job.
 
-The probe specs get their own checker, `scripts/bdd/probe_check.py`, because
+The probe specs get their own checker, `laya-workflow bdd probe-check`, because
 `laya-workflow validate` is the wrong tool for them. Measured, a probe whose
 `edge` names a node that does not exist **passes** `validate` and then fails at
 run time with `error_node_missing` and a zero exit code — which is precisely
@@ -406,23 +406,23 @@ Two changes, one per half of the problem:
   vendoring real htmx to satisfy a `typeof` would be a dependency with no
   behaviour under test.
 
-`run.py` points it at that fixture and requires all three — exit 0, four nodes
+`laya-workflow bdd run` points it at that fixture and requires all three — exit 0, four nodes
 reached, and `"htmx_loaded": true` in the report — so the runner cannot be
 satisfied by a run where the wait quietly failed.
 
 Measured after: the probe went **16.4s → 0.43s** (38×) and the whole
-`run.py` suite **24.5s → ~9s**. Falsified both ways: against `index.html` the
+`laya-workflow bdd run` suite **24.5s → ~9s**. Falsified both ways: against `index.html` the
 run exits 1 with `htmx_ok: expected true, got false`; against `htmx.html` it
 exits 0 with `htmx_loaded: true`, `htmx_ok: true` and all four nodes.
 
-The spec also joins the Chrome-free gates — `probe_check.py` now lints it
+The spec also joins the Chrome-free gates — `laya-workflow bdd probe-check` now lints it
 (5 hand-written specs) and `check.sh`'s validate glob is `*probe*` rather than
 `bdd_*probe*` (6/6 validate).
 
 ### And it caught a blind spot in the doc check
 
 Two counts in this file went stale the instant the probe set widened, and
-`doc_check.py` did not notice, because it matches labelled numbers in the gates'
+`laya-workflow bdd doc-check` did not notice, because it matches labelled numbers in the gates'
 own output and counts written as *words* — "all 4 probe specs", "the four probe
 specs" — are prose. One of them was also past tense, describing the old
 behaviour as if current. Both corrected by hand, and the lesson is written down
@@ -431,9 +431,9 @@ will go quiet about every other number on the page.
 ## The numbers on this page are checked
 
 This README quotes its own gates: the scenario count up top, and the output of
-`vocabulary_check.py` and `args_probe_check.py`. Those quotes drift silently,
+`laya-workflow bdd vocabulary-check` and `laya-workflow bdd args-probe-check`. Those quotes drift silently,
 because nothing recomputed them. Measured on the first run of
-`scripts/bdd/doc_check.py`:
+`laya-workflow bdd doc-check`:
 
 * the headline said **`Current state: 5 scenarios`** while
   `bdd/features/*.feature` transpiles to **22** — the number was never wrong
@@ -441,7 +441,7 @@ because nothing recomputed them. Measured on the first run of
 * the quoted `bdd vocabulary:` block had lost four clauses to an edit and still
   looked like a complete line of output.
 
-`doc_check.py` recomputes every labelled count from the gate that owns it and
+`laya-workflow bdd doc-check` recomputes every labelled count from the gate that owns it and
 compares it with what the README says, and requires each quoted output block to
 be **exactly** what the gate prints today — not a prefix of it. That last
 distinction is the whole check: a truncated quote is a *prefix* of the real
@@ -474,7 +474,7 @@ of them went stale the moment round 17 widened the probe set — see below.
 
 `plugins/bdd/main.rhai` opens with a table of its six ops, its nine assertions and
 the defaults it takes. That header is what someone reads before writing a spec
-against the plugin, and **nothing held it to the code** — `vocabulary_check.py`
+against the plugin, and **nothing held it to the code** — `laya-workflow bdd vocabulary-check`
 checked the two "here is what you can say" *error messages* against the
 dispatcher, and the table right next to them was prose.
 
@@ -556,10 +556,10 @@ included `bdd.navigate: with.url is required`, the shared
 `an earlier step must open a page first` guard, and the three `needs
 with.expected` variants.
 
-`bdd/args_probes.json` pins them, and `scripts/bdd/args_probe_check.py` runs it:
+`bdd/args_probes.json` pins them, and `laya-workflow bdd args-probe-check` runs it:
 
 ```
-$ python3 scripts/bdd/args_probe_check.py
+$ laya-workflow bdd args-probe-check
 bdd args probes: 15/15 argument errors refuse with the message they claim,
 and all 17 throw sites are accounted for (15 pinned here, 5 declared elsewhere)
 ```
@@ -598,7 +598,7 @@ for, so there is no way to make a real tab hang.
 
 ### Cost, and why it is serial
 
-`run.py` prints the slowest scenarios, because the cost is not where you would
+`laya-workflow bdd run` prints the slowest scenarios, because the cost is not where you would
 guess. Process startup and spec parsing are ~3ms (`validate` × 20 = 62ms).
 Almost all of a scenario's ~0.3s is Chrome/CDP round-trips.
 
@@ -627,7 +627,7 @@ after a normal run: 0 dirs, 0 chrome procs
 after SIGINT mid-run: 0 dirs, 0 chrome procs
 ```
 
-**`python3 scripts/bdd/run.py`** is the CDP run. It needs a local Chrome, so it
+**`laya-workflow bdd run`** is the CDP run. It needs a local Chrome, so it
 is an explicit local gate and deliberately *not* in CI: the runners install no
 browser, and adding one is a separate decision rather than something to smuggle
 in here.

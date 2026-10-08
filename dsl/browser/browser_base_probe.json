@@ -1,7 +1,7 @@
 {
   "name": "browser_base_probe",
   "dsl_version": 2,
-  "description": "A hand-written multi-step spec - open -> wait_htmx -> assert -> done - that four documents point at as the canonical \"chrome_cdp owns the page across nodes\" shape. The assert node requires htmx_ok: true, so the wait it sits behind is actually checked: this used to run against the htmx-less index.html, spend the whole 15000ms wait_htmx budget, report htmx_loaded: false and still pass, because nothing looked at the result. scripts/bdd/run.py points it at bdd/fixtures/htmx.html and requires all four nodes.",
+  "description": "A hand-written multi-step spec - open -> wait_htmx -> assert -> done - that four documents point at as the canonical \"chrome_cdp owns the page across nodes\" shape. The assert node requires htmx_ok: true, so the wait it sits behind is actually checked: this used to run against the htmx-less index.html, spend the whole 15000ms wait_htmx budget, report htmx_loaded: false and still pass, because nothing looked at the result. laya-workflow bdd run points it at bdd/fixtures/htmx.html and requires all four nodes.",
   "start": "open",
   "max_iterations": 5,
   "convergence_window": 5,

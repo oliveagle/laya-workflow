@@ -4,8 +4,8 @@
 直接"转成真正的 JSON"？准确率有多高？
 
 **方法**：全部用真实引擎跑（`laya-workflow mcp serve` + `libneedle.so`/`needle3.cact`，
-base 121M/2-bit），不估算。复现：`python3 bench/bdd_to_needle.py`。对照组 = 仓库已有的
-确定性编译器 `scripts/bdd/transpile.py`（46 个 step 模式，22 scenarios 全绿 ~8s，
+base 121M/2-bit），不估算。复现：`./target/release/laya-workflow bench bdd-to-needle`。对照组 = 仓库已有的
+确定性编译器 `laya-workflow bdd transpile`（46 个 step 模式，22 scenarios 全绿 ~8s，
 0ms/步）。
 
 ## 结论（TL;DR）
@@ -55,7 +55,7 @@ base 121M/2-bit），不估算。复现：`python3 bench/bdd_to_needle.py`。对
 
 ## 可行架构（推荐）
 
-1. **Gherkin 保持人的意图层**；标准词汇表走 `scripts/bdd/transpile.py`
+1. **Gherkin 保持人的意图层**；标准词汇表走 `laya-workflow bdd transpile`
    （确定性、0ms、100% 精确、可 `laya-workflow validate` + CI 门禁）。
 2. **needle 只接词汇表外/口述意图**：自然语言 → 多工具 + triggers → `{op, assertion,
    value}`；**confidence ≥ 0.5 才接受**，低于就拒绝交给人工（仓库 routing 模式：

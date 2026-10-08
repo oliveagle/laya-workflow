@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+  "$ROOT/target/release/laya-workflow" plugin registry-check || rc=1#!/usr/bin/env bash
 # The gate before you push, in about a second.
 #
 #   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~1s warm
@@ -88,48 +88,21 @@ fi
 
 # ── 3. do the plugins still compile and still route? ─────────────────────────
 # It is the only stage that can catch a plugin edit: the Rust suite never
-# executes Rhai.
-#
-# Every plugin, not the first one found. There are 14 of them and the Rust
-# suite executes none of them, so a gate that compiles goofish alone would call
-# the repo green with a broken taobao plugin sitting in it - which is precisely
-# the shape of failure this file exists to prevent. With compile.py's allow_hosts
-# fix the whole set costs ~0.3s, so there is no reason to sample.
+# executes Rhai. Every plugin, not a sample: 19 shipped `.rhai` files, plus the
+# goofish intent routing, the fold guard and the feishu classifier fixtures —
+# all in-process in the binary, one command, no Python.
 T0=$SECONDS
-NPLUG=0
-BADPLUG=""
-while IFS= read -r p; do
-  [ -n "$p" ] || continue
-  NPLUG=$((NPLUG+1))
-  if ! python3 "$ROOT/scripts/rhai/compile.py" "$p" >/dev/null 2>"$TMPERR"; then
-    BADPLUG="$BADPLUG ${p#"$ROOT"/}"
-    echo "   FAILED ${p#"$ROOT"/}"
-    sed 's/^/     /' "$TMPERR" | head -3
-  fi
-done < <(find "$ROOT/websites" -name '*.rhai' 2>/dev/null | sort)
-
-if [ "$NPLUG" -gt 0 ]; then
-  stage "plugin gate"
-  # check.sh additionally *runs* goofish to assert routing and the fold, which
-  # compile.py cannot: those are behaviour, not syntax.
-  "$ROOT/scripts/rhai/check.sh" 2>&1 | grep -E '^(ok:|   ok|   corpus|all green|error)' || rc=1
-  # Compiling a plugin says nothing about whether anyone can find it. The
-  # `## Bundled plugins` table is the registry, and it had drifted: three of
-  # the four directories under plugins/ were missing from one registry or the
-  # other. Wired into CI as well, because verify.sh is not what CI runs.
-  python3 "$ROOT/scripts/plugin_registry_check.py" || rc=1
-  if [ -z "$BADPLUG" ]; then
-    printf '   %d/%d plugins compiled [%ss]\n' "$NPLUG" "$NPLUG" "$((SECONDS-T0))"
-  else
-    printf '   %d/%d plugins compiled; FAILED:%s [%ss]\n' \
-      "$((NPLUG - $(printf '%s' "$BADPLUG" | wc -w | tr -d ' ')))" "$NPLUG" "$BADPLUG" "$((SECONDS-T0))"
-    rc=1
-  fi
-else
-  stage "plugin gate"
-  echo "   no plugins under websites/ - skipped"
+stage "plugin gate"
+if ! "$ROOT/target/release/laya-workflow" plugin check 2>&1 | sed 's/^/   /'; then
+  rc=1
 fi
 
+# Compiling a plugin says nothing about whether anyone can find it. The
+# `## Bundled plugins` table is the registry, and it had drifted: three of the
+# four directories under plugins/ were missing from one registry or the other.
+# Wired into CI as well, because verify.sh is not what CI runs.
+"$ROOT/target/release/laya-workflow" plugin registry-check || rc=1
+printf '   [%ss]\n' "$((SECONDS-T0))"
 # ── 4. do the BDD documents still compile into runnable specs? ───────────────
 # bdd/features/*.feature is hand-written; every spec under it is generated.
 # This catches a step that no longer parses, or a scenario that compiles to a
@@ -137,7 +110,7 @@ fi
 # as a red browser test. No Chrome, no network, so it is cheap enough for the
 # default gate. The logic lives in scripts/bdd/check.sh so that CI and this
 # script cannot drift apart; the CDP run is a separate, explicit gate
-# (scripts/bdd/run.py).
+# (`laya-workflow bdd run`).
 stage "bdd transpile"
 if [ -d "$ROOT/bdd/features" ] && compgen -G "$ROOT/bdd/features/*.feature" >/dev/null; then
   if ! "$ROOT/scripts/bdd/check.sh" "$CLI" 2>"$TMPERR" | sed 's/^/   /'; then

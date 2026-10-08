@@ -33,7 +33,7 @@
 
 Jev-Mem stopping 语义：
 
-```python
+```text
 if (evidence_sufficient >= 0.85
     and missing_evidence < 0.40
     and contradiction < 0.40):

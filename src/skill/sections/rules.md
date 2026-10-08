@@ -1,4 +1,4 @@
-# abide — 把 AGENTS.md 的规则变成可执行的检查
+# rules — 把 AGENTS.md 的规则变成可执行的检查
 
 从 [coldteadotai/abide](https://github.com/coldteadotai/abide) 移植。目标：让
 coding agent **真的遵守** AGENTS.md / CLAUDE.md 里的规则，而不是只读一遍。
@@ -15,31 +15,31 @@ coding agent **真的遵守** AGENTS.md / CLAUDE.md 里的规则，而不是只�
 
 ```bash
 # 1. 生成骨架（.abide/ + 空的 rubric.json + .abideignore）
-laya-workflow abide init
+laya-workflow rules init
 
 # 2. 拿到 compile prompt，粘进一个 agent 会话，让它写 rubric
-laya-workflow abide compile
+laya-workflow rules compile
 # 或者先 --init 再打印：
-laya-workflow abide compile --init
+laya-workflow rules compile --init
 
 # 3. 校验 rubric
-laya-workflow abide validate
+laya-workflow rules validate
 
 # 4. 对一次改动做检查（离线，用 question.heuristic 做确定性判定）
-laya-workflow abide check \
+laya-workflow rules check \
   --diff-file /tmp/hunk.diff \
   --file-path src/worker.rs \
   --phase edit
 
 # 5. 用真模型判定（laya-tch /v1/systemone）
-laya-workflow abide check \
+laya-workflow rules check \
   --diff-file /tmp/hunk.diff \
   --file-path src/worker.rs \
   --base-url http://127.0.0.1:8400
 
 # 6. 汇总
-laya-workflow abide report
-laya-workflow abide audit
+laya-workflow rules report
+laya-workflow rules audit
 ```
 
 ## Rubric 结构
@@ -82,7 +82,7 @@ laya-workflow abide audit
 - **model-checked 规则必须写 `when`**（`edit` 按 hunk、`turn` 整轮）。
 - **lint 型规则**（`check.type = "lint"`）只记录、不判定——那本该是 linter 的活。
 - **`question.heuristic` 是 laya 的离线扩展**：没配它也能跑（离线判定为合规，
-  在线用真模型判）；配了它 `abide check` 不用模型也能确定性判。
+  在线用真模型判）；配了它 `rules check` 不用模型也能确定性判。
 
 ## 判定输出
 
@@ -111,10 +111,10 @@ laya-workflow abide audit
 
 ## 与原 abide 的差异
 
-| 原 abide | laya-workflow 移植 |
+| 原 abide 项目 | laya-workflow rules |
 |---|---|
-| Node CLI + Claude Code / Codex / OpenCode / Pi 4 套 hook | `laya-workflow abide <sub>` 独立子命令；hook 接线留给宿主自己（`kind: block` JSON 就是约定） |
-| `compile` 委托给 headless agent | `abide compile` 打印 compile prompt 给用户，粘进 agent 会话即可 |
+| Node CLI + Claude Code / Codex / OpenCode / Pi 4 套 hook | `laya-workflow rules <sub>` 独立子命令；hook 接线留给宿主自己（`kind: block` JSON 就是约定） |
+| `compile` 委托给 headless agent | `rules compile` 打印 compile prompt 给用户，粘进 agent 会话即可 |
 | 判定走 TypeSafe / Vercel AI Gateway 的 `jev-latest` | `--base-url` 指 `laya-tch` 的 `/v1/systemone`；或用 `question.heuristic` 完全离线 |
 | `.abide/rubric.json` / `.abide/events.jsonl` | 一模一样 |
 | `violationProbability` / `bandFor` / thresholds / repair reason | 一模一样 |

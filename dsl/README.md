@@ -163,7 +163,7 @@ kinds, with live-tested endpoints for the network ones (web/http/graphql/rpc/llm
 webhook/sse/prometheus/s3/sql/tcp) and explicit ENV-LIMITED notes for the rest.
 Note `allow_hosts` must list the API endpoint **and** every page host you fetch.
 
-Local mocks: the protocol/service examples run against `bench/mock_services.py`
+Local mocks: the protocol/service examples run against `laya-workflow mock serve`
 (redis/nats/mqtt/smtp/s3/prometheus/kafka/udp/web). Start them with
 `bench/mock_services.sh start` (start/stop/status; it waits for the readiness
 line, so the service outlives the calling shell). Tests take

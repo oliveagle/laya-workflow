@@ -1,4 +1,4 @@
-# Executed by: scripts/bdd/run.py
+# Executed by: laya-workflow bdd run
 # State required: base_url
 Feature: Assertion vocabulary
   Every assertion the bdd plugin offers, checked twice against the real

@@ -1,7 +1,7 @@
 {
   "name": "bdd_wait_probe",
   "dsl_version": 2,
-  "description": "A hand-written spec that waits for an element that never appears, and is required to FAIL. It exists to hold `bdd.wait_for` to two claims the suite otherwise cannot check: that its budget is milliseconds on both sides of the comparison, and that the failure names the budget and the selector. The first version divided the budget into seconds but counted `waited` in milliseconds, so `100 < 15.0` was already false and it gave up after one poll while claiming a 15s timeout - a wait that lies about how long it waited. scripts/bdd/run.py requires a non-zero exit that names the budget, the selector, and a poll count consistent with the budget asked for.",
+  "description": "A hand-written spec that waits for an element that never appears, and is required to FAIL. It exists to hold `bdd.wait_for` to two claims the suite otherwise cannot check: that its budget is milliseconds on both sides of the comparison, and that the failure names the budget and the selector. The first version divided the budget into seconds but counted `waited` in milliseconds, so `100 < 15.0` was already false and it gave up after one poll while claiming a 15s timeout - a wait that lies about how long it waited. laya-workflow bdd run requires a non-zero exit that names the budget, the selector, and a poll count consistent with the budget asked for.",
   "start": "open",
   "max_iterations": 9,
   "convergence_window": 3,

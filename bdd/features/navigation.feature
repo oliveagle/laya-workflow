@@ -1,4 +1,4 @@
-# Executed by: scripts/bdd/run.py
+# Executed by: laya-workflow bdd run
 # State required: base_url
 #
 # `navigate` and `evaluate` are the two plugin ops the rest of the suite never

@@ -38,18 +38,18 @@ Point a spec's `chrome_cdp` capability endpoint at `http://127.0.0.1:<port>` and
 ```sh
 # start on demand, capture the base URL, leave it running (daemon)
 laya-workflow server ensure --port 18766 \
-  --command 'python3 -m http.server 18766'
+  --command 'laya-workflow mock serve --web 18766'
 
 # same, but stay in the foreground (Ctrl-C / SIGTERM stops it)
 laya-workflow server start --port 18766 \
-  --command 'python3 -m http.server 18766'
+  --command 'laya-workflow mock serve --web 18766'
 
 laya-workflow server status --port 18766   # RUNNING <base> (pid N) | STOPPED
 laya-workflow server stop   --port 18766   # SIGTERM + clean state files
 ```
 
 * **Liveness** = "the port answers HTTP at all" (any 2xx–5xx), so a
-  `python3 -m http.server` counts as up even on a default `/healthz` 404; pass
+  `laya-workflow mock serve --web` counts as up even on a default `/healthz` 404; pass
   `--health-path` when the server has a real health endpoint.
 * `ensure` cold-starts `--command` as a **daemon** when nothing healthy answers,
   then prints `BASE=http://127.0.0.1:<port>`; when a server is already up it
@@ -64,13 +64,13 @@ laya-workflow server stop   --port 18766   # SIGTERM + clean state files
 
 ```sh
 laya-workflow run --spec dsl/browser/browser_orchestrate_probe.json \
-  --state '{"cdp_port":9222,"port":18766,"server_cmd":"python3 -m http.server 18766","url":"http://127.0.0.1:18766/"}'
+  --state '{"cdp_port":9222,"port":18766,"server_cmd":"laya-workflow mock serve --web 18766","url":"http://127.0.0.1:18766/"}'
 ```
 
 graph: `browser ensure` → `server ensure` (cold-starts `server_cmd` if the port is
 dead) → open → wait_htmx → assert → done. `laya-workflow` must be on `PATH`
 because the spec calls it through an `exec` capability.
 
-The historical `scripts/laya-ensure-chrome.sh` / `scripts/laya-ensure-server.py`
+The historical `scripts/laya-ensure-chrome.sh` / `laya-workflow server`
 are now thin shims that `exec` these subcommands (kept for existing callers like
 `devine_int`; override the target with `LAYA_WORKFLOW_BIN`).

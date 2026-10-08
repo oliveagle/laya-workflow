@@ -53,8 +53,8 @@ pub enum Backend {
     Cpu,
     /// CUDA GPU `index` via libtorch.
     Cuda(usize),
-    /// Apple MLX (Metal GPU). Phase 1 executes this through the self-contained
-    /// Python runtime under `laya-tch/mlx/`.
+    /// Apple MLX (Metal GPU). The tch engine cannot execute this backend; the
+    /// native Rust implementation is the `laya-mlx` crate.
     Mlx,
 }
 
@@ -74,7 +74,7 @@ impl fmt::Display for Backend {
 pub struct DeviceEnv {
     /// Platform this process is running on.
     pub platform: Platform,
-    /// Whether an importable MLX runtime is present (macOS only).
+    /// Whether an MLX-capable host is present: Apple Silicon macOS (aarch64).
     pub mlx_available: bool,
     /// Whether the linked libtorch reports CUDA support.
     pub cuda_available: bool,
@@ -111,9 +111,8 @@ impl DeviceEnv {
         }
         if !self.mlx_available {
             return Err(anyhow!(
-                "--device mlx requested but no MLX runtime is importable. Install it \
-                 (`python3 -m pip install mlx`) or point LAYA_MLX_PYTHON at a Python that \
-                 can `import mlx.core`."
+                "--device mlx requires Apple Silicon macOS with the native Rust `laya-mlx`
+                 crate available; this host has no MLX backend. Use `cpu` or `cuda` instead."
             ));
         }
         Ok(())

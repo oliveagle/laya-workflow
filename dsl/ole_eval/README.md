@@ -47,14 +47,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 已为 6 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 6 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-python3 bench/dsl_smoke.py   # 5 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 5 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
@@ -87,6 +87,3 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 
 ## 延伸
 
-`reference/laya/` 是另一次迁移（`code/laya` 的 Python 参考实现），语义对照见
-`reference/README.md`。未来可把更多 ole-eval 场景（use-cases 系列）按同样
-方式配置化。

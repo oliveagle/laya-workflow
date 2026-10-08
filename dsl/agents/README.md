@@ -75,7 +75,7 @@ regex/needle 命中」。
 
 ## 离线覆盖
 
-`bench/dsl_smoke.py` 的 `STATES` 注册了 87 个样本（16 个 spec），覆盖每个 verdict label：
+`laya-workflow dsl smoke` 的 `STATES` 注册了 87 个样本（16 个 spec），覆盖每个 verdict label：
 
 - quality_gate: FAIL / WARN / NOTE / PASS
 - security_scan: QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP
@@ -95,7 +95,7 @@ regex/needle 命中」。
 - rebase_push_gate: FAIL_FETCH / NO_COMMIT / FAIL_REBASE_CONFLICT / FAIL_SECRET_BLOCK / PASS
 
 ```bash
-python3 bench/dsl_smoke.py     # 87 agents 样本全部 label 断言通过
+laya-workflow dsl smoke     # 87 agents 样本全部 label 断言通过
 ```
 
 ## 运行

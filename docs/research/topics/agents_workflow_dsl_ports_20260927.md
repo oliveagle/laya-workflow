@@ -146,7 +146,7 @@ serde / serde_json / clap / anyhow / ureq / regex-lite
 | `quality_gate` | FAIL / WARN / NOTE / PASS | 4 |
 | `security_scan` | QUARANTINE_CRITICAL / QUARANTINE_HIGH / CLEAN / SKIP | 4 |
 
-10/10 离线样本在 `bench/dsl_smoke.py` 里跑通，且每个 label 都有**正向 + 反向**用例
+10/10 离线样本在 `laya-workflow dsl smoke` 里跑通，且每个 label 都有**正向 + 反向**用例
 （如 `critical` / `critical_tcp` 是不同 critical pattern；`clean` 是无 pattern 的正常文件）。
 
 ### 3.4 可审计性
@@ -156,7 +156,7 @@ serde / serde_json / clap / anyhow / ureq / regex-lite
 | 规则可见性 | 规则藏在 `grep -E '…'` 的字符串里，要拆 shell 逻辑 | rules 数组一眼看完，每条 = `{when, label}` |
 | 阈值变更成本 | 改 shell 脚本，要重新确认引号/转义 | 改 JSON 一行（值或 label） |
 | 规则静态检查 | 无（`bash -n` 不检查规则结构） | `validate` 会检查 graph 结构 + `match_regex` 的正则合法性 |
-| 离线测试 | 需要构造 git state / 临时文件 | `bench/dsl_smoke.py` 一行样本状态即可 |
+| 离线测试 | 需要构造 git state / 临时文件 | `laya-workflow dsl smoke` 一行样本状态即可 |
 | 版本 diff | 改 grep 字符串，diff 看起来"像 shell 改动" | 改一条 JSON rule，diff 精确到规则级 |
 | schema 演进 | 无 | `dsl_version: 2`，`validate` 报 legacy |
 
@@ -165,7 +165,7 @@ serde / serde_json / clap / anyhow / ureq / regex-lite
 | 维度 | shell | DSL |
 |------|-------|-----|
 | 用例数量 | 0（repo 里没有针对 quality-gate.sh 或 security-scan.sh 的测试） | 10（每个 verdict label 至少 1 个） |
-| 跑测试的方式 | 手动 `bash quality-gate.sh` + 读 exit code + 手动检查 | `python3 bench/dsl_smoke.py`，exit code 判 pass/fail |
+| 跑测试的方式 | 手动 `bash quality-gate.sh` + 读 exit code + 手动检查 | `laya-workflow dsl smoke`，exit code 判 pass/fail |
 | 破坏性 | 真 run 有副作用（quarantine 目录、IMPORTANT.md） | 无副作用，纯决策 |
 
 ### 3.6 Rust 通用化（关键产出）
@@ -205,7 +205,7 @@ laya-workflow validate --spec dsl/agents/quality_gate.json
 laya-workflow validate --spec dsl/agents/security_scan.json
 
 # 3) 全量 smoke（28 个 spec，agents/ 10/10 绿）
-python3 bench/dsl_smoke.py | tail -3
+laya-workflow dsl smoke | tail -3
 
 # 4) 全量 Rust 回归
 target/release/laya-workflow-tests 2>&1 | tail -1
@@ -219,4 +219,4 @@ target/release/laya-workflow-tests 2>&1 | tail -1
 - `dsl/README.md`（folder list + `heuristic` 字段文档）
 - `src/backend.rs`（`heuristic` 求值分支，fail-closed 正则错误）
 - `src/workflow_cli.rs`（validate 静态正则检查）
-- `bench/dsl_smoke.py`（agents/ 10 样本 STATES）
+- `laya-workflow dsl smoke`（agents/ 10 样本 STATES）

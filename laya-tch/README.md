@@ -29,12 +29,11 @@ are covered by `cargo test -p laya-tch` (see the `device::tests` module).
 `LAYA_TCH_DEVICE` provides the same value when the flag is omitted.
 
 > On macOS, `auto` does **not** hand the tch engine to MLX: the engine (HTTP
-> server / `--once`) runs on libtorch, and Phase 1's MLX path is the
-> self-contained Python runtime under `laya-tch/mlx/`. So `auto` degrades to
-> `cpu` (a notice is printed), and passing `--device mlx` explicitly exits with a
-> clear message pointing at the MLX scripts. Use the MLX scripts below for
-> Apple-GPU inference; serve on the tch engine with `--device cpu` (or
-> `--device cuda` where available).
+> server / `--once`) runs on libtorch, while MLX compute lives in the native
+> Rust `laya-mlx` crate. So `auto` degrades to `cpu` (a notice is printed), and
+> passing `--device mlx` explicitly exits with a clear message pointing at
+> `laya-mlx`. Use `laya-mlx` for Apple-GPU inference; serve on the tch engine
+> with `--device cpu` (or `--device cuda` where available).
 
 ## Build
 
@@ -94,71 +93,53 @@ either the download cache under `target/release/build/torch-sys-*/out/libtorch/l
 ## MLX (macOS)
 
 On Apple Silicon there is no usable prebuilt libtorch and no CUDA, so the native
-high-performance path is **MLX on the Metal GPU**. There are two implementations:
+high-performance path is **MLX on the Metal GPU**. It is implemented in Rust:
 
-- **[`../laya-mlx/`](../laya-mlx) — the Rust implementation (primary).** The full
-  model implemented directly on Apple MLX via `mlx-rs`; no Python in the loop.
-  See its README for build (needs the Xcode Metal toolchain) and usage.
-- `laya-tch/mlx/` — the earlier **Python** runtime (reference / legacy, used to
-  generate the frozen parity golden). It also holds the shared request fixtures
-  and the low-level op smoke/bench.
+- **[`../laya-mlx/`](../laya-mlx) — the `laya-mlx` crate.** The full model
+  (ModernBERT-large encoder + decision head + marker scorer + action head), the
+  tokenizer, the prompt builder and the temperature calibration, implemented
+  directly on Apple MLX via `mlx-rs`, with no Python anywhere in the loop.
+  See its README for build (needs the Xcode Metal toolchain), usage and parity.
 
-`laya-tch/mlx/` layout:
-
-- `native/laya_mlx/` — the complete decision model in MLX (`ModernBert` encoder +
-  decision head + scorer + act head), the prompt builder/tokenizer and the
-  calibration logic. Vendored from [`mizorewww/laya-mlx`](https://github.com/mizorewww/laya-mlx)
-  (Apache-2.0; see `native/laya_mlx/NOTICE` and `LICENSE`).
-- `run_once.py` — end-to-end inference (`state` + `questions` → `answers`).
-- `bench_model.py` — whole-request latency and Apple-GPU-vs-CPU speedup.
-- `parity.py` / `parity_tch.py` — output parity (golden / tch CPU).
-- `export_mlx.py` — re-export an upstream Laya checkpoint to the MLX format.
-- `mlx_smoke.py` / `bench.py` — single-layer op-level smoke/bench.
+`laya-tch/mlx/native/` holds only the attribution for the architecture
+  `laya-mlx` was written from. The request and parity fixtures live in the
+  `laya-mlx` crate itself (`examples/`, `tests/`).
 
 ### Requirements
 
-- macOS on Apple Silicon.
-- Python 3 with the `mlx` package (`python3 -m pip install mlx`), `numpy` and
-  `tokenizers`. Verify with
-  `python3 -c "import mlx.core as mx; print(mx.default_device())"` — it should
-  print a `gpu` device when Metal is available.
+- macOS on Apple Silicon with Xcode (the Metal toolchain component).
 - An FP16 MLX Laya checkpoint. Resolution order (first hit wins):
   1. `$LAYA_MLX_MODEL_DIR`
   2. `$LAYA_MODEL_DIR`
   3. the local Hugging Face cache, `models--*laya-mlx*/snapshots/*/`
 
   Each candidate must contain `model.safetensors`, `rl_agent_config.json`,
-  `encoder/config.json` and `tokenizer/`. If none is found the scripts exit
-  non-zero.
+  `encoder/config.json` and `tokenizer/`.
 
 ### End-to-end inference
 
 ```bash
-python3 laya-tch/mlx/run_once.py --request laya-tch/mlx/examples/ref_request.json
+cd ../laya-mlx && cargo build --release
+# one-shot inference (same request/response shape as /v1/systemone)
+./target/release/laya-mlx --request ./examples/ref_request.json
 # -> {"model": "laya-rl-agent", "answers": {...}, "usage": {...}}
 ```
 
-`--device gpu|cpu`, `--dtype float16|float32|bfloat16`, `--compile` and
-`--json` are supported. The vendored runtime is also importable:
-
-```python
-import sys; sys.path.insert(0, "laya-tch/mlx/native")
-import laya_mlx
-agent = laya_mlx.load("$LAYA_MLX_MODEL_DIR", device="gpu")
-agent.system_one(state, questions)
-```
-
-### Parity, benchmark, export
+Benchmark (median / p90 latency + an f16 GEMM probe):
 
 ```bash
-python3 laya-tch/mlx/parity.py        # PASS: matches the upstream golden
-python3 laya-tch/mlx/parity_tch.py    # PASS: MLX(GPU) == tch CPU engine (independent impls)
-python3 laya-tch/mlx/bench_model.py   # whole-model CPU vs GPU + batch scaling
-python3 laya-tch/mlx/export_mlx.py --source <upstream-dir-or-hf-id> --output <dir>
+./target/release/laya-mlx --request ./examples/ref_request.json --bench 20
 ```
 
-Measured on the FP16 MLX checkpoint (`laya-tch/mlx/bench_model.py`, ~590-token
-requests, Apple GPU vs CPU, median of 15):
+### Parity and benchmark
+
+```bash
+cd ../laya-mlx && cargo test --release   # parity vs the frozen golden (skips without the checkpoint)
+LAYA_MLX_TIMING=1 ./target/release/laya-mlx --request ./examples/ref_request.json
+```
+
+Measured on the FP16 MLX checkpoint (~590-token requests, Apple GPU vs CPU,
+median of 15):
 
 | device | per request |
 |---|---|
@@ -166,27 +147,13 @@ requests, Apple GPU vs CPU, median of 15):
 | GPU (Metal) | ~175 ms |
 
 i.e. **≈3.2× faster on the GPU than on the CPU** running the identical model.
-The cost is GEMM-bound at roughly 2–3 TFLOP/s fp16 (see `bench.py`), so the
-whole-model number is consistent with the single-layer rate — batching amortizes
-launch overhead (≈56 → ≈50 ms/question from 1 → 16 questions).
 
 ### `--device mlx` in the Rust CLI
 
 The tch engine (HTTP server / `--once`) is a libtorch build and cannot execute
-MLX, so `--device mlx` there exits with a message pointing at the scripts above;
-`--device auto` on macOS degrades to CPU/CUDA with a notice. Use the MLX scripts
-for Apple-GPU inference.
-
-### Single-layer smoke (op-level)
-
-```bash
-python3 laya-tch/mlx/mlx_smoke.py   # one encoder layer vs fp32 NumPy reference
-python3 laya-tch/mlx/bench.py       # per-op GFLOPS / per-layer latency
-```
-
-`mlx_smoke.py` prints a `parity` line (max abs diff, violations) and ends with
-`PASS`.
-
+MLX, so `--device mlx` there exits with a message pointing at the `laya-mlx`
+crate; `--device auto` on macOS degrades to CPU/CUDA with a notice. Use
+`laya-mlx` for Apple-GPU inference.
 
 ## Tests
 
@@ -208,9 +175,9 @@ LD_LIBRARY_PATH="$TORCH/lib" \
 
 ## Parity / bench
 
-- `bench/api_parity.py`, `bench/parity_check.py` — byte-for-byte output vs the
-  PyTorch reference.
-- `bench/bench_pytorch.py`, `bench/compare_perf.py` — performance comparison.
-- `bench_parity` bin — Rust-side reference probe.
+- `cargo run --release -p laya-tch --bin bench_parity` — Rust-side reference probe
+  (byte-for-byte output vs the captured PyTorch reference).
+
+
 
 All of them honour `LAYA_MODEL_DIR`.

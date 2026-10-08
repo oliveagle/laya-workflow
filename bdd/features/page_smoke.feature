@@ -1,4 +1,4 @@
-# Executed by: scripts/bdd/run.py
+# Executed by: laya-workflow bdd run
 # State required: base_url  (the local fixture server's root, e.g. http://127.0.0.1:8799)
 Feature: Page smoke
   The smallest useful BDD scenario: get a real tab open on a real URL, then

@@ -15,11 +15,11 @@ bdd/*.feature  ── build ─┼─ 测试      manifest.json    （本地 her
 
 一条命令（accuracy gate 内置）：
 ```bash
-python3 scripts/bdd/build.py                     # 本地：编译 + validate + 100% 覆盖
-python3 scripts/bdd/build.py --assist            # + 词汇表外步骤的 needle 建议
-python3 scripts/bdd/build.py --profile production \
+laya-workflow bdd build                     # 本地：编译 + validate + 100% 覆盖
+laya-workflow bdd build --assist            # + 词汇表外步骤的 needle 建议
+laya-workflow bdd build --profile production \
   --base-url https://app.example.com             # 生产集成测试计划（@production 场景）
-python3 scripts/bdd/run.py --profile production \
+laya-workflow bdd run --profile production \
   --base-url https://app.example.com             # 真正执行生产 IT（需要 Chrome/CDP）
 ```
 
@@ -28,7 +28,7 @@ python3 scripts/bdd/run.py --profile production \
 
 ## 二、写 / 改 feature 的规则
 
-1. **只用标准词汇表**（`scripts/bdd/steps.py` 里的规则）。当前支持：
+1. **只用标准词汇表**（`laya-workflow bdd vocabulary-check` 里的规则）。当前支持：
    `the browser is ready`、`I am on "<url>"`、`I open/navigate to "<url>"`、
    `I wait for the element "<sel>"`、`I click the element "<sel>"`、
    `I type "<text>" into the element "<sel>"`、`I select "<v>" in the element "<sel>"`、
@@ -44,26 +44,26 @@ python3 scripts/bdd/run.py --profile production \
 3. **外部地址用 `<base_url>`**：`Given I am on "<base_url>/"`——本地 profile 注入
    fixture 服务器地址，生产 profile 注入 `--base-url`。绝不硬编码生产域名。
 4. **加新 step 必须先扩词汇表**，再在 feature 里用它：
-   `scripts/bdd/steps.py` 的 `_GIVEN/_WHEN/_THEN` 表加正则 + `_args()` 加参数映射，
-   然后 `scripts/bdd/vocabulary_check.py` 加一行断言它映射到正确 op。否则
-   `build.py` 会以"unknown step"拒绝——这不是 bug，是门禁。
+   `laya-workflow bdd vocabulary-check` 的 `_GIVEN/_WHEN/_THEN` 表加正则 + `_args()` 加参数映射，
+   然后 `laya-workflow bdd vocabulary-check` 加一行断言它映射到正确 op。否则
+   `laya-workflow bdd build` 会以"unknown step"拒绝——这不是 bug，是门禁。
 5. **生产集成测试场景打 `@production`**，只跑真实目标，绝不引用本地 fixture
    （`htmx.html` 这类）。
 
 ## 三、维护循环（每次改动都走）
 
 ```bash
-# 1. 改 .feature / steps.py
+# 1. 改 .feature / plugins/bdd/main.rhai
 # 2. 本地门禁（不需要 Chrome）
-python3 scripts/bdd/build.py --assist
+laya-workflow bdd build --assist
 # 3. 有词汇表外步骤？先看 --assist 的建议（带置信度），
-#    把可接受的规则写进 steps.py，再重跑。建议永远不直接编译。
+#    把可接受的规则写进 plugins/bdd/main.rhai，再重跑。建议永远不直接编译。
 # 4. 需要真跑浏览器（有 Chrome 的机器 / CI）
-scripts/bdd/run.py
+laya-workflow bdd run
 scripts/bdd/check.sh            # 或 scripts/verify.sh，含本门禁
 # 5. 生产 IT（可选，有部署目标时）
-python3 scripts/bdd/build.py --profile production --base-url <real>
-python3 scripts/bdd/run.py --profile production --base-url <real>
+laya-workflow bdd build --profile production --base-url <real>
+laya-workflow bdd run --profile production --base-url <real>
 ```
 
 ## 四、准确率策略（为什么这样分）
@@ -74,7 +74,7 @@ python3 scripts/bdd/run.py --profile production --base-url <real>
   打印 `op + 置信度`，`≥0.5` 标 LIKELY、`<0.5` 标 guess。它**绝不自动编译**——
   研究（`docs/bdd_to_needle.md`）实测：基础模型对生造措辞全字段准确率约 40%、
   只有 ~10% 过 0.1 置信度 floor，所以建议只是给 agent 的一个输入，最终以
-  `steps.py` 里的确定规则为准。
+  `plugins/bdd/main.rhai` 里的确定规则为准。
 - **validate 双保险**：build 生成的每个 spec 都跑真实 `laya-workflow validate`，
   结构不合法即失败。
 
@@ -82,7 +82,7 @@ python3 scripts/bdd/run.py --profile production --base-url <real>
 
 | 报错 | 含义 | 动作 |
 |---|---|---|
-| `unknown then step: '...'` | 词汇表不认这个 step | 用 `--assist` 看建议 → 加 `steps.py` 规则 |
+| `unknown then step: '...'` | 词汇表不认这个 step | 用 `--assist` 看建议 → 加 `plugins/bdd/main.rhai` 规则 |
 | `step coverage 40% < 100%` | feature 里有未匹配步骤 | 同上，或改写成标准措辞 |
 | `no @production scenarios selected` | 生产计划为空 | 给场景加 `@production` tag |
 | `--profile production needs --base-url` | 生产没给目标 | 传 `--base-url` 或设 `$BDD_BASE_URL` |
@@ -94,8 +94,8 @@ python3 scripts/bdd/run.py --profile production --base-url <real>
 - `bdd/features/setup/` — `include:` 拉入的步骤列表（无 Feature 头）
 - `bdd/examples/` — 模板/示例（不进 CI glob），如 `production_it.feature`
 - `bdd/fixtures/` — 本地 hermetic 夹具页
-- `scripts/bdd/steps.py` — 词汇表（step → op/assertion）
-- `scripts/bdd/transpile.py` — 编译器（Gherkin → spec）
-- `scripts/bdd/build.py` — 统一 accuracy gate + 多产物（本指南的核心命令）
-- `scripts/bdd/run.py` — 执行器（本地 hermetic / 生产 IT）
-- `scripts/bdd/needle_assist.py` — needle 建议模块（只建议，不编译）
+- `laya-workflow bdd vocabulary-check` — 词汇表（step → op/assertion）
+- `laya-workflow bdd transpile` — 编译器（Gherkin → spec）
+- `laya-workflow bdd build` — 统一 accuracy gate + 多产物（本指南的核心命令）
+- `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）
+- `laya-workflow bdd build --assist` — needle 建议模块（只建议，不编译）
