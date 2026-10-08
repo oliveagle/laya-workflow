@@ -12,8 +12,9 @@
 // cannot call Cua. It does the half that actually needs judgement:
 //
 //   * decide WHICH tool an intent means, and with what arguments;
-//   * resolve a target to the exact handle Cua itself handed out, so a click
-//     lands on a bound element instead of a guessed pixel;
+//   * resolve a target to the exact handle Cua itself handed out, then derive
+//     the button-centre pixel from that element's AX frame — never a guessed
+//     coordinate;
 //   * refuse the calls that can lose a user's work or read a user's clipboard;
 //   * compress Cua's very large results (base64 PNGs, whole AX trees) into
 //     something that fits a run state.
@@ -548,13 +549,140 @@ fn pick_num(el, obs, w, key) {
     return 0;
 }
 
+// Prefer an actionable control over a same-labelled menu item. Text score alone
+// says "7" == "7" whether it is the keypad button or a menu item; a mouse click
+// means the button, and the old stable-order tie-break only worked because the
+// button happened to precede the menu in one Calculator snapshot.
+fn click_affinity(el, target) {
+    let role = norm(ostr(mget(el, "role")) + " " + ostr(mget(el, "subrole")));
+    let bonus = 0;
+    let menu_target = norm(target).contains("menu");
+    if role.contains("button") { bonus += 4; }
+    if role.contains("menu") {
+        if menu_target { bonus += 4; } else { bonus -= 4; }
+    }
+    if type_of(mget(el, "frame")) == "map" { bonus += 1; }
+    return bonus;
+}
+
+// Convert an AX element from macOS desktop-point space to the window PNG's
+// pixel space: subtract the owning window origin, add one half of the frame,
+// then apply the screenshot backing/downscale ratio.
+fn element_center(el, obs) {
+    let f = mget(el, "frame");
+    if type_of(f) != "map" {
+        return #{ ok: false, error: "the bound AX element has no frame" };
+    }
+    let fx = num(mget(f, "x"));
+    let fy = num(mget(f, "y"));
+    let w = num(mget(f, "w"));
+    let h = num(mget(f, "h"));
+    if w <= 0.0 || h <= 0.0 {
+        return #{ ok: false, error: "the bound AX element has an empty frame" };
+    }
+
+    // AX frames are desktop-point coordinates on macOS. Pixel clicks consume
+    // coordinates in the window screenshot, so subtract the owning window's
+    // origin before applying the screenshot's backing/downscale factor.
+    let bounds = mget(obs, "window_bounds");
+    if type_of(bounds) != "map" { bounds = mget(obs, "bounds"); }
+    let x = fx;
+    let y = fy;
+    let window_x = 0.0;
+    let window_y = 0.0;
+    if type_of(bounds) == "map" {
+        window_x = num(mget(bounds, "x"));
+        window_y = num(mget(bounds, "y"));
+        let window_w = num(mget(bounds, "width"));
+        let window_h = num(mget(bounds, "height"));
+        let looks_desktop = fx >= window_x && fy >= window_y
+            && fx <= window_x + window_w && fy <= window_y + window_h;
+        if looks_desktop {
+            x = fx - window_x;
+            y = fy - window_y;
+        }
+    }
+
+    let scale = num(mget(obs, "screenshot_scale"));
+    if scale <= 0.0 { scale = num(mget(obs, "scale")); }
+    if scale <= 0.0 { scale = 1.0; }
+    return #{
+        ok: true,
+        x: (x + w / 2.0) * scale,
+        y: (y + h / 2.0) * scale,
+        scale: scale,
+        frame: #{ x: fx, y: fy, w: w, h: h },
+        window_origin: #{ x: window_x, y: window_y }
+    };
+}
+
+// macOS exposes ghost AX window records beside the real one. A launch receipt
+// can therefore list nine "windows" when only one is on screen; passing the pid
+// alone asks the driver to choose among all nine and it correctly refuses. Pick
+// the concrete record here, using the same policy everywhere: focused first,
+// then on-screen, then titled, then z-order. No candidate means no call.
+fn choose_window(windows, pid) {
+    let best = #{};
+    let best_rank = -1;
+    let best_z = -2147483648;
+    for win in as_array(windows) {
+        let wpid = int_of(mget(win, "pid"));
+        if pid > 0 && wpid > 0 && wpid != pid { continue; }
+        let wid = int_of(mget(win, "window_id"));
+        if wid <= 0 { continue; }
+
+        let rank = 0;
+        if mget(win, "is_focused") == true { rank += 32; }
+        if mget(win, "is_on_screen") == true { rank += 16; }
+        if mstr(win, "title") != "" { rank += 8; }
+        if mget(win, "is_on_screen") != true && mstr(win, "title") == "" { rank -= 4; }
+
+        let z = int_of(mget(win, "z_index"));
+        if mget(win, "z_index") == () { z = -2147483648; }
+        if rank > best_rank || (rank == best_rank && z >= best_z) {
+            best = win;
+            best_rank = rank;
+            best_z = z;
+        }
+    }
+    return best;
+}
+
+fn capture_id_of(obs) {
+    let direct = trimmed(ostr(mget(obs, "capture_id")));
+    if direct != "" { return direct; }
+    let nested = mget(obs, "capture");
+    if type_of(nested) == "map" {
+        let id = trimmed(ostr(mget(nested, "id")));
+        if id != "" { return id; }
+        id = trimmed(ostr(mget(nested, "capture_id")));
+        if id != "" { return id; }
+    }
+    nested = mget(obs, "screenshot");
+    if type_of(nested) == "map" {
+        let id = trimmed(ostr(mget(nested, "capture_id")));
+        if id != "" { return id; }
+    }
+    return "";
+}
+
+fn mouse_clicks(w) {
+    let mode = norm(mstr(w, "click_mode"));
+    if mode == "ax" || mode == "accessibility" { return false; }
+    if mode == "mouse" || mode == "pixel" || mode == "cg_event" { return true; }
+    // The user-visible default: bind through AX, then spend a real pixel click
+    // at that bound button's centre so the agent cursor and CGEvent path move.
+    return true;
+}
+
 fn rank_elements(elems, target, obs, w) {
     let min_score = 20;
     let scored = [];
     for el in elems {
         let parts = element_text(el);
         let s = score_element(parts, target);
-        scored.push(#{ el: el, score: s, text: parts });
+        scored.push(#{ el: el, score: s, rank: s + click_affinity(el, target),
+                       text: parts });
     }
     // Descending by score. Insertion sort: the candidate set is one window's
     // elements, and a hand-rolled sort keeps the comparison in one place.
@@ -563,7 +691,7 @@ fn rank_elements(elems, target, obs, w) {
     while i < n {
         let cur = scored[i];
         let j = i - 1;
-        while j >= 0 && scored[j]["score"] < cur["score"] {
+        while j >= 0 && scored[j]["rank"] < cur["rank"] {
             scored[j + 1] = scored[j];
             j -= 1;
         }
@@ -601,6 +729,7 @@ fn rank_elements(elems, target, obs, w) {
     }
 
     let el = best["el"];
+    let center = element_center(el, obs);
     let pid = pick_num(el, obs, w, "pid");
     let wid = pick_num(el, obs, w, "window_id");
     let token = trimmed(ostr(mget(el, "element_token")));
@@ -620,6 +749,7 @@ fn rank_elements(elems, target, obs, w) {
             window_id: wid
         },
         matched_text: brief_one(best["text"]),
+        center: center,
         alternatives: brief_tail(scored, 1, 4)
     };
 }
@@ -1213,6 +1343,33 @@ fn plan_turn(host, w, log_len) {
             call_index: call_index, turn: call_index
         };
     }
+    // A visible mouse path needs the session cursor tuned before the first
+    // pixel action. macOS renders a Dubins path: the minimum allowed turning
+    // radius plus critical damping removes the wide swirl and overshoot while
+    // retaining a visible glide. The Bezier knobs are zeroed for platforms that
+    // use that renderer.
+    if p["needs_bind"] && !flag(w, "motion_configured", false) {
+        let margs = #{
+            session: sid_of(w),
+            start_handle: 0.5,
+            end_handle: 0.5,
+            arc_size: 0.0,
+            arc_flow: 0.0,
+            spring: 1.0,
+            glide_duration_ms: 180.0,
+            turn_radius: 1.0
+        };
+        return #{
+            status: "call", blocked: false, error: "", intent: intent,
+            phase: "act", verb: "cursor_motion", tool: "set_agent_cursor_motion",
+            args: margs, args_json: wire(host, margs),
+            risk: risk_of("set_agent_cursor_motion"),
+            why: "use a tight, damped, straight-line agent-cursor path",
+            confidence: "high", motion_configured: true,
+            call_index: call_index, turn: call_index
+        };
+    }
+
     // quit_app addresses a pid, and the pid is not knowable from "quit
     // Safari" — it has to come from list_apps, the same deferral a click needs.
     let needs_list = p["verb"] == "quit_app" || p["verb"] == "launch";
@@ -1256,6 +1413,35 @@ fn plan_turn(host, w, log_len) {
     // turn can aim at that one instead. Without this the run stopped on a
     // ghost window that launch_app listed first while the real one sat beside
     // it, and the generic classifier below turned a hint into a dead end.
+    // A pid-only bring_to_front can be refused with the complete candidate list
+    // when macOS reports ghost windows. That refusal is recoverable: select the
+    // focused/on-screen record and retry with both ids. This applies to generic
+    // launches as well as the Calculator sequence.
+    if p["verb"] == "launch" && exit_code != 0 {
+        let t = failed_text + " " + raw_obs;
+        if t.contains("ambiguous_window_target") || t.contains("focused_window_id") || t.contains("\"candidates\"") {
+            let o = as_json(host, t);
+            let rpid = int_of(mget(o, "pid"));
+            if rpid <= 0 { rpid = int_of(mget(w, "pid")); }
+            let rwid = int_of(mget(o, "focused_window_id"));
+            if rwid <= 0 {
+                rwid = int_of(mget(choose_window(mget(o, "candidates"), rpid), "window_id"));
+            }
+            if rpid > 0 && rwid > 0 {
+                let ra = #{ pid: rpid, window_id: rwid, session: sid_of(w) };
+                return #{
+                    status: "call", blocked: false, error: "", intent: intent,
+                    phase: "act", verb: p["verb"], tool: "bring_to_front", args: ra,
+                    args_json: wire(host, ra), risk: risk_of("bring_to_front"),
+                    why: "the driver listed the app's AX windows; selecting window " + rwid
+                        + " (focused/on-screen) and retrying exactly",
+                    confidence: "high", pid: rpid, window_id: rwid,
+                    call_index: call_index, turn: call_index
+                };
+            }
+        }
+    }
+
     if p["verb"] == "calc" && exit_code != 0 {
         let t = failed_text + " " + raw_obs;
         if t.contains("focused_window_id") && int_of(mget(w, "pid")) > 0 {
@@ -1381,10 +1567,8 @@ fn plan_turn(host, w, log_len) {
                 };
             }
             let wins = mget(o, "windows");
-            let wid = 0;
-            if type_of(wins) == "array" && wins.len() > 0 {
-                wid = int_of(mget(wins[0], "window_id"));
-            }
+            let chosen = choose_window(wins, lpid);
+            let wid = int_of(mget(chosen, "window_id"));
             if wid > 0 {
                 let a = #{ pid: lpid, window_id: wid, session: sid };
                 return #{
@@ -1505,15 +1689,68 @@ fn plan_turn(host, w, log_len) {
         // launch_app deliberately leaves the target in the background
         // (self_activation_suppressed), so "open X" is not finished until the
         // window is actually in front. Stopping here would leave the next
-        // click aimed at whatever the user was using instead.
-        let a = #{ pid: lpid };
+        // click aimed at whatever the user was using instead. The receipt may
+        // contain AX ghost records, so never spend its first window: choose the
+        // focused/on-screen one, or discover windows explicitly when the receipt
+        // has none.
+        let chosen = choose_window(mget(o, "windows"), lpid);
+        let wid = int_of(mget(chosen, "window_id"));
+        if wid > 0 {
+            let a = #{ pid: lpid, window_id: wid, session: sid_of(w) };
+            return #{
+                status: "call", blocked: false, error: "", intent: intent,
+                phase: "act", verb: p["verb"], tool: "bring_to_front", args: a,
+                args_json: wire(host, a), risk: risk_of("bring_to_front"),
+                why: "launched " + mstr(o, "name") + " as pid " + lpid
+                    + ", now putting its on-screen window " + wid + " in front",
+                confidence: p["confidence"], pid: lpid, window_id: wid,
+                launched: mstr(o, "name"),
+                call_index: call_index, turn: call_index
+            };
+        }
+        let a = #{ session: sid_of(w) };
+        return #{
+            status: "call", blocked: false, error: "", intent: intent,
+            phase: "observe", verb: p["verb"], tool: "list_windows", args: a,
+            args_json: wire(host, a), risk: risk_of("list_windows"),
+            why: "launched " + mstr(o, "name") + " as pid " + lpid
+                + ", but its concrete window was not ready; finding it",
+            confidence: p["confidence"], pid: lpid, launched: mstr(o, "name"),
+            call_index: call_index, turn: call_index
+        };
+    }
+    // The launch receipt had no usable window, so the loop asked list_windows.
+    // Match the pid recorded by the launch step and select by the same concrete
+    // focused/on-screen policy rather than array order.
+    if p["verb"] == "launch" && raw_obs.contains("\"windows\"") && !raw_obs.contains("\"apps\"") && !raw_obs.contains("frontmost_pid") {
+        let lpid = int_of(mget(w, "pid"));
+        if lpid <= 0 {
+            return #{
+                status: "blocked", blocked: true, intent: intent, verb: p["verb"],
+                error: "launch_app did not leave a pid in state to match a window against",
+                tool: "", args: #{}, args_json: "", risk: p["risk"],
+                why: "refusing to choose a window without its owning pid",
+                call_index: call_index, turn: call_index
+            };
+        }
+        let chosen = choose_window(mget(as_json(host, obs), "windows"), lpid);
+        let wid = int_of(mget(chosen, "window_id"));
+        if wid <= 0 {
+            return #{
+                status: "blocked", blocked: true, intent: intent, verb: p["verb"],
+                error: "'" + p["target"] + "' (pid " + lpid + ") has no focused/on-screen window",
+                tool: "", args: #{}, args_json: "", risk: p["risk"],
+                why: "refusing to bring forward an AX ghost window",
+                call_index: call_index, turn: call_index
+            };
+        }
+        let a = #{ pid: lpid, window_id: wid, session: sid_of(w) };
         return #{
             status: "call", blocked: false, error: "", intent: intent,
             phase: "act", verb: p["verb"], tool: "bring_to_front", args: a,
             args_json: wire(host, a), risk: risk_of("bring_to_front"),
-            why: "launched " + mstr(o, "name") + " as pid " + lpid
-                + ", now putting its window in front",
-            confidence: p["confidence"], pid: lpid, launched: mstr(o, "name"),
+            why: "bring the focused/on-screen window " + wid + " for '" + p["target"] + "' in front",
+            confidence: "high", pid: lpid, window_id: wid,
             call_index: call_index, turn: call_index
         };
     }
@@ -1536,6 +1773,21 @@ fn plan_turn(host, w, log_len) {
     // three clicks and spent the whole call budget. An act receipt carries a
     // "summary" of what it did; the start_session receipt that opens a run does
     // not, so this cannot fire on turn 1.
+    // A one-shot keyboard action is also complete when its receipt arrives.
+    // Restricting the receipt stop below to needs_bind actions made "press
+    // escape" replay the same key until max_calls: every receipt said ✅, but
+    // the planner treated it as an observation to plan against again.
+    if !p["needs_bind"] && raw_obs.contains("\"summary\"")
+        && (p["tool"] == "press_key" || p["tool"] == "type_text" || p["tool"] == "hotkey") {
+        let o = as_json(host, obs);
+        return #{
+            status: "done", done: true, blocked: false, intent: intent,
+            verb: p["verb"], tool: "", args: #{}, args_json: "", risk: p["risk"],
+            why: p["verb"] + " delivered: " + mstr(o, "summary"),
+            pid: int_of(mget(w, "pid")), window_id: int_of(mget(w, "window_id")),
+            call_index: call_index, turn: call_index
+        };
+    }
     if p["needs_bind"] && raw_obs.contains("\"summary\"") {
         return #{
             status: "done", done: true, blocked: false, intent: intent,
@@ -1553,6 +1805,31 @@ fn plan_turn(host, w, log_len) {
     if have_obs { seen = as_json(host, obs); }
     if p["needs_bind"] {
         if !seen.contains("elements") && !seen.contains("tree_markdown") {
+            // A desktop accessibility snapshot names apps and windows but carries
+            // no spendable element tokens. Repeating it cannot produce a bind,
+            // and picking one of the windows by array order would be the exact
+            // "random click" failure this plugin exists to prevent.
+            if seen.contains("windows") {
+                let wins = as_array(mget(seen, "windows"));
+                let choices = [];
+                let i = 0;
+                while i < wins.len() && choices.len() < 8 {
+                    let x = wins[i];
+                    choices.push(#{
+                        app: mstr(x, "app_name"), pid: int_of(mget(x, "pid")),
+                        title: mstr(x, "title"), window_id: int_of(mget(x, "window_id"))
+                    });
+                    i += 1;
+                }
+                return #{
+                    status: "blocked", blocked: true, intent: intent,
+                    verb: p["verb"], error: "no exact window was selected",
+                    hint: "pass pid and window_id (or focus/open the app first) so the click can bind an element in that window",
+                    candidates: choices, tool: "", args: #{}, args_json: "",
+                    risk: p["risk"], call_index: call_index, turn: call_index,
+                    why: "refusing to choose a window by accident; nothing was clicked"
+                };
+            }
             return observe_step(host, p, w, sid_of(w), intent, call_index);
         }
         return bind_and_act(host, p, seen, w, intent, call_index);
@@ -1565,6 +1842,19 @@ fn plan_turn(host, w, log_len) {
     if needs_list {
         if !seen.contains("apps") { return list_apps_step(host, p, intent, call_index); }
         return list_and_act(host, p, seen, w, intent, call_index);
+    }
+
+    // Direct keyboard input is still input to a concrete window. The Calculator
+    // sequence threads ids through its own phases; a one-shot "press escape"
+    // receives the ids the caller got from open/focus and must spend them too,
+    // or the driver correctly refuses with "Missing required integer field: pid".
+    if p["tool"] == "press_key" || p["tool"] == "type_text" || p["tool"] == "hotkey" {
+        let kpid = int_of(mget(w, "pid"));
+        let kwid = int_of(mget(w, "window_id"));
+        if kpid > 0 && kwid > 0 {
+            p["args"]["pid"] = kpid;
+            p["args"]["window_id"] = kwid;
+        }
     }
 
     let e = emit(host, p["tool"], p["args"], p["why"], allow_danger);
@@ -1615,7 +1905,17 @@ fn observe_step(host, p, w, sid, intent, ci) {
         args["window_id"] = wid;
         // The screenshot is not needed to resolve a handle and is by far the
         // largest thing in the response; the structured elements are.
-        args["include_screenshot"] = false;
+        if mouse_clicks(w) && p["tool"] == "click" {
+            // Pixel clicks deliberately consume the screenshot context issued
+            // by this same observation. Write the PNG to disk instead of
+            // returning base64 through workflow state.
+            args["include_screenshot"] = true;
+            let shot = trimmed(mstr(w, "observe_screenshot_out_file"));
+            if shot == "" { shot = "/tmp/laya-cua-" + sid + "-observe.png"; }
+            args["screenshot_out_file"] = shot;
+        } else {
+            args["include_screenshot"] = false;
+        }
         if p["target"] != "" { args["query"] = p["target"]; }
     }
     return #{
@@ -1643,16 +1943,65 @@ fn bind_and_act(host, p, obs, w, intent, ci) {
     }
     let a = p["args"];
     let addr = b["address"];
-    a["element_token"] = addr["element_token"];
-    if addr["pid"] > 0 { a["pid"] = addr["pid"]; }
+    // The exact screenshot-pixel contract is verified for `click`. Double/right
+    // retain semantic AX delivery until their coordinate contracts get the same
+    // end-to-end treatment.
+    let input_mode = if mouse_clicks(w) && p["tool"] == "click" {
+        "mouse"
+    } else {
+        "accessibility"
+    };
+
+    if input_mode == "mouse" {
+        let c = mget(b, "center");
+        if type_of(c) != "map" || c["ok"] != true {
+            return #{
+                status: "blocked", blocked: true, intent: intent,
+                verb: p["verb"], error: mstr(c, "error"),
+                hint: "the target was bound, but its AX frame cannot be converted to a button-centre pixel click",
+                tool: "", args: #{}, args_json: "", risk: p["risk"],
+                call_index: ci,
+                why: "no safe button centre; refusing to guess a coordinate"
+            };
+        }
+        if addr["pid"] <= 0 || addr["window_id"] <= 0 {
+            return #{
+                status: "blocked", blocked: true, intent: intent,
+                verb: p["verb"], error: "pixel click needs both pid and window_id",
+                tool: "", args: #{}, args_json: "", risk: p["risk"],
+                call_index: ci,
+                why: "no exact window anchor; refusing a screen-coordinate guess"
+            };
+        }
+        a["pid"] = addr["pid"];
+        a["window_id"] = addr["window_id"];
+        a["x"] = c["x"];
+        a["y"] = c["y"];
+        // Background pixel clicks are allowed to resolve the point and then
+        // deliver AXPress. Foreground explicitly selects the CGEvent/HID route,
+        // which is what "real mouse click" means here.
+        a["delivery_mode"] = "foreground";
+        let capture_id = capture_id_of(obs);
+        let debug_image = trimmed(mstr(w, "click_debug_image_out"));
+        // Driver schema makes capture_id and debug_image_out mutually
+        // exclusive; the exact-capture guard is the production default, while
+        // an explicitly requested crosshair uses the freshly captured debug PNG.
+        if debug_image == "" && capture_id != "" { a["capture_id"] = capture_id; }
+        if debug_image != "" { a["debug_image_out"] = debug_image; }
+    } else {
+        a["element_token"] = addr["element_token"];
+        if addr["pid"] > 0 { a["pid"] = addr["pid"]; }
+    }
+
     return #{
         status: "call", blocked: false, error: "", intent: intent,
         phase: "act", verb: p["verb"], tool: p["tool"], args: a,
         args_json: wire(host, a), risk: p["risk"],
         why: p["why"] + " — bound '" + p["target"] + "' to "
-            + mstr(b, "element_token") + " (score " + b["score"] + ")",
-        confidence: p["confidence"], address: addr,
-        matched_text: mget(b, "matched_text"),
+            + mstr(b, "element_token") + " (score " + b["score"]
+            + ") and clicked its AX-frame centre via " + input_mode + " input",
+        confidence: p["confidence"], address: addr, input_mode: input_mode,
+        click_point: mget(b, "center"), matched_text: mget(b, "matched_text"),
         alternatives: mget(b, "alternatives"), call_index: ci
     };
 }

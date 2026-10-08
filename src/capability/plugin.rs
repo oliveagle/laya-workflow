@@ -3530,6 +3530,9 @@ mod tests {
         if ctx["with"].get("session_started").is_none() {
             ctx["with"]["session_started"] = json!(true);
         }
+        if ctx["with"].get("motion_configured").is_none() {
+            ctx["with"]["motion_configured"] = json!(true);
+        }
         call_with_host("cua", "plan", ctx)
     }
 
@@ -3539,11 +3542,8 @@ mod tests {
         call_with_host("cua", op, ctx)
     }
 
-    /// An element_token is only spendable inside the session whose
-    /// get_window_state issued it -- spent from a session-less call the driver
-    /// answers `stale_element_token ... has no current snapshot`. So the very
-    /// first thing a run does is open a session, and every later call repeats
-    /// its label.
+    /// A session and a tuned cursor precede every bound click; the click itself
+    /// is grounded in the AX frame rather than a guessed coordinate.
     #[test]
     fn cua_opens_a_session_before_anything_else() {
         let first = call_with_host("cua", "plan", cua_ctx(json!({ "intent": "click 7" }))).unwrap();
@@ -3551,25 +3551,182 @@ mod tests {
         assert_eq!(first["args_json"], json!(r#"{"session":"laya"}"#));
         assert_eq!(first["risk"], json!("act"));
 
-        // The label is not a one-off: the observation and the click that spends
-        // its token have to repeat it, or the token is stale on arrival.
+        // The visual path is tightened before the first mouse action. Zero arc
+        // and critical damping keep it direct; the smallest accepted turning
+        // radius avoids the wide Dubins swirl.
+        let motion = call_with_host("cua", "plan", cua_ctx(json!({
+            "intent": "click 7", "session_started": true
+        }))).unwrap();
+        assert_eq!(motion["tool"], json!("set_agent_cursor_motion"));
+        let m: Value = serde_json::from_str(motion["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(m["arc_size"], json!(0.0));
+        assert_eq!(m["arc_flow"], json!(0.0));
+        assert_eq!(m["spring"], json!(1.0));
+        assert_eq!(m["turn_radius"], json!(1.0));
+        assert_eq!(motion["motion_configured"], json!(true));
+
+        // The label repeats on every call, or the token/capture context is
+        // stale on arrival.
         let obs = cua(json!({ "intent": "click 7", "pid": 7, "window_id": 9 })).unwrap();
         assert_eq!(obs["tool"], json!("get_window_state"));
-        assert!(
-            obs["args_json"].as_str().unwrap().contains(r#""session":"laya""#),
-            "the observation must run inside the session: {}",
-            obs["args_json"]
-        );
+        let oa: Value = serde_json::from_str(obs["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(oa["session"], json!("laya"));
+        assert_eq!(oa["include_screenshot"], json!(true));
+        assert!(oa["screenshot_out_file"].as_str().unwrap().contains("laya"));
 
         let act = cua(json!({
             "intent": "click 7", "pid": 7, "window_id": 9,
-            "observation": { "elements": [{ "role": "AXButton", "label": "7",
-                                            "element_token": "s1:5",
-                                            "frame": { "x": 1, "y": 2, "w": 3, "h": 4 } }] }
+            "observation": {
+                "pid": 7, "window_id": 9, "capture_id": "cap1",
+                "window_bounds": { "x": 10, "y": 20, "width": 100, "height": 50 },
+                "screenshot_scale": 2,
+                "elements": [{ "role": "AXButton", "label": "7",
+                               "element_token": "s1:5",
+                               "frame": { "x": 11, "y": 21, "w": 3, "h": 4 } }]
+            }
         }))
         .unwrap();
         assert_eq!(act["tool"], json!("click"));
-        assert_eq!(act["args_json"], json!(r#"{"element_token":"s1:5","pid":7,"session":"laya"}"#));
+        assert_eq!(act["input_mode"], json!("mouse"));
+        let a: Value = serde_json::from_str(act["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(a["pid"], json!(7));
+        assert_eq!(a["window_id"], json!(9));
+        assert_eq!(a["x"], json!(5.0));
+        assert_eq!(a["y"], json!(6.0));
+        assert_eq!(a["capture_id"], json!("cap1"));
+        assert_eq!(a["delivery_mode"], json!("foreground"));
+        assert!(a.get("element_token").is_none(),
+            "pixel and token addressing must not be mixed");
+        assert_eq!(act["address"]["element_token"], json!("s1:5"),
+            "the exact AX binding remains auditable even when delivered by pixel");
+    }
+
+    /// Text score alone cannot distinguish a keypad button from a same-labelled
+    /// menu entry. Mouse affinity must prefer the actionable button.
+    #[test]
+    fn cua_prefers_a_button_over_a_same_labelled_menu_item() {
+        let hit = cua(json!({
+            "intent": "click 7", "pid": 7, "window_id": 9,
+            "observation": {
+                "pid": 7, "window_id": 9,
+                "window_bounds": { "x": 10, "y": 20, "width": 100, "height": 50 },
+                "screenshot_scale": 1,
+                "elements": [
+                    { "role": "AXMenuItem", "label": "7", "element_token": "menu",
+                      "frame": { "x": 11, "y": 21, "w": 3, "h": 4 } },
+                    { "role": "AXButton", "label": "7", "element_token": "button",
+                      "frame": { "x": 12, "y": 22, "w": 3, "h": 4 } }
+                ]
+            }
+        }))
+        .unwrap();
+        assert_eq!(hit["status"], json!("call"));
+        assert_eq!(hit["address"]["element_token"], json!("button"));
+        assert_eq!(hit["matched_text"][0], json!("7"));
+        assert_eq!(hit["matched_text"][1], json!("AXButton"));
+    }
+
+    /// A desktop snapshot without a selected window must stop, not repeatedly
+    /// observe or pick a window by array order.
+    #[test]
+    fn cua_blocks_a_windowless_desktop_snapshot() {
+        let r = cua(json!({
+            "intent": "click 7",
+            "observation": json!({ "apps": [ { "name": "Calculator", "pid": 7 } ],
+                                   "windows": [ { "app_name": "Calculator", "pid": 7,
+                                                  "title": "Calculator", "window_id": 9 } ] })
+        }))
+        .unwrap();
+        assert_eq!(r["status"], json!("blocked"));
+        assert!(r["args_json"].as_str().unwrap_or("").is_empty());
+        assert_eq!(r["candidates"][0]["window_id"], json!(9));
+        assert!(r["why"].as_str().unwrap().contains("nothing was clicked"));
+    }
+
+    /// "open Calculator" must not spend the first AX window record: macOS keeps
+    /// ghost windows beside the real one, and a pid-only focus call is refused as
+    /// ambiguous. The launch receipt, a window list, and that refusal all resolve
+    /// to the same concrete focused/on-screen window.
+    #[test]
+    fn cua_launch_binds_the_real_window_not_an_ax_ghost() {
+        let receipt = json!({
+            "launch_state": "already_running", "pid": 7, "name": "Calculator",
+            "windows": [
+                { "pid": 7, "window_id": 99, "title": "", "is_on_screen": false },
+                { "pid": 7, "window_id": 9, "title": "Calculator", "is_on_screen": true }
+            ]
+        });
+        let focus = cua(json!({
+            "intent": "open Calculator", "observation": receipt.to_string()
+        })).unwrap();
+        assert_eq!(focus["status"], json!("call"));
+        assert_eq!(focus["tool"], json!("bring_to_front"));
+        let a: Value = serde_json::from_str(focus["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(a["pid"], json!(7));
+        assert_eq!(a["window_id"], json!(9), "the ghost record 99 must not be spent");
+
+        // list_apps also contains per-app `windows` arrays. It is the observation
+        // that resolves the app name, not a post-launch window list, so it must
+        // continue to launch_app rather than be mistaken for one.
+        let apps = json!({ "apps": [
+            { "name": "计算器", "pid": 7, "running": true,
+              "bundle_id": "com.apple.calculator", "windows": [] }
+        ]});
+        let launch = cua(json!({
+            "intent": "open Calculator", "observation": apps.to_string()
+        })).unwrap();
+        assert_eq!(launch["status"], json!("call"));
+        assert_eq!(launch["tool"], json!("launch_app"));
+
+        let listed = json!({
+            "windows": [
+                { "pid": 7, "window_id": 100, "title": "", "is_on_screen": false },
+                { "pid": 7, "window_id": 9, "title": "Calculator", "is_on_screen": true, "z_index": 4 }
+            ]
+        });
+        let retry = cua(json!({
+            "intent": "open Calculator", "pid": 7,
+            "observation": listed.to_string()
+        })).unwrap();
+        assert_eq!(retry["status"], json!("call"));
+        assert_eq!(retry["window_id"], json!(9));
+
+        // If the pid-only call was already refused, the refusal's candidate list
+        // is enough to retry exactly; it is not a reason to stop the workflow.
+        let refusal = json!({
+            "code": "ambiguous_window_target", "pid": 7,
+            "candidates": [
+                { "window_id": 100, "title": "", "is_on_screen": false },
+                { "window_id": 9, "title": "Calculator", "is_on_screen": true }
+            ]
+        });
+        let recover = cua(json!({
+            "intent": "open Calculator", "pid": 7, "exit_code": 1,
+            "error_text": refusal.to_string()
+        })).unwrap();
+        assert_eq!(recover["status"], json!("call"));
+        assert_eq!(recover["tool"], json!("bring_to_front"));
+        let ra: Value = serde_json::from_str(recover["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(ra["pid"], json!(7));
+        assert_eq!(ra["window_id"], json!(9));
+    }
+
+    /// Callers can explicitly retain semantic AX delivery where a visible mouse
+    /// path is not wanted.
+    #[test]
+    fn cua_can_opt_back_into_accessibility_delivery() {
+        let hit = cua(json!({
+            "intent": "click 7", "pid": 7, "window_id": 9, "click_mode": "ax",
+            "observation": {
+                "pid": 7, "window_id": 9,
+                "elements": [{ "role": "AXButton", "label": "7", "element_token": "s1:5" }]
+            }
+        }))
+        .unwrap();
+        assert_eq!(hit["input_mode"], json!("accessibility"));
+        let a: Value = serde_json::from_str(hit["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(a["element_token"], json!("s1:5"));
+        assert!(a.get("x").is_none() && a.get("y").is_none());
     }
 
     /// A successful call is not a refusal. get_window_state's own response
@@ -3678,7 +3835,7 @@ mod tests {
         assert!(direct["args_json"].as_str().unwrap_or("").is_empty());
     }
 
-    /// A click cannot be planned from the intent alone: the coordinates are not
+    /// A click cannot be planned from the intent alone: the centre point is not
     /// in "click OK" and must not be invented. Plan must emit the observation
     /// and only act once a real snapshot is fed back.
     #[test]
@@ -3708,23 +3865,34 @@ mod tests {
             "an unbound click must never reach exec");
         assert_eq!(miss["candidates"].as_array().unwrap().len(), 2);
 
-        // A snapshot that does contain it: the plan now carries Cua's own token.
+        // A snapshot that contains it: bind the token for audit, then deliver a
+        // real foreground pixel click at that AX frame's centre.
         let hit = cua(json!({
             "intent": "click the OK button",
-            "observation": json!({ "pid": 4242, "window_id": 77, "elements": [
-                { "element_token": "t1", "label": "Cancel" },
-                { "element_token": "t9", "label": "OK" }
-            ]})
+            "observation": json!({
+                "pid": 4242, "window_id": 77, "capture_id": "cap-ok",
+                "window_bounds": { "x": 100, "y": 200, "width": 300, "height": 200 },
+                "screenshot_scale": 2,
+                "elements": [
+                    { "element_token": "t1", "label": "Cancel" },
+                    { "role": "AXButton", "element_token": "t9", "label": "OK",
+                      "frame": { "x": 110, "y": 210, "w": 20, "h": 10 } }
+                ]
+            })
         }))
         .unwrap();
         assert_eq!(hit["status"], json!("call"));
         assert_eq!(hit["phase"], json!("act"));
         assert_eq!(hit["tool"], json!("click"));
         let args: Value = serde_json::from_str(hit["args_json"].as_str().unwrap()).unwrap();
-        assert_eq!(args["element_token"], json!("t9"));
         assert_eq!(args["pid"], json!(4242), "inherited from the observation");
-        assert!(args.get("x").is_none() && args.get("y").is_none(),
-            "a bound click must not also carry coordinates");
+        assert_eq!(args["window_id"], json!(77));
+        assert_eq!(args["x"], json!(40.0));
+        assert_eq!(args["y"], json!(30.0));
+        assert_eq!(args["delivery_mode"], json!("foreground"));
+        assert!(args.get("element_token").is_none(),
+            "token and pixel addressing are alternative modes");
+        assert_eq!(hit["address"]["element_token"], json!("t9"));
     }
 
     /// With a known window, the observation is narrowed to that window and the
@@ -3740,7 +3908,8 @@ mod tests {
         let args: Value = serde_json::from_str(p["args_json"].as_str().unwrap()).unwrap();
         assert_eq!(args["pid"], json!(99));
         assert_eq!(args["window_id"], json!(5));
-        assert_eq!(args["include_screenshot"], json!(false));
+        assert_eq!(args["include_screenshot"], json!(true));
+        assert!(args["screenshot_out_file"].as_str().unwrap().contains("laya"));
         assert_eq!(args["query"], json!("OK"), "the target filters the tree");
     }
 
@@ -3762,6 +3931,30 @@ mod tests {
         let key = cua(json!({ "intent": "press return" })).unwrap();
         assert_eq!(key["tool"], json!("press_key"));
         assert_eq!(key["args"]["key"], json!("return"));
+
+        // A one-shot keystroke must carry the concrete ids returned by open or
+        // focus; without them the driver refuses rather than typing into a
+        // window chosen by accident.
+        let addressed = cua(json!({
+            "intent": "press escape", "pid": 7, "window_id": 9
+        })).unwrap();
+        assert_eq!(addressed["tool"], json!("press_key"));
+        let ka: Value = serde_json::from_str(addressed["args_json"].as_str().unwrap()).unwrap();
+        assert_eq!(ka["pid"], json!(7));
+        assert_eq!(ka["window_id"], json!(9));
+
+        // A successful one-shot receipt must stop the loop; before this it
+        // planned the same keystroke again until max_calls.
+        let receipt = json!({
+            "summary": "✅ Pressed escape on pid 7.", "effect": "unverifiable"
+        });
+        let done = cua(json!({
+            "intent": "press escape", "pid": 7, "window_id": 9,
+            "observation": receipt.to_string()
+        })).unwrap();
+        assert_eq!(done["status"], json!("done"));
+        assert_eq!(done["tool"], json!(""));
+        assert!(done["why"].as_str().unwrap().contains("Pressed escape"));
         assert_eq!(key["phase"], json!("act"), "a keystroke needs no binding");
 
         // A click plans as observe-then-act, so the verb and target are what
@@ -3808,15 +4001,22 @@ mod tests {
         // And the end-to-end effect: the binder sees the label, so it binds.
         let hit = cua(json!({
             "intent": "click the OK button",
-            "observation": json!({ "elements": [
-                { "element_token": "t1", "label": "Cancel" },
-                { "element_token": "t9", "label": "OK" }
-            ]})
+            "observation": json!({
+                "pid": 1, "window_id": 2,
+                "window_bounds": { "x": 0, "y": 0, "width": 100, "height": 100 },
+                "screenshot_scale": 1,
+                "elements": [
+                    { "element_token": "t1", "label": "Cancel" },
+                    { "role": "AXButton", "element_token": "t9", "label": "OK",
+                      "frame": { "x": 10, "y": 10, "w": 20, "h": 10 } }
+                ]
+            })
         }))
         .unwrap();
         assert_eq!(hit["status"], json!("call"));
         let args: Value = serde_json::from_str(hit["args_json"].as_str().unwrap()).unwrap();
-        assert_eq!(args["element_token"], json!("t9"));
+        assert_eq!(args["x"], json!(20.0));
+        assert_eq!(args["y"], json!(15.0));
     }
 
     /// An unparseable intent is reported with the grammar, because a caller
