@@ -4,17 +4,17 @@
 coding agent **真的遵守** AGENTS.md / CLAUDE.md 里的规则，而不是只读一遍。
 
 核心循环：
-1. **compile**：把规则文本交给 agent（或你自己）变成 `.abide/rubric.json` 里的
+1. **compile**：把规则文本交给 agent（或你自己）变成 `.rules/rubric.json` 里的
    machine-checkable 规则。
 2. **check**：每次编辑（`--phase edit`）或整轮改动（`--phase turn`）跑一遍检查，
    违规概率 >= `thresholds.act`（默认 0.8）就发 `{kind:"block"}`；>= `flag`
    （默认 0.5）发 `{kind:"notice"}`；否则 `{kind:"silent"}`。
-3. **report / audit**：事后从 `.abide/events.jsonl` 汇总哪些规则被违反过。
+3. **report / audit**：事后从 `~/.laya-workflow/rules/events.jsonl` 汇总哪些规则被违反过。
 
 ## 快速上手
 
 ```bash
-# 1. 生成骨架（.abide/ + 空的 rubric.json + .abideignore）
+# 1. 生成骨架（<repo>/.rules/ + 空的 rubric.json + .rulesignore；events 走 ~/.laya-workflow/rules/）
 laya-workflow rules init
 
 # 2. 拿到 compile prompt，粘进一个 agent 会话，让它写 rubric
@@ -44,7 +44,7 @@ laya-workflow rules audit
 
 ## Rubric 结构
 
-`.abide/rubric.json`：
+`.rules/rubric.json`：
 
 ```json
 {
@@ -89,7 +89,7 @@ laya-workflow rules audit
 `check` 子命令把 hook 输出直接打到 stdout：
 
 ```json
-{ "kind": "block", "reason": "Abide: … Repair src/worker.rs now, …" }
+{ "kind": "block", "reason": "Rules: … Repair src/worker.rs now, …" }
 ```
 
 - `block`：概率 ≥ act。给 agent 的一句话修复指令，含具体规则 id / 源文件行号 /
@@ -99,7 +99,9 @@ laya-workflow rules audit
 
 ## 事件
 
-每次 check 追加一行到 `.abide/events.jsonl`，事件 schema 与 abide 一致：
+每次 check 追加一行到 **`~/.laya-workflow/rules/events.jsonl`**（用户级审计日志，不进 git）。
+规则文件本身在 `<repo>/.rules/rubric.json`（可提交、团队共享）。
+事件 schema 与原 abide 一致：
 
 ```
 {"kind":"check","at":"…","phase":"edit","files":[…],"rules":1,
@@ -116,7 +118,8 @@ laya-workflow rules audit
 | Node CLI + Claude Code / Codex / OpenCode / Pi 4 套 hook | `laya-workflow rules <sub>` 独立子命令；hook 接线留给宿主自己（`kind: block` JSON 就是约定） |
 | `compile` 委托给 headless agent | `rules compile` 打印 compile prompt 给用户，粘进 agent 会话即可 |
 | 判定走 TypeSafe / Vercel AI Gateway 的 `jev-latest` | `--base-url` 指 `laya-tch` 的 `/v1/systemone`；或用 `question.heuristic` 完全离线 |
-| `.abide/rubric.json` / `.abide/events.jsonl` | 一模一样 |
+| rubric 在 `.abide/rubric.json`（跟代码提交） | rubric 在 `<repo>/.rules/rubric.json`（跟代码提交） |
+| events 在 `.abide/events.jsonl`（跟代码提交） | events 在 `~/.laya-workflow/rules/events.jsonl`（用户级，不进 git） |
 | `violationProbability` / `bandFor` / thresholds / repair reason | 一模一样 |
 
 ## 下一步

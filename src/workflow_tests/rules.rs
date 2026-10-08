@@ -1,15 +1,15 @@
-//! abide port tests: rubric schema, band/probability, scope globs, runner,
+//! rules tests (ported from abide): rubric schema, band/probability, scope globs, runner,
 //! events, and the hook output shapes. Offline only — no model needed.
 
 use super::Harness;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-use laya_workflow::abide as ab;
+use laya_workflow::rules as ab;
 
 fn tmpdir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!(
-        "laya-abide-test-{}-{}",
+        "laya-rules-test-{}-{}",
         tag,
         std::process::id()
     ));
@@ -31,6 +31,7 @@ fn model_rule(id: &str, when: ab::RuleWhen, q: ab::Question, scope: Option<Vec<S
         check: ab::Check::Model {
             question: q,
             overlaps: None,
+            heuristic: None,
         },
         status: ab::RuleStatus::Active,
     }
@@ -65,7 +66,7 @@ fn score_q() -> ab::Question {
     }
 }
 
-pub fn test_abide_schema(h: &mut Harness) {
+pub fn test_rules_schema(h: &mut Harness) {
     // valid rubric round-trips (camelCase JSON field names)
     let rubric = ab::Rubric {
         version: 1,
@@ -116,6 +117,7 @@ pub fn test_abide_schema(h: &mut Harness) {
     bad_choice.rules[0].check = ab::Check::Model {
         question: cq,
         overlaps: None,
+        heuristic: None,
     };
     h.check(
         "choice violating outside criteria rejected",
@@ -123,7 +125,7 @@ pub fn test_abide_schema(h: &mut Harness) {
     );
 }
 
-pub fn test_abide_probability_and_band(h: &mut Harness) {
+pub fn test_rules_probability_and_band(h: &mut Harness) {
     // boolean
     let q = boolean_q(None);
     let (p, a) = ab::violation_probability(
@@ -205,7 +207,7 @@ pub fn test_abide_probability_and_band(h: &mut Harness) {
     h.eq("band clear", ab::band_for(0.49, t), ab::Band::Clear);
 }
 
-pub fn test_abide_glob(h: &mut Harness) {
+pub fn test_rules_glob(h: &mut Harness) {
     h.check("glob star matches same dir", ab::glob_match("*.rs", "a.rs"));
     h.check("glob star no slash", !ab::glob_match("*.rs", "src/a.rs"));
     h.check(
@@ -236,7 +238,7 @@ pub fn test_abide_glob(h: &mut Harness) {
     h.check("rule without scope applies everywhere", ab::rule_applies_to(&open, "any/file"));
 }
 
-pub fn test_abide_runner(h: &mut Harness) {
+pub fn test_rules_runner(h: &mut Harness) {
     // select_rules: phase + scope
     let edit_rule = model_rule("edit-rule", ab::RuleWhen::Edit, boolean_q(None), None);
     let turn_rule = model_rule("turn-rule", ab::RuleWhen::Turn, boolean_q(None), None);
@@ -283,7 +285,7 @@ pub fn test_abide_runner(h: &mut Harness) {
     let all = vec![&scoped_a, &scoped_b, &open_rule];
     let groups = ab::group_by_scope(&all, &diffs);
     // three groups: {src}, {docs}, and the open rule covers BOTH files so it
-    // gets its own group (abide groups by the exact in-scope file set)
+    // gets its own group (rules groups by the exact in-scope file set)
     h.eq("three scope groups", groups.len(), 3usize);
     let has_both = groups
         .iter()
@@ -301,7 +303,7 @@ pub fn test_abide_runner(h: &mut Harness) {
     );
 }
 
-pub fn test_abide_check_offline(h: &mut Harness) {
+pub fn test_rules_check_offline(h: &mut Harness) {
     // Offline check: heuristic rule matches a bad diff, clears a good one.
     let rule = model_rule(
         "no-println",
@@ -324,7 +326,7 @@ pub fn test_abide_check_offline(h: &mut Harness) {
         thresholds: ab::DEFAULT_THRESHOLDS,
         include_heuristic: true,
     };
-    let backend = ab::AbideHeuristicBackend;
+    let backend = ab::RulesHeuristicBackend;
     let out = ab::run_check(&request, &backend).unwrap();
     h.eq("bad diff verdict count", out.verdicts.len(), 1usize);
     h.eq(
@@ -368,7 +370,7 @@ pub fn test_abide_check_offline(h: &mut Harness) {
     h.eq("out-of-scope yields no verdicts", out.verdicts.len(), 0usize);
 }
 
-pub fn test_abide_hook_output(h: &mut Harness) {
+pub fn test_rules_hook_output(h: &mut Harness) {
     let rule = model_rule("r1", ab::RuleWhen::Edit, boolean_q(None), None);
     let v_act = ab::Verdict {
         rule_id: "r1".to_string(),
@@ -422,15 +424,21 @@ pub fn test_abide_hook_output(h: &mut Harness) {
     h.check("reason asks repair", reason.contains("Repair"));
 }
 
-pub fn test_abide_events(h: &mut Harness) {
+pub fn test_rules_events(h: &mut Harness) {
+    // events live under the process-wide LAYA_HOME; isolate so this test does
+    // not accumulate into the real ~/.laya-workflow across runs.
+    let saved_laya_home = std::env::var_os("LAYA_HOME");
+    let laya_home = tmpdir("events-laya-home");
+    std::env::set_var("LAYA_HOME", &laya_home);
+
     let root = tmpdir("events");
     ab::cmd_init(&root).unwrap();
-    h.check("init creates rubric", root.join(".abide/rubric.json").exists());
-    h.check("init creates abideignore", root.join(".abide/.abideignore").exists());
+    h.check("init creates rubric", root.join(".rules/rubric.json").exists());
+    h.check("init creates rulesignore", root.join(".rules/.rulesignore").exists());
     let read = ab::read_rubric(&ab::rubric_path(&root));
     h.check("init rubric is valid", matches!(read, ab::RubricRead::Ok { .. }));
 
-    let ev = ab::AbideEvent::Check {
+    let ev = ab::RulesEvent::Check {
         at: "t".to_string(),
         phase: ab::RuleWhen::Edit,
         session_id: None,
@@ -460,9 +468,15 @@ pub fn test_abide_events(h: &mut Harness) {
     h.eq("report checks", report["checks"].as_u64(), Some(1));
     h.eq("report blocks", report["blocks"].as_u64(), Some(1));
     h.eq("report per-rule act", report["by_rule"]["r1"]["act"].as_u64(), Some(1));
+
+    // restore LAYA_HOME
+    match saved_laya_home {
+        Some(v) => std::env::set_var("LAYA_HOME", v),
+        None => std::env::remove_var("LAYA_HOME"),
+    }
 }
 
-pub fn test_abide_compile_prompt(h: &mut Harness) {
+pub fn test_rules_compile_prompt(h: &mut Harness) {
     let root = tmpdir("prompt");
     std::fs::write(root.join("AGENTS.md"), "# Rules\n- never print to stdout\n").unwrap();
     let prompt = ab::compile_prompt(&root);

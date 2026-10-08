@@ -266,12 +266,6 @@ enum Cmd {
         #[command(subcommand)]
         cmd: RulesCmd,
     },
-    /// Hidden back-compat alias for `rules` (previously `abide`).
-    #[command(hide = true)]
-    Abide {
-        #[command(subcommand)]
-        cmd: RulesCmd,
-    },
     /// Offline mock services: serve the protocol/HTTP mocks the integration
     /// tests need (`mock serve`), or the line-delimited JSON stdio agent
     /// (`mock stdio`). Replaces laya-workflow mock serve and laya-workflow mock serve.
@@ -575,11 +569,11 @@ enum DslCmd {
 
 #[derive(Subcommand)]
 enum RulesCmd {
-    /// Create `.abide/` with a valid empty rubric + `.abideignore`.
+    /// Create `.rules/` with a valid empty rubric + `.rulesignore`.
     Init,
-    /// Validate a rubric file's structure (default `.abide/rubric.json`).
+    /// Validate a rubric file's structure (default `.rules/rubric.json`).
     Validate {
-        /// Rubric file to validate (default: `<root>/.abide/rubric.json`).
+        /// Rubric file to validate (default: `<root>/.rules/rubric.json`).
         #[arg(long)]
         file: Option<String>,
     },
@@ -587,7 +581,7 @@ enum RulesCmd {
     /// (`{kind: silent|notice|block}`). Offline by default; `--base-url`
     /// judges with a live Jev model instead of the offline heuristics.
     Check {
-        /// Rubric file (default: `<root>/.abide/rubric.json`).
+        /// Rubric file (default: `<root>/.rules/rubric.json`).
         #[arg(long)]
         file: Option<String>,
         /// Phase to judge: edit (per hunk) or turn (whole change).
@@ -614,19 +608,19 @@ enum RulesCmd {
         /// Prompt/turn id recorded in events.jsonl.
         #[arg(long)]
         prompt_id: Option<String>,
-        /// Repo root to look up .abide/ from (default: walk up from cwd).
+        /// Repo root to look up .rules/ from (default: walk up from cwd).
         #[arg(long)]
         root: Option<String>,
     },
-    /// Summarise `.abide/events.jsonl` (checks, blocks, per-rule bands).
+    /// Summarise the events log (~/.laya-workflow/rules/events.jsonl): checks, blocks, per-rule bands.
     Report {
-        /// Repo root holding `.abide/` (default: walk up from cwd).
+        /// Repo root holding `.rules/` (default: walk up from cwd).
         #[arg(long)]
         root: Option<String>,
     },
-    /// Pretty-print every `.abide/events.jsonl` entry.
+    /// Pretty-print every entry in the events log (~/.laya-workflow/rules/events.jsonl).
     Audit {
-        /// Repo root holding `.abide/` (default: walk up from cwd).
+        /// Repo root holding `.rules/` (default: walk up from cwd).
         #[arg(long)]
         root: Option<String>,
     },
@@ -636,7 +630,7 @@ enum RulesCmd {
         /// Repo root to read AGENTS.md from (default: walk up from cwd).
         #[arg(long)]
         root: Option<String>,
-        /// Also write `.abide/rubric.json` scaffold first (via `init`).
+        /// Also write `.rules/rubric.json` scaffold first (via `init`).
         #[arg(long, default_value_t = false)]
         init: bool,
     },
@@ -1171,7 +1165,6 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Rules { cmd } => run_rules(cmd),
-        Cmd::Abide { cmd } => run_rules(cmd),
         Cmd::LayaMem { cmd } => run_laya_mem(cmd),
         Cmd::Browser { cmd } => run_browser(cmd),
         Cmd::Chrome { cmd } => run_chrome_alias(cmd),
@@ -1894,7 +1887,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("dsl",       "Workflow JSON shape (`name`, `start`, `nodes[*]`, `actions`, `capabilities`), versioning (`dsl_version`), folder layout, and the kind catalogue.", "list"),
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("install",   "The state root (~/.laya-workflow), `install` (layout + every bundled plugin + the laya-mem specs), and the laya-mem memory gate (`mcp serve`, `laya-mem info`).", "overview"),
-        ("rules",     "Rule enforcement: compile AGENTS.md rules into `.abide/rubric.json`, judge diffs against it, audit events. Hidden back-compat alias: `abide`.", "rules"),
+        ("rules",     "Rule enforcement: compile AGENTS.md rules into `.rules/rubric.json`, judge diffs against it, audit events.", "rules"),
         ("update",    "Self-update from GitHub Releases: resolve the host platform, download the right tarball, atomically replace the running binary with a `.bak` fallback.", "install"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
@@ -1975,7 +1968,7 @@ fn print_overview() {
     println!("  replay -s S -d D -iter N");
     println!("                 re-run a single iter in place from its state_before");
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
-    println!("  rules i|v|c|r|a  enforce AGENTS.md rules: init / validate / check / report / audit (alias: `abide`)");
+    println!("  rules i|v|c|r|a  enforce AGENTS.md rules: init / validate / check / report / audit");
     println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  db s|e|st|p    serve/ensure/status/stop the HTAP SQLite+DuckDB daemon");
@@ -2012,7 +2005,6 @@ fn print_overview() {
 fn print_section(name: &str) -> Result<()> {
     let body = match name {
         "rules" => SKILL_RULES,
-        "abide" => SKILL_RULES,
         "overview" => SKILL_OVERVIEW,
         "validate" => SKILL_VALIDATE,
         "run" => SKILL_RUN,
@@ -2659,15 +2651,15 @@ mod tests {
 }
 
 /// Walk up from cwd to find the repo root (matching abide's findRepoRoot).
-fn abide_repo_root() -> std::path::PathBuf {
-    laya_workflow::abide::find_repo_root(&std::env::current_dir().unwrap_or_default())
+fn rules_repo_root() -> std::path::PathBuf {
+    laya_workflow::rules::find_repo_root(&std::env::current_dir().unwrap_or_default())
 }
 
 fn run_rules(cmd: &RulesCmd) -> Result<()> {
-    use laya_workflow::abide as ab;
+    use laya_workflow::rules as ab;
     match cmd {
         RulesCmd::Init => {
-            let dir = ab::cmd_init(&abide_repo_root())?;
+            let dir = ab::cmd_init(&rules_repo_root())?;
             println!("created {}", dir.display());
             println!("next: `laya-workflow rules compile` to build a rubric from AGENTS.md");
             Ok(())
@@ -2676,7 +2668,7 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
             let path = file
                 .as_deref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|| ab::rubric_path(&abide_repo_root()));
+                .unwrap_or_else(|| ab::rubric_path(&rules_repo_root()));
             match ab::read_rubric(&path) {
                 ab::RubricRead::Ok { rubric, .. } => {
                     println!(
@@ -2712,7 +2704,7 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(abide_repo_root);
+                .unwrap_or_else(rules_repo_root);
             let rubric_file = file
                 .as_deref()
                 .map(std::path::PathBuf::from)
@@ -2757,7 +2749,7 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(abide_repo_root);
+                .unwrap_or_else(rules_repo_root);
             let summary = ab::cmd_report(&repo)?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())
@@ -2766,14 +2758,14 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(abide_repo_root);
+                .unwrap_or_else(rules_repo_root);
             ab::cmd_audit(&repo)
         }
         RulesCmd::Compile { root, init } => {
             let repo = root
                 .as_deref()
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(abide_repo_root);
+                .unwrap_or_else(rules_repo_root);
             if *init {
                 ab::cmd_init(&repo)?;
                 eprintln!("scaffold: {}", ab::rubric_path(&repo).display());

@@ -1,4 +1,4 @@
-//! abide — rule enforcement for coding agents (Rust port).
+//! rules — rule enforcement for coding agents (Rust port).
 //!
 //! Port of <https://github.com/coldteadotai/abide>: turn the repo's
 //! AGENTS.md / CLAUDE.md into a machine-checkable rubric, then judge every
@@ -11,7 +11,8 @@
 //!   * `violation_probability` + `band_for` (act=0.8 / flag=0.5)
 //!   * `select_rules` / `group_by_scope` / `loudest_verdicts` / `run_check`
 //!   * `repair_reason` / `flag_notice` — the block / notice / silent output
-//!   * `.abide/rubric.json` + `.abide/events.jsonl`
+//!   * `<repo>/.rules/rubric.json` — the rubric itself, committed with the repo
+//!   * `~/.laya-workflow/rules/events.jsonl` — per-user audit log (never committed)
 //!
 //! One extension for offline determinism: a model question may carry an
 //! optional `heuristic` block (`match_any` tokens + `p_violated` / `p_ok`).
@@ -140,6 +141,12 @@ pub enum Check {
         question: Question,
         #[serde(skip_serializing_if = "Option::is_none")]
         overlaps: Option<String>,
+        /// Trap for the most common authoring mistake: `heuristic` belongs on
+        /// the *question*, not on the check. Serde would otherwise silently
+        /// drop it and the offline backend would never fire. Captured here so
+        /// `validate` can name the bug; it is never read by the engines.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        heuristic: Option<Heuristic>,
     },
     Deferred {
         reason: String,
@@ -180,7 +187,7 @@ fn default_rule_status() -> RuleStatus {
 pub struct RubricSource {
     /// Repo-relative path, or "~/..." for a file in the home directory.
     pub path: String,
-    /// sha256 hex of the file bytes. Filled by `abide compile` / `validate`.
+    /// sha256 hex of the file bytes. Filled by `rules compile` / `validate`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sha: Option<String>,
     /// Glob the file's rules apply to. Defaults to the file's directory.
@@ -689,12 +696,12 @@ pub fn check_with_model(
 
 // ─── offline backend (deterministic; reads the heuristic extension) ──
 
-/// Deterministic abide backend for offline runs and CI. Reads each question's
+/// Deterministic rules backend for offline runs and CI. Reads each question's
 /// optional `heuristic` block and answers from token matches on the serialised
 /// state. A question without one is answered compliant (probability ~0).
-pub struct AbideHeuristicBackend;
+pub struct RulesHeuristicBackend;
 
-impl Decide for AbideHeuristicBackend {
+impl Decide for RulesHeuristicBackend {
     fn decide(&self, state: &Value, questions: &Value) -> Result<crate::workflow::Verdict> {
         let text = serde_json::to_string(state).unwrap_or_default();
         let mut answers = HashMap::new();
@@ -800,7 +807,7 @@ impl Decide for AbideHeuristicBackend {
                     }
                     (json!(level as f64), m, if hits { p_v } else { 1.0 - p_ok })
                 }
-                other => bail!("unknown abide question type {other:?} for {qid}"),
+                other => bail!("unknown rules question type {other:?} for {qid}"),
             };
             answers.insert(
                 qid.clone(),
@@ -823,7 +830,7 @@ impl Decide for AbideHeuristicBackend {
 pub fn make_backend(base_url: Option<&str>) -> Box<dyn Decide> {
     match base_url {
         Some(u) => Box::new(LayaBackend::new(u)),
-        None => Box::new(AbideHeuristicBackend),
+        None => Box::new(RulesHeuristicBackend),
     }
 }
 
@@ -831,7 +838,7 @@ pub fn make_backend(base_url: Option<&str>) -> Box<dyn Decide> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AbideEvent {
+pub enum RulesEvent {
     Check {
         at: String,
         phase: RuleWhen,
@@ -879,10 +886,11 @@ pub enum AbideEvent {
 }
 
 /// Best effort. The log must never take the caller down with it.
-pub fn append_event(root: &Path, event: &AbideEvent) {
-    let dir = root.join(".abide");
-    let file = dir.join("events.jsonl");
-    let _ = std::fs::create_dir_all(&dir);
+pub fn append_event(root: &Path, event: &RulesEvent) {
+    let file = events_path(root);
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
     let line = serde_json::to_string(event).unwrap_or_default();
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&file) {
@@ -891,8 +899,8 @@ pub fn append_event(root: &Path, event: &AbideEvent) {
 }
 
 /// Read every parseable event, skipping torn lines.
-pub fn read_events(root: &Path) -> Vec<AbideEvent> {
-    let file = root.join(".abide").join("events.jsonl");
+pub fn read_events(root: &Path) -> Vec<RulesEvent> {
+    let file = events_path(root);
     let raw = match std::fs::read_to_string(&file) {
         Ok(r) => r,
         Err(_) => return vec![],
@@ -903,7 +911,7 @@ pub fn read_events(root: &Path) -> Vec<AbideEvent> {
         if line.is_empty() {
             continue;
         }
-        if let Ok(ev) = serde_json::from_str::<AbideEvent>(line) {
+        if let Ok(ev) = serde_json::from_str::<RulesEvent>(line) {
             out.push(ev);
         }
     }
@@ -1019,7 +1027,7 @@ pub fn repair_reason(phase: RuleWhen, violations: &[Violation], files: &[String]
     };
     let count_phrase = if lines.len() == 1 { "a rule".to_string() } else { format!("{} rules", lines.len()) };
     format!(
-        "Abide: {subject} to break {count_phrase} from this repository's instructions.\n{}\n{ask}",
+        "Rules: {subject} to break {count_phrase} from this repository's instructions.\n{}\n{ask}",
         lines.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n")
     )
 }
@@ -1045,7 +1053,7 @@ pub fn flag_notice(phase: RuleWhen, flagged: &[Violation], files: &[String]) -> 
         RuleWhen::Turn => "turn",
     };
     format!(
-        "rules: uncertain about {}{on} ({phase_label}). Not sent to the agent. Details in .abide/events.jsonl.",
+        "rules: uncertain about {}{on} ({phase_label}). Not sent to the agent. Details in ~/.laya-workflow/rules/events.jsonl.",
         list.join(", ")
     )
 }
@@ -1063,7 +1071,7 @@ pub fn find_repo_root(start: &Path) -> PathBuf {
             .unwrap_or_else(|| start.to_path_buf())
     };
     let mut fallback: Option<PathBuf> = None;
-    let markers = [".git", ".abide", "AGENTS.md", "CLAUDE.md"];
+    let markers = [".git", ".rules", "AGENTS.md", "CLAUDE.md"];
     loop {
         if dir.join(".git").exists() {
             return dir;
@@ -1084,16 +1092,24 @@ pub fn find_repo_root(start: &Path) -> PathBuf {
     fallback.unwrap_or_else(|| start.to_path_buf())
 }
 
-pub fn abide_dir(root: &Path) -> PathBuf {
-    root.join(".abide")
+/// The repo-local rubric dir: `<repo>/.rules`. Committed with the repo so the
+/// team and CI share one rule set — this is the file `rules compile` writes.
+pub fn rules_dir(root: &Path) -> PathBuf {
+    root.join(".rules")
 }
 
 pub fn rubric_path(root: &Path) -> PathBuf {
-    abide_dir(root).join("rubric.json")
+    rules_dir(root).join("rubric.json")
 }
 
-pub fn events_path(root: &Path) -> PathBuf {
-    abide_dir(root).join("events.jsonl")
+/// The per-user audit log: `$LAYA_HOME/rules/events.jsonl`
+/// (`~/.laya-workflow/rules/events.jsonl` by default). Runtime output — the
+/// repo never sees it, so `git status` stays clean while `report` / `audit`
+/// still aggregate every check this user ran.
+pub fn events_path(_root: &Path) -> PathBuf {
+    let base = crate::state::state_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from(".laya-workflow"));
+    base.join("rules").join("events.jsonl")
 }
 
 #[derive(Clone, Debug)]
@@ -1157,11 +1173,21 @@ pub fn validate_rubric(rubric: &Rubric) -> Vec<String> {
         }
         seen.insert(&rule.id);
         match &rule.check {
-            Check::Model { question, .. } => {
+            Check::Model {
+                question,
+                heuristic: misplaced,
+                ..
+            } => {
                 if rule.when.is_none() {
                     issues.push(format!(
                         "{p}: rule \"{}\" is model-checked and needs \"when\": \"edit\" or \"turn\"",
                         rule.id
+                    ));
+                }
+                if misplaced.is_some() {
+                    issues.push(format!(
+                        "{p}.check: unknown field \"heuristic\" — move it to {p}.check.question.heuristic \
+                         (the offline backend reads the question's heuristic, not the check's)"
                     ));
                 }
                 validate_question(question, &format!("{p}.check.question"), &mut issues);
@@ -1359,7 +1385,7 @@ pub fn bound_state(text: &str, max: usize) -> String {
 /// Instruction files a compile run starts from, in priority order.
 pub const INSTRUCTION_FILES: &[&str] = &["AGENTS.md", "CLAUDE.md"];
 
-/// Emit the prompt that turns AGENTS.md / CLAUDE.md into `.abide/rubric.json`.
+/// Emit the prompt that turns AGENTS.md / CLAUDE.md into `.rules/rubric.json`.
 /// abide delegates this to a headless agent; here we print the prompt for the
 /// user to run in an agent session in the repo (abide's own fallback path).
 pub fn compile_prompt(root: &Path) -> String {
@@ -1381,7 +1407,7 @@ pub fn compile_prompt(root: &Path) -> String {
     format!(
         "You are compiling {sources_list} into a machine-checkable rubric for the rules rule-enforcement tool.\n\
 \n\
-Read the instruction files below, then write `.abide/rubric.json` at the repo root.\n\
+Read the instruction files below, then write `.rules/rubric.json` at the repo root.\n\
 \n\
 {bodies_text}\n\
 \n\
@@ -1402,7 +1428,7 @@ Rules of thumb:\n\
 - Decompose prose into single, testable rules; prefer boolean/choice questions for sharp rules.\n\
 - Rules a linter already enforces become {{\"type\":\"lint\",\"pattern\":\"…\"}} (reported, never run).\n\
 - Optional offline determinism: add \"heuristic\": {{\"match_any\":[\"token\"],\"p_violated\":0.95,\"p_ok\":0.05}}\n\
-  to a model question so `abide check` can judge it without a model. Without it,\n\
+  to a model question so `rules check` can judge it without a model. Without it,\n\
   offline checks treat the rule as compliant (live model judging via --base-url still applies).\n\
 \n\
 Write only the JSON file. Do not print it.\n"
@@ -1411,9 +1437,9 @@ Write only the JSON file. Do not print it.\n"
 
 // ─── init scaffold ──────────────────────────────────────────────────
 
-/// Create `.abide/` with an empty-but-valid rubric and a starter `.abideignore`.
+/// Create `.rules/` with an empty-but-valid rubric and a starter `.rulesignore`.
 pub fn cmd_init(root: &Path) -> Result<PathBuf> {
-    let dir = abide_dir(root);
+    let dir = rules_dir(root);
     std::fs::create_dir_all(&dir)?;
     let rb = rubric_path(root);
     if !rb.exists() {
@@ -1427,7 +1453,7 @@ pub fn cmd_init(root: &Path) -> Result<PathBuf> {
         };
         write_rubric(&rb, &rubric)?;
     }
-    let ignore = dir.join(".abideignore");
+    let ignore = dir.join(".rulesignore");
     if !ignore.exists() {
         std::fs::write(&ignore, "# Paths rules never checks, one glob per line.\n# .env\n# *.key\n")?;
     }
@@ -1516,7 +1542,7 @@ pub fn cmd_check(input: &CheckCliInput) -> Result<HookOutput> {
     let output = hook_output(phase, &rubric.rules, &outcome.verdicts, &repairable);
     let blocked = matches!(output, HookOutput::Block { .. });
 
-    let event = AbideEvent::Check {
+    let event = RulesEvent::Check {
         at,
         phase,
         session_id: input.session_id.clone(),
@@ -1540,7 +1566,7 @@ pub fn cmd_check(input: &CheckCliInput) -> Result<HookOutput> {
     Ok(output)
 }
 
-/// Summarise `.abide/events.jsonl`: total checks/blocks, band counts per rule.
+/// Summarise the events log: total checks/blocks, band counts per rule.
 pub fn cmd_report(root: &Path) -> Result<Value> {
     let events = read_events(root);
     let mut checks = 0u64;
@@ -1550,7 +1576,7 @@ pub fn cmd_report(root: &Path) -> Result<Value> {
     let mut per_rule: Map<String, Value> = Map::new();
     for ev in &events {
         match ev {
-            AbideEvent::Check { verdicts, blocked, .. } => {
+            RulesEvent::Check { verdicts, blocked, .. } => {
                 checks += 1;
                 if *blocked {
                     blocks += 1;
@@ -1568,9 +1594,9 @@ pub fn cmd_report(root: &Path) -> Result<Value> {
                     e[band_key] = json!(e[band_key].as_u64().unwrap_or(0) + 1);
                 }
             }
-            AbideEvent::Skip { .. } => skips += 1,
-            AbideEvent::Error { .. } => errors += 1,
-            AbideEvent::CompileNeeded { .. } => {}
+            RulesEvent::Skip { .. } => skips += 1,
+            RulesEvent::Error { .. } => errors += 1,
+            RulesEvent::CompileNeeded { .. } => {}
         }
     }
     Ok(json!({
