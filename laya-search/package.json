@@ -1,0 +1,13 @@
+{
+  "name": "laya-search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "jev-search API reproduced with a locally deployed laya-mlx decision model.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": { "node": ">=22.12" },
+  "license": "MIT"
+}

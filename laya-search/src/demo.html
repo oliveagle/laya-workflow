@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Laya Search</title>
+<style>
+  :root { color-scheme: dark light; --line: #8884; --muted: #888; }
+  body { margin: 0 auto; max-width: 720px; padding: 24px 16px; font: 14px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 18px; } a { color: #58a6ff; text-decoration: none; } a:hover { text-decoration: underline; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 10px 12px; font: inherit; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
+  button { padding: 10px 16px; font: inherit; border: 0; border-radius: 8px; background: #238636; color: #fff; cursor: pointer; }
+  .meta { color: var(--muted); font-size: 12px; margin: 12px 0; }
+  .item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pct { float: right; font: 12px ui-monospace, monospace; }
+  .snippet { color: var(--muted); font-size: 13px; }
+  .error { color: #f85149; }
+  .chips span { display: inline-block; margin: 0 6px 6px 0; padding: 2px 10px; border: 1px solid var(--line); border-radius: 99px; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Laya Search <span style="color:var(--muted);font-weight:400">— jev-search API on local laya-mlx</span></h1>
+<form id="f"><input id="q" placeholder="Rust async runtimes on Hacker News this month" autofocus /><button>Search</button></form>
+<div class="chips" id="chips"></div>
+<div class="meta" id="meta"></div>
+<div id="out"></div>
+<script>
+const byUrl = new Map();
+const fmt = (ev) => `${ev.type} ${ev.source ?? ''}/${ev.engine ?? ''} ${ev.searchMs ?? ev.totalMs ?? ''}ms`;
+document.getElementById('f').onsubmit = async (e) => {
+  e.preventDefault();
+  const q = document.getElementById('q').value.trim();
+  if (!q) return;
+  byUrl.clear(); document.getElementById('out').replaceChildren(); document.getElementById('chips').replaceChildren();
+  document.getElementById('meta').textContent = 'Reading your question…';
+  const res = await fetch('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ q }) });
+  if (!res.ok) { document.getElementById('meta').replaceChildren(Object.assign(document.createElement('span'), { className: 'error', textContent: (await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}` })); return; }
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n'); buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const ev = JSON.parse(line);
+      if (ev.type === 'intent') {
+        document.getElementById('chips').replaceChildren(...[
+          document.createElement('span'), ...ev.sources.map((s) => { const el = document.createElement('span'); el.textContent = s; return el; }),
+          (() => { const el = document.createElement('span'); el.textContent = ev.window; return el; })(),
+        ]);
+        document.getElementById('chips').firstChild.textContent = ev.query;
+        document.getElementById('meta').textContent = `judge=${ev.judge} intent=${ev.intentMs}ms`;
+      } else if (ev.type === 'lane') {
+        for (const it of ev.items) {
+          const key = it.url.replace(/[#?].*$/, '');
+          const row = byUrl.get(key);
+          if (row) { row.querySelector('.pct').textContent = `${Math.round((row._r = Math.max(row._r, it.relevance)) * 100)}%`; continue; }
+          const div = document.createElement('div'); div.className = 'item'; div._r = it.relevance;
+          div.innerHTML = '';
+          const a = document.createElement('a'); a.href = it.url; a.target = '_blank'; a.rel = 'noopener'; a.textContent = it.title || it.url;
+          const pct = document.createElement('span'); pct.className = 'pct'; pct.textContent = `${Math.round(it.relevance * 100)}%`;
+          const sn = document.createElement('div'); sn.className = 'snippet'; sn.textContent = it.snippet;
+          div.append(pct, a, sn); byUrl.set(key, div); document.getElementById('out').append(div);
+        }
+      } else if (ev.type === 'error') {
+        document.getElementById('meta').textContent = ev.message;
+      } else if (ev.type === 'done') {
+        document.getElementById('meta').textContent += ` · total ${ev.totalMs}ms · ${ev.tokens} tokens`;
+      }
+    }
+  }
+};
+</script>
+</body>
+</html>
