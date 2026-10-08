@@ -93,8 +93,8 @@ rustup 的 std 不兼容，会报 `E0514 found crate compiled by an incompatible
    `COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs`。少了 `--no-xattrs` 的话
    GNU tar 解包时还会刷一百多条 `Ignoring unknown extended header keyword`。
 3. **别用 `gzip -dc | grep -c` 数 tar 成员** —— 那是对二进制流数行，会得到几百万这种
-   毫无意义的数。`80-archive.sh` 的 `tar_list()` 用 python3 的 `tarfile`，它既不会像
-   bsdtar 那样藏 `._*`，数得也准。
+   毫无意义的数。`80-archive.sh` 的 `tar_list()` 改用 `tar -tzf`——`tar` 直接列全部成员
+   （含 `._*` AppleDouble），既不会像 bsdtar 那样藏 `._*`，数得也准，无须任何解释器。
 
 `80-archive.sh` 有三条**构建期**断言，就是为了不让上面这些坑漏到 Linux 用户手上：
 

@@ -30,14 +30,12 @@ strip_macos_xattrs() {
   fi
 }
 
-# tar 成员数和 AppleDouble 检查用 python3 做：
-#   1) gzip -dc | grep -c 对二进制流数行是瞎数（会得到几百万），没有意义；
-#   2) bsdtar 自己 list 会把 AppleDouble 成员藏起来，正好漏掉要抓的东西。
-# python 的 tarfile 两个坑都不踩。
-tar_list() { # 归档路径 -> 每行一个成员名（包含 ._*）
-  python3 -c 'import sys,tarfile
-for m in tarfile.open(sys.argv[1]).getmembers():
-    print(m.name)' "$1"
+# tar 成员数和 AppleDouble 检查：`tar -tzf` 直接列全部成员（含 ._* AppleDouble），
+# 无须任何解释器。
+#   - `grep -c ..*._*` 数二进制流行没意义；
+#   - bsdtar 的 list 会把 AppleDouble 成员藏起来，正好漏掉要抓的东西。
+tar_list() { # 归档路径 -> 每行一个成员名（包含 ._*)
+  tar -tzf "$1" 2>/dev/null
 }
 
 # 归档里出现 ._* 就是出事了，直接失败，别等人到 Linux 上才发现

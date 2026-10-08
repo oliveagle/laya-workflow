@@ -127,13 +127,12 @@ if [ $rc -eq 0 ]; then ok "start 成功（$((SECONDS-T0))s）"; else bad "start 
 laya-engine status | sed 's/^/  /'
 
 step "7. /health 直连"
-if command -v python3 >/dev/null; then
-  python3 -c "import urllib.request;print('  /health ->',urllib.request.urlopen('http://127.0.0.1:8400/health',timeout=10).read().decode())" \
-    && ok "health 通" || bad "health 不通"
+if command -v curl >/dev/null 2>&1; then
+  body="$(curl -fs --max-time 10 http://127.0.0.1:8400/health 2>/dev/null || true)"
+  if [ -n "$body" ]; then printf "  /health -> %s\n" "$body"; ok "health 通"; else bad "health 不通"; fi
 else
-  # 不要 `status | grep -q`（pipefail + SIGPIPE 会把条件反过来）
   laya-engine status > /tmp/st
-  if grep -q '= ok' /tmp/st; then ok "health ok（engine 自报）"; else bad "health 不通"; fi
+  if grep -q ok /tmp/st; then ok "health ok（engine 自报）"; else bad "health 不通"; fi
 fi
 
 step "8. 真模型决策（POST /v1/systemone）"

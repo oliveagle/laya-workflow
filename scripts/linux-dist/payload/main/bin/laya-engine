@@ -52,11 +52,6 @@ health() {
     [ "$(wget -qO- -T 5 "$URL/health" 2>/dev/null)" = "ok" ]
     return $?
   fi
-  # python3
-  if command -v python3 >/dev/null 2>&1; then
-    python3 -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('$URL/health',timeout=5).read().strip()==b'ok' else 1)" 2>/dev/null
-    return $?
-  fi
   # 兜底：/proc/net/tcp{,6} 里查这个端口有没有在 LISTEN（纯 grep/awk，哪儿都有）
   port_hex=$(printf '%04X' "$PORT")
   awk -v p=":$port_hex" '$4=="0A" && index($2,p)>0 {found=1} END{exit !found}' \
