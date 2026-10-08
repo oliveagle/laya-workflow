@@ -31,6 +31,9 @@ sudo install -m 0755 laya-workflow /usr/local/bin/laya-workflow
 
 # lay down the state root + every bundled plugin + the laya-mem specs
 laya-workflow install
+
+# later: self-update from GitHub Releases (picks the right asset for this host)
+laya-workflow update
 ```
 
 **Only `laya-workflow` goes on a runtime machine.** The release tarball above
