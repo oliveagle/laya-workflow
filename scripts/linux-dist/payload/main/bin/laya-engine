@@ -1,0 +1,142 @@
+#!/bin/sh
+# laya-engine — 推理引擎（laya-tch）进程管理
+#
+#   laya-engine start     后台启动，等到 /health 返回 ok
+#   laya-engine stop      停掉
+#   laya-engine restart   重启
+#   laya-engine status    看进程 / 端口 / 健康
+#   laya-engine smoke     端到端自检：起引擎 → 真模型决策 → 打印结果
+#   laya-engine logs      看日志尾部（加 follow 跟）
+set -e
+
+self="$0"
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self="$link" ;;
+    *)  self="$(dirname "$self")/$link" ;;
+  esac
+done
+bindir=$(cd "$(dirname "$self")" && pwd)
+if [ -x "$bindir/../libexec/laya-tch" ]; then
+  PKG_ROOT=$(cd "$bindir/.." && pwd)
+else
+  PKG_ROOT="@PKG_ROOT@"
+fi
+
+: "${LAYA_HOME:=$HOME/.laya-workflow}"
+RUN_DIR="$LAYA_HOME/run"
+PID_FILE="$RUN_DIR/laya-tch.pid"
+LOG_FILE="$RUN_DIR/laya-tch.log"
+PORT="${LAYA_TCH_PORT:-8400}"
+HOST="${LAYA_TCH_HOST:-127.0.0.1}"
+URL="http://$HOST:$PORT"
+mkdir -p "$RUN_DIR"
+
+health() {
+  # bash: /dev/tcp，最省事
+  if [ -n "${BASH_VERSION:-}" ]; then
+    exec 3<>"/dev/tcp/$HOST/$PORT" 2>/dev/null || return 1
+    printf 'GET /health HTTP/1.0\r\n\r\n' >&3
+    if grep -q '^ok' <&3 2>/dev/null; then exec 3<&-; return 0; fi
+    exec 3<&-
+    return 1
+  fi
+  # curl
+  if command -v curl >/dev/null 2>&1; then
+    [ "$(curl -fsS --max-time 5 "$URL/health" 2>/dev/null)" = "ok" ]
+    return $?
+  fi
+  # wget
+  if command -v wget >/dev/null 2>&1; then
+    [ "$(wget -qO- -T 5 "$URL/health" 2>/dev/null)" = "ok" ]
+    return $?
+  fi
+  # python3
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('$URL/health',timeout=5).read().strip()==b'ok' else 1)" 2>/dev/null
+    return $?
+  fi
+  # 兜底：/proc/net/tcp{,6} 里查这个端口有没有在 LISTEN（纯 grep/awk，哪儿都有）
+  port_hex=$(printf '%04X' "$PORT")
+  awk -v p=":$port_hex" '$4=="0A" && index($2,p)>0 {found=1} END{exit !found}' \
+    /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+running() {
+  [ -f "$PID_FILE" ] || return 1
+  pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+wait_health() {
+  i=0
+  while [ "$i" -lt "${1:-180}" ]; do
+    if health; then return 0; fi
+    if [ -f "$PID_FILE" ] && ! running; then
+      echo "laya-engine: 进程启动失败，日志尾部：" >&2
+      tail -n 30 "$LOG_FILE" >&2 || true
+      return 1
+    fi
+    sleep 1
+    i=$((i+1))
+  done
+  echo "laya-engine: 等待 $URL/health 超时，日志尾部：" >&2
+  tail -n 30 "$LOG_FILE" >&2 || true
+  return 1
+}
+
+cmd_start() {
+  if running && health; then echo "laya-tch 已在跑：$URL"; return 0; fi
+  if running; then
+    echo "laya-tch 进程在但 /health 不通，先停掉重启" >&2
+    cmd_stop || true
+  fi
+  echo "启动 laya-tch（CPU，端口 ${PORT}，日志 ${LOG_FILE}）..."
+  nohup "$PKG_ROOT/bin/laya-tch" --host "$HOST" --port "$PORT" \
+        >>"$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  wait_health 300
+  echo "laya-tch 就绪：$URL  (pid $(cat "$PID_FILE"))"
+  echo
+  echo "接下来："
+  echo "  export LAYA_BASE_URL=$URL"
+  echo "  laya-workflow demo"
+  echo "或者直接：laya-engine smoke"
+}
+
+cmd_stop() {
+  if ! running; then echo "laya-tch 没在跑"; rm -f "$PID_FILE"; return 0; fi
+  pid=$(cat "$PID_FILE")
+  kill "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 20 ] && kill -0 "$pid" 2>/dev/null; do sleep 0.5; i=$((i+1)); done
+  kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "laya-tch 已停"
+}
+
+cmd_status() {
+  if running; then echo "进程: 在跑 (pid $(cat "$PID_FILE"))"; else echo "进程: 没在跑"; fi
+  if health; then echo "健康: $URL/health = ok"; else echo "健康: $URL/health 不通"; fi
+  echo "端口: $PORT   日志: $LOG_FILE"
+}
+
+cmd_smoke() {
+  cmd_start
+  echo
+  echo "=== 真模型决策自检（POST $URL/v1/systemone）==="
+  LAYA_BASE_URL="$URL" "$PKG_ROOT/bin/laya-workflow" demo
+}
+
+case "${1:-status}" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_stop || true; cmd_start ;;
+  status)  cmd_status ;;
+  smoke)   cmd_smoke ;;
+  logs)    tail -n 60 "$LOG_FILE" ;;
+  follow)  tail -f "$LOG_FILE" ;;
+  *) echo "用法: laya-engine {start|stop|restart|status|smoke|logs|follow}" >&2; exit 2 ;;
+esac

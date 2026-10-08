@@ -1,0 +1,178 @@
+# laya 离线运行包 @VERSION@ — Linux x86_64 / CPU
+
+解压即用。不需要联网，不需要编译，不需要 CUDA。
+
+```bash
+tar xzf laya-linux-cpu-x86_64-0.8.0.tar.gz      # 或 unzip
+cd laya-linux-cpu-x86_64-0.8.0
+./install.sh
+laya-engine smoke
+```
+
+## 这个包里有什么
+
+| 路径 | 是什么 | 实测大小 |
+|---|---|---|
+| `bin/laya-workflow` | 工作流引擎 CLI wrapper（转发到 `libexec/`） | 1.6 KB |
+| `bin/laya-tch` | 推理引擎 wrapper：自动带 libtorch 路径 + 模型目录 + `--device cpu` | 1.9 KB |
+| `bin/laya-engine` | 引擎进程管理：`start / stop / restart / status / smoke / logs` | 4.6 KB |
+| `bin/sqlite3` | 静态编译 sqlite3 3.53.4（`db` 能力 shell out 到它） | @N_SQLITE_BYTES@ |
+| `libexec/laya-workflow` | 真正的 ELF 二进制（rust，strip 过） | @N_WF_BYTES@ |
+| `libexec/laya-tch` | 真正的 ELF 二进制（rust + tch，动态链 libtorch） | @N_TCH_BYTES@ |
+| `lib/libtorch/lib/` | PyTorch 2.13.0 CPU 运行库（`libtorch_cpu.so` 414 MB 打头） | @N_LIBTORCH_BYTES@ |
+| `models/laya/` | `convaiinnovations/laya` 权重 842,609,210 B + tokenizer | @N_MODEL_BYTES@ |
+| `specs/` | @N_SPEC@ 个工作流 spec（`laya-workflow list` 里那些） | @N_DSL_BYTES@ |
+| `install.sh` `env.sh` `README.md` `VERSION` | 安装脚本 / shell 环境 / 说明书 | 30 KB |
+
+解压后总体积 **@TOTAL_HUMAN@**（@N_TOTAL_BYTES@，共 @N_FILES@ 个文件）。
+压缩后：zip 约 859 MB / tar.gz 约 860 MB（safetensors 本身压不动）。
+
+## 系统要求
+
+| 项目 | 要求 | 说明 |
+|---|---|---|
+| 架构 | x86_64 | 只有 x86_64。ARM 机器（aarch64）用不了这个包 |
+| glibc | **>= 2.28** | Ubuntu 20.04+ / Debian 10+ / RHEL 8+ / openSUSE 15+。这是 libtorch 的下限 |
+| libstdc++6 | 必须有 | `apt install libstdc++6` / `yum install libstdc++`。几乎所有发行版默认都装了 |
+| 内存 | 建议 >= 4 GB | 加载 800 MB 权重 + 前向 |
+| 磁盘 | >= 3 GB | 包 1.2 GB + 状态目录（chrome profile 不算，这个包不带 chrome） |
+
+**不需要**：Docker、Python、conda、CUDA、Chrome、DuckDB、Node.js。
+
+### 为什么 spec 目录叫 `specs` 不叫 `dsl`
+
+引擎会从**当前工作目录**往上找 `.laya-workflow/dsl` 或 `dsl`，找到就当 `repo` 层加载
+（`src/spec.rs` 的 `REPO_SPEC_REL_PATHS`）。如果包根目录里就叫 `dsl`，那么你在包目录里
+跑任何命令都会多加载一层 —— 同一批 @N_SPEC@ 个 spec 变成两份，`list` 报 @N_SPEC_SUM@ 个，
+而且包内那份会**盖住**你装到 `~/.laya-workflow/dsl` 里、自己改过的版本。
+所以包内那个目录叫 `specs`；装完之后 spec 的正常位置仍然是 `~/.laya-workflow/dsl`。
+
+确认一下：
+
+```bash
+$ laya-workflow list | head -5
+DSL search path (low → high; later overrides earlier):
+  builtin  <打包机路径>/dsl  (missing)     # 编译期路径，目标机上不存在，正常
+  user     ~/.laya-workflow/dsl             # install.sh 装进来的，就该用这份
+@N_SPEC@ spec(s)
+```
+
+## 装完之后怎么用
+
+### 1. 起推理引擎
+
+```bash
+laya-engine start
+# 第一次会加载 800 MB 权重，CPU 上大概 5~40 秒
+# 日志：~/.laya-workflow/run/laya-tch.log
+```
+
+`laya-engine status` 看状态，`laya-engine stop` 停掉。
+
+### 2. 跑真模型决策
+
+```bash
+export LAYA_BASE_URL=http://127.0.0.1:8400   # wrapper 会自动把它变成 --base-url
+laya-workflow demo
+```
+
+或者一条命令搞定（起引擎 + 跑 demo）：
+
+```bash
+laya-engine smoke
+```
+
+### 3. 常用命令
+
+```bash
+laya-workflow list                    # 列出 @N_SPEC@ 个 spec
+laya-workflow describe <name>         # 看某个工作流的图
+laya-workflow validate <spec.json>    # 校验 spec
+laya-workflow run <spec.json> --query "..."
+laya-workflow apps                    # 跑内置 app 的参考用例
+laya-workflow skill                   # 渐进式说明书
+laya-workflow install --dirs-only     # 只建状态目录
+```
+
+不设 `LAYA_BASE_URL` 也能跑，但走的是 **offline heuristic**（不经过模型，只验图和管道）。
+
+## 目录与环境变量
+
+**状态目录** `~/.laya-workflow`（可用 `LAYA_HOME` 改）：
+
+```
+dsl/        装好的 @N_SPEC@ 个 spec（install.sh 从包内 specs/ 拷进来）
+plugins/    插件 —— 这个包不带，见下面的插件包
+websites/   空目录，插件的网页产物放这
+laya-mem/   记忆库（codex.sqlite + specs）
+chrome/     浏览器 profile —— 这个包不带 chrome，用不到
+run/        laya-tch 的 pid 和日志
+```
+
+**可调的环境变量**
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `LAYA_HOME` | `~/.laya-workflow` | 状态根目录 |
+| `LAYA_BASE_URL` | 空 | 设了就自动当 `--base-url` 用 |
+| `LAYA_TCH_PORT` | 8400 | 引擎端口 |
+| `LAYA_TCH_HOST` | 127.0.0.1 | 引擎监听地址 |
+| `LAYA_TCH_MODEL_DIR` | 包内 `models/laya` | 换模型/多份权重时用 |
+| `LAYA_TCH_DEVICE` | cpu | 这个包只有 CPU 轮子，改成 cuda 会失败 |
+| `LAYA_DSL_DIR` | 自动 | 强制指定 spec 目录（一般不用管） |
+| `LAYA_MEM_SQLITE` | `<LAYA_HOME>/laya-mem/codex.sqlite` | 记忆库位置 |
+
+## 不想装，直接就地跑
+
+```bash
+. ./env.sh          # 把 bin/ 加进 PATH，设好 LAYA_HOME / LAYA_BASE_URL
+laya-engine start
+laya-workflow demo
+```
+
+或者完全手动：
+
+```bash
+export LD_LIBRARY_PATH=$PWD/lib/libtorch/lib
+./libexec/laya-tch --model-dir $PWD/models/laya --device cpu --port 8400 &
+./libexec/laya-workflow --base-url http://127.0.0.1:8400 --dsl-dir $PWD/specs demo
+```
+
+## 关于插件
+
+这个包**不含插件**（浏览器/搜索/网站那类 Rhai 扩展）。两种装法：
+
+```bash
+# A. 插件包（另一个 zip）
+tar xzf laya-plugins-0.8.0.tar.gz && cd laya-plugins-0.8.0 && ./install.sh
+
+# B. 从二进制内置副本装（19 个插件，都编译进 laya-workflow 了）
+laya-workflow install          # 加 --force 覆盖已有的
+```
+
+不装插件不影响工作流引擎和真模型决策；只有依赖插件的 spec 才需要。
+
+## 换模型
+
+包里是 `convaiinnovations/laya` 的 root 变体（typed-decisions，英文）。
+HF 上还有 `multilingual/`（614 MB 权重 + 34 MB tokenizer），把目录指过去就行：
+
+```bash
+export LAYA_TCH_MODEL_DIR=/path/to/multilingual
+laya-engine restart
+```
+
+目录里必须有 `model.safetensors` 和 `tokenizer/tokenizer.json`（或 `tokenizer.json`）。
+
+## 卸载
+
+```bash
+./install.sh --uninstall             # 删命令
+rm -rf ~/.laya-workflow              # 删状态（可选）
+```
+
+## 已验证
+
+在 `debian:bookworm-slim`（glibc 2.36）里从零解压安装跑通：
+`install.sh` → `laya-engine start` → `/health` 返回 ok → `laya-workflow demo`
+用真模型（libtorch CPU）出决策。

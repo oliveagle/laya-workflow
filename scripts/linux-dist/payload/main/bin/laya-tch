@@ -1,0 +1,75 @@
+#!/bin/sh
+# laya-tch — Laya 决策模型推理引擎（CPU / libtorch）
+# 这个脚本是 wrapper：负责定位 libtorch 与模型权重，然后 exec 真正的二进制。
+# 直接解压就能用，不需要先 source 任何东西。
+set -e
+
+self="$0"
+# 解析软链接（如果 install.sh 把它软链到了 /usr/local/bin）
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self="$link" ;;
+    *)  self="$(dirname "$self")/$link" ;;
+  esac
+done
+bindir=$(cd "$(dirname "$self")" && pwd)
+
+if [ -x "$bindir/../libexec/laya-tch" ]; then
+  PKG_ROOT=$(cd "$bindir/.." && pwd)
+else
+  PKG_ROOT="@PKG_ROOT@"          # install.sh 会替换成安装后的绝对路径
+fi
+
+LIBTORCH_DIR="$PKG_ROOT/lib/libtorch"
+MODEL_DIR="${LAYA_TCH_MODEL_DIR:-$PKG_ROOT/models/laya}"
+PORT="${LAYA_TCH_PORT:-8400}"
+HOST="${LAYA_TCH_HOST:-127.0.0.1}"
+DEVICE="${LAYA_TCH_DEVICE:-cpu}"
+
+if [ ! -d "$LIBTORCH_DIR/lib" ]; then
+  echo "laya-tch: 找不到 libtorch: $LIBTORCH_DIR/lib" >&2
+  echo "          请确认包解压完整（lib/libtorch 应该存在）。" >&2
+  exit 1
+fi
+if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
+  echo "laya-tch: 找不到模型权重: $MODEL_DIR/model.safetensors" >&2
+  echo "          可以用 LAYA_TCH_MODEL_DIR 指向别处的模型目录。" >&2
+  exit 1
+fi
+
+# 只有在调用方没有自己设的时候才补上
+if [ -z "$LD_LIBRARY_PATH" ]; then
+  LD_LIBRARY_PATH="$LIBTORCH_DIR/lib"
+else
+  case ":$LD_LIBRARY_PATH:" in
+    *":$LIBTORCH_DIR/lib:"*) ;;
+    *) LD_LIBRARY_PATH="$LIBTORCH_DIR/lib:$LD_LIBRARY_PATH" ;;
+  esac
+fi
+export LD_LIBRARY_PATH
+
+# 已经显式给了 --model-dir / --port / --host / --device 就原样转发
+for a in "$@"; do
+  case "$a" in
+    --model-dir=*|--port=*|--host=*|--device=*) exec "$PKG_ROOT/libexec/laya-tch" "$@" ;;
+  esac
+done
+case " $* " in
+  *" --model-dir "*) ;;
+  *) set -- --model-dir "$MODEL_DIR" "$@" ;;
+esac
+case " $* " in
+  *" --port "*) ;;
+  *) set -- --port "$PORT" "$@" ;;
+esac
+case " $* " in
+  *" --host "*) ;;
+  *) set -- --host "$HOST" "$@" ;;
+esac
+case " $* " in
+  *" --device "*) ;;
+  *) set -- --device "$DEVICE" "$@" ;;
+esac
+
+exec "$PKG_ROOT/libexec/laya-tch" "$@"

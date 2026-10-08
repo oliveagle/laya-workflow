@@ -1,0 +1,51 @@
+#!/bin/sh
+# laya-workflow — Laya 工作流引擎 CLI
+# wrapper 做两件事：
+#   1) 找到包里的 spec 目录（dsl/），因为编译期的 builtin 路径在打包机器上，不存在于目标机
+#   2) 如果设置了 LAYA_BASE_URL 而命令行没写 --base-url，自动补上，
+#      这样 `laya-workflow demo` 就能直接打到本地 laya-tch 上跑真模型决策
+set -e
+
+self="$0"
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case "$link" in
+    /*) self="$link" ;;
+    *)  self="$(dirname "$self")/$link" ;;
+  esac
+done
+bindir=$(cd "$(dirname "$self")" && pwd)
+
+if [ -x "$bindir/../libexec/laya-workflow" ]; then
+  PKG_ROOT=$(cd "$bindir/.." && pwd)
+else
+  PKG_ROOT="@PKG_ROOT@"
+fi
+
+: "${LAYA_HOME:=$HOME/.laya-workflow}"
+export LAYA_HOME
+
+# spec：优先用状态目录里已安装的 dsl/，否则指向包内自带的 specs/
+# （包内那个目录叫 specs 不叫 dsl，是有意的：引擎会从 cwd 往上找 `dsl/`
+#   当成 repo 层，包根叫 dsl 的话用户在包目录里跑命令会多加载一层，
+#   同一批 spec 变两份，还会盖住用户自己改过的 ~/.laya-workflow/dsl）
+if [ -z "$LAYA_DSL_DIR" ]; then
+  if [ -d "$LAYA_HOME/dsl" ] && [ -n "$(ls -A "$LAYA_HOME/dsl" 2>/dev/null)" ]; then
+    :
+  elif [ -d "$PKG_ROOT/specs" ]; then
+    LAYA_DSL_DIR="$PKG_ROOT/specs"
+    export LAYA_DSL_DIR
+  fi
+fi
+
+has_base_url=0
+for a in "$@"; do
+  case "$a" in
+    --base-url|--base-url=*) has_base_url=1 ;;
+  esac
+done
+if [ "$has_base_url" -eq 0 ] && [ -n "${LAYA_BASE_URL:-}" ]; then
+  set -- --base-url "$LAYA_BASE_URL" "$@"
+fi
+
+exec "$PKG_ROOT/libexec/laya-workflow" "$@"
