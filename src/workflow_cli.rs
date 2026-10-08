@@ -222,6 +222,31 @@ enum Cmd {
         #[arg(long, default_value_t = false)]
         dirs_only: bool,
     },
+    /// Self-update: install the newest `laya-workflow` from this repo's GitHub
+    /// Releases (or a pinned `--tag`), replacing the running binary in place.
+    /// `--check` only reports whether an update exists. See
+    /// `skill --section update`.
+    Update {
+        /// Only report the latest release and whether an update exists; change nothing.
+        #[arg(long, default_value_t = false)]
+        check: bool,
+        /// Install this release tag instead of the latest (e.g. v0.9.0).
+        #[arg(long, value_name = "TAG")]
+        tag: Option<String>,
+        /// Reinstall even when the resolved version equals the running one.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Repo to update from (default: oliveagle/laya-workflow).
+        #[arg(long, default_value = "oliveagle/laya-workflow")]
+        repo: String,
+        /// Force the platform target triple instead of detecting it.
+        #[arg(long, value_name = "TRIPLE")]
+        target: Option<String>,
+        /// Override the GitHub API base URL (tests / mirrors).
+        #[arg(long, hide = true)]
+        api_base: Option<String>,
+    },
+
     /// The laya-mem memory gate: where its specs and store live, and how to
     /// restore the shipped specs.
     LayaMem {
@@ -1092,6 +1117,22 @@ fn main() -> Result<()> {
         } => run_skill(section.as_deref(), recipe.as_deref(), *list, format),
         Cmd::Plugin { cmd } => run_plugin(cmd),
         Cmd::Install { force, dirs_only } => run_install(*force, *dirs_only),
+        Cmd::Update {
+            check,
+            tag,
+            force,
+            repo,
+            target,
+            api_base,
+        } => laya_workflow::update::run(&laya_workflow::update::UpdateOptions {
+            repo: repo.clone(),
+            tag: tag.clone(),
+            check_only: *check,
+            force: *force,
+            target: target.clone(),
+            api_base: api_base.clone(),
+        })
+        .map(|_| ()),
         Cmd::Bdd { cmd } => run_bdd(cmd),
         Cmd::Mock { cmd } => run_mock(cmd),
         Cmd::Dsl { cmd } => run_dsl(cmd),
@@ -1854,6 +1895,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("plugins",   "Extension seam: write site logic as a sandboxed Rhai plugin, install one from a git repo (`plugin install`), and call it with `kind: \"plugin\"`.", "dsl"),
         ("install",   "The state root (~/.laya-workflow), `install` (layout + every bundled plugin + the laya-mem specs), and the laya-mem memory gate (`mcp serve`, `laya-mem info`).", "overview"),
         ("rules",     "Rule enforcement: compile AGENTS.md rules into `.abide/rubric.json`, judge diffs against it, audit events. Hidden back-compat alias: `abide`.", "rules"),
+        ("update",    "Self-update from GitHub Releases: resolve the host platform, download the right tarball, atomically replace the running binary with a `.bak` fallback.", "install"),
         ("tests",     "The offline test runner `laya-workflow-tests` is modular: each `[section]` is selectable via `./target/release/laya-workflow-tests <section>`.", "tests"),
         ("orchestrate", "Bring up the local resources a browser workflow needs first: `browser ensure --backend <b>` (a browser backend, idempotent) and `server ensure|start|stop|status` (a local HTTP server).", "plugins"),
         ("db",        "HTAP store in two modes: `kind: \"db\"` pairs SQLite (ACID) with DuckDB (analytics) over one file — `embed` (local CLIs) or `server` (`db serve` daemon, shared writer).", "orchestrate"),
@@ -1992,6 +2034,7 @@ fn print_section(name: &str) -> Result<()> {
         "safety" => SKILL_SAFETY,
         "plugins" => SKILL_PLUGINS,
         "install" => SKILL_INSTALL,
+        "update" => SKILL_UPDATE,
         "orchestrate" => SKILL_ORCHESTRATE,
         "db" => SKILL_DB,
         "notify" => SKILL_NOTIFY,
@@ -2046,6 +2089,7 @@ static SKILL_TESTS: &str = include_str!("skill/sections/tests.md");
 static SKILL_SAFETY: &str = include_str!("skill/sections/safety.md");
 static SKILL_PLUGINS: &str = include_str!("skill/sections/plugins.md");
 static SKILL_INSTALL: &str = include_str!("skill/sections/install.md");
+static SKILL_UPDATE: &str = include_str!("skill/sections/update.md");
 static SKILL_ORCHESTRATE: &str = include_str!("skill/sections/orchestrate.md");
 static SKILL_DB: &str = include_str!("skill/sections/db.md");
 static SKILL_NOTIFY: &str = include_str!("skill/sections/notify.md");

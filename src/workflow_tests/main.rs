@@ -23,6 +23,7 @@ mod t_apps;
 mod t_spec;
 mod t_state;
 mod timeouts;
+mod update;
 
 pub use laya_workflow::apps;
 pub use laya_workflow::backend::{choice, noul, score, verdict, ScriptedBackend};
@@ -119,6 +120,8 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("heuristic-fixes", heuristics::test_heuristic_fixes),
         ("persist", persist::test_persistence),
         ("accuracy", heuristics::test_accuracy),
+        ("update-version", update::test_update),
+        ("update-install", update::test_extract_and_install),
     ]
 }
 

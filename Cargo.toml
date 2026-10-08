@@ -14,6 +14,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 ureq = { version = "2", features = ["json"] }
+tar = "0.4"
+flate2 = "1"
 regex-lite = "0.1"
 tungstenite = "0.24"
 rhai = { version = "1.26.1", features = ["serde"] }

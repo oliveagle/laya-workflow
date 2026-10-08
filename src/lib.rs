@@ -6,6 +6,7 @@
 //! * `capability` — capability registry (data / local / net / proto / web / ...)
 
 pub mod abide;
+pub mod update;
 pub mod bdd;
 pub mod mock;
 pub mod accuracy;
