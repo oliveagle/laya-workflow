@@ -22,7 +22,7 @@ fetch() { # url dest expect_bytes
 }
 
 fetch "$MODEL_BASE/model.safetensors"            "$DEST/model.safetensors"            "$MODEL_SAFETENSORS_BYTES"
-fetch "$MODEL_BASE/tokenizer/tokenizer.json"      "$DEST/tokenizer/tokenizer.json"     3582228
+fetch "$MODEL_BASE/tokenizer/tokenizer.json"      "$DEST/tokenizer/tokenizer.json"     "$MODEL_TOKENIZER_BYTES"
 # tokenizer_config.json 是可选的，拿到就带上，没有也不影响
 fetch_optional() {
   local url=$1 dest=$2

@@ -16,6 +16,7 @@ EXTRA_PLUGIN_DIR=${LAYA_EXTRA_PLUGIN_DIR:-$HOME/.laya-workflow/plugins}
 
 # ---------------------------------------------------------------- 版本 / 外部依赖
 PKG_VERSION=0.9.0                    # 跟 Cargo.toml workspace.version 一致
+GITHUB_REPO=oliveagle/laya-workflow
 PKG_NAME=laya-linux-cpu-x86_64
 PLUGIN_PKG_NAME=laya-plugins
 
@@ -33,9 +34,19 @@ LIBTORCH_SO_SHA256="55de3057c8866e30d3fe56e4c4554860d5bf85c37b8ae6e2c81eea5c00d0
 28b3d3926e0674eda7dcdf26c27dfd05cb455d681d11cb84fdbf7e0df72f3f7b  libtorch.so"
 
 MODEL_REPO=convaiinnovations/laya
-MODEL_REV=main
+# 必须 pin 到具体 commit，不能用 main —— main 是活动的，上游改一次 tokenizer
+# 大小就变，几周后重建拿到的是另一份权重，但你以为还是同一份。
+# 2026-10-03 的 main（本次打包时它变了：tokenizer.json 3582228 -> 3583228）。
+MODEL_REV=7b928d828b7b0e022f929d9bd2e44165aa270148
 MODEL_SAFETENSORS_BYTES=842609210   # root 变体（typed-decisions，英文）
+MODEL_TOKENIZER_BYTES=3583228        # 上游在 2026-10-03 重写过 tokenizer
 MODEL_BASE=https://huggingface.co/$MODEL_REPO/resolve/$MODEL_REV
+
+# 官方 GitHub release 里的 laya-workflow（release.yml 用真 Ubuntu + --locked 编的）。
+# 有它就不用在 macOS 上交叉编译那一个二进制了；laya-tch 不在 release 里，仍要自己编。
+# release tag 带 v 前缀（v0.9.0），$PKG_VERSION 来自 Cargo.toml 是不带的 —— 漏了就是 404
+GITHUB_RELEASE_BASE=https://github.com/$GITHUB_REPO/releases/download/v$PKG_VERSION
+RELEASE_LAYA_WORKFLOW_BYTES=4828771   # laya-workflow-x86_64-unknown-linux-gnu.tar.gz
 
 SQLITE_YEAR=2026
 SQLITE_NUMBER=3530400                # 3.53.4

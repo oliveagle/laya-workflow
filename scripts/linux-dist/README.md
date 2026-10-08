@@ -7,8 +7,8 @@
 |---|---|---|
 | `laya-linux-cpu-x86_64-<ver>.zip` | ~859 MB | 主包：二进制 + libtorch + 模型 + spec |
 | `laya-linux-cpu-x86_64-<ver>.tar.gz` | ~860 MB | 同上，tar 格式 |
-| `laya-plugins-<ver>.zip` | ~240 KB | 插件包（可审计副本 + laya-mem specs） |
-| `laya-plugins-<ver>.tar.gz` | ~203 KB | 同上，tar 格式 |
+| `laya-plugins-<ver>.zip` | ~239 KB | 插件包（可审计副本 + laya-mem specs） |
+| `laya-plugins-<ver>.tar.gz` | ~192 KB | 同上，tar 格式 |
 
 解压后 **1.2 GB**，其中模型 807 MB + libtorch 417 MB 占 99%。
 `duckdb` 和 `chrome` 按需求**没有**打进去。
@@ -31,7 +31,7 @@
 |---|---|---|
 | `10-toolchain` | 装/校验交叉 gcc、补 rust-std for linux target、写 C++ wrapper | 幂等 |
 | `30-libtorch` | 下载 PyTorch CPU 运行库，只留 `lib/` | 缓存在 `$WORK/libtorch` |
-| `20-binaries` | 交叉编译 `laya-workflow` + `laya-tch` | cargo 自己管 |
+| `20-binaries` | 取官方 release 的 `laya-workflow` + 交叉编译 `laya-tch` | cargo 自己管 |
 | `40-model` | 下载 HF 权重 + tokenizer（807 MB） | 缓存在 `$WORK/model` |
 | `50-sqlite3` | 容器内静态编译 sqlite3 CLI | 缓存在 `$WORK/sqlite3` |
 | `60-plugins` | 收插件（容器里跑 `laya-workflow install` + 仓库 `plugins/`） | 每次重收 |
@@ -64,6 +64,48 @@ rustup 的 std 不兼容，会报 `E0514 found crate compiled by an incompatible
 
 `x86_64-unknown-linux-gnu` 的 rust-std 官方镜像基本没有，脚本会从
 `static.rust-lang.org` 手动补进 toolchain（幂等，只做一次）。
+
+## 为什么还得 build —— GitHub release 到底给了什么
+
+有官方 release，优先用。`v0.9.0` 的 release 里有：
+
+```
+laya-workflow-x86_64-unknown-linux-gnu.tar.gz   4.6 MB   ← 直接可用
+laya-workflow-aarch64-apple-darwin.tar.gz                 ← macOS 用
+laya-workflow-dev-*.tar.gz                                ← 测试 harness，非运行时
+```
+
+`20-binaries.sh` 现在**优先下载官方的 `laya-workflow`**（真 Ubuntu 上 `cargo build --locked`
+编的，比 macOS 交叉编译可信，且大小写进 `common.sh` 校验），拿不到才退回自己交叉编译。
+`LAYA_USE_RELEASE_BIN=0` 可强制退回。
+
+但**离线包真正需要的东西 release 里一半都没有**：
+
+| 需要 | release 有吗 | 为什么 |
+|---|---|---|
+| `laya-workflow` | ✅ | — |
+| `laya-tch`（模型推理 engine） | ❌ | `release.yml:36` 写死 `-p laya-workflow`；`laya-tch` 是独立 crate，那个工作流根本没编它 |
+| libtorch 417 MB | ❌ | PyTorch 的运行时，不是本仓库产物 |
+| 模型权重 807 MB | ❌ | 在 HF 上 |
+| sqlite3 CLI | ❌ | 脚本现编 |
+| 98 个 `specs/*.json` | ❌（且**必须自带**） | 见下 |
+
+最后一条是要点：`src/spec.rs:191` 的 `builtin_spec_dir()` 是
+`concat!(env!("CARGO_MANIFEST_DIR"), "/dsl")` —— **编译期写死的构建机绝对路径**。
+用官方二进制时 `list` 打出来是：
+
+```
+builtin  /home/runner/work/laya-workflow/laya-workflow/dsl  (missing)
+user     /root/.laya-workflow/dsl
+98 spec(s)
+```
+
+`builtin` 那层在目标机上根本不存在，98 个 spec 全靠包内自带的 `specs/` 顶上来。
+所以这个包不是「下载即用」，libtorch / 权重 / specs 三样都得自己备齐。
+
+**根治办法**：把 `laya-tch` 也加进 `release.yml`（去掉 `-p laya-workflow` 的限制，
+或者加一条 `-p laya-tch` 的构建）。那样 `20-binaries` 整步都能省掉，
+连 brew 交叉工具链都不再是硬依赖。目前还没做。
 
 ## 交叉编译踩过的坑（脚本里都处理了，别删）
 
@@ -118,6 +160,25 @@ info "容器保留: $NAME（docker rm -f $NAME 清掉）"   # ← 全角括号�
   （按字节匹配，能抓到 UTF-8 的高位字节）
 
 踩过 6 处，都修了。改脚本时新增带中文的输出，守卫会替你抓住。
+
+## 模型必须 pin 到 commit（`MODEL_REV`）
+
+不能写 `main`。上游 2026-10-03 动过一次 `main`，`tokenizer.json` 从 3582228 变成 3583228
+字节 —— `40-model.sh` 的大小校验直接把它拦下来了：
+
+```
+✗ tokenizer.json 大小不对：期望 3582228，实际 3583228
+```
+
+这正是那个校验存在的意义：静默混入一份不同的权重，比构建失败糟糕得多。
+所以 `MODEL_REV` 写死成 `7b928d828b7b0e022f929d9bd2e44165aa270148`（当时的 `main`），
+URL 用 `/resolve/$MODEL_REV`。要升级模型：
+
+```bash
+curl -s https://huggingface.co/api/models/convaiinnovations/laya | grep -m1 '"sha"'
+# 把 sha 填进 common.sh 的 MODEL_REV，并把 MODEL_SAFETENSORS_BYTES /
+# MODEL_TOKENIZER_BYTES 更新为新的大小
+```
 
 ## 插件从哪来（重要）
 
