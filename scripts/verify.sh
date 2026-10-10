@@ -1,4 +1,3 @@
-  "$ROOT/target/release/laya-workflow" plugin registry-check || rc=1#!/usr/bin/env bash
 # The gate before you push, in about a second.
 #
 #   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~1s warm
