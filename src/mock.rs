@@ -229,7 +229,14 @@ impl HttpMock {
                     ks.sort();
                     let mut s = String::new();
                     for k in ks {
-                        let short = k.trim_start_matches('/').split('/').nth(2).unwrap_or(&k).to_string();
+                        // Mirror the old Python mock (`k.lstrip('/').split('/', 2)[-1]`):
+                        // drop the leading slash and the bucket segment, keep the key.
+                        let short = k
+                            .trim_start_matches('/')
+                            .splitn(3, '/')
+                            .last()
+                            .unwrap_or(&k)
+                            .to_string();
                         s.push_str(&format!("<Contents><Key>{short}</Key></Contents>"));
                     }
                     s
@@ -643,7 +650,12 @@ pub fn serve_udp(port: u16) -> std::io::Result<()> {
     let mut buf = [0u8; 4096];
     loop {
         let (n, addr) = s.recv_from(&mut buf)?;
-        let _ = s.send_to(&buf[..n], addr);
+        // Mirror the old Python mock: reply `echo:<payload>`, not the raw
+        // payload. `capabilities-batch3` asserts on the `echo:` prefix.
+        let mut reply = Vec::with_capacity(5 + n);
+        reply.extend_from_slice(b"echo:");
+        reply.extend_from_slice(&buf[..n]);
+        let _ = s.send_to(&reply, addr);
     }
 }
 
