@@ -2229,7 +2229,10 @@ fn needle_suggest(step: &str) -> Option<Value> {
 
 fn plugin_src() -> Result<String> {
     let p = repo_root().join("plugins").join("bdd").join("main.rhai");
-    std::fs::read_to_string(&p).with_context(|| format!("cannot read {}", p.display()))
+    match std::fs::read_to_string(&p) {
+        Ok(s) => Ok(s),
+        Err(_) => Ok(include_str!("../plugins/bdd/main.rhai").to_string()),
+    }
 }
 
 /// Port of `vocabulary_check.py check_plugin_messages`.
@@ -2409,6 +2412,10 @@ fn check_xfail_reasons() -> Vec<String> {
     const XFAIL: &str = "expected_failure";
     let mut problems = Vec::new();
     let feature_dir = repo_root().join("bdd").join("features");
+    if !feature_dir.is_dir() {
+        // No repo corpus next to a release binary: this gate has nothing to check.
+        return Vec::new();
+    }
     let mut names: Vec<String> = Vec::new();
     if feature_dir.is_dir() {
         if let Ok(rd) = std::fs::read_dir(&feature_dir) {
