@@ -18,6 +18,10 @@ bdd/*.feature  ── build ──┼─ 测试        manifest.json           (
 | `laya-workflow bdd build --assist` | 同上，并对词汇表外的步骤打印 needle 建议（只建议，不编译） |
 | `laya-workflow bdd build --profile production --base-url https://app.example.com` | 只跑 `@production` 场景，输出 `it.manifest.json` |
 | `laya-workflow bdd run [--profile production] [--base-url URL]` | 真浏览器执行（需要 Chrome） |
+| `laya-workflow bdd score --check` | 工作流造册打分（离线）：词汇表 recall/precision、`@outputs` 合同、expressiveness |
+| `laya-workflow bdd score --run` | 同上 + 真实 Chrome e2e 通过率 |
+| `laya-workflow bdd compare` | 离线：BDD vs 手写 JSON 的体积对比 + 造册门禁（不进 CI 会漏掉，见下） |
+| `laya-workflow bdd live` | 实战：29 个真实网站语料（需要 Chrome） |
 | `scripts/bdd/check.sh [laya-workflow]` | CI 门禁（vocabulary + probe + args + doc + `laya-workflow bdd build` 严格编译） |
 
 准确率门禁：词汇表外 step = 编译错误；生成的 spec 必过 `laya-workflow validate`；每 feature
@@ -278,3 +282,55 @@ laya-workflow bdd build bdd/examples/my.feature --assist --out /tmp/x
 - **BDD skill**：已装到 codex + opencode（`~/.codex/skills/bdd/SKILL.md`），新会话里说"维护 BDD"会自动加载
 - **可行性研究**：`docs/bdd_to_needle.md` + `laya-workflow bench bdd-to-needle`（为什么 needle 不当主路径）
 - **CI 门禁**：`scripts/bdd/check.sh` 已经被 CI 跑；`scripts/verify.sh` 调用它
+
+## 工作流模式（把没有接口的 UI 变成 agent 可调用的工具）
+
+同一份 `.feature` 既能写测试，也能**描述工作流**——一串动作 + 采集 state 作为产物。
+工作流专用 step：
+
+```gherkin
+Given I am on "<base_url>/app.html"
+When I extract the page title into page_title          # 采集：表达式结果 → state.<key>
+When I extract the attribute "data-app" of the element "#app" into app_version
+When I click the element "#consent" if it is present   # 条件点击：不在这里就 no-op
+When I type "ACME" into the element "#search"
+When I press the key "Enter"                           # 真实按键
+When I wait until the element "#export" becomes enabled # 等状态（wait for 只等存在）
+When I extract the text of the element "#results .row" into first_row
+Then the saved value "first_row" contains text "ACME"   # 读 state，不需要页面
+```
+
+用 tag 声明产物，`bdd build` 会把它当编译期合同（声明了却无人产出 = 编译失败）：
+
+```
+@outputs(page_title, app_version, first_row)
+Scenario: Search the no-API app and capture its record
+```
+
+完整示例：`bdd/features/workflow_capture.feature`（目标页 `bdd/fixtures/app.html`）。
+
+打分（离线 / 含 e2e）：
+
+```bash
+laya-workflow bdd score --check     # 词汇表 recall/precision、@outputs 合同、expressiveness
+laya-workflow bdd score --run       # 再加真实 Chrome e2e（需要 CHROME_BIN / 系统 Chrome）
+```
+
+## 实战演练：29 个真实网站（`bdd live` / `bdd compare`）
+
+词汇表只在夹具上跑通说明不了什么。实战语料是 `bdd/bench/live/*.feature`——
+**29 个工作流打 29 个真实外部网站**，每个 ≥20 步，无夹具服务器、无 probe
+（`laya-workflow bdd live`）。一台 headless Chrome 串行跑：**29 passed, 0 failed / 842 steps**。
+完整报告（每站表格、BDD vs JSON 对比、首次跑暴露的坑）见 `bdd/bench/live/REPORT.md`。
+
+```bash
+laya-workflow bdd compare                # 离线：体积 + 造册门禁
+laya-workflow bdd live                   # 打真实网站（设置 CHROME_BIN）
+laya-workflow bdd run <feature> --live   # 单个实战用例
+```
+
+`bdd compare` 把每个 `.feature` 编译出来，量出手写 JSON 的等价规格：**JSON 是 BDD 的
+~16 倍字节、~38 倍行数**。它还会给每种表示各埋一个"造册错误"，问各自的 gate 能否**离线**
+抓到：BDD 的封闭词汇表把未知步骤直接编译报错（29/29）；JSON DSL 的 `validate` 只做结构校验，
+对语义错误——写错的 op、悬空的 edge、拼错的 assertion——一个都抓不到，只能在页面上运行时暴
+露（对照：同一个 `validate` 能抓出删掉的 `start`，所以这个 0 是真的门禁缺口，不是坏探针）。

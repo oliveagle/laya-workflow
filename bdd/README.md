@@ -12,9 +12,13 @@ laya-workflow bdd run                    # every scenario, real Chrome
 laya-workflow bdd run --filter outline   # one feature, by substring
 laya-workflow bdd run --keep             # keep the generated specs
 laya-workflow bdd transpile bdd/features/*.feature --list
+laya-workflow bdd score --check          # score the authoring corpus (offline)
+laya-workflow bdd score --run            # ... plus an end-to-end pass
+laya-workflow bdd compare                 # BDD vs hand-written JSON: volume + the authoring gate (offline)
+laya-workflow bdd live                    # 29 real external websites (needs Chrome)
 ```
 
-Current state: **22 scenarios, all green in ~8s**, hermetic — the only HTTP
+Current state: **25 scenarios, all green in ~16s**, hermetic — the only HTTP
 traffic is a local fixture server on a random port. `laya-workflow bdd doc-check`
 keeps every count on this page recomputed from the gates themselves.
 
@@ -66,7 +70,8 @@ Python transpiler, so a hand-written spec gets the same checks a compiled
             "value": "#echo", "target_id": "${state.target_id}" } }
 ```
 
-Ops: `open`, `navigate`, `wait_for`, `evaluate`, `assert`, `release`. The
+Ops: `open`, `navigate`, `wait_for`, `evaluate`, `assert`, `release`,
+`wait_until`. The
 capability leaves `op` unset so the engine prefers `with.op` per call.
 
 `release` reports the number of tabs the engine actually closed and **throws if
@@ -85,7 +90,7 @@ the same fixture as the scenarios. If the vocabulary ever stops being usable
 outside the compiler, that row goes red.
 
 Assertions: `title_contains`, `url_contains`, `visible`, `absent`, `is_true`,
-`is_false`, `equals`, `contains`, `equals_text`.
+`is_false`, `equals`, `contains`, `equals_text`, `state_equals`, `state_contains`.
 
 Those two lists — the ops and the assertions — are not only documentation, they
 are the *error messages*. `bdd: unknown op 'x' (open | navigate | …)` and
@@ -132,7 +137,7 @@ pins every step in the table to the op it is supposed to run, and runs in the
 default gate with no Chrome:
 
 ```
-bdd vocabulary: 21 steps map correctly, 17 step arguments survive, 8 operand types
+bdd vocabulary: 30 steps map correctly, 24 step arguments survive, 8 operand types
                  survive, 8 steps still refuse to run without a page, 2 stay refused
                  after a release, every @expected_failure says what it disproves, the
                  plugin's own vocabulary messages are in sync, and its header documents
@@ -153,9 +158,14 @@ load-bearing enough to have its own `@expected_failure` scenario, because
 
 **When** — `I open "<url>"` · `I navigate to "<url>"` ·
 `I wait for the element "<selector>"` · `I click the element "<selector>"` ·
+`I click the element "<selector>" if it is present` ·
 `I type "<text>" into the element "<selector>"` ·
 `I select "<value>" in the element "<selector>"` ·
-`I run javascript "<expression>"` · `I release the page`
+`I press the key "<key>"` · `I run javascript "<expression>"` ·
+`I extract the text of the element "<selector>" into <key>` ·
+`I extract the attribute "<attr>" of the element "<selector>" into <key>` ·
+`I extract the page url into <key>` · `I extract the page title into <key>` ·
+`I wait until the element "<selector>" becomes <state>` · `I release the page`
 
 `I release the page` is the one step that changes what a *later* step may do:
 it closes the tab, so the compiler moves to its has-no-page state and any
@@ -166,10 +176,114 @@ halves of that are pinned in `laya-workflow bdd vocabulary-check`.
 `the element "<selector>" is visible` ·
 `javascript "<expression>" is true|false` ·
 `javascript "<expression>" equals <json>` ·
-`javascript "<expression>" contains "<text>"`
+`javascript "<expression>" contains "<text>"` ·
+`the saved value "<key>" equals text "<text>"` ·
+`the saved value "<key>" contains text "<text>"`
 
 `equals` takes JSON, so `equals 42`, `equals true` and `equals "complete"` all
 mean what they look like.
+
+## Workflow vocabulary (not only testing)
+
+The same document that pins a test can be a *workflow*: a sequence of actions
+that leaves collected state behind for a caller, which is how a UI with no API
+becomes something an agent can call. Four steps exist only for that, and have no
+meaning as a pass/fail check on their own:
+
+* `I extract the text of the element "<sel>" into <key>` — and the attribute, url
+  and title variants — runs an expression and files the value under a state key.
+  It is `evaluate` plus a `project`, so the extracted value is the workflow's
+  *output* rather than a verdict.
+* `I wait until the element "<sel>" becomes visible|invisible|absent|enabled|disabled`
+  polls a boolean until it holds. `wait for` only knows presence; a workflow that
+  must wait for a button to become *enabled* — the usual "results are ready"
+  signal — needs this. Each state is a guarded expression, so an element that is
+  not there yet reads as "not yet satisfied" rather than as a probe error.
+* `I press the key "<key>"` dispatches a real key to the page (the `chrome_cdp`
+  `key` op), so a search box that runs on Enter can be driven without a click.
+* `I click the element "<sel>" if it is present` is the conditional click: an
+  absent element is a legitimate no-op, not a failure. It is what lets one
+  workflow run on a page that may or may not show a consent banner.
+
+Two assertions read collected state instead of the page, so a workflow can check
+its outputs after the tab is gone:
+
+* `the saved value "<key>" equals text "<text>"`
+* `the saved value "<key>" contains text "<text>"`
+
+### `@outputs(...)` is a checked contract
+
+A scenario can declare the state keys it promises to produce:
+
+```
+@outputs(page_title, page_url, first_row)
+Scenario: Search the no-API app and capture its record
+  ...
+```
+
+`extract ... into <key>` is what produces them, through the node's `project`
+map. `laya-workflow bdd build` refuses to compile a scenario that declares an
+output nobody produces — the same accuracy-first stance as the step vocabulary,
+one level up: a declared output nobody produces is a promise the run cannot
+keep, and a caller would only find out as an empty value. The declared list is
+also written to the spec's `_bdd.outputs`, so tooling can read a workflow's
+interface without running it. `bdd/features/workflow_capture.feature` is the
+worked example: it drives the no-API fixture `bdd/fixtures/app.html` end to end
+(extract → conditional click → key → `wait_until` → state assertions).
+
+### Scoring the authoring loop (`bdd score`)
+
+The workflow vocabulary is only worth having if an agent can *author* a workflow
+from an intent quickly and correctly. That is a claim about a loop, so it has
+numbers, and `laya-workflow bdd score` recomputes them from the same gates the
+loop hits. The corpus is `bdd/bench/tasks/*.json`; each task carries an `intent`,
+a reference `feature`, the outputs it promises, the phrasings an author would
+*want* to write, the phrasings that are not in the vocabulary, and the step whose
+removal should break an `@outputs` contract. It measures, per task and in total:
+
+* **expressiveness** — does the reference workflow compile at 100% coverage?
+* **vocabulary recall** — do the phrasings an author would want to write compile?
+* **vocabulary precision** — are the out-of-vocabulary phrasings *refused by
+  name*, rather than silently mis-compiled into the wrong step? This is the
+  failure shape the whole vocabulary exists to prevent, so it is counted as one.
+* **the `@outputs` contract** — does dropping the step that produces a declared
+  output really turn into a compile error, on the real feature text?
+* **authoring cost** — steps and unique steps per workflow, and the number of
+  steps in a naive first draft that are *not* yet in the vocabulary (the expected
+  fix count before the first green build).
+
+`--check` turns the hard ones into a gate (all 100%, wired into
+`scripts/bdd/check.sh`, so CI sees it with no Chrome). `--run` adds the
+end-to-end half on a machine with Chrome: it runs every reference workflow and
+counts the scenarios that pass and the wall-clock they took, so the benchmark
+covers execution and not only compilation. Authoring *time* needs an author;
+execution time does not, so that is the time number the benchmark reports
+honestly.
+
+### Live-fire against real sites (`bdd live` / `bdd compare`)
+
+A vocabulary that only drives fixtures proves nothing about the web. The live
+corpus is `bdd/bench/live/*.feature` — **29 workflows against 29 real, external
+websites**, each ≥20 steps, run with no fixture server and no probes
+(`laya-workflow bdd live`). It is **29 passed, 0 failed / 842 steps** on one
+headless Chrome. The full write-up — per-site table, the BDD-vs-JSON comparison
+and the friction the first run exposed — is `bdd/bench/live/REPORT.md`.
+
+```bash
+laya-workflow bdd compare                # offline: volume + the authoring gate
+laya-workflow bdd live                   # the real web (set CHROME_BIN)
+laya-workflow bdd run <feature> --live   # one live case
+```
+
+`bdd compare` compiles each `.feature` and measures the JSON spec an author would
+otherwise hand-write: the JSON is **~16x the bytes and ~38x the lines** of the
+same workflow. It also seeds one authoring fault per representation and asks each
+side's gate whether it is caught **offline**: BDD's closed vocabulary refuses an
+unknown step at compile time (29/29); the JSON DSL's `validate` is structural-only
+and catches none of the semantic faults — a typo'd op, a dangling edge, a
+misspelled assertion — which surface only on a running page (control: the same
+`validate` *does* catch a removed `start`, so the zero is a real gap and not a
+broken probe).
 
 ## `@expected_failure`
 
@@ -472,7 +586,7 @@ words ("four probe specs") are not labels it recognises either, which is how two
 of them went stale the moment round 17 widened the probe set — see below.
 ## The header is the contract, so it is checked
 
-`plugins/bdd/main.rhai` opens with a table of its six ops, its nine assertions and
+`plugins/bdd/main.rhai` opens with a table of its seven ops, its eleven assertions and
 the defaults it takes. That header is what someone reads before writing a spec
 against the plugin, and **nothing held it to the code** — `laya-workflow bdd vocabulary-check`
 checked the two "here is what you can say" *error messages* against the
@@ -494,7 +608,7 @@ field and never did.
 
 * every op the dispatcher handles is documented, and every op documented is
   handled;
-* same for the nine assertions;
+* same for the eleven assertions;
 * every `_num(ctx, "x", N)` default is quoted in the header, with the same number.
 
 All three directions were confirmed red on purpose. Adding an op to the
@@ -560,8 +674,8 @@ with.expected` variants.
 
 ```
 $ laya-workflow bdd args-probe-check
-bdd args probes: 15/15 argument errors refuse with the message they claim,
-and all 17 throw sites are accounted for (15 pinned here, 5 declared elsewhere)
+bdd args probes: 16/16 argument errors refuse with the message they claim,
+and all 20 throw sites are accounted for (16 pinned here, 7 declared elsewhere)
 ```
 
 It is a **table**, not 15 near-identical spec files, because the useful content
@@ -590,6 +704,8 @@ covered, or why it cannot be:
 | `bdd.wait_for: timed out after` | `dsl/browser/bdd_wait_probe.json` |
 | `bdd.release: no open target` | `dsl/browser/bdd_release_probe.json` |
 | `throw last` (the assert mismatch) | `bdd_assert_probe.json` + an `@expected_failure` scenario |
+| `bdd.wait_until: timed out after` | `dsl/browser/bdd_wait_until_probe.json` |
+| the `_assert_state` mismatch | `bdd/features/workflow_capture.feature`'s `@expected_failure` scenario |
 | `bdd: target never reached` | **not covered** — needs a tab that never finishes loading |
 | `bdd.open: " + e` (the load-failure catch) | **not covered** — same reason |
 
@@ -668,6 +784,9 @@ in here.
   multi-step scenario therefore lets the `chrome_cdp` capability own the page
   and passes the plugin a `target_id` to borrow — which is what the transpiler
   emits, and what `dsl/browser/browser_base_probe.json` does.
-* One `Scenario` cannot branch mid-run. The DSL is a decision DAG and the
-  transpiler uses that for the happy path only; a conditional step would need
-  real edge routing.
+* One `Scenario` cannot branch mid-run: the transpiler emits the straight-line
+  happy path, and a data-dependent branch would need real edge routing.
+  `I click ... if it is present` is not that — it is a single step that behaves
+  as a no-op when the element is absent, not control flow. It makes a workflow
+  robust to a page that may or may not show a control; it cannot choose one
+  action over another.

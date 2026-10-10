@@ -21,6 +21,8 @@ laya-workflow bdd build --profile production \
   --base-url https://app.example.com             # 生产集成测试计划（@production 场景）
 laya-workflow bdd run --profile production \
   --base-url https://app.example.com             # 真正执行生产 IT（需要 Chrome/CDP）
+laya-workflow bdd compare                        # 离线：BDD vs 手写 JSON 的体积 + 造册门禁
+laya-workflow bdd live                           # 实战：29 个真实网站（需要 Chrome）
 ```
 
 **门禁是硬性的**：词汇表外步骤 = 编译错误（exit 1）；生成的 spec 必须过
@@ -29,12 +31,21 @@ laya-workflow bdd run --profile production \
 ## 二、写 / 改 feature 的规则
 
 1. **只用标准词汇表**（`laya-workflow bdd vocabulary-check` 里的规则）。当前支持：
-   `the browser is ready`、`I am on "<url>"`、`I open/navigate to "<url>"`、
-   `I wait for the element "<sel>"`、`I click the element "<sel>"`、
-   `I type "<text>" into the element "<sel>"`、`I select "<v>" in the element "<sel>"`、
-   `I run javascript "<expr>"`、`I release the page`；断言 9 种：
-   `the page title contains` / `the page url contains` / `the element ... is visible|absent` /
-   `javascript ... is true|false|equals|contains|equals text`。
+   - 导航/动作：`the browser is ready`、`I am on "<url>"`、`I open/navigate to "<url>"`、
+     `I wait for the element "<sel>"`、`I click the element "<sel>"`、
+     `I click the element "<sel>" if it is present`、`I type "<text>" into the element "<sel>"`、
+     `I select "<v>" in the element "<sel>"`、`I press the key "<key>"`、
+     `I run javascript "<expr>"`、`I release the page`。
+   - 工作流取值（给 agent 当工具用、产出 collected state，而非 pass/fail）：
+     `I extract the text of the element "<sel>" into <key>`、
+     `I extract the attribute "<attr>" of the element "<sel>" into <key>`、
+     `I extract the page url into <key>`、`I extract the page title into <key>`、
+     `I wait until the element "<sel>" becomes visible|invisible|absent|enabled|disabled`。
+   - 断言 11 种：`the page title contains` / `the page url contains` /
+     `the element ... is visible|absent` / `javascript ... is true|false|equals|contains|equals text` /
+     `the saved value "<key>" equals text "<text>"` / `the saved value "<key>" contains text "<text>"`。
+   > 做"工作流"（不是测试）时优先用 extract/key/wait_until/click-if-present + state 断言：
+   > 它是把没有接口的 UI 变成 agent 可调用工具的主路径。
 2. **一个 tag 一行**（Gherkin 解析器一行只认一个 `@tag`）：
    ```
    @production
@@ -49,6 +60,10 @@ laya-workflow bdd run --profile production \
    `laya-workflow bdd build` 会以"unknown step"拒绝——这不是 bug，是门禁。
 5. **生产集成测试场景打 `@production`**，只跑真实目标，绝不引用本地 fixture
    （`htmx.html` 这类）。
+6. **工作流场景用 `@outputs(<key>, ...)` 声明产物**：它把"这个工作流产出哪些 state key"
+   变成编译期合同——`laya-workflow bdd build` 会拒绝"声明了但没有任何 step 产出"的输出。
+   每个 `@outputs` 里的 key 必须由某个 `I extract ... into <key>` 产出（或 seed 进
+   initial_state）。参考 `bdd/features/workflow_capture.feature` + `bdd/fixtures/app.html`。
 
 ## 三、维护循环（每次改动都走）
 
@@ -93,9 +108,14 @@ laya-workflow bdd run --profile production --base-url <real>
 - `bdd/features/*.feature` — 正式场景（CI 门禁的 glob）
 - `bdd/features/setup/` — `include:` 拉入的步骤列表（无 Feature 头）
 - `bdd/examples/` — 模板/示例（不进 CI glob），如 `production_it.feature`
-- `bdd/fixtures/` — 本地 hermetic 夹具页
+- `bdd/fixtures/` — 本地 hermetic 夹具页（`app.html` 是"无接口 UI 转工作流"的示例目标）
+- `bdd/features/workflow_capture.feature` — 工作流语义的端到端示例（extract/key/wait_until/条件点击/@outputs）
 - `laya-workflow bdd vocabulary-check` — 词汇表（step → op/assertion）
 - `laya-workflow bdd transpile` — 编译器（Gherkin → spec）
 - `laya-workflow bdd build` — 统一 accuracy gate + 多产物（本指南的核心命令）
 - `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）
 - `laya-workflow bdd build --assist` — needle 建议模块（只建议，不编译）
+- `bdd/bench/live/` — 实战语料：29 个真实网站的 `.feature` + `<name>.config.json` 站点白名单（`_` 前缀的 `_probe` 不算语料）
+- `bdd/bench/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
+- `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
+- `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
