@@ -15,7 +15,11 @@ DIST_OUT=${LAYA_DIST_OUT:-$HOME/ole/dist/laya}
 EXTRA_PLUGIN_DIR=${LAYA_EXTRA_PLUGIN_DIR:-$HOME/.laya-workflow/plugins}
 
 # ---------------------------------------------------------------- 版本 / 外部依赖
-PKG_VERSION=0.9.0                    # 跟 Cargo.toml workspace.version 一致
+# 版本号从 Cargo.toml 直接读，不手工抄 —— 抄错的后果是包名写着 0.10.1、里面装的却是
+# 0.9.0 编出来的二进制，而版本号还被顺手写进 VERSION 文件，用户根本看不出来。
+# 手工维护两处这件事，已经在这次升级里出现过一次了。
+PKG_VERSION=${LAYA_PKG_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/Cargo.toml" | head -1)}
+[ -n "$PKG_VERSION" ] || die "从 $REPO_ROOT/Cargo.toml 里读不到 version"
 GITHUB_REPO=oliveagle/laya-workflow
 PKG_NAME=laya-linux-cpu-x86_64
 PLUGIN_PKG_NAME=laya-plugins
@@ -46,7 +50,7 @@ MODEL_BASE=https://huggingface.co/$MODEL_REPO/resolve/$MODEL_REV
 # 有它就不用在 macOS 上交叉编译那一个二进制了；laya-tch 不在 release 里，仍要自己编。
 # release tag 带 v 前缀（v0.9.0），$PKG_VERSION 来自 Cargo.toml 是不带的 —— 漏了就是 404
 GITHUB_RELEASE_BASE=https://github.com/$GITHUB_REPO/releases/download/v$PKG_VERSION
-RELEASE_LAYA_WORKFLOW_BYTES=4828771   # laya-workflow-x86_64-unknown-linux-gnu.tar.gz
+RELEASE_LAYA_WORKFLOW_BYTES=4912923   # laya-workflow-x86_64-unknown-linux-gnu.tar.gz
 
 SQLITE_YEAR=2026
 SQLITE_NUMBER=3530400                # 3.53.4

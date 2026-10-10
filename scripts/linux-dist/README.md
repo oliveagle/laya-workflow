@@ -103,9 +103,15 @@ user     /root/.laya-workflow/dsl
 `builtin` 那层在目标机上根本不存在，98 个 spec 全靠包内自带的 `specs/` 顶上来。
 所以这个包不是「下载即用」，libtorch / 权重 / specs 三样都得自己备齐。
 
+顺带一提：v0.10.0 加了 `laya-workflow update` 子命令（`src/update.rs`），
+装好的 laya-workflow 能自己从 GitHub Releases 自我更新。它替代的是「下载二进制」这一步，
+**不替代**这个离线包 —— 它不带 libtorch、权重和 specs，所以 `20-binaries` 依然要编
+`laya-tch`。
+
 **根治办法**：把 `laya-tch` 也加进 `release.yml`（去掉 `-p laya-workflow` 的限制，
 或者加一条 `-p laya-tch` 的构建）。那样 `20-binaries` 整步都能省掉，
-连 brew 交叉工具链都不再是硬依赖。目前还没做。
+连 brew 交叉工具链都不再是硬依赖。截至 v0.10.1 仍未做 —— `release.yml` 从 v0.7.0 起没改过，
+release 里还是那 4 个 tarball。
 
 ## 交叉编译踩过的坑（脚本里都处理了，别删）
 
@@ -160,6 +166,19 @@ info "容器保留: $NAME（docker rm -f $NAME 清掉）"   # ← 全角括号�
   （按字节匹配，能抓到 UTF-8 的高位字节）
 
 踩过 6 处，都修了。改脚本时新增带中文的输出，守卫会替你抓住。
+
+## 版本号不要手工抄
+
+`PKG_VERSION` 直接从 `Cargo.toml` 的 `[package] version` 读：
+
+```bash
+PKG_VERSION=${LAYA_PKG_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' "$REPO_ROOT/Cargo.toml" | head -1)}
+```
+
+以前这里是手抄的常量，后果是升级时漏改一处就打出一个「包名写着 0.10.1、里面装着 0.9.0
+编出来的二进制」的包 —— 而版本号还被顺手写进包里的 `VERSION` 文件，用户根本看不出来。
+`cargo release` 之类改了 Cargo.toml 但没改脚本的情况同理。需要临时覆盖用
+`LAYA_PKG_VERSION`。
 
 ## 模型必须 pin 到 commit（`MODEL_REV`）
 
