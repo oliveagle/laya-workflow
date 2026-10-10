@@ -78,7 +78,7 @@ fi
 
 # The plugin's argument-validation errors, which the four browser probes above
 # cannot reach. Needs no Chrome either, so it belongs in this file and not in
-# the runner. 15 runs, ~25ms, and it fails if the plugin grows an error message
+# the runner. 16 runs, ~25ms, and it fails if the plugin grows an error message
 # that nothing pins.
 "$BIN" bdd args-probe-check
 
@@ -88,6 +88,21 @@ fi
 # block had lost four clauses to an edit. Same reason as the rest of this file:
 # no Chrome, no network, and CI runs it.
 "$BIN" bdd doc-check
+
+# The authoring corpus: can a workflow actually be expressed from an intent, and
+# does the vocabulary catch what it should? Offline and Chrome-free - it compiles
+# every reference workflow (expressiveness), checks the phrasings an author would
+# want to write compile (recall) while the ones that are not in the vocabulary are
+# refused by name (precision), and re-checks the @outputs contract on real
+# features. `laya-workflow bdd score --run` adds the end-to-end half on a machine
+# that has Chrome.
+"$BIN" bdd score --check
+
+# The live-fire corpus (bdd/bench/live/*.feature), compiled offline. `bdd compare`
+# compiles all 29 real-site workflows and runs the seeded-fault gate - no Chrome,
+# no network - so a live case that stops parsing is caught here, in CI, instead of
+# on the machine that happens to have a browser.
+"$BIN" bdd compare >/dev/null
 
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT

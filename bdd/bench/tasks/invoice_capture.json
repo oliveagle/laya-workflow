@@ -1,0 +1,76 @@
+{
+  "id": "invoice_capture",
+  "intent": "Open the invoice app, dismiss the cookie banner if it is there, search for ACME by typing and pressing Enter, wait for the export button to become enabled, then capture the app version, the first result row and the page title.",
+  "feature": "bdd/features/workflow_capture.feature",
+  "expected_outputs": [
+    "page_title",
+    "page_url",
+    "app_version",
+    "first_row"
+  ],
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "I am on \"<base_url>/app.html\""
+    },
+    {
+      "kind": "when",
+      "text": "I extract the page title into page_title"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the attribute \"data-app\" of the element \"#app\" into app_version"
+    },
+    {
+      "kind": "when",
+      "text": "I click the element \"#consent\" if it is present"
+    },
+    {
+      "kind": "when",
+      "text": "I type \"ACME\" into the element \"#search\""
+    },
+    {
+      "kind": "when",
+      "text": "I press the key \"Enter\""
+    },
+    {
+      "kind": "when",
+      "text": "I wait until the element \"#export\" becomes enabled"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the text of the element \"#results .row\" into first_row"
+    },
+    {
+      "kind": "then",
+      "text": "the saved value \"page_title\" contains text \"Invoice\""
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "given",
+      "text": "I visit \"<base_url>/app.html\""
+    },
+    {
+      "kind": "when",
+      "text": "I enter \"ACME\" in the element \"#search\""
+    },
+    {
+      "kind": "when",
+      "text": "I hit the enter key"
+    },
+    {
+      "kind": "when",
+      "text": "I save the page title as page_title"
+    },
+    {
+      "kind": "then",
+      "text": "page title contains \"Invoice\""
+    },
+    {
+      "kind": "then",
+      "text": "the value \"page_title\" is \"Invoice\""
+    }
+  ],
+  "drop_output_step": "I extract the text of the element \"#results .row\" into first_row"
+}

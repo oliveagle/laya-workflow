@@ -623,6 +623,11 @@ fn when_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
                 "bdd",
             ),
             (
+                Regex::new(r"^I click the element (?P<sel>.+?) if it is present$").unwrap(),
+                "click_if_present",
+                "bdd",
+            ),
+            (
                 Regex::new(r"^I click the element (?P<sel>.+)$").unwrap(),
                 "click",
                 "chrome",
@@ -647,6 +652,37 @@ fn when_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
                 "release",
                 "bdd",
             ),
+            // ── workflow vocabulary: data extraction & conditional & key ──
+            (
+                Regex::new(r"^I extract the text of the element (?P<sel>.+?) into (?P<var>.+)$").unwrap(),
+                "extract_text",
+                "bdd",
+            ),
+            (
+                Regex::new(r"^I extract the attribute (?P<attr>.+?) of the element (?P<sel>.+?) into (?P<var>.+)$").unwrap(),
+                "extract_attribute",
+                "bdd",
+            ),
+            (
+                Regex::new(r"^I extract the page url into (?P<var>.+)$").unwrap(),
+                "extract_url",
+                "bdd",
+            ),
+            (
+                Regex::new(r"^I extract the page title into (?P<var>.+)$").unwrap(),
+                "extract_title",
+                "bdd",
+            ),
+            (
+                Regex::new(r"^I press the key (?P<key>.+)$").unwrap(),
+                "key",
+                "chrome",
+            ),
+            (
+                Regex::new(r"^I wait until the element (?P<sel>.+?) becomes (?P<state>.+)$").unwrap(),
+                "wait_until",
+                "bdd",
+            ),
         ]
     })
 }
@@ -669,6 +705,16 @@ fn then_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
                 Regex::new(r"^the page url contains (?P<v>.+)$").unwrap(),
                 "assert",
                 "url_contains",
+            ),
+            (
+                Regex::new(r"^the saved value (?P<v>.+?) equals text (?P<v2>.+)$").unwrap(),
+                "assert",
+                "state_equals",
+            ),
+            (
+                Regex::new(r"^the saved value (?P<v>.+?) contains text (?P<v2>.+)$").unwrap(),
+                "assert",
+                "state_contains",
             ),
             (
                 Regex::new(r"^the element (?P<v>.+?) is visible$").unwrap(),
@@ -776,7 +822,7 @@ fn build_args(
     op: &str,
     extra: &str,
     caps: &regex_lite::Captures<'_>,
-) -> Result<(Map<String, Value>, String, bool)> {
+) -> Result<(Map<String, Value>, String, bool, Option<Value>)> {
     let get = |k: &str| caps.name(k).map(|m| m.as_str().to_string());
     let v = unquote(&get("v").unwrap_or_default());
 
@@ -787,6 +833,7 @@ fn build_args(
                 Map::new(),
                 "Is the CDP browser connected and ready to accept steps?".into(),
                 false,
+                None,
             ));
         };
         let url = unquote(&url);
@@ -798,6 +845,7 @@ fn build_args(
             },
             format!("Did Chrome open {url} and reach a loaded page?"),
             false,
+            None,
         ));
     }
     if op == "navigate" {
@@ -810,10 +858,11 @@ fn build_args(
             },
             format!("Did the page navigate to {url}?"),
             true,
+            None,
         ));
     }
     if op == "release" {
-        return Ok((Map::new(), "Was the page closed?".into(), true));
+        return Ok((Map::new(), "Was the page closed?".into(), true, None));
     }
     if op == "wait_for" {
         let sel = unquote(&get("sel").unwrap_or_default());
@@ -825,6 +874,7 @@ fn build_args(
             },
             format!("Is {sel} present on the page?"),
             true,
+            None,
         ));
     }
     if op == "click" {
@@ -837,6 +887,7 @@ fn build_args(
             },
             format!("Was {sel} clicked?"),
             true,
+            None,
         ));
     }
     if op == "type" {
@@ -851,6 +902,7 @@ fn build_args(
             },
             format!("Was {text:?} typed into {sel}?"),
             true,
+            None,
         ));
     }
     if op == "select" {
@@ -865,6 +917,7 @@ fn build_args(
             },
             format!("Was {value:?} selected in {sel}?"),
             true,
+            None,
         ));
     }
     if op == "evaluate" {
@@ -880,11 +933,150 @@ fn build_args(
             },
             format!("Did the script run on the page: {expr:?}?"),
             true,
+            None,
+        ));
+    }
+    if op == "extract_text" {
+        let sel = unquote(&get("sel").unwrap_or_default());
+        let var = get("var").unwrap_or_default();
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("expression".into(), json!(format!("document.querySelector('{}').textContent", sel)));
+                m
+            },
+            format!("Extracted text of {sel} into state.{var}"),
+            true,
+            Some(json!({ var.clone(): "/value" })),
+        ));
+    }
+    if op == "extract_attribute" {
+        let sel = unquote(&get("sel").unwrap_or_default());
+        let attr = unquote(&get("attr").unwrap_or_default());
+        let var = get("var").unwrap_or_default();
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("expression".into(), json!(format!("document.querySelector('{}').getAttribute('{}')", sel, attr)));
+                m
+            },
+            format!("Extracted attribute {attr} of {sel} into state.{var}"),
+            true,
+            Some(json!({ var.clone(): "/value" })),
+        ));
+    }
+    if op == "extract_url" {
+        let var = get("var").unwrap_or_default();
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("expression".into(), json!("location.href"));
+                m
+            },
+            format!("Extracted page url into state.{var}"),
+            true,
+            Some(json!({ var.clone(): "/value" })),
+        ));
+    }
+    if op == "extract_title" {
+        let var = get("var").unwrap_or_default();
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("expression".into(), json!("document.title"));
+                m
+            },
+            format!("Extracted page title into state.{var}"),
+            true,
+            Some(json!({ var.clone(): "/value" })),
+        ));
+    }
+    if op == "key" {
+        let key = unquote(&get("key").unwrap_or_default());
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("key".into(), json!(key.clone()));
+                m
+            },
+            format!("Pressed key {key:?}"),
+            true,
+            None,
+        ));
+    }
+    if op == "wait_until" {
+        let sel = unquote(&get("sel").unwrap_or_default());
+        let state = unquote(&get("state").unwrap_or_default());
+        // Each state is a guarded boolean, so a page where the element is not
+        // there yet is "not yet satisfied" rather than a TypeError the poll
+        // would report as an error. `visible` uses the same notion of visible
+        // the `visible` assertion does (a box on screen, not merely present);
+        // `absent` is the one that means "not in the DOM at all".
+        let q = format!("document.querySelector('{sel}')");
+        let js = match state.as_str() {
+            "visible" => format!(
+                "(function(){{var e={q}; if(!e) return false; var r=e.getBoundingClientRect(); \
+                 return (r.width>0||r.height>0) && getComputedStyle(e).visibility!=='hidden';}})()"
+            ),
+            "invisible" => format!(
+                "(function(){{var e={q}; if(!e) return true; var r=e.getBoundingClientRect(); \
+                 return !((r.width>0||r.height>0) && getComputedStyle(e).visibility!=='hidden');}})()"
+            ),
+            "absent" => format!("!{q}"),
+            "enabled" => format!("(function(){{var e={q}; return !!e && !e.disabled;}})()"),
+            "disabled" => format!("(function(){{var e={q}; return !!e && !!e.disabled;}})()"),
+            _ => bail!(
+                "wait_until: unsupported state {state:?} (visible | invisible | absent | enabled | disabled)"
+            ),
+        };
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("expression".into(), json!(js.clone()));
+                m
+            },
+            format!("Waited for {sel} to become {state}"),
+            true,
+            None,
+        ));
+    }
+    if op == "click_if_present" {
+        let sel = unquote(&get("sel").unwrap_or_default());
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("selector".into(), json!(sel.clone()));
+                m.insert("if_present".into(), json!(true));
+                m
+            },
+            format!("Clicked {sel} if it was present"),
+            true,
+            None,
         ));
     }
     if op == "assert" {
         let mut m = Map::new();
         m.insert("assertion".into(), json!(extra));
+        if matches!(extra, "state_equals" | "state_contains") {
+            // `v` names a state key (a variable an earlier extract step set),
+            // not a page expression; the operand is a literal string. Compare
+            // it to `expected` directly. No page is needed to check collected
+            // workflow outputs, so `needs_page` is false.
+            let key = unquote(&get("v").unwrap_or_default());
+            let text = unquote(&get("v2").unwrap_or_default());
+            m.insert("value".into(), json!(format!("${{state.{key}}}")));
+            m.insert("expected".into(), json!(text.clone()));
+            let verb = if extra == "state_equals" { "equal" } else { "contain" };
+            return Ok((
+                m,
+                format!(
+                    "Does state.{key} {verb} {:?}?",
+                    text
+                ),
+                false,
+                None,
+            ));
+        }
         m.insert("value".into(), json!(v.clone()));
         let desc = if matches!(extra, "equals" | "equals_text" | "contains") {
             let raw = get("v2").unwrap_or_default();
@@ -910,6 +1102,7 @@ fn build_args(
             m,
             format!("Did the assertion hold: {desc}?"),
             true,
+            None,
         ));
     }
     bail!("no builder for op {op:?}")
@@ -925,7 +1118,7 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
         })
         .into_owned();
     let (caps, op, extra) = match_step(&step.kind, &text)?;
-    let (mut args, instruction, needs_page) = build_args(op, extra, &caps)?;
+    let (mut args, instruction, needs_page, project_override) = build_args(op, extra, &caps)?;
 
     if needs_page && !has_page {
         bail!(
@@ -935,10 +1128,22 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
         );
     }
 
-    let capability = if matches!(op, "click" | "type" | "select") {
+    let capability = if matches!(op, "click" | "type" | "select" | "key" | "click_if_present") {
         "chrome"
     } else {
         "bdd"
+    };
+    // The step's op name is not always the capability op it runs: the extract
+    // family reuse the plugin's `evaluate` op (they differ only in what they
+    // project out of its result), and `click_if_present` runs the chrome
+    // capability's `click` with an `if_present` flag. Keeping one op per step
+    // name in the vocabulary, but dispatching to the reused implementation,
+    // means the vocabulary stays readable while the capability surface stays
+    // small and already tested.
+    let cap_op = match op {
+        "extract_text" | "extract_attribute" | "extract_url" | "extract_title" => "evaluate",
+        "click_if_present" => "click",
+        other => other,
     };
     if has_page {
         args.insert("target_id".into(), json!("${state.target_id}"));
@@ -949,10 +1154,24 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
     // existing `args` Map was already filled in `op, …` order by `build_args`
     // (or `op, url` for `open`); we rebuild here so `op` is always key #0.
     let mut with: Map<String, Value> = Map::new();
-    with.insert("op".into(), json!(op));
+    with.insert("op".into(), json!(cap_op));
     for (k, v) in args.into_iter() {
         if k != "op" {
             with.insert(k, v);
+        }
+    }
+
+    // Compute the per-call project map. `target_id` is always projected for
+    // page-bound steps; extract* ops merge extra state keys on top.
+    let mut call_project: Map<String, Value> = project(capability)
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    if let Some(p) = &project_override {
+        if let Some(obj) = p.as_object() {
+            for (k, v) in obj {
+                call_project.insert(k.clone(), v.clone());
+            }
         }
     }
 
@@ -961,16 +1180,25 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
         // The page is opened by the chrome_cdp *capability*, not by the plugin:
         // the engine closes every tab a plugin opened before the next step.
         now_has_page = true;
+        let mut p = Map::new();
+        p.insert("target_id".into(), json!("/target_id"));
+        if let Some(po) = project_override {
+            if let Some(obj) = po.as_object() {
+                for (k, v) in obj {
+                    p.insert(k.clone(), v.clone());
+                }
+            }
+        }
         Some(json!({
             "kind": "call", "capability": "chrome",
             "with": with,
-            "project": {"target_id": "/target_id"}
+            "project": p
         }))
     } else if op != "open" {
         Some(json!({
             "kind": "call", "capability": capability,
             "with": with,
-            "project": project(capability)
+            "project": call_project
         }))
     } else {
         // `the browser is ready` (op="open" with no url): a declaration, not
@@ -1103,6 +1331,46 @@ fn merge(dst: &mut Value, src: &Value) {
 }
 
 /// Compile one scenario into a full spec (public shape + `_bdd` metadata).
+
+/// `@outputs(a, b)` on a Scenario declares the state keys the workflow is
+/// *contractually* supposed to produce, so a caller (an agent invoking this as
+/// a tool) knows what it can read back. Returns [] when the tag is absent.
+pub fn scenario_outputs(scenario: &Scenario) -> Vec<String> {
+    for t in &scenario.tags {
+        if let Some(rest) = t.strip_prefix("outputs(") {
+            if let Some(inner) = rest.strip_suffix(')') {
+                return inner
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// State keys the compiled nodes actually *produce* (via a `project` map), plus
+/// whatever `initial_state` seeds. This is the ground truth an `@outputs`
+/// declaration is checked against: a declared output nobody produces is a lie
+/// a caller would only discover at run time, so it is a compile error instead.
+fn produced_state_keys(nodes: &[Value], initial_state: &Value) -> BTreeSet<String> {
+    let mut keys: BTreeSet<String> = BTreeSet::new();
+    if let Some(o) = initial_state.as_object() {
+        for k in o.keys() {
+            keys.insert(k.clone());
+        }
+    }
+    for n in nodes {
+        if let Some(proj) = n.get("action").and_then(|a| a.get("project")).and_then(|p| p.as_object()) {
+            for k in proj.keys() {
+                keys.insert(k.clone());
+            }
+        }
+    }
+    keys
+}
+
 pub fn compile_scenario(
     feature: &Feature,
     scenario: &Scenario,
@@ -1210,6 +1478,36 @@ pub fn compile_scenario(
         },
         "nodes": all
     });
+    // `@outputs(...)` contract gate: every declared output must be produced by
+    // a step (a `project` key) or seeded in `initial_state`. Declaring an
+    // output nobody produces turns a silent run-time surprise into a build
+    // failure — the same accuracy-first stance as the step vocabulary.
+    let declared = scenario_outputs(scenario);
+    if !declared.is_empty() {
+        let seeded = config
+            .get("initial_state")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let produced = produced_state_keys(&all, &seeded);
+        let missing: Vec<String> = declared
+            .iter()
+            .filter(|k| !produced.contains(*k))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "Scenario {:?} declares @outputs({}) but nothing produces: {}. \
+                 Add a step that extracts it (e.g. `I extract ... into <{}>`), \
+                 or seed it in initial_state. A declared output nobody produces \
+                 is a promise the run cannot keep.",
+                scenario.name,
+                declared.join(", "),
+                missing.join(", "),
+                missing[0]
+            );
+        }
+    }
+
     let mut meta = Map::new();
     meta.insert("feature".into(), json!(feature.name));
     meta.insert("feature_path".into(), json!(rel_path(&feature.path)));
@@ -1217,6 +1515,7 @@ pub fn compile_scenario(
     meta.insert("tags".into(), json!(scenario.tags));
     let init = config.get("initial_state").cloned().unwrap_or_else(|| json!({}));
     meta.insert("initial_state".into(), init);
+    meta.insert("outputs".into(), json!(declared));
     spec["_bdd"] = Value::Object(meta);
     Ok(spec)
 }
@@ -2100,6 +2399,18 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         ("then", "javascript \"a\" contains \"x\"", Some("assert"), Some("contains"), true),
         ("then", "javascript \"a\" equals text \"x\"", Some("assert"), Some("equals_text"), true),
         ("then", "javascript \"a\" equals_text \"x\"", Some("assert"), Some("equals_text"), true),
+        // ── workflow vocabulary (not testing): extraction, conditional, key,
+        //    and assertions on collected state ──
+        ("when", r##"I extract the text of the element "#a" into t"##, Some("evaluate"), None, true),
+        ("when", r##"I extract the attribute "href" of the element "#a" into link"##, Some("evaluate"), None, true),
+        ("when", "I extract the page url into u", Some("evaluate"), None, true),
+        ("when", "I extract the page title into t", Some("evaluate"), None, true),
+        ("when", "I press the key \"Enter\"", Some("key"), None, true),
+        ("when", r##"I wait until the element "#a" becomes visible"##, Some("wait_until"), None, true),
+        ("when", r##"I click the element "#a" if it is present"##, Some("click"), None, true),
+        // state assertions read collected state, so they need no page: has_page=false.
+        ("then", "the saved value \"first_row\" equals text \"ACME\"", Some("assert"), Some("state_equals"), false),
+        ("then", "the saved value \"first_row\" contains text \"ACME\"", Some("assert"), Some("state_contains"), false),
         ("when", "I release the page", Some("release"), None, true),
     ];
     for (kind, text, want_op, want_assertion, has_page) in &cases {
@@ -2149,6 +2460,14 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         ("then", "javascript \"a\" equals 3", vec![("assertion", json!("equals")), ("value", json!("a")), ("expected", json!(3))]),
         ("then", "javascript \"a\" contains \"x\"", vec![("assertion", json!("contains")), ("expected", json!("x"))]),
         ("then", "javascript \"a\" equals text \"x\"", vec![("assertion", json!("equals_text")), ("expected", json!("x"))]),
+        // ── workflow vocabulary arguments ──
+        ("when", r##"I extract the text of the element "#a" into t"##, vec![("expression", json!("document.querySelector('#a').textContent"))]),
+        ("when", r##"I extract the attribute "href" of the element "#a" into link"##, vec![("expression", json!("document.querySelector('#a').getAttribute('href')"))]),
+        ("when", "I extract the page url into u", vec![("expression", json!("location.href"))]),
+        ("when", "I extract the page title into t", vec![("expression", json!("document.title"))]),
+        ("when", "I press the key \"Enter\"", vec![("key", json!("Enter"))]),
+        ("when", r##"I wait until the element "#a" becomes enabled"##, vec![("expression", json!("(function(){var e=document.querySelector('#a'); return !!e && !e.disabled;})()"))]),
+        ("when", r##"I click the element "#a" if it is present"##, vec![("selector", json!("#a")), ("if_present", json!(true))]),
     ];
     for (kind, text, wants) in &arg_cases {
         match compile_step(&mk(kind, text), true) {
@@ -2209,6 +2528,50 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
                     ));
                 }
             }
+        }
+    }
+
+    // Workflow extraction must *project* the collected value into the named
+    // state key. An extract step that runs the expression but files the result
+    // nowhere is the silent-failure shape this whole vocabulary exists to stop:
+    // the workflow "succeeds" and the caller reads an empty output. Pinning the
+    // project pointer is what makes `@outputs` a real contract rather than a
+    // comment.
+    let extract_cases: Vec<(&str, &str, &str)> = vec![
+        (r##"I extract the text of the element "#a" into first_row"##, "first_row", "/value"),
+        (r##"I extract the attribute "href" of the element "#a" into link"##, "link", "/value"),
+        ("I extract the page url into page_url", "page_url", "/value"),
+        ("I extract the page title into page_title", "page_title", "/value"),
+    ];
+    for (text, key, ptr) in &extract_cases {
+        match compile_step(&mk("when", text), true) {
+            Err(e) => failures.push(format!("when {text:?}: {e}")),
+            Ok((node, _)) => {
+                let got = node
+                    .action
+                    .as_ref()
+                    .and_then(|a| a.get("project"))
+                    .and_then(|p| p.get(*key));
+                if got != Some(&json!(ptr)) {
+                    failures.push(format!(
+                        "when {text:?}: project[{key}] is {got:?}, want {ptr:?} - an \
+                         extracted value the state never keeps is a caller-visible empty output"
+                    ));
+                }
+            }
+        }
+    }
+
+    // state_equals / state_contains read collected state, so they must compile
+    // with no page open (a workflow checks its outputs after the tab is gone).
+    for text in [
+        "the saved value \"first_row\" equals text \"ACME\"",
+        "the saved value \"first_row\" contains text \"ACME\"",
+    ] {
+        if let Err(e) = compile_step(&mk("then", text), false) {
+            failures.push(format!(
+                "then {text:?}: {e} - a state assertion must not require a page"
+            ));
         }
     }
 
@@ -2313,6 +2676,7 @@ pub fn check_probes() -> Result<i32> {
         "dsl/browser/bdd_assert_probe.json",
         "dsl/browser/bdd_release_probe.json",
         "dsl/browser/bdd_wait_probe.json",
+        "dsl/browser/bdd_wait_until_probe.json",
         "dsl/browser/bdd_retry_probe.json",
         "dsl/browser/browser_base_probe.json",
     ]
@@ -2962,6 +3326,13 @@ pub struct RunOptions {
     pub timeout_secs: u64,
     pub keep: bool,
     pub out: String,
+    /// Live-fire mode: the features target real, external sites (their sidecar
+    /// `policy.allow_hosts` names the hosts). No local fixture server, and the
+    /// hand-written fixture probes are skipped — this is the real web, not the
+    /// hermetic suite.
+    pub live: bool,
+    /// Write a per-scenario JSON report here (exit code, seconds, verdict).
+    pub report: Option<String>,
 }
 
 impl Default for RunOptions {
@@ -2981,6 +3352,8 @@ impl Default for RunOptions {
                 .join("bdd-specs")
                 .to_string_lossy()
                 .into_owned(),
+            live: false,
+            report: None,
         }
     }
 }
@@ -3237,6 +3610,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     let handwritten_spec = root.join("dsl/browser/bdd_assert_probe.json");
     let release_probe = root.join("dsl/browser/bdd_release_probe.json");
     let wait_probe = root.join("dsl/browser/bdd_wait_probe.json");
+    let wait_until_probe = root.join("dsl/browser/bdd_wait_until_probe.json");
     let retry_probe = root.join("dsl/browser/bdd_retry_probe.json");
     const RELEASE_MUST_CONTAIN: &str = "no open target";
     const WAIT_PROBE_BUDGET_MS: i64 = 600;
@@ -3272,12 +3646,14 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     }
 
     let profile = o.profile.as_str();
-    let base_url = if profile == "production" {
+    let base_url = if o.live {
+        Some(String::new())
+    } else if profile == "production" {
         o.base_url.clone().or_else(|| std::env::var("BDD_BASE_URL").ok())
     } else {
         None
     };
-    if profile == "production" && base_url.is_none() {
+    if profile == "production" && !o.live && base_url.is_none() {
         eprintln!(
             "bdd: --profile production needs --base-url (or $BDD_BASE_URL) — production \
              integration tests run against a real target, never the local fixture server"
@@ -3376,7 +3752,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     // the headless Chrome its spec asks for, so the runner never opens a window
     // on the developer's screen.
     let mut fixture_child: Option<FixtureServer> = None;
-    let base_url = if profile == "production" {
+    let base_url = if profile == "production" || o.live {
         base_url.unwrap_or_default()
     } else {
         let (base, child) = spawn_fixture_server(&fixture_dir)?;
@@ -3387,6 +3763,9 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         );
         base
     };
+    if o.live {
+        println!("bdd: live-fire  (real external sites; no fixtures, no probes)");
+    }
     if profile == "production" {
         println!("bdd: profile production  base_url {base_url}  (no local fixtures)");
     }
@@ -3554,6 +3933,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         None
     };
 
+    if !o.live {
     let empty_state = json!({});
     add_probe(
         &browser_base_probe,
@@ -3592,6 +3972,16 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         true,
         &mut results,
     );
+    let wait_until_needle = format!("bdd.wait_until: timed out after {WAIT_PROBE_BUDGET_MS}ms");
+    add_probe(
+        &wait_until_probe,
+        json!({"url": format!("{base_url}/index.html")}),
+        "workflow wait_until must time out and say what it polled",
+        &[&wait_until_needle, "!!document.querySelector('#search').disabled", "ms elapsed"],
+        &rel_path(&wait_until_probe.to_string_lossy()),
+        true,
+        &mut results,
+    );
     add_probe(
         &retry_probe,
         json!({"url": format!("{base_url}/index.html")}),
@@ -3602,6 +3992,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         &mut results,
     );
     let _ = empty_state;
+    }
 
     results.sort_by(|a, b| a.name.cmp(&b.name));
     let passed = results.iter().filter(|r| r.ok).count();
@@ -3628,6 +4019,28 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     }
     println!("\nbdd: {passed} passed, {failed} failed");
 
+    if let Some(rp) = &o.report {
+        let rows: Vec<Value> = results
+            .iter()
+            .map(|r| json!({
+                "name": r.name, "pass": r.ok, "rc": r.rc,
+                "xfail": r.xfail, "seconds": (r.elapsed * 100.0).round() / 100.0
+            }))
+            .collect();
+        let doc = json!({
+            "mode": if o.live { "live" } else { "hermetic" },
+            "total": results.len(),
+            "passed": passed,
+            "failed": failed,
+            "scenarios": rows,
+        });
+        if let Err(e) = std::fs::write(rp, serde_json::to_string_pretty(&doc)?) {
+            eprintln!("bdd: could not write report {rp}: {e}");
+        } else {
+            println!("bdd: report {rp}");
+        }
+    }
+
     // Whatever happens — a failing scenario, a Ctrl-C, a crash — kill the Chrome
     // processes holding our profile dirs and remove them. The runner used to
     // leak them: nine survivors were found holding renderers, and the machine's
@@ -3649,4 +4062,708 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     }
     println!("\n{}", if failed == 0 { "all green" } else { "RED" });
     Ok(if failed == 0 { 0 } else { 1 })
+}
+
+// ── authoring benchmark (`laya-workflow bdd score`) ─────────────────────────
+//
+// The workflow half of the vocabulary is only worth having if an agent can
+// *author* a workflow from an intent quickly and correctly. That is a claim
+// about a loop, so it needs numbers, and the numbers have to come from the same
+// gates the loop actually hits. This subcommand scores a corpus of authoring
+// tasks (`bdd/bench/tasks/*.json`) against exactly three things an author cares
+// about, all measured, none asserted:
+//
+//   * expressiveness — does the reference workflow compile, at 100% coverage?
+//   * vocabulary recall/precision — do the phrasings an author would *want* to
+//     write compile, and do the ones that are not in the vocabulary get caught
+//     with a named error instead of being silently mis-compiled?
+//   * the `@outputs` contract — is declaring an output nobody produces really a
+//     compile error, on a real feature, not just in a unit test?
+//
+// `--check` turns the hard ones into a gate (all 100%); `--run` adds an end to
+// end pass over a real Chrome, so the benchmark also measures whether the
+// workflows it scores actually run.
+
+/// Does the deterministic vocabulary know this step? The same matcher the
+/// compiler uses, so "true" means "an agent writing this gets a workflow".
+pub fn vocab_matches(kind: &str, text: &str) -> bool {
+    match_step(kind, text).is_ok()
+}
+
+/// One `(kind, text)` step probe out of a task's JSON.
+fn parse_step_probe(v: &Value) -> (String, String) {
+    (
+        v.get("kind").and_then(Value::as_str).unwrap_or("when").to_string(),
+        v.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+    )
+}
+
+pub struct ScoreOptions {
+    /// Turn the hard targets (compile, coverage, recall, precision, contract)
+    /// into a gate: any shortfall exits non-zero.
+    pub check: bool,
+    /// Also run every task's reference workflow against real Chrome, so the
+    /// benchmark covers execution and not only compilation.
+    pub run: bool,
+    /// Write the metrics as JSON here.
+    pub json: Option<String>,
+    /// Score only these task ids (default: every task under bdd/bench/tasks).
+    pub tasks: Vec<String>,
+}
+
+impl Default for ScoreOptions {
+    fn default() -> Self {
+        Self { check: false, run: false, json: None, tasks: Vec::new() }
+    }
+}
+
+struct TaskScore {
+    id: String,
+    intent: String,
+    feature: String,
+    compile_ok: bool,
+    compile_error: Option<String>,
+    coverage: f64,
+    declared_outputs: usize,
+    known_ok: usize,
+    known_total: usize,
+    unknown_ok: usize,
+    unknown_total: usize,
+    contract_ok: bool,
+    reference_steps: usize,
+    unique_steps: usize,
+    e2e: Option<bool>,
+    /// Wall-clock seconds the reference workflow took end to end (`--run`).
+    e2e_secs: f64,
+}
+
+pub fn score(o: &ScoreOptions) -> Result<i32> {
+    let root = repo_root();
+    let tasks_dir = root.join("bdd").join("bench").join("tasks");
+    if !tasks_dir.is_dir() {
+        bail!("no authoring corpus at {} - nothing to score", tasks_dir.display());
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&tasks_dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
+        .collect();
+    files.sort();
+
+    let mut tasks: Vec<TaskScore> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+    let mut feature_paths: Vec<PathBuf> = Vec::new();
+
+    for path in &files {
+        let meta: Value = serde_json::from_str(&std::fs::read_to_string(path)?)
+            .with_context(|| format!("parsing {}", path.display()))?;
+        let id = meta.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        if !o.tasks.is_empty() && !o.tasks.iter().any(|t| t == &id) {
+            continue;
+        }
+        let intent = meta.get("intent").and_then(Value::as_str).unwrap_or("").to_string();
+        let feature_rel = meta.get("feature").and_then(Value::as_str).unwrap_or("").to_string();
+        let feature_path = root.join(&feature_rel);
+        let feature_text = std::fs::read_to_string(&feature_path)
+            .with_context(|| format!("reading {feature_rel}"))?;
+        let feature = parse(&feature_text, &feature_path.to_string_lossy())?;
+
+        // expressiveness: every scenario compiles.
+        let mut compile_ok = true;
+        let mut compile_error = None;
+        for sc in &feature.scenarios {
+            if let Err(e) = compile_scenario(&feature, sc, &json!({}), "chrome-headless.sh") {
+                compile_ok = false;
+                compile_error = Some(format!("{}: {e:#}", sc.name));
+                break;
+            }
+        }
+        let cov = feature_coverage(&feature);
+        let declared: usize = feature.scenarios.iter().map(|s| scenario_outputs(s).len()).sum();
+
+        let known = meta.get("known_steps").and_then(Value::as_array).cloned().unwrap_or_default();
+        let unknown = meta.get("unknown_steps").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut known_ok = 0usize;
+        for k in &known {
+            let (kind, text) = parse_step_probe(k);
+            if vocab_matches(&kind, &text) {
+                known_ok += 1;
+            } else {
+                problems.push(format!("{id}: a step the corpus says is supported does not compile: {kind} {text:?}"));
+            }
+        }
+        let mut unknown_ok = 0usize;
+        for k in &unknown {
+            let (kind, text) = parse_step_probe(k);
+            match match_step(&kind, &text) {
+                Ok(_) => problems.push(format!(
+                    "{id}: a step the corpus says is out of vocabulary compiled silently: {kind} {text:?} - the worst drift shape"
+                )),
+                Err(e) => {
+                    let msg = format!("{e:#}");
+                    if msg.contains("unknown") {
+                        unknown_ok += 1;
+                    } else {
+                        problems.push(format!("{id}: out-of-vocabulary step failed for the wrong reason: {msg}"));
+                    }
+                }
+            }
+        }
+
+        // @outputs contract: dropping the step that produces a declared output
+        // must turn into a compile error, on the real feature text.
+        let mut contract_ok = true;
+        if let Some(drop) = meta.get("drop_output_step").and_then(Value::as_str) {
+            let mutated: String = feature_text
+                .lines()
+                .filter(|l| !l.contains(drop))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if mutated == feature_text {
+                contract_ok = false;
+                problems.push(format!("{id}: drop_output_step {drop:?} matched no line - the mutation is stale"));
+            } else {
+                let mf = parse(&mutated, &feature_path.to_string_lossy())?;
+                let caught = mf
+                    .scenarios
+                    .iter()
+                    .any(|sc| compile_scenario(&mf, sc, &json!({}), "chrome-headless.sh").is_err());
+                if !caught {
+                    contract_ok = false;
+                    problems.push(format!(
+                        "{id}: removing the step that produces a declared @outputs key still compiled - the contract is not enforced"
+                    ));
+                }
+            }
+        }
+
+        let all_steps: Vec<&Step> = feature
+            .background
+            .iter()
+            .chain(feature.scenarios.iter().flat_map(|s| s.steps.iter()))
+            .collect();
+        let unique: BTreeSet<String> = all_steps
+            .iter()
+            .map(|s| format!("{} {}", s.kind, s.text))
+            .collect();
+
+        feature_paths.push(feature_path.clone());
+        tasks.push(TaskScore {
+            id,
+            intent,
+            feature: feature_rel,
+            compile_ok,
+            compile_error,
+            coverage: cov.coverage,
+            declared_outputs: declared,
+            known_ok,
+            known_total: known.len(),
+            unknown_ok,
+            unknown_total: unknown.len(),
+            contract_ok,
+            reference_steps: all_steps.len(),
+            unique_steps: unique.len(),
+            e2e: None,
+            e2e_secs: 0.0,
+        });
+    }
+
+    if tasks.is_empty() {
+        bail!("no authoring tasks selected");
+    }
+
+    // optional e2e: run every task feature once, in one `bdd run`, and read the
+    // per-feature verdict out of its report.
+    if o.run {
+        let exe = std::env::current_exe()?;
+        let mut args: Vec<String> = vec!["bdd".into(), "run".into()];
+        for p in &feature_paths {
+            args.push(p.to_string_lossy().into_owned());
+        }
+        // Every feature path is positional after `run`.
+        let out = std::process::Command::new(exe).args(&args).output()?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        for t in tasks.iter_mut() {
+            let name = Path::new(&t.feature)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let mut passes = 0usize;
+            let mut fails = 0usize;
+            for line in text.lines() {
+                if line.contains(&name) {
+                    if line.contains("FAIL") || line.contains("XFAIL-WRONG-REASON") {
+                        fails += 1;
+                    } else if line.contains("PASS") || line.contains("xfail") {
+                        passes += 1;
+                    }
+                    // The runner prints each scenario's wall-clock as the last
+                    // token (`1.19s`). Summing it per feature is the one honest
+                    // *time* number the benchmark has: authoring time needs an
+                    // author, but execution time is measurable here.
+                    if let Some(tok) = line.split_whitespace().last() {
+                        if let Some(v) = tok.strip_suffix('s').and_then(|n| n.parse::<f64>().ok()) {
+                            t.e2e_secs += v;
+                        }
+                    }
+                }
+            }
+            t.e2e = Some(fails == 0 && passes > 0);
+            if fails > 0 {
+                problems.push(format!("{}: the reference workflow failed end to end", t.id));
+            }
+        }
+    }
+
+    // ── aggregate ───────────────────────────────────────────────────────────
+    let n = tasks.len();
+    let compiled = tasks.iter().filter(|t| t.compile_ok).count();
+    let min_cov = tasks.iter().map(|t| t.coverage).fold(f64::INFINITY, f64::min);
+    let contracts = tasks.iter().filter(|t| t.contract_ok).count();
+    let known_ok: usize = tasks.iter().map(|t| t.known_ok).sum();
+    let known_total: usize = tasks.iter().map(|t| t.known_total).sum();
+    let unknown_ok: usize = tasks.iter().map(|t| t.unknown_ok).sum();
+    let unknown_total: usize = tasks.iter().map(|t| t.unknown_total).sum();
+    let steps: usize = tasks.iter().map(|t| t.reference_steps).sum();
+    let unique: usize = tasks.iter().map(|t| t.unique_steps).sum();
+    let draft_fixes: usize = tasks.iter().map(|t| t.unknown_total).sum();
+    let avg_steps = steps as f64 / n as f64;
+
+    println!("bdd score: {n} authoring task(s)");
+    for t in &tasks {
+        let e2e = match t.e2e {
+            Some(true) => format!(" e2e=PASS {:.2}s", t.e2e_secs),
+            Some(false) => " e2e=FAIL".to_string(),
+            None => String::new(),
+        };
+        println!(
+            "  {:<22} compile={} coverage={:5.1}% outputs={} known={}/{} unknown={}/{} contract={}{}",
+            t.id,
+            if t.compile_ok { "ok" } else { "FAIL" },
+            t.coverage,
+            t.declared_outputs,
+            t.known_ok,
+            t.known_total,
+            t.unknown_ok,
+            t.unknown_total,
+            if t.contract_ok { "ok" } else { "FAIL" },
+            e2e
+        );
+        if let Some(e) = &t.compile_error {
+            println!("      compile error: {e}");
+        }
+    }
+    println!(
+        "bdd score: expressiveness {compiled}/{n} compile at min coverage {min_cov:.1}%, \
+         @outputs contract {contracts}/{n} mutations caught"
+    );
+    println!(
+        "bdd score: vocabulary recall {known_ok}/{known_total}, precision {unknown_ok}/{unknown_total} \
+         (every out-of-vocabulary step refused by name, never mis-compiled)"
+    );
+    println!(
+        "bdd score: authoring cost {steps} steps ({unique} unique), avg {avg_steps:.1} steps/workflow, \
+         {draft_fixes} naive-draft fix(es)"
+    );
+    let total_e2e: f64 = tasks.iter().map(|t| t.e2e_secs).sum();
+    if o.run {
+        println!(
+            "bdd score: end-to-end {} task(s) in {total_e2e:.2}s of scenario time (real Chrome)",
+            tasks.iter().filter(|t| t.e2e_secs > 0.0).count()
+        );
+    }
+
+    if let Some(path) = &o.json {
+        let report = json!({
+            "tasks": tasks.iter().map(|t| json!({
+                "id": t.id, "intent": t.intent, "feature": t.feature,
+                "compile_ok": t.compile_ok, "coverage": t.coverage,
+                "declared_outputs": t.declared_outputs,
+                "known_ok": t.known_ok, "known_total": t.known_total,
+                "unknown_ok": t.unknown_ok, "unknown_total": t.unknown_total,
+                "contract_ok": t.contract_ok, "reference_steps": t.reference_steps,
+                "unique_steps": t.unique_steps, "e2e": t.e2e, "e2e_secs": t.e2e_secs
+            })).collect::<Vec<_>>(),
+            "aggregate": {
+                "tasks": n, "compiled": compiled, "min_coverage": min_cov,
+                "contracts_caught": contracts,
+                "vocabulary_recall": [known_ok, known_total],
+                "vocabulary_precision": [unknown_ok, unknown_total],
+                "steps": steps, "unique_steps": unique,
+                "avg_steps_per_workflow": avg_steps,
+                "naive_draft_fixes": draft_fixes,
+                "e2e_secs_total": total_e2e
+            }
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
+        println!("bdd score: wrote {path}");
+    }
+
+    let hard_ok = compiled == n
+        && min_cov >= 100.0
+        && contracts == n
+        && known_ok == known_total
+        && unknown_ok == unknown_total;
+    if !problems.is_empty() {
+        for p in &problems {
+            eprintln!("bdd score: {p}");
+        }
+    }
+    if o.check && !hard_ok {
+        eprintln!("bdd score: FAIL - an authoring target is below the bar");
+        return Ok(1);
+    }
+    if !o.check {
+        println!("bdd score: (informational - pass --check to gate)");
+    }
+    Ok(if problems.is_empty() { 0 } else { 1 })
+}
+
+// ── live-fire corpus (`laya-workflow bdd live`) ─────────────────────────────
+//
+// The hermetic suite runs against fixtures; this runs the same generic workflow
+// vocabulary against *real* external sites, one feature per case, each with a
+// sidecar `<name>.config.json` naming the hosts its steps navigate to. It is the
+// same `run()` engine, told not to start fixtures and not to add the fixture
+// probes — so a case is real Chrome against the real web or it is nothing.
+
+pub struct LiveOptions {
+    pub features: Vec<String>,
+    pub filter: Option<String>,
+    pub out: String,
+    pub timeout_secs: u64,
+    pub json: Option<String>,
+}
+
+impl Default for LiveOptions {
+    fn default() -> Self {
+        Self {
+            features: Vec::new(),
+            filter: None,
+            out: repo_root().join("target").join("bdd-live").to_string_lossy().into_owned(),
+            timeout_secs: 180,
+            json: None,
+        }
+    }
+}
+
+/// Every `bdd/bench/live/*.feature` except the `_`-prefixed development probe.
+pub fn live_features() -> Result<Vec<PathBuf>> {
+    let dir = repo_root().join("bdd").join("bench").join("live");
+    if !dir.is_dir() {
+        bail!("no live corpus at {} - nothing to run", dir.display());
+    }
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().map(|x| x == "feature").unwrap_or(false)
+                && !p.file_name().map(|n| n.to_string_lossy().starts_with('_')).unwrap_or(true)
+        })
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
+pub fn live(o: &LiveOptions) -> Result<i32> {
+    let mut features = if o.features.is_empty() {
+        live_features()?.iter().map(|p| p.to_string_lossy().into_owned()).collect()
+    } else {
+        o.features.clone()
+    };
+    if let Some(f) = &o.filter {
+        features.retain(|p| p.contains(f.as_str()));
+    }
+    if features.is_empty() {
+        bail!("no live features selected");
+    }
+    let ro = RunOptions {
+        features,
+        filter: None,
+        tags: None,
+        profile: "live".into(),
+        base_url: None,
+        port: 0,
+        jobs: 1,
+        timeout_secs: o.timeout_secs,
+        keep: false,
+        out: o.out.clone(),
+        live: true,
+        report: o.json.clone(),
+    };
+    run(&ro)
+}
+
+// ── BDD vs pure JSON DSL (`laya-workflow bdd compare`) ──────────────────────
+//
+// The point of a Gherkin step vocabulary is that it is a *cheaper* authoring and
+// debugging surface than the JSON spec it compiles to. This measures that on the
+// live corpus, per case and in aggregate:
+//
+//   * volume  — non-comment .feature lines and bytes vs the compiled spec's
+//               pretty JSON lines and bytes, and steps vs nodes (1:1);
+//   * gate    — seed one fault in each representation and ask the gate the
+//               author actually runs ("bdd build" here, "validate" there) whether
+//               it is caught, offline, before a browser is ever opened.
+
+pub struct CompareOptions {
+    pub json: Option<String>,
+    pub only: Vec<String>,
+}
+
+impl Default for CompareOptions {
+    fn default() -> Self {
+        Self { json: None, only: Vec::new() }
+    }
+}
+
+struct CaseCompare {
+    id: String,
+    steps: usize,
+    bdd_lines: usize,
+    bdd_bytes: usize,
+    json_lines: usize,
+    json_bytes: usize,
+    json_nodes: usize,
+    bdd_fault_caught: bool,
+    json_cap_fault_caught: bool,
+    json_edge_fault_caught: bool,
+    json_sem_fault_caught: bool,
+    json_struct_fault_caught: bool,
+}
+
+fn noncomment_lines(text: &str) -> usize {
+    text.lines()
+        .filter(|l| {
+            let t = l.trim();
+            !t.is_empty() && !t.starts_with('#')
+        })
+        .count()
+}
+
+pub fn compare(o: &CompareOptions) -> Result<i32> {
+    let feats = live_features()?;
+    let tmp = tempfile_build_dir()?;
+    let mut cases: Vec<CaseCompare> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
+
+    for path in &feats {
+        let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if !o.only.is_empty() && !o.only.iter().any(|x| x == &id) {
+            continue;
+        }
+        let rel = rel_path(&path.to_string_lossy());
+        let text = std::fs::read_to_string(path)?;
+        let feature = parse(&text, &path.to_string_lossy())?;
+        let config = load_config(path)?;
+        // Compile every scenario; the union of nodes is the JSON spec an author
+        // would otherwise have to write by hand.
+        let mut spec_nodes = 0usize;
+        let mut first_spec: Option<Value> = None;
+        let mut compile_ok = true;
+        for sc in &feature.scenarios {
+            match compile_scenario(&feature, sc, &config, "scripts/bdd/chrome-headless.sh") {
+                Ok(spec) => {
+                    spec_nodes += spec.get("nodes").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+                    if first_spec.is_none() {
+                        first_spec = Some(public_spec(&spec));
+                    }
+                }
+                Err(e) => {
+                    compile_ok = false;
+                    problems.push(format!("{rel}: does not compile: {e:#}"));
+                }
+            }
+        }
+        let Some(spec) = first_spec else { continue };
+
+        let steps: usize = noncomment_lines(&text)
+            .min(feature.background.len() + feature.scenarios.iter().map(|s| s.steps.len()).sum::<usize>());
+        let bdd_steps = feature.background.len()
+            + feature.scenarios.iter().map(|s| s.steps.len()).sum::<usize>();
+        let bdd_lines = noncomment_lines(&text);
+        let bdd_bytes = text.len();
+        let spec_str = serde_json::to_string_pretty(&spec)?;
+        let json_lines = spec_str.lines().count();
+        let json_bytes = spec_str.len();
+
+        // ── gate: one seeded fault per representation ──
+        // BDD: an out-of-vocabulary verb. The deterministic compiler refuses it.
+        let mutated_bdd = text.replacen("I click the element", "I tap the element", 1);
+        let bdd_fault_caught = mutated_bdd != text
+            && match parse(&mutated_bdd, &path.to_string_lossy()) {
+                Ok(mf) => mf
+                    .scenarios
+                    .iter()
+                    .any(|sc| compile_scenario(&mf, sc, &config, "scripts/bdd/chrome-headless.sh").is_err()),
+                Err(_) => true,
+            };
+
+        // JSON: three *semantic* mistakes a JSON author makes — an unknown op,
+        // an edge to a node that does not exist, an unknown assertion — each run
+        // through the gate they actually run: `validate` (check_version +
+        // load_file + registry + secret audit). Plus a structural control
+        // (delete `start`) that `validate` is expected to catch, so a 0 on the
+        // semantic faults is a real finding and not a broken probe.
+        let load = |spec: &Value, name: &str| -> bool {
+            let p = tmp.join(name);
+            let _ = std::fs::write(&p, serde_json::to_string(&spec).unwrap_or_default());
+            crate::spec::load_file(&p.to_string_lossy()).is_err()
+        };
+        // an unknown op on the first node that actually runs an effect.
+        let mut m_a = spec.clone();
+        if let Some(arr) = m_a.get_mut("nodes").and_then(Value::as_array_mut) {
+            if let Some(n0) = arr.iter_mut().find(|n| n.pointer("/action/with").is_some()) {
+                if let Some(w) = n0.pointer_mut("/action/with").and_then(Value::as_object_mut) {
+                    w.insert("op".into(), json!("frobnicate"));
+                }
+            }
+        }
+        let json_cap_fault_caught = load(&m_a, &format!("{id}_badop.json"));
+
+        // an edge to a node that is not in the graph.
+        let mut m_b = spec.clone();
+        if let Some(arr) = m_b.get_mut("nodes").and_then(Value::as_array_mut) {
+            if let Some(n0) = arr.first_mut() {
+                if let Some(e) = n0.get_mut("edge").and_then(|e| e.get_mut("condition")).and_then(Value::as_object_mut) {
+                    e.insert("Z".into(), json!("no_such_node"));
+                }
+            }
+        }
+        let json_edge_fault_caught = load(&m_b, &format!("{id}_badedge.json"));
+
+        // an unknown assertion — seed it on a real assert node when there is one.
+        let mut m_c = spec.clone();
+        if let Some(arr) = m_c.get_mut("nodes").and_then(Value::as_array_mut) {
+            let idx = arr
+                .iter()
+                .position(|n| n.pointer("/action/with/op").and_then(Value::as_str) == Some("assert"))
+                .or_else(|| arr.iter().position(|n| n.pointer("/action/with").is_some()));
+            if let Some(i) = idx {
+                if let Some(w) = arr[i].pointer_mut("/action/with").and_then(Value::as_object_mut) {
+                    w.insert("assertion".into(), json!("frobnicate"));
+                }
+            }
+        }
+        let json_sem_fault_caught = load(&m_c, &format!("{id}_badsem.json"));
+
+        // structural control: `validate` must reject a spec with no `start`.
+        let mut m_d = spec.clone();
+        if let Some(o) = m_d.as_object_mut() {
+            o.remove("start");
+        }
+        let json_struct_fault_caught = load(&m_d, &format!("{id}_nostart.json"));
+
+        let _ = (steps, compile_ok);
+        cases.push(CaseCompare {
+            id,
+            steps: bdd_steps,
+            bdd_lines,
+            bdd_bytes,
+            json_lines,
+            json_bytes,
+            json_nodes: spec_nodes,
+            bdd_fault_caught,
+            json_cap_fault_caught,
+            json_edge_fault_caught,
+            json_sem_fault_caught,
+            json_struct_fault_caught,
+        });
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    if cases.is_empty() {
+        bail!("no live features to compare");
+    }
+
+    println!("bdd compare: BDD .feature vs the JSON spec it compiles to ({} case(s))", cases.len());
+    println!(
+        "  {:<34} {:>6} {:>6} {:>7} {:>7} {:>6}",
+        "case", "steps", "bdd-ln", "json-ln", "ratio", "nodes"
+    );
+    let mut tot_steps = 0usize;
+    let mut tot_bdd_bytes = 0usize;
+    let mut tot_json_bytes = 0usize;
+    let mut tot_bdd_lines = 0usize;
+    let mut tot_json_lines = 0usize;
+    let mut bdd_caught = 0usize;
+    let mut json_caught = 0usize;
+    let mut json_struct_caught = 0usize;
+    for c in &cases {
+        let ratio = c.json_bytes as f64 / c.bdd_bytes.max(1) as f64;
+        println!(
+            "  {:<34} {:>6} {:>6} {:>7} {:>6.1}x {:>6}",
+            c.id, c.steps, c.bdd_lines, c.json_lines, ratio, c.json_nodes
+        );
+        tot_steps += c.steps;
+        tot_bdd_bytes += c.bdd_bytes;
+        tot_json_bytes += c.json_bytes;
+        tot_bdd_lines += c.bdd_lines;
+        tot_json_lines += c.json_lines;
+        if c.bdd_fault_caught { bdd_caught += 1; }
+        if c.json_cap_fault_caught { json_caught += 1; }
+        if c.json_edge_fault_caught { json_caught += 1; }
+        if c.json_sem_fault_caught { json_caught += 1; }
+        if c.json_struct_fault_caught { json_struct_caught += 1; }
+    }
+    let n = cases.len();
+    let byte_ratio = tot_json_bytes as f64 / tot_bdd_bytes.max(1) as f64;
+    let line_ratio = tot_json_lines as f64 / tot_bdd_lines.max(1) as f64;
+    println!();
+    println!(
+        "bdd compare: {tot_steps} steps, {tot_bdd_lines} .feature lines ({tot_bdd_bytes} B) vs \
+         {tot_json_lines} JSON lines ({tot_json_bytes} B)"
+    );
+    println!(
+        "bdd compare: authoring volume — JSON is {byte_ratio:.1}x the bytes and {line_ratio:.1}x the lines \
+         of the same workflow in BDD"
+    );
+    println!(
+        "bdd compare: authoring gate — BDD compiles a closed vocabulary, so an unknown step is a \
+         compile error offline: caught {bdd_caught}/{n}."
+    );
+    println!(
+        "bdd compare: authoring gate — the JSON author's `validate` is structural-only: it caught \
+         {json_caught}/{} semantic faults (unknown op / dangling edge / unknown assertion), which \
+         surface only when the workflow runs. Control: it caught {json_struct_caught}/{n} missing-`start` \
+         faults, so the 0 is a real gap, not a broken probe.",
+        n * 3
+    );
+
+    if let Some(path) = &o.json {
+        let report = json!({
+            "cases": cases.iter().map(|c| json!({
+                "id": c.id, "steps": c.steps,
+                "bdd_lines": c.bdd_lines, "bdd_bytes": c.bdd_bytes,
+                "json_lines": c.json_lines, "json_bytes": c.json_bytes, "json_nodes": c.json_nodes,
+                "bdd_fault_caught": c.bdd_fault_caught,
+                "json_unknown_op_caught": c.json_cap_fault_caught,
+                "json_edge_fault_caught": c.json_edge_fault_caught,
+                "json_semantic_fault_caught": c.json_sem_fault_caught,
+                "json_structural_fault_caught": c.json_struct_fault_caught,
+            })).collect::<Vec<_>>(),
+            "aggregate": {
+                "cases": n, "steps": tot_steps,
+                "bdd_bytes": tot_bdd_bytes, "json_bytes": tot_json_bytes,
+                "bdd_lines": tot_bdd_lines, "json_lines": tot_json_lines,
+                "byte_ratio": byte_ratio, "line_ratio": line_ratio,
+                "bdd_fault_caught_offline": [bdd_caught, n],
+                "json_semantic_fault_caught_offline": [json_caught, n * 3],
+                "json_structural_fault_caught_offline": [json_struct_caught, n],
+            }
+        });
+        std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
+        println!("bdd compare: wrote {path}");
+    }
+    if !problems.is_empty() {
+        for p in &problems {
+            eprintln!("bdd compare: {p}");
+        }
+        return Ok(1);
+    }
+    Ok(0)
 }

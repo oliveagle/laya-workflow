@@ -430,6 +430,57 @@ enum BddCmd {
         /// Output dir for generated specs.
         #[arg(long, default_value = "target/bdd-specs")]
         out: String,
+        /// Live-fire against real external sites (no fixtures, no probes).
+        #[arg(long, default_value_t = false)]
+        live: bool,
+        /// Write a per-scenario JSON report here.
+        #[arg(long)]
+        report: Option<String>,
+    },
+    /// Score the authoring corpus: expressiveness, vocabulary recall/precision,
+    /// the @outputs contract, and (optionally) an end-to-end run. Answers "how
+    /// fast and how accurately can an agent author a workflow from an intent".
+    Score {
+        /// Turn the hard targets (compile, coverage, recall, precision,
+        /// contract) into a gate: any shortfall exits non-zero.
+        #[arg(long, default_value_t = false)]
+        check: bool,
+        /// Also run every task's reference workflow against real Chrome.
+        #[arg(long, default_value_t = false)]
+        run: bool,
+        /// Write the metrics as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+        /// Score only these task ids (default: every task in the corpus).
+        #[arg(name = "tasks", num_args = 0..)]
+        tasks: Vec<String>,
+    },
+    /// Run the live-fire corpus (bdd/bench/live/*.feature) against real sites.
+    Live {
+        /// Feature files (default: every bdd/bench/live/*.feature).
+        #[arg(name = "features", num_args = 0..)]
+        features: Vec<String>,
+        /// Only features whose path contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Output dir for generated specs.
+        #[arg(long, default_value = "target/bdd-live")]
+        out: String,
+        /// Per-scenario timeout in seconds.
+        #[arg(long, default_value_t = 180)]
+        timeout_secs: u64,
+        /// Write a per-scenario JSON report here.
+        #[arg(long)]
+        json: Option<String>,
+    },
+    /// Quantify BDD authoring vs hand-written JSON DSL on the live corpus.
+    Compare {
+        /// Write the comparison as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+        /// Compare only these case ids (default: every case in the corpus).
+        #[arg(name = "cases", num_args = 0..)]
+        cases: Vec<String>,
     },
 }
 
@@ -2312,6 +2363,8 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             timeout_secs,
             keep,
             out,
+            live,
+            report,
         } => bdd::run(&bdd::RunOptions {
             features: features.clone(),
             filter: filter.clone(),
@@ -2323,6 +2376,31 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             timeout_secs: *timeout_secs,
             keep: *keep,
             out: out.clone(),
+            live: *live,
+            report: report.clone(),
+        })?,
+        BddCmd::Score { check, run, json, tasks } => bdd::score(&bdd::ScoreOptions {
+            check: *check,
+            run: *run,
+            json: json.clone(),
+            tasks: tasks.clone(),
+        })?,
+        BddCmd::Live {
+            features,
+            filter,
+            out,
+            timeout_secs,
+            json,
+        } => bdd::live(&bdd::LiveOptions {
+            features: features.clone(),
+            filter: filter.clone(),
+            out: out.clone(),
+            timeout_secs: *timeout_secs,
+            json: json.clone(),
+        })?,
+        BddCmd::Compare { json, cases } => bdd::compare(&bdd::CompareOptions {
+            json: json.clone(),
+            only: cases.clone(),
         })?,
     };
     if code != 0 {

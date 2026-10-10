@@ -1,0 +1,211 @@
+{
+  "mode": "live",
+  "total": 29,
+  "passed": 29,
+  "failed": 0,
+  "scenarios": [
+    {
+      "name": "01_example_domain.feature :: example_domain reads the minimal static page",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 2.85
+    },
+    {
+      "name": "02_wikipedia_rust.feature :: wikipedia_rust reads en.wikipedia.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 5.13
+    },
+    {
+      "name": "03_wikipedia_systems.feature :: wikipedia_systems reads en.wikipedia.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 2.96
+    },
+    {
+      "name": "04_wiktionary_serendipity.feature :: wiktionary_serendipity reads en.wiktionary.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.57
+    },
+    {
+      "name": "05_wiktionary_lexicon.feature :: wiktionary_lexicon reads en.wiktionary.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 2.75
+    },
+    {
+      "name": "06_hackernews.feature :: hackernews reads news.ycombinator.com on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 3.38
+    },
+    {
+      "name": "07_github_rust.feature :: github_rust reads github.com on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 14.03
+    },
+    {
+      "name": "08_gitlab.feature :: gitlab reads gitlab.com on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 13.62
+    },
+    {
+      "name": "09_pypi_requests.feature :: pypi_requests reads pypi.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 7.09
+    },
+    {
+      "name": "10_docsrs_serde.feature :: docsrs_serde reads docs.rs on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 6.63
+    },
+    {
+      "name": "11_mdn_html.feature :: mdn_html reads developer.mozilla.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 5.55
+    },
+    {
+      "name": "12_go_dev.feature :: go_dev reads go.dev on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 8.95
+    },
+    {
+      "name": "13_nodejs.feature :: nodejs reads nodejs.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.71
+    },
+    {
+      "name": "14_arxiv_attention.feature :: arxiv_attention reads arxiv.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.73
+    },
+    {
+      "name": "15_kernel_org.feature :: kernel_org reads www.kernel.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 3.78
+    },
+    {
+      "name": "16_debian.feature :: debian reads www.debian.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 8.89
+    },
+    {
+      "name": "17_w3c.feature :: w3c reads www.w3.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 5.27
+    },
+    {
+      "name": "18_ietf.feature :: ietf reads www.ietf.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.4
+    },
+    {
+      "name": "19_rfc_editor.feature :: rfc_editor reads www.rfc-editor.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 5.21
+    },
+    {
+      "name": "20_php_net.feature :: php_net reads www.php.net on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 6.16
+    },
+    {
+      "name": "21_perl_org.feature :: perl_org reads www.perl.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.33
+    },
+    {
+      "name": "22_haskell_org.feature :: haskell_org reads www.haskell.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 7.7
+    },
+    {
+      "name": "23_scala_lang.feature :: scala_lang reads www.scala-lang.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 7.74
+    },
+    {
+      "name": "24_weather_gov.feature :: weather_gov reads www.weather.gov on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 6.52
+    },
+    {
+      "name": "25_nasa_gov.feature :: nasa_gov reads www.nasa.gov on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 37.29
+    },
+    {
+      "name": "26_npr_org.feature :: npr_org reads www.npr.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 20.42
+    },
+    {
+      "name": "27_gutenberg_pnp.feature :: gutenberg_pnp reads www.gutenberg.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.59
+    },
+    {
+      "name": "28_wikidata_q42.feature :: wikidata_q42 reads www.wikidata.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 6.75
+    },
+    {
+      "name": "29_commons_wikimedia.feature :: commons_wikimedia reads commons.wikimedia.org on the real web",
+      "pass": true,
+      "rc": 0,
+      "xfail": false,
+      "seconds": 4.89
+    }
+  ]
+}

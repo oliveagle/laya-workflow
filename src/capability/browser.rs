@@ -3743,6 +3743,16 @@ pub fn call_browser(c: &BrowserCap, with: &Value, state: &Value, policy: &Policy
                 )?;
             }
             if coords.get("ok").and_then(Value::as_bool) != Some(true) {
+                // `if_present` (BDD `I click the element "<sel>" if it is
+                // present`): an absent element is a legitimate no-op, not an
+                // error. Report that nothing was clicked so the workflow can
+                // branch on it; only the plain click refuses.
+                if with.get("if_present").and_then(Value::as_bool) == Some(true) {
+                    out["target_id"] = json!(id);
+                    out["clicked"] = json!(false);
+                    out["present"] = json!(false);
+                    return Ok(out);
+                }
                 bail!("browser click target was not found or is not visible");
             }
             if coords.get("same").and_then(Value::as_bool) != Some(true) {

@@ -20,6 +20,11 @@
 //   wait_for   poll until `with.selector` matches, or `with.timeout_ms` (default
 //              15000) elapses. Reports what it waited for on failure.
 //   evaluate   run `with.expression` on `with.target_id`.
+//   wait_until  poll `with.expression` (a JS boolean) until it is truthy, or
+//              `with.timeout_ms` (default 15000) elapses. The workflow
+//              counterpart of `assert`: `assert` says a condition must already
+//              hold, `wait_until` says the workflow cannot proceed until the
+//              page reaches a state. Reads only; never presses anything.
 //   assert     the Then family. `with.assertion` names the check and
 //              `with.value` the operand; a mismatch throws. `with.attempts`
 //              (default 1) retries a failing check 300ms apart, for a page that
@@ -46,6 +51,10 @@
 //   equals          value: expression + `with.expected` (JSON literal)
 //   contains        value: expression + `with.expected` (string)
 //   equals_text     value: expression + `with.expected` (string, trimmed)
+//   state_equals    value: a workflow value + `with.expected` (string)  — compares
+//                   a state value extracted by an earlier step, no page probe
+//   state_contains  value: a workflow value + `with.expected` (string)  — same,
+//                   substring match
 //
 // Every assert evaluates an expression shaped `{ ok: <bool>, actual: <value> }`
 // and then throws, on failure, with the actual value in the message. The
@@ -62,7 +71,8 @@ fn run(host, ctx) {
     if op == "evaluate" { return _op_evaluate(host, ctx); }
     if op == "assert" { return _op_assert(host, ctx); }
     if op == "release" { return _op_release(host, ctx); }
-    throw "bdd: unknown op '" + op + "' (open | navigate | wait_for | evaluate | assert | release)";
+    if op == "wait_until" { return _op_wait_until(host, ctx); }
+    throw "bdd: unknown op '" + op + "' (open | navigate | wait_for | evaluate | assert | release | wait_until)";
 }
 
 // ── argument helpers ────────────────────────────────────────────────────────
@@ -239,6 +249,40 @@ fn _op_wait_for(host, ctx) {
         + _elapsed_ms(host, started) + "ms elapsed) waiting for " + selector + why;
 }
 
+// ── op: wait_until ──────────────────────────────────────────────────────────
+// Poll `with.expression` (a JS boolean) until it is truthy, or `with.timeout_ms`
+// (default 15000) elapses. This is the workflow counterpart of `assert`: an
+// `assert` says a condition MUST already hold, a `wait_until` says the workflow
+// cannot proceed until the page reaches a state. Reads only — it never presses
+// anything — so it is safe to interleave with chrome_cdp-owned steps.
+fn _op_wait_until(host, ctx) {
+    let target = _require_target(ctx, "wait_until");
+    let expression = _arg(ctx, "expression");
+    if expression == "" { throw "bdd.wait_until: with.expression is required"; }
+    let budget = _num(ctx, "timeout_ms", 15000);
+    let started = host.now()["unix_ms"];
+    let last = "";
+    let polls = 0;
+    loop {
+        polls += 1;
+        let ok = false;
+        try {
+            ok = host.browser_evaluate(target, expression, false) == true;
+        } catch (e) {
+            last = "" + e;
+        }
+        let spent = _elapsed_ms(host, started);
+        if ok {
+            return #{ target_id: target, ready: true, waited_ms: spent, polls: polls };
+        }
+        if spent >= budget { break; }
+        sleep(0.1);
+    }
+    let why = if last == "" { "" } else { "; last probe error: " + last };
+    throw "bdd.wait_until: timed out after " + budget + "ms (" + polls + " polls, "
+        + _elapsed_ms(host, started) + "ms elapsed) waiting for " + expression + why;
+}
+
 // ── op: evaluate ────────────────────────────────────────────────────────────
 fn _op_evaluate(host, ctx) {
     let target = _require_target(ctx, "evaluate");
@@ -319,17 +363,38 @@ fn _expr_for(host, ctx, name) {
              + ") !== -1, actual: String(eval(" + _js_str(host, value) + ")) })";
     }
     throw "bdd.assert: unknown assertion '" + name
-        + "' (title_contains | url_contains | visible | absent | is_true | is_false | equals | contains | equals_text)";
+        + "' (title_contains | url_contains | visible | absent | is_true | is_false | equals | contains | equals_text | state_equals | state_contains)";
+}
+
+// Compare a state value (extracted by an earlier step) against a literal.
+// Shared by the state_equals / state_contains assertions.
+fn _assert_state(host, name, value, expected) {
+    let ok = if name == "state_equals" { value == expected } else { value.contains(expected) };
+    if ok {
+        return #{ pass: true, assertion: name, actual: value };
+    }
+    throw "bdd.assert: FAIL " + name + " with value " + host.json_stringify(value)
+        + " | expected " + host.json_stringify(expected);
 }
 
 fn _op_assert(host, ctx) {
-    let target = _require_target(ctx, "assert");
     let name = _arg(ctx, "assertion");
     if name == "" { throw "bdd.assert: with.assertion is required"; }
     let value = _arg(ctx, "value");
     if value == "" {
         throw "bdd.assert: with.value is required for assertion '" + name + "'";
     }
+    // `state_equals` / `state_contains` compare a *workflow value* that an
+    // earlier step extracted into state, not a fresh page probe. They never
+    // touch the browser, so they are handled before a target is required: a
+    // workflow may check its collected outputs after the page is gone.
+    if name == "state_equals" {
+        return _assert_state(host, "state_equals", value, _arg(ctx, "expected"));
+    }
+    if name == "state_contains" {
+        return _assert_state(host, "state_contains", value, _arg(ctx, "expected"));
+    }
+    let target = _require_target(ctx, "assert");
     let js = _expr_for(host, ctx, name);
 
     // One attempt by default. A deterministic assertion that is going to fail

@@ -1,0 +1,67 @@
+{
+  "id": "multi_page_audit",
+  "intent": "Start on the fixture page, record its title and heading, move the same tab to the second page, record that title too, and prove the first page is really gone.",
+  "feature": "bdd/bench/tasks/multi_page_audit.feature",
+  "expected_outputs": [
+    "page_one_title",
+    "page_one_heading",
+    "page_two_title"
+  ],
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "I am on \"<base_url>/index.html\""
+    },
+    {
+      "kind": "when",
+      "text": "I extract the page title into page_one_title"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the text of the element \"#heading\" into page_one_heading"
+    },
+    {
+      "kind": "when",
+      "text": "I navigate to \"<base_url>/second.html\""
+    },
+    {
+      "kind": "when",
+      "text": "I extract the page title into page_two_title"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the page url into page_two_url"
+    },
+    {
+      "kind": "then",
+      "text": "the element \"#heading\" is absent"
+    },
+    {
+      "kind": "then",
+      "text": "the saved value \"page_two_title\" contains text \"second page\""
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "when",
+      "text": "I go to \"<base_url>/second.html\""
+    },
+    {
+      "kind": "when",
+      "text": "I capture the heading text into page_one_heading"
+    },
+    {
+      "kind": "when",
+      "text": "I move to the url \"<base_url>/second.html\""
+    },
+    {
+      "kind": "then",
+      "text": "the collected page_one_title includes \"Fixture\""
+    },
+    {
+      "kind": "then",
+      "text": "the element \"#heading\" is not there"
+    }
+  ],
+  "drop_output_step": "I extract the page title into page_two_title"
+}

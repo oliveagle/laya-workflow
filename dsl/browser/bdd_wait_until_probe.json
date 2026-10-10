@@ -1,0 +1,117 @@
+{
+  "name": "bdd_wait_until_probe",
+  "dsl_version": 2,
+  "description": "A hand-written spec whose `wait_until` can never be satisfied, and is required to FAIL. It holds the workflow-only wait to the same claims `wait_for` is held to: that its budget is milliseconds on both sides of the comparison, that the failure names the budget and the exact expression it polled, and that it reports a poll count consistent with the budget. `wait_until` polls an arbitrary JS boolean (here, that the search box became disabled), which is a state `wait_for` cannot express - so it needs its own evidence that a doomed wait really gives up and says why. laya-workflow bdd run requires a non-zero exit naming the budget, the expression and the elapsed time.",
+  "start": "open",
+  "max_iterations": 9,
+  "convergence_window": 3,
+  "convergence_eps": 0.001,
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "max_timeout_ms": 120000,
+    "max_output": 1048576,
+    "retries": 0
+  },
+  "capabilities": {
+    "chrome": {
+      "kind": "chrome_cdp",
+      "endpoint": "http://127.0.0.1:${state.cdp_port}",
+      "profile_dir": "${state.cdp_profile}",
+      "launch": true,
+      "startup_timeout_ms": 30000,
+      "timeout_ms": 15000,
+      "max_text": 8000,
+      "max_owned_pages": 32,
+      "owned_idle_ms": 300000,
+      "chrome_binary": "scripts/bdd/chrome-headless.sh"
+    },
+    "bdd": {
+      "kind": "plugin",
+      "plugin": "bdd",
+      "browser": "chrome",
+      "timeout_ms": 60000
+    }
+  },
+  "nodes": [
+    {
+      "name": "open",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Open ${state.url} in a real Chrome tab and wait until it is actually loaded?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "wait_forever"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "chrome",
+        "with": {
+          "op": "open",
+          "url": "${state.url}"
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    },
+    {
+      "name": "wait_forever",
+      "primary_q": "ok",
+      "questions": {
+        "ok": {
+          "type": "choice",
+          "instructions": "Did the search box become disabled?",
+          "criteria": {
+            "A": "yes",
+            "B": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "STOP"
+        },
+        "default": "STOP"
+      },
+      "state": {
+        "keep": [
+          "url",
+          "target_id"
+        ]
+      },
+      "action": {
+        "kind": "call",
+        "capability": "bdd",
+        "with": {
+          "op": "wait_until",
+          "target_id": "${state.target_id}",
+          "expression": "!!document.querySelector('#search').disabled",
+          "timeout_ms": 600
+        },
+        "project": {
+          "target_id": "/target_id"
+        }
+      }
+    }
+  ]
+}

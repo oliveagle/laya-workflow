@@ -1,12 +1,12 @@
 {
   "_comment": [
-    "The plugin's argument-validation errors, as a table instead of 15 near-identical",
+    "The plugin's argument-validation errors, as a table instead of a pile of near-identical",
     "spec files. Each row is a (with, message) pair the plugin must actually produce.",
     "laya-workflow bdd args-probe-check materialises a spec from each row, runs it, and",
     "requires a non-zero exit whose output contains `must_contain`.",
     "",
     "Measured, every row here is rejected before the plugin touches CDP, so none of",
-    "them needs a browser, a page, or the fixture server: 15 runs in ~25ms total,",
+    "them needs a browser, a page, or the fixture server: they run in ~25ms total,",
     "against 170-300ms per probe for the four specs that do need Chrome. That is why",
     "this lives in check.sh (which CI runs) and not in run.py (which it does not).",
     "",
@@ -98,6 +98,13 @@
       "blurb": "evaluate refuses rather than sending an empty expression to CDP"
     },
     {
+      "name": "wait_until_without_expression",
+      "source": "bdd.wait_until: with.expression is required",
+      "with": {"op": "wait_until", "target_id": "no-such-target"},
+      "must_contain": "bdd.wait_until: with.expression is required",
+      "blurb": "the workflow wait refuses an empty expression before it touches the page, exactly like evaluate"
+    },
+    {
       "name": "release_without_target",
       "source": "bdd.release: with.target_id is required",
       "with": {"op": "release"},
@@ -165,6 +172,16 @@
       "source": "throw last",
       "covered_by": "dsl/browser/bdd_assert_probe.json and the xfail scenario in bdd/features/page_smoke.feature",
       "why": "the assertion-mismatch path, which is the plugin's ordinary success-with-a-verdict"
+    },
+    {
+      "source": "bdd.wait_until: timed out after",
+      "covered_by": "dsl/browser/bdd_wait_until_probe.json",
+      "why": "a wait_until budget that expires needs a real page that stays still; the probe asserts the budget, the expression it polled and a poll count consistent with the budget"
+    },
+    {
+      "source": "\" | expected \" + host.json_stringify(expected)",
+      "covered_by": "bdd/features/workflow_capture.feature (the @expected_failure state_equals scenario)",
+      "why": "the state_equals/state_contains mismatch path: a collected workflow output that does not match, which needs a compiled scenario that really extracted a value"
     }
   ]
 }

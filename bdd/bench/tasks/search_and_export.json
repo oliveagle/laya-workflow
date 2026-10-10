@@ -1,0 +1,62 @@
+{
+  "id": "search_and_export",
+  "intent": "On an app that was already consented to, search for ACME, press Enter, wait for the export button to be enabled, click it if present, then capture the app's exported marker and the page url.",
+  "feature": "bdd/bench/tasks/search_and_export.feature",
+  "expected_outputs": [
+    "exported",
+    "page_url"
+  ],
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "I am on \"<base_url>/app.html?clean=1\""
+    },
+    {
+      "kind": "when",
+      "text": "I click the element \"#consent\" if it is present"
+    },
+    {
+      "kind": "when",
+      "text": "I type \"ACME\" into the element \"#search\""
+    },
+    {
+      "kind": "when",
+      "text": "I press the key \"Enter\""
+    },
+    {
+      "kind": "when",
+      "text": "I wait until the element \"#export\" becomes enabled"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the attribute \"data-exported\" of the element \"#app\" into exported"
+    },
+    {
+      "kind": "when",
+      "text": "I extract the page url into page_url"
+    },
+    {
+      "kind": "then",
+      "text": "the saved value \"exported\" equals text \"1\""
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "when",
+      "text": "I submit the form"
+    },
+    {
+      "kind": "when",
+      "text": "I wait for \"#export\" to be enabled"
+    },
+    {
+      "kind": "when",
+      "text": "I read the attribute \"data-exported\" from \"#app\""
+    },
+    {
+      "kind": "then",
+      "text": "the extracted exported is equal to \"1\""
+    }
+  ],
+  "drop_output_step": "I extract the attribute \"data-exported\" of the element \"#app\" into exported"
+}

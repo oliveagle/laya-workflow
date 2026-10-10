@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoice Search &mdash; No-API App</title>
+<style>
+  body{font:14px/1.5 system-ui,sans-serif;margin:2rem;max-width:44rem}
+  #consent{background:#ffd;border:1px solid #cc9;padding:.6rem 1rem;margin-bottom:1rem}
+  #export{display:inline-block}
+  .row{border-bottom:1px solid #eee;padding:.25rem 0}
+</style>
+</head>
+<body>
+<!-- The page being turned into a tool: a small UI with no API at all. The
+     workflow below drives it like a person would and reads the result back out
+     of the DOM. `data-app` is the kind of build/version marker a caller wants
+     to record alongside the extracted data. -->
+<div id="app" data-app="1.4.0">
+  <h1 id="heading">Invoice search</h1>
+
+  <!-- Present initially, removed by a click. `I click the element "#consent" if
+       it is present` is a no-op on the ?clean=1 variant, which is exactly why a
+       workflow that must be robust to a changing page wants the conditional
+       click rather than a plain one. -->
+  <div id="consent">We use cookies. <button id="consent-ok" type="button">Got it</button></div>
+
+  <label for="search">Vendor</label>
+  <input id="search" name="search" type="text" value="" autocomplete="off">
+  <button id="export" type="button" disabled>Export</button>
+
+  <div id="results"></div>
+</div>
+
+<script>
+  // Dismiss the consent banner (both the button and a click anywhere on the
+  // banner work, so the workflow can click the banner element itself).
+  function dismissConsent() {
+    var c = document.getElementById('consent');
+    if (c && c.parentNode) { c.parentNode.removeChild(c); }
+  }
+  var consent = document.getElementById('consent');
+  if (consent) { consent.addEventListener('click', dismissConsent); }
+  // ?clean=1: the app was already consented to, so the banner never renders.
+  if (location.search.indexOf('clean=1') !== -1) { dismissConsent(); }
+
+  var pending = false;
+  function runSearch() {
+    var q = document.getElementById('search').value || '';
+    var results = document.getElementById('results');
+    var exportBtn = document.getElementById('export');
+    results.innerHTML = '';
+    exportBtn.disabled = true;      // results are not ready yet
+    if (!q) { return; }
+    pending = true;
+    // Results arrive asynchronously, the way a real search endpoint's would.
+    // The export button flips to enabled only when they have: that is the
+    // "results are ready" signal the workflow waits on with `wait_until`.
+    setTimeout(function () {
+      for (var i = 1; i <= 2; i++) {
+        var row = document.createElement('div');
+        row.className = 'row';
+        row.textContent = q + '-INV' + (1000 + i) + ' total ' + (i * 120) + ' USD';
+        results.appendChild(row);
+      }
+      exportBtn.disabled = false;
+      pending = false;
+    }, 400);
+  }
+
+  // Enter in the search box runs the search; the button does nothing, so the
+  // workflow has to use the key step it is meant to exercise.
+  document.getElementById('search').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { runSearch(); }
+  });
+  // A click on export just stamps a marker, so the workflow can tell it landed.
+  document.getElementById('export').addEventListener('click', function () {
+    document.getElementById('app').setAttribute('data-exported', '1');
+  });
+</script>
+</body>
+</html>
