@@ -137,7 +137,7 @@ pins every step in the table to the op it is supposed to run, and runs in the
 default gate with no Chrome:
 
 ```
-bdd vocabulary: 30 steps map correctly, 24 step arguments survive, 8 operand types
+bdd vocabulary: 34 steps map correctly, 30 step arguments survive, 8 operand types
                  survive, 8 steps still refuse to run without a page, 2 stay refused
                  after a release, every @expected_failure says what it disproves, the
                  plugin's own vocabulary messages are in sync, and its header documents
@@ -165,7 +165,9 @@ load-bearing enough to have its own `@expected_failure` scenario, because
 `I extract the text of the element "<selector>" into <key>` ·
 `I extract the attribute "<attr>" of the element "<selector>" into <key>` ·
 `I extract the page url into <key>` · `I extract the page title into <key>` ·
-`I wait until the element "<selector>" becomes <state>` · `I release the page`
+`I wait until the element "<selector>" becomes <state>` · `I release the page` ·
+`I run the command "<shell>"`
+
 
 `I release the page` is the one step that changes what a *later* step may do:
 it closes the tab, so the compiler moves to its has-no-page state and any
@@ -178,10 +180,26 @@ halves of that are pinned in `laya-workflow bdd vocabulary-check`.
 `javascript "<expression>" equals <json>` ·
 `javascript "<expression>" contains "<text>"` ·
 `the saved value "<key>" equals text "<text>"` ·
-`the saved value "<key>" contains text "<text>"`
+`the saved value "<key>" contains text "<text>"` ·
+`the exit code is <n>` · `stdout contains "<text>"` · `stderr contains "<text>"`
 
 `equals` takes JSON, so `equals 42`, `equals true` and `equals "complete"` all
 mean what they look like.
+
+### Exec vocabulary (CLI integration tests, no browser)
+
+`I run the command "<shell>"` runs the whole command under `/bin/sh -c` via the
+engine's native `exec` capability and files `exit_code` / `stdout` / `stderr`
+into state — no Chrome, no page. It is the step that lets a `.feature` drive a
+CLI integration test (e.g. exec a real binary and check its verdict) the same
+way arkcli's JSON DSL specs do. Assertions on its results never touch the page:
+
+- `the exit code is 0` — strict compare (number form `0` or quoted form `"0"`)
+- `stdout contains "<text>"` / `stderr contains "<text>"` — substring of the captured stream
+
+A scenario made only of `When I run the command` + these `Then`s compiles to a
+spec whose `bdd` plugin capability carries **no** browser, so `bdd run` needs no
+Chrome for it.
 
 ## Workflow vocabulary (not only testing)
 

@@ -73,6 +73,33 @@ pub fn test_capabilities(h: &mut Harness) {
     );
     h.eq("cap: exec exit code", out["exit_code"].as_i64().unwrap(), 0);
 
+    // Regression: BDD `I run the command` compiles to argv ["/bin/sh","-c",
+    // "${with.cmd}"] and hands the real command over as `with.cmd`. That
+    // command may itself reference `${state.x}` (the same grammar the DSL
+    // specs write directly into argv, e.g. `BIN="${state.arkcli}"; ...`). The
+    // argv used to be expanded exactly once, so the nested `${state.arkcli}`
+    // survived into the shell literally and `[ -x "$BIN" ]` failed (exit 127).
+    let reg = capability::registry_from(
+        &[(
+            "bdd",
+            json!({
+                "kind": "exec",
+                "argv": ["/bin/sh", "-c", "${with.cmd}"],
+                "timeout_ms": 5000,
+            }),
+        )],
+        Some(pol.clone()),
+    )
+    .unwrap();
+    let out = reg
+        .call(
+            "bdd",
+            &json!({"cmd": "BIN=\"${state.arkcli}\"; [ -x \"$BIN\" ] || BIN=false; \"$BIN\""}),
+            &json!({"arkcli": "/bin/echo", "n": 0}),
+        )
+        .unwrap();
+    h.eq("cap: exec nested with->state expansion runs", out["exit_code"].as_i64().unwrap(), 0);
+
     // A child whose output overflows the ~64KiB pipe buffer must still finish.
     // Regression: exec used to poll try_wait() and only collect afterwards, so a
     // child writing more than one pipe-full blocked in write() forever and the

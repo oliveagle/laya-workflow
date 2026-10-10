@@ -55,6 +55,13 @@
 //                   a state value extracted by an earlier step, no page probe
 //   state_contains  value: a workflow value + `with.expected` (string)  — same,
 //                   substring match
+//   exit_code_equals  value: ${state.exit_code} + `with.expected` (number or
+//                   string) — compares an `I run the command` step's exit code,
+//                   no page probe
+//   stdout_contains   value: ${state.stdout} + `with.expected` (string) — the
+//                   command's stdout contains it
+//   stderr_contains   value: ${state.stderr} + `with.expected` (string) — the
+//                   command's stderr contains it
 //
 // Every assert evaluates an expression shaped `{ ok: <bool>, actual: <value> }`
 // and then throws, on failure, with the actual value in the message. The
@@ -363,13 +370,21 @@ fn _expr_for(host, ctx, name) {
              + ") !== -1, actual: String(eval(" + _js_str(host, value) + ")) })";
     }
     throw "bdd.assert: unknown assertion '" + name
-        + "' (title_contains | url_contains | visible | absent | is_true | is_false | equals | contains | equals_text | state_equals | state_contains)";
+        + "' (title_contains | url_contains | visible | absent | is_true | is_false | equals | contains | equals_text | state_equals | state_contains | exit_code_equals | stdout_contains | stderr_contains)";
 }
 
 // Compare a state value (extracted by an earlier step) against a literal.
 // Shared by the state_equals / state_contains assertions.
 fn _assert_state(host, name, value, expected) {
-    let ok = if name == "state_equals" { value == expected } else { value.contains(expected) };
+    let ok = if name == "state_equals" {
+        value == expected
+    } else if name == "exit_code_equals" {
+        // exit_code is projected as a number; the document may write it as a
+        // number (`is 0`) or a quoted string (`is "0"`) — compare canonically.
+        value.to_string() == expected.to_string()
+    } else {
+        value.contains(expected)
+    };
     if ok {
         return #{ pass: true, assertion: name, actual: value };
     }
@@ -393,6 +408,18 @@ fn _op_assert(host, ctx) {
     }
     if name == "state_contains" {
         return _assert_state(host, "state_contains", value, _arg(ctx, "expected"));
+    }
+    // `exit_code_equals` / `stdout_contains` / `stderr_contains` compare values
+    // an `I run the command` step projected into state. They never touch the
+    // browser either, so they are handled before a target is required.
+    if name == "exit_code_equals" {
+        return _assert_state(host, "exit_code_equals", value, _arg(ctx, "expected"));
+    }
+    if name == "stdout_contains" {
+        return _assert_state(host, "stdout_contains", value, _arg(ctx, "expected"));
+    }
+    if name == "stderr_contains" {
+        return _assert_state(host, "stderr_contains", value, _arg(ctx, "expected"));
     }
     let target = _require_target(ctx, "assert");
     let js = _expr_for(host, ctx, name);

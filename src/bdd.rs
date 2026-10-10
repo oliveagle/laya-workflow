@@ -583,10 +583,16 @@ fn typed_operand(raw: &str) -> Value {
 
 /// What a node publishes back into state.
 fn project(capability: &str) -> Value {
-    if capability == "bdd" {
-        json!({"target_id": "/target_id"})
-    } else {
-        json!({})
+    match capability {
+        "bdd" => json!({"target_id": "/target_id"}),
+        // An exec step files its shell result into state so later assertions
+        // can read it — the same keys the DSL specs' exec capability uses.
+        "exec" => json!({
+            "exit_code": "/exit_code",
+            "stdout": "/stdout",
+            "stderr": "/stderr"
+        }),
+        _ => json!({}),
     }
 }
 
@@ -646,6 +652,11 @@ fn when_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
                 Regex::new(r"^I run javascript (?P<expr>.+)$").unwrap(),
                 "evaluate",
                 "bdd",
+            ),
+            (
+                Regex::new(r"^I run the command (?P<cmd>.+)$").unwrap(),
+                "exec",
+                "exec",
             ),
             (
                 Regex::new(r"^I release the page$").unwrap(),
@@ -715,6 +726,24 @@ fn then_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
                 Regex::new(r"^the saved value (?P<v>.+?) contains text (?P<v2>.+)$").unwrap(),
                 "assert",
                 "state_contains",
+            ),
+            // ── exec-result assertions: compare values an `I run the command`
+            //    step projected into state (exit_code / stdout / stderr). They
+            //    never touch the page, so `needs_page` stays false. ──
+            (
+                Regex::new(r"^the exit code is (?P<v>.+)$").unwrap(),
+                "assert",
+                "exit_code_equals",
+            ),
+            (
+                Regex::new(r"^stdout contains (?P<v>.+)$").unwrap(),
+                "assert",
+                "stdout_contains",
+            ),
+            (
+                Regex::new(r"^stderr contains (?P<v>.+)$").unwrap(),
+                "assert",
+                "stderr_contains",
             ),
             (
                 Regex::new(r"^the element (?P<v>.+?) is visible$").unwrap(),
@@ -936,6 +965,24 @@ fn build_args(
             None,
         ));
     }
+    if op == "exec" {
+        // `I run the command "…"` compiles to the engine's native `exec`
+        // capability. The argv is a single `/bin/sh -c` of the whole command,
+        // and `cmd` is passed per-call so one capability serves every exec step
+        // in the scenario. The exec capability projects exit_code/stdout/stderr
+        // into state (see `project("exec")`); nothing here needs a page.
+        let cmd = unquote(&get("cmd").unwrap_or_default());
+        return Ok((
+            {
+                let mut m = Map::new();
+                m.insert("cmd".into(), json!(cmd.clone()));
+                m
+            },
+            format!("Did the command exit 0: {cmd:?}?"),
+            false,
+            None,
+        ));
+    }
     if op == "extract_text" {
         let sel = unquote(&get("sel").unwrap_or_default());
         let var = get("var").unwrap_or_default();
@@ -1057,6 +1104,35 @@ fn build_args(
     if op == "assert" {
         let mut m = Map::new();
         m.insert("assertion".into(), json!(extra));
+        if matches!(extra, "exit_code_equals" | "stdout_contains" | "stderr_contains") {
+            // `I run the command` projected exit_code/stdout/stderr into state;
+            // compare those against the document's literal. Like the state_*
+            // family, no page is involved, so `needs_page` stays false.
+            let key = match extra {
+                "exit_code_equals" => "exit_code",
+                "stdout_contains" => "stdout",
+                _ => "stderr",
+            };
+            let raw = get("v").unwrap_or_default();
+            let expected = if extra == "exit_code_equals" {
+                typed_operand(raw.trim())
+            } else {
+                json!(unquote(&raw))
+            };
+            m.insert("value".into(), json!(format!("${{state.{key}}}")));
+            m.insert("expected".into(), expected);
+            let what = if extra == "exit_code_equals" {
+                format!("exit code {}", raw.trim())
+            } else {
+                format!("{key} to contain {:?}", unquote(&raw))
+            };
+            return Ok((
+                m,
+                format!("Did the command's {what}?"),
+                false,
+                None,
+            ));
+        }
         if matches!(extra, "state_equals" | "state_contains") {
             // `v` names a state key (a variable an earlier extract step set),
             // not a page expression; the operand is a literal string. Compare
@@ -1130,6 +1206,10 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
 
     let capability = if matches!(op, "click" | "type" | "select" | "key" | "click_if_present") {
         "chrome"
+    } else if op == "exec" {
+        // `I run the command` uses the engine's native exec capability, not the
+        // bdd plugin — the plugin owns page ops, the engine owns processes.
+        "exec"
     } else {
         "bdd"
     };
@@ -1450,6 +1530,33 @@ pub fn compile_scenario(
     let mut all = nodes;
     all.push(done);
 
+    // A scenario that never opens a page (pure `I run the command` + state/exec
+    // assertions) must not drag a browser along: the plugin host brings up
+    // `browser` *before* any op, so even a page-free assert would launch (or
+    // worse, fail to find) Chrome. Only bind the browser when a page is opened.
+    let mut capabilities = Map::new();
+    capabilities.insert("chrome".into(), chrome);
+    let mut bdd_cap = Map::new();
+    bdd_cap.insert("kind".into(), json!("plugin"));
+    bdd_cap.insert("plugin".into(), json!("bdd"));
+    bdd_cap.insert("timeout_ms".into(), json!(60000));
+    if has_page {
+        bdd_cap.insert("browser".into(), json!("chrome"));
+    }
+    capabilities.insert("bdd".into(), Value::Object(bdd_cap));
+    // `I run the command` steps call the engine's native exec capability. The
+    // argv wraps the whole command in `/bin/sh -c`; `cmd` arrives per-call via
+    // `${with.cmd}`. Unused in browser-only scenarios, so always declared.
+    capabilities.insert(
+        "exec".into(),
+        json!({
+            "kind": "exec",
+            "argv": ["/bin/sh", "-c", "${with.cmd}"],
+            "timeout_ms": 120000,
+            "max_output": 1048576
+        }),
+    );
+
     let mut spec = json!({
         "name": format!("bdd_{}_{}", feature.slug(), scenario.slug()),
         "dsl_version": 2,
@@ -1467,15 +1574,7 @@ pub fn compile_scenario(
         "convergence_window": 3,
         "convergence_eps": 0.001,
         "policy": policy,
-        "capabilities": {
-            // Every non-input step is a `bdd` plugin op — including the
-            // asserts; the plugin owns what an assertion means.
-            "chrome": chrome,
-            "bdd": {
-                "kind": "plugin", "plugin": "bdd", "browser": "chrome",
-                "timeout_ms": 60000
-            }
-        },
+        "capabilities": Value::Object(capabilities),
         "nodes": all
     });
     // `@outputs(...)` contract gate: every declared output must be produced by
@@ -2411,6 +2510,11 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         // state assertions read collected state, so they need no page: has_page=false.
         ("then", "the saved value \"first_row\" equals text \"ACME\"", Some("assert"), Some("state_equals"), false),
         ("then", "the saved value \"first_row\" contains text \"ACME\"", Some("assert"), Some("state_contains"), false),
+        // ── exec vocabulary: a CLI command + assertions on its projected state ──
+        ("when", "I run the command \"arkcli version\"", Some("exec"), None, false),
+        ("then", "the exit code is 0", Some("assert"), Some("exit_code_equals"), false),
+        ("then", "stdout contains \"ok\"", Some("assert"), Some("stdout_contains"), false),
+        ("then", "stderr contains \"err\"", Some("assert"), Some("stderr_contains"), false),
         ("when", "I release the page", Some("release"), None, true),
     ];
     for (kind, text, want_op, want_assertion, has_page) in &cases {
@@ -2468,6 +2572,13 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         ("when", "I press the key \"Enter\"", vec![("key", json!("Enter"))]),
         ("when", r##"I wait until the element "#a" becomes enabled"##, vec![("expression", json!("(function(){var e=document.querySelector('#a'); return !!e && !e.disabled;})()"))]),
         ("when", r##"I click the element "#a" if it is present"##, vec![("selector", json!("#a")), ("if_present", json!(true))]),
+        // ── exec vocabulary arguments ──
+        ("when", "I run the command \"arkcli version\"", vec![("cmd", json!("arkcli version"))]),
+        ("when", "I run the command \"echo hi >&2; exit 3\"", vec![("cmd", json!("echo hi >&2; exit 3"))]),
+        ("then", "the exit code is 0", vec![("assertion", json!("exit_code_equals")), ("value", json!("${state.exit_code}")), ("expected", json!(0))]),
+        ("then", "the exit code is \"0\"", vec![("assertion", json!("exit_code_equals")), ("value", json!("${state.exit_code}")), ("expected", json!("0"))]),
+        ("then", "stdout contains \"ok\"", vec![("assertion", json!("stdout_contains")), ("value", json!("${state.stdout}")), ("expected", json!("ok"))]),
+        ("then", "stderr contains \"err\"", vec![("assertion", json!("stderr_contains")), ("value", json!("${state.stderr}")), ("expected", json!("err"))]),
     ];
     for (kind, text, wants) in &arg_cases {
         match compile_step(&mk(kind, text), true) {

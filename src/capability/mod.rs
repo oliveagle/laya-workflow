@@ -766,7 +766,31 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     let argv: Vec<String> = c
         .argv
         .iter()
-        .map(|a| stringify(&expand(&Value::String(a.clone()), state, with)))
+        .map(|a| {
+            // BDD `I run the command` compiles to argv ["/bin/sh","-c",
+            // "${with.cmd}"] and passes the real command as `with.cmd`, which
+            // may itself reference `${state.x}` / `${env.X}` (same grammar the
+            // DSL specs use directly in argv). `expand` resolves one level, so
+            // re-expand boundedly until no placeholder remains — otherwise a
+            // `BIN="${state.arkcli}"` inside a with-injected command would be
+            // handed to the shell literally and `[ -x "$BIN" ]` would fail.
+            let mut v = expand(&Value::String(a.clone()), state, with);
+            for _ in 0..4 {
+                let s = match &v {
+                    Value::String(s) => s.clone(),
+                    _ => break,
+                };
+                if !s.contains("${") {
+                    break;
+                }
+                let next = expand(&Value::String(s.clone()), state, with);
+                if next == v {
+                    break;
+                }
+                v = next;
+            }
+            stringify(&v)
+        })
         .collect();
     if argv.is_empty() {
         bail!("exec capability has empty argv");
