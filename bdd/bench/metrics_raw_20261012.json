@@ -1,0 +1,1598 @@
+{
+ "compare": {
+  "cases": [
+   {
+    "id": "01_example_domain",
+    "steps": 30,
+    "bdd_lines": 34,
+    "bdd_bytes": 1766,
+    "json_lines": 1322,
+    "json_bytes": 30045,
+    "json_nodes": 31,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "02_wikipedia_rust",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1935,
+    "json_lines": 1248,
+    "json_bytes": 29071,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "03_wikipedia_systems",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1877,
+    "json_lines": 1248,
+    "json_bytes": 28897,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "04_wiktionary_serendipity",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1850,
+    "json_lines": 1248,
+    "json_bytes": 28817,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "05_wiktionary_lexicon",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1846,
+    "json_lines": 1248,
+    "json_bytes": 28805,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "06_hackernews",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1825,
+    "json_lines": 1248,
+    "json_bytes": 28745,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "07_github_rust",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1795,
+    "json_lines": 1248,
+    "json_bytes": 28645,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "08_gitlab",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1786,
+    "json_lines": 1248,
+    "json_bytes": 28618,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "09_pypi_requests",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1784,
+    "json_lines": 1248,
+    "json_bytes": 28610,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "10_docsrs_serde",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1769,
+    "json_lines": 1248,
+    "json_bytes": 28564,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "11_mdn_html",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1816,
+    "json_lines": 1248,
+    "json_bytes": 28719,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "12_go_dev",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1689,
+    "json_lines": 1248,
+    "json_bytes": 28323,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "13_nodejs",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1738,
+    "json_lines": 1248,
+    "json_bytes": 28474,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "14_arxiv_attention",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1808,
+    "json_lines": 1248,
+    "json_bytes": 28683,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "15_kernel_org",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1763,
+    "json_lines": 1248,
+    "json_bytes": 28553,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "16_debian",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1762,
+    "json_lines": 1248,
+    "json_bytes": 28550,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "17_w3c",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1747,
+    "json_lines": 1248,
+    "json_bytes": 28501,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "18_ietf",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1736,
+    "json_lines": 1248,
+    "json_bytes": 28470,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "19_rfc_editor",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1803,
+    "json_lines": 1248,
+    "json_bytes": 28677,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "20_php_net",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1744,
+    "json_lines": 1248,
+    "json_bytes": 28493,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "21_perl_org",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1728,
+    "json_lines": 1248,
+    "json_bytes": 28446,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "22_haskell_org",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1795,
+    "json_lines": 1248,
+    "json_bytes": 28650,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "23_scala_lang",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1783,
+    "json_lines": 1248,
+    "json_bytes": 28617,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "24_weather_gov",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1820,
+    "json_lines": 1248,
+    "json_bytes": 28725,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "25_nasa_gov",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1750,
+    "json_lines": 1248,
+    "json_bytes": 28512,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "26_npr_org",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1743,
+    "json_lines": 1248,
+    "json_bytes": 28490,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "27_gutenberg_pnp",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1826,
+    "json_lines": 1248,
+    "json_bytes": 28745,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "28_wikidata_q42",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1784,
+    "json_lines": 1248,
+    "json_bytes": 28618,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   },
+   {
+    "id": "29_commons_wikimedia",
+    "steps": 29,
+    "bdd_lines": 33,
+    "bdd_bytes": 1890,
+    "json_lines": 1248,
+    "json_bytes": 28941,
+    "json_nodes": 30,
+    "bdd_fault_caught": true,
+    "json_unknown_op_caught": false,
+    "json_edge_fault_caught": false,
+    "json_semantic_fault_caught": false,
+    "json_structural_fault_caught": true
+   }
+  ],
+  "aggregate": {
+   "cases": 29,
+   "steps": 842,
+   "bdd_bytes": 51958,
+   "json_bytes": 832004,
+   "bdd_lines": 958,
+   "json_lines": 36266,
+   "byte_ratio": 16.013010508487625,
+   "line_ratio": 37.855949895615865,
+   "bdd_fault_caught_offline": [
+    29,
+    29
+   ],
+   "json_semantic_fault_caught_offline": [
+    0,
+    87
+   ],
+   "json_structural_fault_caught_offline": [
+    29,
+    29
+   ]
+  }
+ },
+ "metrics2": {
+  "latency_summary": {
+   "reps": 5,
+   "cases": 30,
+   "transpile_median_ms": 5.400405265390873,
+   "transpile_mean_ms": 5.613490675265591,
+   "transpile_p95_ms": 6.600243970751762,
+   "validate_median_ms": 4.503952339291573,
+   "validate_mean_ms": 4.708519671112299,
+   "validate_p95_ms": 5.685161799192429
+  },
+  "latency_transpile": [
+   {
+    "case": "01_example_domain",
+    "median_ms": 6.977411452680826,
+    "min_ms": 4.988452885299921,
+    "max_ms": 8.305727038532495
+   },
+   {
+    "case": "02_wikipedia_rust",
+    "median_ms": 5.573264788836241,
+    "min_ms": 4.658963996917009,
+    "max_ms": 6.2125870026648045
+   },
+   {
+    "case": "03_wikipedia_systems",
+    "median_ms": 4.793694242835045,
+    "min_ms": 4.667650908231735,
+    "max_ms": 4.944422282278538
+   },
+   {
+    "case": "04_wiktionary_serendipity",
+    "median_ms": 5.084741860628128,
+    "min_ms": 4.825962707400322,
+    "max_ms": 5.219762213528156
+   },
+   {
+    "case": "05_wiktionary_lexicon",
+    "median_ms": 5.204402841627598,
+    "min_ms": 4.984154831618071,
+    "max_ms": 5.215974990278482
+   },
+   {
+    "case": "06_hackernews",
+    "median_ms": 4.9611530266702175,
+    "min_ms": 4.9282521940767765,
+    "max_ms": 5.782781634479761
+   },
+   {
+    "case": "07_github_rust",
+    "median_ms": 5.156103055924177,
+    "min_ms": 4.947487264871597,
+    "max_ms": 7.490269839763641
+   },
+   {
+    "case": "08_gitlab",
+    "median_ms": 5.499118007719517,
+    "min_ms": 5.001016892492771,
+    "max_ms": 6.30653090775013
+   },
+   {
+    "case": "09_pypi_requests",
+    "median_ms": 5.133612081408501,
+    "min_ms": 4.978574812412262,
+    "max_ms": 6.178292911499739
+   },
+   {
+    "case": "10_docsrs_serde",
+    "median_ms": 5.06225973367691,
+    "min_ms": 4.8012579791247845,
+    "max_ms": 6.108975037932396
+   },
+   {
+    "case": "11_mdn_html",
+    "median_ms": 5.120858084410429,
+    "min_ms": 4.80430293828249,
+    "max_ms": 7.705507334321737
+   },
+   {
+    "case": "12_go_dev",
+    "median_ms": 5.4412707686424255,
+    "min_ms": 5.194905214011669,
+    "max_ms": 7.0367311127483845
+   },
+   {
+    "case": "13_nodejs",
+    "median_ms": 6.098074838519096,
+    "min_ms": 4.818510264158249,
+    "max_ms": 6.4140004105865955
+   },
+   {
+    "case": "14_arxiv_attention",
+    "median_ms": 6.0539329424500465,
+    "min_ms": 4.951955750584602,
+    "max_ms": 6.420742254704237
+   },
+   {
+    "case": "15_kernel_org",
+    "median_ms": 6.103134248405695,
+    "min_ms": 5.2305408753454685,
+    "max_ms": 6.931826937943697
+   },
+   {
+    "case": "16_debian",
+    "median_ms": 5.35953976213932,
+    "min_ms": 5.221042782068253,
+    "max_ms": 7.165720220655203
+   },
+   {
+    "case": "17_w3c",
+    "median_ms": 6.087255664169788,
+    "min_ms": 5.091764032840729,
+    "max_ms": 7.246939931064844
+   },
+   {
+    "case": "18_ietf",
+    "median_ms": 5.35167520865798,
+    "min_ms": 5.071146879345179,
+    "max_ms": 7.067246828228235
+   },
+   {
+    "case": "19_rfc_editor",
+    "median_ms": 5.345855373889208,
+    "min_ms": 5.011715926229954,
+    "max_ms": 6.556683219969273
+   },
+   {
+    "case": "20_php_net",
+    "median_ms": 5.218509119004011,
+    "min_ms": 5.053242668509483,
+    "max_ms": 5.667638964951038
+   },
+   {
+    "case": "21_perl_org",
+    "median_ms": 5.002159159630537,
+    "min_ms": 4.92657907307148,
+    "max_ms": 6.252700928598642
+   },
+   {
+    "case": "22_haskell_org",
+    "median_ms": 6.275644060224295,
+    "min_ms": 4.996067378669977,
+    "max_ms": 6.833815947175026
+   },
+   {
+    "case": "23_scala_lang",
+    "median_ms": 5.978764034807682,
+    "min_ms": 5.092236213386059,
+    "max_ms": 7.010602857917547
+   },
+   {
+    "case": "24_weather_gov",
+    "median_ms": 6.149199791252613,
+    "min_ms": 5.386269185692072,
+    "max_ms": 6.909454707056284
+   },
+   {
+    "case": "25_nasa_gov",
+    "median_ms": 5.625552032142878,
+    "min_ms": 5.109808407723904,
+    "max_ms": 6.720585748553276
+   },
+   {
+    "case": "26_npr_org",
+    "median_ms": 5.136176943778992,
+    "min_ms": 4.824990872293711,
+    "max_ms": 7.03002791851759
+   },
+   {
+    "case": "27_gutenberg_pnp",
+    "median_ms": 7.019650191068649,
+    "min_ms": 5.203219596296549,
+    "max_ms": 7.680952083319426
+   },
+   {
+    "case": "28_wikidata_q42",
+    "median_ms": 6.600243970751762,
+    "min_ms": 6.485180929303169,
+    "max_ms": 6.9129010662436485
+   },
+   {
+    "case": "29_commons_wikimedia",
+    "median_ms": 6.277015898376703,
+    "min_ms": 5.273100454360247,
+    "max_ms": 6.892754230648279
+   },
+   {
+    "case": "_probe",
+    "median_ms": 4.714447073638439,
+    "min_ms": 4.486265126615763,
+    "max_ms": 4.896443337202072
+   }
+  ],
+  "latency_validate": [
+   {
+    "case": "01_example_domain",
+    "median_ms": 4.2077600955963135
+   },
+   {
+    "case": "02_wikipedia_rust",
+    "median_ms": 4.12010820582509
+   },
+   {
+    "case": "03_wikipedia_systems",
+    "median_ms": 4.4139111414551735
+   },
+   {
+    "case": "04_wiktionary_serendipity",
+    "median_ms": 4.320409148931503
+   },
+   {
+    "case": "05_wiktionary_lexicon",
+    "median_ms": 4.476176109164953
+   },
+   {
+    "case": "06_hackernews",
+    "median_ms": 4.454606212675571
+   },
+   {
+    "case": "07_github_rust",
+    "median_ms": 4.51123109087348
+   },
+   {
+    "case": "08_gitlab",
+    "median_ms": 4.449727945029736
+   },
+   {
+    "case": "09_pypi_requests",
+    "median_ms": 4.5273806899785995
+   },
+   {
+    "case": "10_docsrs_serde",
+    "median_ms": 4.374308045953512
+   },
+   {
+    "case": "11_mdn_html",
+    "median_ms": 4.672669805586338
+   },
+   {
+    "case": "12_go_dev",
+    "median_ms": 4.375771153718233
+   },
+   {
+    "case": "13_nodejs",
+    "median_ms": 4.4999998062849045
+   },
+   {
+    "case": "14_arxiv_attention",
+    "median_ms": 4.603541921824217
+   },
+   {
+    "case": "15_kernel_org",
+    "median_ms": 5.5255768820643425
+   },
+   {
+    "case": "16_debian",
+    "median_ms": 5.607298109680414
+   },
+   {
+    "case": "17_w3c",
+    "median_ms": 5.685161799192429
+   },
+   {
+    "case": "18_ietf",
+    "median_ms": 4.540765658020973
+   },
+   {
+    "case": "19_rfc_editor",
+    "median_ms": 5.500089842826128
+   },
+   {
+    "case": "20_php_net",
+    "median_ms": 4.456690046936274
+   },
+   {
+    "case": "21_perl_org",
+    "median_ms": 4.527491983026266
+   },
+   {
+    "case": "22_haskell_org",
+    "median_ms": 4.395938012748957
+   },
+   {
+    "case": "23_scala_lang",
+    "median_ms": 5.996286869049072
+   },
+   {
+    "case": "24_weather_gov",
+    "median_ms": 4.59160003811121
+   },
+   {
+    "case": "25_nasa_gov",
+    "median_ms": 4.313835874199867
+   },
+   {
+    "case": "26_npr_org",
+    "median_ms": 4.507904872298241
+   },
+   {
+    "case": "27_gutenberg_pnp",
+    "median_ms": 5.773365031927824
+   },
+   {
+    "case": "28_wikidata_q42",
+    "median_ms": 5.284271202981472
+   },
+   {
+    "case": "29_commons_wikimedia",
+    "median_ms": 4.432004876434803
+   },
+   {
+    "case": "_probe",
+    "median_ms": 4.109707660973072
+   }
+  ],
+  "edit_cost": [
+   {
+    "case": "01_example_domain",
+    "needle": "https://example.com/",
+    "bdd_lines_to_touch": 2,
+    "json_lines_to_touch": 5,
+    "bdd_bytes_in_file": 2,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "02_wikipedia_rust",
+    "needle": "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "03_wikipedia_systems",
+    "needle": "https://en.wikipedia.org/wiki/Systems_programming",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "04_wiktionary_serendipity",
+    "needle": "https://en.wiktionary.org/wiki/serendipity",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "05_wiktionary_lexicon",
+    "needle": "https://en.wiktionary.org/wiki/lexicon",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "06_hackernews",
+    "needle": "https://news.ycombinator.com/",
+    "bdd_lines_to_touch": 2,
+    "json_lines_to_touch": 5,
+    "bdd_bytes_in_file": 2,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "07_github_rust",
+    "needle": "https://github.com/rust-lang/rust",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "08_gitlab",
+    "needle": "https://gitlab.com/gitlab-org/gitlab",
+    "bdd_lines_to_touch": 2,
+    "json_lines_to_touch": 5,
+    "bdd_bytes_in_file": 2,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "09_pypi_requests",
+    "needle": "https://pypi.org/project/requests/",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   },
+   {
+    "case": "10_docsrs_serde",
+    "needle": "https://docs.rs/serde/latest/serde/",
+    "bdd_lines_to_touch": 1,
+    "json_lines_to_touch": 3,
+    "bdd_bytes_in_file": 1,
+    "json_path": ".nodes[1].action.with.url"
+   }
+  ],
+  "fault_summary": {
+   "unknown_op": {
+    "n": 20,
+    "caught": 0,
+    "catch_rate": 0.0,
+    "mean_ms": 4.7,
+    "mean_msg_len": 7762,
+    "line_info_rate": 0.0,
+    "node_ref_rate": 1.0,
+    "sample": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output"
+   },
+   "dangling_edge": {
+    "n": 0,
+    "caught": 0,
+    "catch_rate": null,
+    "mean_ms": null,
+    "mean_msg_len": null,
+    "line_info_rate": null,
+    "node_ref_rate": null,
+    "sample": null
+   },
+   "missing_start": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.3,
+    "mean_msg_len": 54,
+    "line_info_rate": 0.0,
+    "node_ref_rate": 0.0,
+    "sample": "# dsl_version: 2 (current)\nError: spec missing 'start'"
+   },
+   "unknown_assertion": {
+    "n": 0,
+    "caught": 0,
+    "catch_rate": null,
+    "mean_ms": null,
+    "mean_msg_len": null,
+    "line_info_rate": null,
+    "node_ref_rate": null,
+    "sample": null
+   }
+  },
+  "structure": [
+   {
+    "case": "01_example_domain",
+    "json_lines": 1322,
+    "json_max_nesting": 6,
+    "json_dup_pct": 87.9,
+    "json_ops": 29,
+    "json_nodes": 0,
+    "bdd_step_lines": 30
+   },
+   {
+    "case": "02_wikipedia_rust",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "03_wikipedia_systems",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "04_wiktionary_serendipity",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "05_wiktionary_lexicon",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "06_hackernews",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 87.3,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "07_github_rust",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "08_gitlab",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "09_pypi_requests",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "10_docsrs_serde",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "11_mdn_html",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "12_go_dev",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 87.3,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "13_nodejs",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 87.1,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "14_arxiv_attention",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "15_kernel_org",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "16_debian",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "17_w3c",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "18_ietf",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "19_rfc_editor",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "20_php_net",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "21_perl_org",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "22_haskell_org",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "23_scala_lang",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "24_weather_gov",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.9,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "25_nasa_gov",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "26_npr_org",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "27_gutenberg_pnp",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "28_wikidata_q42",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "29_commons_wikimedia",
+    "json_lines": 1248,
+    "json_max_nesting": 6,
+    "json_dup_pct": 86.8,
+    "json_ops": 28,
+    "json_nodes": 0,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "_probe",
+    "json_lines": 1028,
+    "json_max_nesting": 6,
+    "json_dup_pct": 85.8,
+    "json_ops": 22,
+    "json_nodes": 0,
+    "bdd_step_lines": 23
+   }
+  ],
+  "structure_summary": {
+   "json_mean_nesting": 6,
+   "json_mean_dup_pct": 86.9,
+   "json_mean_lines": 1243.1,
+   "bdd_mean_step_lines": 28.8,
+   "json_mean_ops": 27.8
+  }
+ },
+ "fault_inject": {
+  "json_validate": {
+   "unknown_op": {
+    "n": 20,
+    "caught": 0,
+    "catch_rate": 0.0,
+    "mean_ms": 4.9,
+    "mean_msg_len": 7762,
+    "line_info_rate": 0.0,
+    "specific_rate": 0.0,
+    "sample": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations"
+   },
+   "dangling_edge": {
+    "n": 20,
+    "caught": 0,
+    "catch_rate": 0.0,
+    "mean_ms": 5.1,
+    "mean_msg_len": 7774,
+    "line_info_rate": 0.0,
+    "specific_rate": 1.0,
+    "sample": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations"
+   },
+   "missing_start": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.5,
+    "mean_msg_len": 54,
+    "line_info_rate": 0.0,
+    "specific_rate": 1.0,
+    "sample": "# dsl_version: 2 (current)\nError: spec missing 'start'"
+   },
+   "unknown_assertion": {
+    "n": 20,
+    "caught": 0,
+    "catch_rate": 0.0,
+    "mean_ms": 4.9,
+    "mean_msg_len": 7762,
+    "line_info_rate": 0.0,
+    "specific_rate": 0.0,
+    "sample": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations"
+   },
+   "unknown_capability": {
+    "n": 20,
+    "caught": 0,
+    "catch_rate": 0.0,
+    "mean_ms": 4.8,
+    "mean_msg_len": 7762,
+    "line_info_rate": 0.0,
+    "specific_rate": 0.0,
+    "sample": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations"
+   }
+  },
+  "bdd_compile": {
+   "unknown_step": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.7,
+    "mean_msg_len": 126,
+    "line_info_rate": 1.0,
+    "specific_rate": 1.0,
+    "sample": "error: <tmp>/01_example_domain.unknown_step.feature: line 8: noSuchVerbZZZ wait for the element \"body\""
+   },
+   "unclosed_scenario": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.3,
+    "mean_msg_len": 98,
+    "line_info_rate": 0.0,
+    "specific_rate": 1.0,
+    "sample": "error: <tmp>/01_example_domain.noscenario.feature: feature has no Scenario"
+   },
+   "bad_keyword": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.1,
+    "mean_msg_len": 142,
+    "line_info_rate": 1.0,
+    "specific_rate": 1.0,
+    "sample": "error: <tmp>/01_example_domain.badkw.feature: line 1: text before any Feature: header: \"Featur: example_domain live check\""
+   }
+  },
+  "_samples": {
+   "unknown_op": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations\": 32,\n  \"nodes\": {\n    \"s0\": {\n      \"questions\": [\n        \"ok\"\n      ],\n      \"primary_q\": \"ok\",\n      \"edge_condition\": {\n        \"A\": \"s1\"\n      },\n      \"",
+   "dangling_edge": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations\": 32,\n  \"nodes\": {\n    \"s0\": {\n      \"questions\": [\n        \"ok\"\n      ],\n      \"primary_q\": \"ok\",\n      \"edge_condition\": {\n        \"A\": \"ghost_node_xyz\"\n    ",
+   "missing_start": "# dsl_version: 2 (current)\nError: spec missing 'start'",
+   "unknown_assertion": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations\": 32,\n  \"nodes\": {\n    \"s0\": {\n      \"questions\": [\n        \"ok\"\n      ],\n      \"primary_q\": \"ok\",\n      \"edge_condition\": {\n        \"A\": \"s1\"\n      },\n      \"",
+   "unknown_capability": "# dsl_version: 2 (current)\n# capabilities: bdd, chrome, exec\n# policy: allow_exec=true allow_hosts=[\"127.0.0.1\", \"example.com\"] max_timeout_ms=120000 max_output=1048576 retries=0\n# secrets: none required\n{\n  \"start\": \"s0\",\n  \"max_iterations\": 32,\n  \"nodes\": {\n    \"s0\": {\n      \"questions\": [\n        \"ok\"\n      ],\n      \"primary_q\": \"ok\",\n      \"edge_condition\": {\n        \"A\": \"s1\"\n      },\n      \"",
+   "unknown_step": "error: <tmp>/01_example_domain.unknown_step.feature: line 8: noSuchVerbZZZ wait for the element \"body\"",
+   "unclosed_scenario": "error: <tmp>/01_example_domain.noscenario.feature: feature has no Scenario",
+   "bad_keyword": "error: <tmp>/01_example_domain.badkw.feature: line 1: text before any Feature: header: \"Featur: example_domain live check\""
+  }
+ },
+ "extra": {
+  "syntax_error": {
+   "json_truncated": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.1,
+    "mean_msg_len": 54,
+    "line_info_rate": 1.0,
+    "sample": "Error: EOF while parsing a string at line 618 column 36"
+   },
+   "feature_truncated": {
+    "n": 20,
+    "caught": 20,
+    "catch_rate": 1.0,
+    "mean_ms": 3.6,
+    "mean_msg_len": 177,
+    "line_info_rate": 0.85,
+    "sample": "error: <tmp>/01_example_domain.trunc.feature: line 20: not a step, table or section header: \"When\""
+   }
+  },
+  "counts_summary": {
+   "json_mean_fields": 757,
+   "json_mean_json_tokens": 3427,
+   "json_mean_str_tokens": 2418,
+   "bdd_mean_words": 229.1,
+   "bdd_mean_step_lines": 28.8,
+   "cases": 30
+  },
+  "counts": [
+   {
+    "case": "01_example_domain",
+    "json_fields": 788,
+    "json_str_tokens": 2537,
+    "json_json_tokens": 3609,
+    "bdd_words": 237,
+    "bdd_step_lines": 30
+   },
+   {
+    "case": "02_wikipedia_rust",
+    "json_fields": 761,
+    "json_str_tokens": 2440,
+    "json_json_tokens": 3446,
+    "bdd_words": 233,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "03_wikipedia_systems",
+    "json_fields": 761,
+    "json_str_tokens": 2431,
+    "json_json_tokens": 3446,
+    "bdd_words": 230,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "04_wiktionary_serendipity",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3444,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "05_wiktionary_lexicon",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3444,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "06_hackernews",
+    "json_fields": 761,
+    "json_str_tokens": 2437,
+    "json_json_tokens": 3438,
+    "bdd_words": 232,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "07_github_rust",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3448,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "08_gitlab",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3447,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "09_pypi_requests",
+    "json_fields": 761,
+    "json_str_tokens": 2422,
+    "json_json_tokens": 3440,
+    "bdd_words": 227,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "10_docsrs_serde",
+    "json_fields": 761,
+    "json_str_tokens": 2431,
+    "json_json_tokens": 3442,
+    "bdd_words": 230,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "11_mdn_html",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3440,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "12_go_dev",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3436,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "13_nodejs",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3438,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "14_arxiv_attention",
+    "json_fields": 761,
+    "json_str_tokens": 2437,
+    "json_json_tokens": 3443,
+    "bdd_words": 232,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "15_kernel_org",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3436,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "16_debian",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3436,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "17_w3c",
+    "json_fields": 761,
+    "json_str_tokens": 2437,
+    "json_json_tokens": 3452,
+    "bdd_words": 232,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "18_ietf",
+    "json_fields": 761,
+    "json_str_tokens": 2431,
+    "json_json_tokens": 3440,
+    "bdd_words": 230,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "19_rfc_editor",
+    "json_fields": 761,
+    "json_str_tokens": 2437,
+    "json_json_tokens": 3457,
+    "bdd_words": 232,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "20_php_net",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3438,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "21_perl_org",
+    "json_fields": 761,
+    "json_str_tokens": 2425,
+    "json_json_tokens": 3436,
+    "bdd_words": 228,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "22_haskell_org",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3438,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "23_scala_lang",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3447,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "24_weather_gov",
+    "json_fields": 761,
+    "json_str_tokens": 2446,
+    "json_json_tokens": 3438,
+    "bdd_words": 235,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "25_nasa_gov",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3438,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "26_npr_org",
+    "json_fields": 761,
+    "json_str_tokens": 2428,
+    "json_json_tokens": 3438,
+    "bdd_words": 229,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "27_gutenberg_pnp",
+    "json_fields": 761,
+    "json_str_tokens": 2437,
+    "json_json_tokens": 3443,
+    "bdd_words": 232,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "28_wikidata_q42",
+    "json_fields": 761,
+    "json_str_tokens": 2431,
+    "json_json_tokens": 3445,
+    "bdd_words": 230,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "29_commons_wikimedia",
+    "json_fields": 761,
+    "json_str_tokens": 2431,
+    "json_json_tokens": 3449,
+    "bdd_words": 230,
+    "bdd_step_lines": 29
+   },
+   {
+    "case": "_probe",
+    "json_fields": 613,
+    "json_str_tokens": 1968,
+    "json_json_tokens": 2824,
+    "bdd_words": 204,
+    "bdd_step_lines": 23
+   }
+  ]
+ },
+ "score": {
+  "tasks": [
+   {
+    "id": "invoice_capture",
+    "intent": "Open the invoice app, dismiss the cookie banner if it is there, search for ACME by typing and pressing Enter, wait for the export button to become enabled, then capture the app version, the first result row and the page title.",
+    "feature": "bdd/features/workflow_capture.feature",
+    "compile_ok": true,
+    "coverage": 100.0,
+    "declared_outputs": 4,
+    "known_ok": 9,
+    "known_total": 9,
+    "unknown_ok": 6,
+    "unknown_total": 6,
+    "contract_ok": true,
+    "reference_steps": 27,
+    "unique_steps": 20,
+    "e2e": null,
+    "e2e_secs": 0.0
+   },
+   {
+    "id": "multi_page_audit",
+    "intent": "Start on the fixture page, record its title and heading, move the same tab to the second page, record that title too, and prove the first page is really gone.",
+    "feature": "bdd/bench/tasks/multi_page_audit.feature",
+    "compile_ok": true,
+    "coverage": 100.0,
+    "declared_outputs": 3,
+    "known_ok": 8,
+    "known_total": 8,
+    "unknown_ok": 5,
+    "unknown_total": 5,
+    "contract_ok": true,
+    "reference_steps": 11,
+    "unique_steps": 11,
+    "e2e": null,
+    "e2e_secs": 0.0
+   },
+   {
+    "id": "search_and_export",
+    "intent": "On an app that was already consented to, search for ACME, press Enter, wait for the export button to be enabled, click it if present, then capture the app's exported marker and the page url.",
+    "feature": "bdd/bench/tasks/search_and_export.feature",
+    "compile_ok": true,
+    "coverage": 100.0,
+    "declared_outputs": 2,
+    "known_ok": 8,
+    "known_total": 8,
+    "unknown_ok": 4,
+    "unknown_total": 4,
+    "contract_ok": true,
+    "reference_steps": 12,
+    "unique_steps": 12,
+    "e2e": null,
+    "e2e_secs": 0.0
+   }
+  ],
+  "aggregate": {
+   "tasks": 3,
+   "compiled": 3,
+   "min_coverage": 100.0,
+   "contracts_caught": 3,
+   "vocabulary_recall": [
+    25,
+    25
+   ],
+   "vocabulary_precision": [
+    15,
+    15
+   ],
+   "steps": 50,
+   "unique_steps": 43,
+   "avg_steps_per_workflow": 16.666666666666668,
+   "naive_draft_fixes": 15,
+   "e2e_secs_total": 0.0
+  }
+ },
+ "collected_at": "2026-10-12",
+ "binary": "~/.cargo/bin/laya-workflow release @2026-10-11",
+ "repo_head": "71fb20e"
+}
