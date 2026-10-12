@@ -1,0 +1,25 @@
+{
+  "id": "decision_content_safety",
+  "intent": "A content-safety policy node: ask eight semantic checks (prohibited / PII on public feed / age blocking / context blocking at blocking or review severity) plus an effective severity score; the primary question is the score question (not the first question) and the threshold action reads it; label BLOCK when any blocking condition holds or severity >= 90, REVIEW when any review condition holds or severity >= 50, otherwise ALLOW; carry the request and content ids through.",
+  "feature": "bdd/workflows/ole_eval/content_safety_guard.feature",
+  "known_steps": [
+    { "kind": "given", "text": "a choice question \"is_prohibited\" asks \"Does the content hit a prohibited semantic category (never allowed in any context)?\"" },
+    { "kind": "given", "text": "a score question \"effective_severity\" asks \"Effective severity 0-100 (base taxonomy severity plus repeat-violation boost up to +30).\"" },
+    { "kind": "given", "text": "the workflow runs at most 5 iterations" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "the primary question is \"effective_severity\"" },
+    { "kind": "then", "text": "the action reads the question \"effective_severity\"" },
+    { "kind": "then", "text": "label \"BLOCK\" when the answer to \"is_prohibited\" is \"B\"" },
+    { "kind": "then", "text": "label \"REVIEW\" when \"effective_severity\" is at least 50" },
+    { "kind": "then", "text": "label \"ALLOW\" otherwise" },
+    { "kind": "then", "text": "keep the state key \"request_id\"" }
+  ],
+  "unknown_steps": [
+    { "kind": "given", "text": "a multiple choice \"is_prohibited\" asks \"Does it hit a prohibited category?\"" },
+    { "kind": "given", "text": "a boolean question \"is_prohibited\" asks \"Does it hit a prohibited category?\"" },
+    { "kind": "then", "text": "label \"BLOCK\" if the answer to \"is_prohibited\" equals \"B\"" },
+    { "kind": "then", "text": "the primary question is set to \"effective_severity\"" },
+    { "kind": "then", "text": "keep state \"request_id\"" },
+    { "kind": "when", "text": "else go to \"STOP\"" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "decision_agent_probe",
+  "intent": "Probe an external agent: declare an execution policy (allow exec, host allow-list, timeout, output cap) and two agent capabilities (HTTP and stdio) in the Background, then a single decision node asks whether to route to the local engine or forward to the external agent, and on the agent route calls the app_server capability passing the state text and projecting the agent's output.",
+  "feature": "bdd/workflows/capabilities/agent_session_probe.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 5 iterations" },
+    { "kind": "given", "text": "the policy" },
+    { "kind": "given", "text": "the capabilities" },
+    { "kind": "given", "text": "a choice question \"route\" asks \"Should this request be handled by the local engine, or forwarded to the external agent?\"" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "call the capability \"app_server\"" }
+  ],
+  "unknown_steps": [
+    { "kind": "given", "text": "the execution policy is" },
+    { "kind": "given", "text": "the capability list" },
+    { "kind": "given", "text": "a routing question \"route\" asks \"Should this go to the agent?\"" },
+    { "kind": "when", "text": "all other answers go to \"STOP\"" },
+    { "kind": "then", "text": "call the tool \"app_server\"" },
+    { "kind": "then", "text": "use the capability \"app_server\"" }
+  ]
+}

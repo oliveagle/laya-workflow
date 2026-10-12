@@ -121,3 +121,98 @@ laya-workflow bdd run --profile production --base-url <real>
 - `bdd/bench/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
 - `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
 - `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
+
+## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
+
+> 这是把 **agentic 决策 workflow** 变成 BDD 的主路径（也是把 `dsl/<cat>/<name>.json`
+> 里 99 个决策 spec 全量转成 `.feature` 的做法）。一条 `@decision` feature = 一张决策图：
+> **Feature = 整张图，每个 Scenario = 一个决策节点**。编译产物是决策图 spec
+> （`nodes/start/max_iterations/policy/capabilities`），不是浏览器步骤 spec。
+
+### 文件放哪 / 来源
+
+- 源：`bdd/workflows/<cat>/<name>.feature`（层级镜像 `dsl/<cat>/`，如 routing/、agents/、capabilities/…）
+- 编译产物：`dsl/<cat>/<name>.json` —— **这是权威 spec，由 `bdd round-trip` 证明等价，不许手改**
+- 门禁：`laya-workflow bdd round-trip` —— 每个 `@decision` feature 必须逐字段复现其 dsl spec；
+  **反向完整性**：任何有 dsl spec 但没有 `@decision` 源的，round-trip 直接 FAIL（"convert it"）。
+
+### 结构：Feature = 图，Scenario = 节点
+
+```gherkin
+@decision
+Feature: support_ticket_router
+
+  Background:                        # 整张图的设置（可选）
+    Given the workflow runs at most 20 iterations
+
+  Scenario: classify                 # 一个决策节点
+    Given a choice question "category" asks "Which team should handle this ticket?"
+      | answer    | meaning          |   # choice 表：第一行是表头 | answer | meaning |
+      | billing   | invoices, ...    |   # 其余行是 criteria
+    When the answer "technical" goes to "severity_probe"   # edge 条件 → 目标节点
+    And any other answer goes to "STOP"                    # edge 默认
+    Then keep the answer to "category"                     # copy_keys
+    And require confidence at least 0.4                    # min_confidence
+    And allow up to 3 retries                              # max_retries
+
+  Scenario: severity_probe           # 第二个节点
+    Given a score question "severity" asks "How severe is the impact?"
+      | level    |                   # score 表：| level |（criteria 是 level 列表）
+    When any other answer goes to "STOP"
+    Then label "PAGE_ONCALL" when "severity" is at least 1.5   # 有序 threshold 规则
+    And label "BACKLOG" otherwise                               # 兜底
+```
+
+### 决策词汇表（Given / When / Then）
+
+**Background（整图级）**：`Given the workflow runs at most N iterations`（max_iterations）、
+`Given the policy`（| key | value | 表 → policy 块）、`Given the capabilities`（| name | config-JSON | 表）。
+
+**Given 问题（每节点 ≥1 个问题）**：
+- `a choice question "Q" asks "..."` + `| answer | meaning |` 表
+- `a score question "Q" asks "..."` + `| level |` 表
+- `a noul question "Q" asks "..."` + 可选 `| truthy | ... |` / `| falsy | ... |` 表
+- `the sub workflow "NAME"` —— 节点只引子工作流（不能混节点内容）
+- 启发式（跟在问题后、配置**最近一个**问题）：
+  - `answer "X" when the field "F" contains <needles> with hit N [and miss M]`（field_any）
+  - `answer "X" when the text contains <needles> with hit N [and miss M]`（any）
+  - `score "X" from the numeric field "F" [with miss M]`（numeric）
+  - `answer "X" when the field "F" matches <patterns> with hit N [and miss M]`（regex）
+  - `answer "X" with mid N when the field "F" contains <needles>`（mid）
+  - `answer by rules on the field "F" with hit N [and fallback "X"]`（match_rules + | label | needles | 表）
+  - `score "X" when the field "F" contains "HIGH" scoring H and "MID" scoring M miss L`（score_bands）
+  - `the answer is always "X"`、`the answer comes from the field "F"`
+
+**When 边**：`the answer "X" goes to "NODE"`（edge 条件）、`any other answer goes to "NODE"`（默认）。
+
+**Then 动作**：
+- 阈值规则（**有序**，round-trip 断言顺序）：`label "L" when the answer to "Q" is "X"` /
+  `... is one of "X","Y"` / `... when the answer is "X"`（implicit）/ `... with at least C confidence` /
+  `label "L" when "Q" is at least N` / `label "L" when "Q" is below N` / `label "L" otherwise`
+- state：`keep the answer to "Q"`（copy_keys）、`keep the state key "K"`
+- 节点设置：`the primary question is "Q"`、`the action reads the question "Q"`、
+  `require confidence at least N`、`allow up to N retries`
+- 能力调用：`call the capability "NAME"` + `| with.<k> | ... |` / `| chain.<as>.capability | ... |` 表
+- 高级动作：`gate "Q" on option "O" with block B allow A`、`merge open probabilities on "Q"`、
+  `combine "C" with signal "S" fallback "F" review "R" requiring MIN high H low L`、
+  `rubric "Q1" at L1 levels weight W1 and "Q2" at L2 levels weight W2 requiring M`、
+  `prepare a UI proposal from operation "OP" field "F" amount "A" surface "S" hash "H" requiring M [value "K"]`
+
+> 单元格里要写字面 `|`（如 shell 管道）时转义成 `\|`；JSON 值里的 `\r\n` 等按 JSON 转义。
+
+### 作者循环（agent 怎么写一个决策 workflow）
+
+1. 想清楚决策图：几个节点？每个节点问什么问题、答什么路由、产出什么 label/动作。
+2. 在 `bdd/workflows/<cat>/<name>.feature` 写 `@decision` feature（先查词汇表，生造措辞会被拒）。
+3. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
+   validate 逐行错误）或 CLI `laya-workflow bdd build`。
+4. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
+5. 全量门禁：`laya-workflow bdd round-trip`（99/99 复现）+ `scripts/bdd/check.sh`。
+6. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
+
+### 为什么这样是 agentic workflow 的核心
+
+- **确定性**：`@decision` 词汇表是确定性编译器（正则 → 决策图），0ms、无歧义；validate 双保险。
+- **单一事实来源**：`.feature` 是源，`dsl/*.json` 是编译产物；round-trip 证明等价，杜绝双份漂移。
+- **可直接运行**：`laya-workflow run --spec dsl/<cat>/<name>.json` 用 HeuristicBackend / 真实 LLM 跑决策图。
+- **完整性可审计**：`bdd_catalog` 让"所有已知 workflow 都 BDD 化"这件事可测（孤儿即报）。
