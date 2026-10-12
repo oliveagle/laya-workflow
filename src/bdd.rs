@@ -848,14 +848,14 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             //    the *most recent* question in the same Scenario) ──
             (
                 Regex::new(
-                    r#"^answer "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)$"#,
+                    r#"^answer "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
                 )
                 .unwrap(),
                 "heur_field_any",
             ),
             (
                 Regex::new(
-                    r#"^answer "(?P<ans>[^"]+)" when the text contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)$"#,
+                    r#"^answer "(?P<ans>[^"]+)" when the text contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
                 )
                 .unwrap(),
                 "heur_any",
@@ -924,6 +924,14 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             (
                 Regex::new(r"^allow up to (?P<n>\d+) retries$").unwrap(),
                 "max_retries",
+            ),
+            (
+                Regex::new(r#"^the primary question is "(?P<q>.+)"$"#).unwrap(),
+                "primary_q",
+            ),
+            (
+                Regex::new(r#"^the action reads the question "(?P<q>.+)"$"#).unwrap(),
+                "action_q",
             ),
         ]
     })
@@ -1838,6 +1846,8 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut min_confidence: Option<f64> = None;
     let mut max_retries: Option<usize> = None;
     let mut last_question: Option<String> = None;
+    let mut explicit_primary: Option<String> = None;
+    let mut action_q: Option<String> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -1916,9 +1926,13 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 }
                 h.insert("match_any".into(), json!(needles));
                 h.insert("p_hit".into(), json!(hit));
-                // 1 - 0.95 is 0.050000000000000044 in f64; round to avoid a
-                // spurious diff when the spec is compared/round-tripped.
-                h.insert("p_miss".into(), json!(((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0));
+                // explicit `and miss M` overrides the default 1-hit; 1 - 0.95
+                // is 0.050000000000000044 in f64, so round the default.
+                let miss: f64 = match caps.name("miss") {
+                    Some(m) => m.as_str().parse()?,
+                    None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
+                };
+                h.insert("p_miss".into(), json!(miss));
                 q.insert("heuristic".into(), Value::Object(h));
             }
             "heur_numeric" => {
@@ -1966,6 +1980,8 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "keep_state" => keep.push(caps["k"].to_string()),
             "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
             "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
+            "primary_q" => explicit_primary = Some(caps["q"].to_string()),
+            "action_q" => action_q = Some(caps["q"].to_string()),
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
         }
     }
@@ -1976,12 +1992,18 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             scenario.name
         );
     }
-    let primary_q = primary_q.unwrap_or_else(|| "ok".to_string());
+    // explicit `the primary question is "Q"` overrides the first-question default;
+    // a threshold action can additionally read a different question via
+    // `the action reads the question "Q"`.
+    let primary_q = explicit_primary
+        .clone()
+        .or(primary_q)
+        .unwrap_or_else(|| "ok".to_string());
 
     let action = if !rules.is_empty() {
         Some(json!({
             "kind": "threshold",
-            "question": primary_q,
+            "question": action_q.clone().unwrap_or_else(|| primary_q.clone()),
             "rules": rules
         }))
     } else if !copy_keys.is_empty() {

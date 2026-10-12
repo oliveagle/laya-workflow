@@ -96,6 +96,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-layers", t_spec::test_spec_layers),
         ("state", t_state::test_state_home_override),
         ("bdd-decision", t_bdd::test_bdd_decision),
+        ("bdd-decision-primary-q", t_bdd::test_bdd_decision_primary_q),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

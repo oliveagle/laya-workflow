@@ -108,3 +108,69 @@ Feature: bad
         bdd::compile_decision(&f3, &json!({})).is_err(),
     );
 }
+/// `Then the primary question is "Q"` overrides the first-question default, and
+/// `Then the action reads the question "Q"` lets a threshold action read a
+/// different question than the primary one (e.g. a numeric heuristic question).
+pub fn test_bdd_decision_primary_q(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: content_safety_guard
+  Guard content by policy first, then severity.
+
+  Scenario: policy
+    Given a choice question "policy" asks "Which policy applies?"
+      | answer   | meaning              |
+      | moderate | requires moderation  |
+      | allow    | safe to post         |
+    And a choice question "channel" asks "Which channel?"
+      | answer | meaning      |
+      | chat   | chat message |
+      | mail   | email        |
+    When the answer "moderate" goes to "moderate"
+    And any other answer goes to "STOP"
+    Then the primary question is "channel"
+    And keep the answer to "policy"
+
+  Scenario: moderate
+    Given a score question "severity" asks "How severe?"
+      | level    |
+      | low      |
+      | high     |
+    When any other answer goes to "STOP"
+    Then the primary question is "severity"
+    And the action reads the question "severity"
+    And label "BLOCK" when "severity" is at least 1.5
+    And label "REVIEW" otherwise
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse primary-q feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile primary-q");
+    let nodes = spec["nodes"].as_array().unwrap();
+
+    // policy node: explicit primary is the *second* question, not the first
+    let policy = &nodes[0];
+    h.eq("bdd: policy primary_q", policy["primary_q"].clone(), json!("channel"));
+    h.eq(
+        "bdd: policy questions present",
+        policy["questions"]["policy"]["type"].clone(),
+        json!("choice"),
+    );
+    h.eq(
+        "bdd: policy action kind",
+        policy["action"]["kind"].clone(),
+        json!("copy_keys"),
+    );
+
+    // moderate node: action.question reads "severity" explicitly
+    let moderate = &nodes[1];
+    h.eq("bdd: moderate primary_q", moderate["primary_q"].clone(), json!("severity"));
+    h.eq(
+        "bdd: moderate action question",
+        moderate["action"]["question"].clone(),
+        json!("severity"),
+    );
+    let rules = moderate["action"]["rules"].as_array().unwrap();
+    h.eq("bdd: moderate rule count", rules.len(), 2);
+    h.eq("bdd: moderate rule1 label", rules[0]["label"].clone(), json!("BLOCK"));
+    h.eq("bdd: moderate rule1 gte", rules[0]["when"]["value_gte"].clone(), json!(1.5));
+    h.eq("bdd: moderate rule2 always", rules[1]["when"]["always"].clone(), json!(true));
+}
