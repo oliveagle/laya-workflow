@@ -5699,6 +5699,14 @@ pub fn live_features() -> Result<Vec<PathBuf>> {
             p.extension().map(|x| x == "feature").unwrap_or(false)
                 && !p.file_name().map(|n| n.to_string_lossy().starts_with('_')).unwrap_or(true)
         })
+        // @decision features (one decision workflow per feature) are compiled by
+        // the decision-graph path and gated by the decision loop in check.sh,
+        // not by the browser live corpus. Excluding them keeps `bdd compare` /
+        // `bdd live` on the browser-step features only.
+        .filter(|p| {
+            let text = std::fs::read_to_string(p).unwrap_or_default();
+            !text.lines().any(|l| l.trim_start().starts_with("@decision"))
+        })
         .collect();
     out.sort();
     Ok(out)

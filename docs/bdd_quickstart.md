@@ -424,7 +424,7 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**72/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
+**99/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
 每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价：
 
 - routing：support_ticket_router
@@ -439,6 +439,7 @@ Feature: support_ticket_router
 - pipelines：intake_pipeline_nested
 - capabilities（29）：agent_session_probe、cua_desktop、db_analytics、db_server_analytics、dingtalk/feishu chat、exec_preflight_guard、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、web_research、web_research_tinyfish、support_routing、quality_rubric、data_pipeline_local、stateful_pipeline、protocol_services、ticket_structuring、credentialed_integrations、computer_use、span_selection
 - laya_mem：+ persist_memory
+- browser（27）：alphaxiv_paper、arxiv、bdd_assert_probe、bdd_release_probe、bdd_retry_probe、bdd_wait_probe、bdd_wait_until_probe、bing、browser_base_probe、browser_orchestrate_probe、browser_singleton、crates、docsrs、github、goofish_item、goofish_sqlite、google_research、google_search_top10、hackernews、jev_deep_dive、mdn、pypi、taobao_ddr5_sweep、taobao_item、taobao_jev_tour、v2ex、wikipedia
 
 验证方法：`bdd build`（compile+validate+100% 覆盖）+ round-trip 逐字段对比 + `run --spec`
 用 `bench/dsl_smoke_states.json` 同状态跑原 JSON 与 BDD spec，比对 label/action_answer/confidence。
