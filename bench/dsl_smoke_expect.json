@@ -161,5 +161,11 @@
   "support_ticket_router_hybrid": {
     "technical": "QUEUE_TODAY",
     "billing": "QUEUE_TODAY"
+  },
+  "rag_triage": {
+    "conflict_review": "conflict_review",
+    "candidate_evidence": "candidate_evidence",
+    "exclude": "exclude",
+    "human_review": "human_review"
   }
 }

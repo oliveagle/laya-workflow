@@ -926,5 +926,60 @@
     "ambiguous_signal": {
       "message": "hello just checking something"
     }
+  },
+  "rag_triage": {
+    "conflict_review": {
+      "route_relevant": "yes",
+      "route_evidence": "no",
+      "route_contradiction": "yes"
+    },
+    "candidate_evidence": {
+      "route_relevant": "yes",
+      "route_evidence": "no",
+      "route_contradiction": "no"
+    },
+    "exclude": {
+      "route_relevant": "no",
+      "route_evidence": "no",
+      "route_contradiction": "no"
+    },
+    "human_review": {
+      "route_relevant": "maybe",
+      "route_evidence": "maybe",
+      "route_contradiction": "no"
+    }
+  },
+  "persist_memory": {
+    "go": {
+      "text": "probe"
+    }
+  },
+  "cua_desktop": {
+    "route": {
+      "text": "probe",
+      "step_verdict": "HALT"
+    }
+  },
+  "feishu_unread_digest": {
+    "digest": {
+      "text": "probe"
+    }
+  },
+  "hf_trending": {
+    "done": {
+      "text": "probe"
+    }
+  },
+  "quality_rubric": {
+    "score": {
+      "rubric_usefulness_hint": "high",
+      "rubric_clarity_hint": "high"
+    }
+  },
+  "span_selection": {
+    "select": {
+      "text": "@billing contact",
+      "snapshot": "value_key amount"
+    }
   }
 }
