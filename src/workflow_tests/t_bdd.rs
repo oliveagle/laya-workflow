@@ -226,3 +226,57 @@ Feature: risk_edges
     );
     h.eq("bdd: implicit answer label", rules2[0]["label"].clone(), json!("execute_transfer"));
 }
+
+/// value_lt / option+gte / score_miss / empty pass-through node — the shapes
+/// that unblocked the laya_mem + guards + versioned + pipelines batch.
+pub fn test_bdd_decision_extended(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: extended_shapes
+
+  Scenario: stop_check
+    Given a noul question "evidence_sufficient" asks "Is the evidence sufficient?"
+    And score "evidence_sufficient" from the numeric field "evidence_status" with miss 0.5
+    When any other answer goes to "STOP"
+    Then label "CONTINUE" when "evidence_sufficient" is below 0.85
+    And label "CONTINUE" when "contradiction" is at least 0.4
+    And label "STOP_EVIDENCE_OK" otherwise
+
+  Scenario: moderate
+    Given a choice question "is_hate" asks "Is it hate speech?"
+      | answer | meaning      |
+      | A      | no           |
+      | B      | yes          |
+    When any other answer goes to "STOP"
+    Then label "BLOCK" when the answer to "is_hate" is "B" with at least 0.7 confidence
+    And label "APPROVE" otherwise
+
+  Scenario: passthrough
+    When any other answer goes to "STOP"
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse extended feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile extended");
+
+    let stop = &spec["nodes"][0];
+    h.eq("bdd: score_miss", stop["questions"]["evidence_sufficient"]["heuristic"]["score_miss"].clone(), json!(0.5));
+    h.eq("bdd: score_miss field", stop["questions"]["evidence_sufficient"]["heuristic"]["extract_numeric"].clone(), json!("evidence_status"));
+    let r = stop["action"]["rules"].as_array().unwrap();
+    h.eq("bdd: value_lt rule", r[0]["when"]["value_lt"].clone(), json!(0.85));
+    h.eq("bdd: value_lt question", r[0]["when"]["question"].clone(), json!("evidence_sufficient"));
+    h.eq("bdd: value_gte with q", r[1]["when"]["question"].clone(), json!("contradiction"));
+    h.eq("bdd: value_gte", r[1]["when"]["value_gte"].clone(), json!(0.4));
+
+    let mnode = &spec["nodes"][1];
+    let r2 = mnode["action"]["rules"].as_array().unwrap();
+    h.eq("bdd: opt_gte option", r2[0]["when"]["option"].clone(), json!("B"));
+    h.eq("bdd: opt_gte gte", r2[0]["when"]["gte"].clone(), json!(0.7));
+    h.eq("bdd: opt_gte question", r2[0]["when"]["question"].clone(), json!("is_hate"));
+
+    // empty pass-through node still compiles (0 questions)
+    let nodes = spec["nodes"].as_array().unwrap();
+    h.eq("bdd: node count", nodes.len(), 3);
+    let pt = &nodes[2];
+    h.eq("bdd: passthrough name", pt["name"].clone(), json!("passthrough"));
+    h.eq("bdd: passthrough empty questions", pt["questions"].as_object().map(|m| m.len()).unwrap_or(99), 0);
+    h.eq("bdd: passthrough primary_q default", pt["primary_q"].clone(), json!("ok"));
+}

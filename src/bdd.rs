@@ -862,7 +862,7 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
-                    r#"^score "(?P<ans>[^"]+)" from the numeric field "(?P<field>[^"]+)"$"#,
+                    r#"^score "(?P<ans>[^"]+)" from the numeric field "(?P<field>[^"]+)"(?: with miss (?P<miss>\d+(?:\.\d+)?))?$"#,
                 )
                 .unwrap(),
                 "heur_numeric",
@@ -914,10 +914,31 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer to "(?P<q>[^"]+)" is "(?P<a>.+)" with at least (?P<c>\d+(?:\.\d+)?) confidence$"#,
+                )
+                .unwrap(),
+                "label_opt_gte",
+            ),
+            (
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer is "(?P<a>.+)" with at least (?P<c>\d+(?:\.\d+)?) confidence$"#,
+                )
+                .unwrap(),
+                "label_opt_gte_implicit",
+            ),
+            (
+                Regex::new(
                     r#"^label "(?P<label>[^"]+)" when "(?P<q>[^"]+)" is at least (?P<n>\d+(?:\.\d+)?)$"#,
                 )
                 .unwrap(),
                 "label_gte",
+            ),
+            (
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when "(?P<q>[^"]+)" is below (?P<n>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "label_lt",
             ),
             (
                 Regex::new(r#"^label "(?P<label>.+)" otherwise$"#).unwrap(),
@@ -1959,8 +1980,12 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
                 let mut h = Map::new();
+                let miss: f64 = match caps.name("miss") {
+                    Some(m) => m.as_str().parse()?,
+                    None => 0.0,
+                };
                 h.insert("extract_numeric".into(), json!(field));
-                h.insert("score_miss".into(), json!(0.0));
+                h.insert("score_miss".into(), json!(miss));
                 q.insert("heuristic".into(), Value::Object(h));
             }
             "edge" => {
@@ -1989,10 +2014,31 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     "label": caps["label"].to_string()
                 }));
             }
+            "label_opt_gte" => {
+                let c: f64 = caps["c"].to_string().parse()?;
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "option": caps["a"].to_string(), "gte": c},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_opt_gte_implicit" => {
+                let c: f64 = caps["c"].to_string().parse()?;
+                rules.push(json!({
+                    "when": {"option": caps["a"].to_string(), "gte": c},
+                    "label": caps["label"].to_string()
+                }));
+            }
             "label_gte" => {
                 let n: f64 = caps["n"].to_string().parse()?;
                 rules.push(json!({
                     "when": {"question": caps["q"].to_string(), "value_gte": n},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_lt" => {
+                let n: f64 = caps["n"].to_string().parse()?;
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "value_lt": n},
                     "label": caps["label"].to_string()
                 }));
             }
@@ -2012,12 +2058,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
         }
     }
 
-    if questions.is_empty() {
-        bail!(
-            "Scenario {:?}: a decision node needs at least one question (Given a choice/score/noul question ...)",
-            scenario.name
-        );
-    }
+    // A decision node may have zero questions (a pure pass-through/stop node
+    // that only carries an edge), so no hard requirement here. Most nodes carry
+    // at least one question.
     // explicit `the primary question is "Q"` overrides the first-question default;
     // a threshold action can additionally read a different question via
     // `the action reads the question "Q"`.
