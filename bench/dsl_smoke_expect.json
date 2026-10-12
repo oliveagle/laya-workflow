@@ -144,5 +144,22 @@
   "retrieve_loop": {
     "sufficient": "STOP_EVIDENCE_OK",
     "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT"
+  },
+  "stopping_codegraph": {
+    "contradiction": "CONTINUE_CONTRADICTION",
+    "missing": "CONTINUE_MISSING",
+    "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT",
+    "ok": "STOP_EVIDENCE_OK"
+  },
+  "consolidation": {
+    "contradicts": "CONTRADICTS",
+    "obsolete": "OBSOLETE",
+    "redundant": "REDUNDANT_WITH",
+    "related": "RELATED_TO",
+    "separate": "KEEP_SEPARATE"
+  },
+  "support_ticket_router_hybrid": {
+    "technical": "QUEUE_TODAY",
+    "billing": "QUEUE_TODAY"
   }
 }

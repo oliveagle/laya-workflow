@@ -843,5 +843,88 @@
       "cand_1_new_information": "no",
       "cand_1_supports_current_evidence": "no"
     }
+  },
+  "stopping_codegraph": {
+    "contradiction": {
+      "evidence_status": "partial",
+      "contradiction": "true",
+      "missing_evidence": "false"
+    },
+    "missing": {
+      "evidence_status": "partial",
+      "contradiction": "false",
+      "missing_evidence": "missing"
+    },
+    "insufficient": {
+      "evidence_status": "partial",
+      "contradiction": "false",
+      "missing_evidence": "false"
+    },
+    "ok": {
+      "evidence_status": "sufficient",
+      "contradiction": "false",
+      "missing_evidence": "false"
+    }
+  },
+  "consolidation": {
+    "contradicts": {
+      "pair_0_contradiction_status": "conflict between the two entries"
+    },
+    "obsolete": {
+      "pair_0_obsolete_status": "obsolete fact, supersede the old one"
+    },
+    "redundant": {
+      "pair_0_redundant_status": "duplicate of the other entry"
+    },
+    "related": {
+      "pair_0_link_status": "related topic, corroborat the other entry"
+    },
+    "separate": {
+      "pair_0_redundant_status": "neutral unrelated"
+    }
+  },
+  "support_ticket_router_hybrid": {
+    "technical": {
+      "text": "Production outage since 14:32, payments API returning 500 errors"
+    },
+    "billing": {
+      "text": "Customer was billed twice for the same invoice and wants a refund"
+    }
+  },
+  "routing_codegraph": {
+    "semantic_high": {
+      "semantic": "high",
+      "temporal": "low",
+      "causal": "low",
+      "entity": "low",
+      "multi_hop_need": "no",
+      "recency_importance": "no"
+    }
+  },
+  "traversal_codegraph": {
+    "cand0_high": {
+      "cand_0_relevance": "high",
+      "cand_0_relation_usefulness": "high",
+      "cand_0_new_information": "high",
+      "cand_0_supports_current_evidence": "high",
+      "cand_1_relevance": "low",
+      "cand_1_relation_usefulness": "low",
+      "cand_1_new_information": "low",
+      "cand_1_supports_current_evidence": "low"
+    }
+  },
+  "support_routing": {
+    "billing_urgent": {
+      "message": "invoice due today, customer charged twice, needs refund urgently"
+    },
+    "account_urgent": {
+      "message": "cannot log into my account, locked out, deadline today for the report"
+    },
+    "technical_calm": {
+      "message": "the export integration crashed with a 500 error last night"
+    },
+    "ambiguous_signal": {
+      "message": "hello just checking something"
+    }
   }
 }

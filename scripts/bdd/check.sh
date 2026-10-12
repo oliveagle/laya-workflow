@@ -177,4 +177,17 @@ if ! "$BIN" bdd round-trip >/dev/null 2> "$out/roundtrip.err"; then
   exit 1
 fi
 
-echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage and round-trip to their dsl spec"
+# The behavioural smoke gate: every spec under dsl/ must validate, and where a
+# labelled sample state is registered (bench/dsl_smoke_states.json) it must
+# route/decide to the expected label (bench/dsl_smoke_expect.json) through the
+# real engine — offline heuristic backend, so no model, no Chrome, no network.
+# Structural round-trip above proves the .feature == dsl spec; this proves the
+# dsl specs actually *decide correctly* on the states they are given.
+if ! "$BIN" dsl smoke > "$out/smoke.log" 2> "$out/smoke.err"; then
+  echo "bdd check: dsl behavioural smoke failed:" >&2
+  cat "$out/smoke.err" >&2
+  cat "$out/smoke.log" >&2
+  exit 1
+fi
+smoke_line="$(grep -oE "[0-9]+/[0-9]+ specs OK" "$out/smoke.log" | tail -1)"
+echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage and round-trip to their dsl spec; behavioural smoke: $smoke_line"
