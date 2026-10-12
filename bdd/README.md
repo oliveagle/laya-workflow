@@ -350,7 +350,7 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   61 of 99 specs carry behavioural states today (25 labelled expectation sets).
+   61 of 99 specs carry behavioural states today (35 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate).
    The 11 call-heavy decision workflows that need a model/network/CLI/secret are
    validate-only offline *by design*.
 3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%

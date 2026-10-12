@@ -999,3 +999,32 @@ pub fn test_bdd_mcp_new(h: &mut Harness) {
     h.check("bdd_new: empty name errors", t.call(&json!({"name": ""})).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The behavioural-smoke data: every expected label must correspond to a
+/// registered sample state, and the number of labelled expectation sets must
+/// not silently regress below the pinned floor (35). This guards the
+/// correctness coverage that `bdd dsl smoke` enforces per-run.
+pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
+    let root = bdd::repo_root();
+    let expect: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json")).unwrap(),
+    )
+    .unwrap();
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let expect_obj = expect.as_object().unwrap();
+    let states_obj = states.as_object().unwrap();
+    h.check("bdd: smoke expect stems >= 35", expect_obj.len() >= 35);
+    // Every expect stem must have registered states, and every expected label
+    // must be one of that stem's state keys (no dangling expectations).
+    for (stem, emap) in expect_obj {
+        h.check(&format!("bdd: expect stem {stem} has states"), states_obj.contains_key(stem));
+        if let Some(smap) = states_obj.get(stem).and_then(|v| v.as_object()) {
+            for label in emap.as_object().unwrap().keys() {
+                h.check(&format!("bdd: expect label {stem}:{label} has a state"), smap.contains_key(label));
+            }
+        }
+    }
+}

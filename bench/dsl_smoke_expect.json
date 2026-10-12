@@ -167,5 +167,50 @@
     "candidate_evidence": "candidate_evidence",
     "exclude": "exclude",
     "human_review": "human_review"
+  },
+  "support_ticket_router": {
+    "outage": "QUEUE_TODAY"
+  },
+  "intake_pipeline_nested": {
+    "outage": "QUEUE_TODAY"
+  },
+  "content_policy_gate": {
+    "threat": "BLOCK",
+    "clean": "APPROVE"
+  },
+  "content_safety_guard": {
+    "blocked": "BLOCK",
+    "allowed": "ALLOW",
+    "review": "REVIEW"
+  },
+  "adaptive_risk_control": {
+    "deny": "DENY",
+    "allow": "ALLOW",
+    "review": "REVIEW"
+  },
+  "aml_screener": {
+    "block": "BLOCK",
+    "review": "REVIEW",
+    "clear": "CLEAR"
+  },
+  "deployment_canary_guard": {
+    "reject": "REJECT",
+    "escalate": "ESCALATE",
+    "approve": "APPROVE"
+  },
+  "intrusion_signal_guard": {
+    "block": "block",
+    "challenge": "challenge",
+    "monitor": "monitor",
+    "allow": "allow"
+  },
+  "agent_command_gate": {
+    "dangerous": "BLOCK",
+    "safe": "ALLOW"
+  },
+  "triage_then_moderate": {
+    "safety": "CONFIRM",
+    "billing": "CONFIRM",
+    "support": "CONFIRM"
   }
 }
