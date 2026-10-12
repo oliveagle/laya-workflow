@@ -379,12 +379,18 @@ Feature: support_ticket_router
 | Given | `a choice/score/noul question "Q" asks "..."`（后跟 `| 表 |`） | `questions.Q`（choice 的 criteria 表 `\| answer \| meaning \|`；score 的 `\| level \|`） |
 | And（given） | `answer "B" when the text contains "a", "b" with hit 0.95` | `questions.Q.heuristic.match_any`（p_hit/p_miss） |
 | And（given） | `answer "B" when the field "f" contains "a" with hit 0.9` | `heuristic.field` + match_any |
-| And（given） | `score "Q" from the numeric field "f"` | `heuristic.extract_numeric`（score 问题） |
+| And（given） | `score "Q" from the numeric field "f"`（可选 `with miss M`） | `heuristic.extract_numeric`（score 问题，`score_miss` 默认 0.0） |
 | When | `the answer "A" goes to "NODE"` | `edge.condition[A]` |
 | When | `any other answer goes to "NODE"` | `edge.default` |
 | Then | `label "X" when the answer to "Q" is "A"` | threshold rule `{when:{question,answer},label}` |
+| Then | `label "X" when the answer to "Q" is one of "A", "B"` | threshold rule `{when:{question,answer_in},label}` |
+| Then | `label "X" when the answer is "A"` | threshold rule `{when:{answer},label}`（隐式作用 action.question） |
+| Then | `label "X" when the answer to "Q" is "A" with at least 0.7 confidence` | threshold rule `{when:{question,option,gte},label}` |
 | Then | `label "X" when "Q" is at least 1.5` | threshold rule `{when:{question,value_gte},label}` |
+| Then | `label "X" when "Q" is below 0.85` | threshold rule `{when:{question,value_lt},label}` |
 | Then | `label "X" otherwise` | threshold rule `{when:{always},label}` |
+| Then | `the primary question is "Q"` | `primary_q` 显式覆盖首个问题默认 |
+| Then | `the action reads the question "Q"` | threshold `action.question` 覆盖（读非 primary 问题） |
 | Then | `keep the answer to "Q"` | `action.copy_keys` |
 | Then | `keep the state key "K"` | `state.keep` |
 | Then | `require confidence at least N` / `allow up to N retries` | `min_confidence` / `max_retries` |
@@ -393,12 +399,29 @@ Feature: support_ticket_router
 规则按书写顺序保持（ordered threshold：第一条命中的 label 生效）。门禁与 browser 模式一致：
 **词汇表外的决策 step = 编译错误**，绝不明编译。
 
+一个 Scenario 也可以**没有任何 question**（纯 pass-through / 终止节点，只带 edge 路由），
+编译器会产出一个 `primary_q:"ok"` + 空 `questions` 的最小节点。
+
+规则的 `when.question` 可以指向**不同于 `action.question` 的问题**（多信号阈值，
+如 `stopping` 同时看 contradiction / missing_evidence / evidence_sufficient 三个值），
+`action.question` 只决定节点输出读哪个 decision。
+
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-| BDD 源 | 原 JSON | 验证 |
-|---|---|---|
-| `bdd/workflows/routing/support_ticket_router.feature` | `dsl/routing/support_ticket_router.json` | 引擎离线跑全部样本：label/answer/confidence 逐项一致 |
-| `bdd/workflows/agents/quality_gate.feature` | `dsl/agents/quality_gate.json` | 同上（含 heuristic match_any 命中） |
+**32/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
+每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价：
+
+- routing：support_ticket_router
+- agents：quality_gate、bitx_wrapper_test、coding_env_check、commit_push_precheck、htmx_app_lint、mlu270_smoke、project_structure_guard、skill_publish_gate、workflow_guardian、zero_leftover_gate
+- ole_eval：content_safety_guard、adaptive_risk_control、aml_screener、deployment_canary_guard、dialogue_policy、intrusion_signal_guard
+- laya_mem：admission、consolidation、memory_type、relation_pair、retrieve_loop、routing、stopping、traversal
+- guards：content_policy_gate
+- codegraph：routing_codegraph、stopping_codegraph、traversal_codegraph
+- versioned：refund_policy.v1、refund_policy.v2
+- pipelines：intake_pipeline_nested
+
+验证方法：`bdd build`（compile+validate+100% 覆盖）+ round-trip 逐字段对比 + `run --spec`
+用 `bench/dsl_smoke_states.json` 同状态跑原 JSON 与 BDD spec，比对 label/action_answer/confidence。
 
 ```bash
 laya-workflow bdd build bdd/workflows/routing/support_ticket_router.feature   # 编译 + validate + 100% 覆盖
