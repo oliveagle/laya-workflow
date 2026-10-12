@@ -278,6 +278,91 @@ covers execution and not only compilation. Authoring *time* needs an author;
 execution time does not, so that is the time number the benchmark reports
 honestly.
 
+## Decision workflows (`@decision`) — the agentic decision graph
+
+The browser-step corpus above is one BDD mode. There is a second, and it is the
+one that drives the agentic *decision* layer: an `@decision` feature is a whole
+**decision graph** — `Feature` = the graph, each `Scenario` = one decision node.
+It compiles to a decision spec (`nodes/start/max_iterations/policy/capabilities`),
+not a browser step list. Every one of the 99 checked-in `dsl/<cat>/<name>.json`
+specs is the compiled output of a `@decision` feature under
+`bdd/workflows/<cat>/`, and the two are proven equivalent in both directions by
+`laya-workflow bdd round-trip` (a dsl spec with no BDD source, or a feature that
+drifts from its spec, fails the gate).
+
+A two-node router, verbatim from `bdd/workflows/routing/support_ticket_router.feature`:
+
+```gherkin
+@decision
+Feature: support_ticket_router
+
+  Background:                        # whole-graph settings (optional)
+    Given the workflow runs at most 20 iterations
+
+  Scenario: classify                 # one decision node
+    Given a choice question "category" asks "Which team should handle this ticket?"
+      | answer    | meaning                      |
+      | billing   | invoices, payments, refunds  |
+      | technical | bugs, outages, system errors |
+    When the answer "technical" goes to "severity_probe"   # edge condition
+    And any other answer goes to "STOP"                    # edge default
+    Then keep the answer to "category"                     # copy_keys
+    And require confidence at least 0.4                    # min_confidence
+
+  Scenario: severity_probe           # second node
+    Given a score question "severity" asks "How severe is the impact?"
+      | level    |
+      | minor    |
+      | degraded |
+      | outage   |
+    When any other answer goes to "STOP"
+    Then label "PAGE_ONCALL" when "severity" is at least 1.5  # ordered threshold
+    And label "BACKLOG" otherwise                              # fallback label
+```
+
+The decision vocabulary (a deterministic compiler, not a model — regex to graph,
+0 ms, no ambiguity):
+
+* **Background (graph level)** — `Given the workflow runs at most N iterations`,
+  `Given the policy` (`| key | value |`), `Given the capabilities` (`| name | config-JSON |`).
+* **Given (questions, ≥1 per node)** — `a choice question "Q" asks "..."` with a
+  `| answer | meaning |` table; `a score question "Q" asks "..."` with a
+  `| level |` table; `a noul question "Q" asks "..."` with optional
+  `| truthy | ... |` / `| falsy | ... |` rows; `the sub workflow "NAME"` for a
+  node that only references another workflow. Declared heuristics attach after
+  their question: `answer "X" when the field "F" contains ... with hit N`,
+  `answer by rules on the field "F" ...`, `score "X" when the field "F" contains
+  "H" scoring H and "M" scoring M miss L`, `the answer is always "X"`, ….
+* **When (edges)** — `the answer "X" goes to "NODE"`, `any other answer goes to "NODE"`.
+* **Then (actions)** — ordered threshold labels (`label "L" when "Q" is at least
+  N` / `below N` / `otherwise`), state (`keep the answer to "Q"` / `keep the state
+  key "K"`), node settings (`the primary question is "Q"`, `the action reads the
+  question "Q"`, `require confidence at least N`, `allow up to N retries`),
+  capability calls (`call the capability "NAME"` with `| with.<k> |` / `| chain.<as>.capability |`
+  tables), and composed actions (`gate ...`, `merge open probabilities on "Q"`,
+  `combine ...`, `rubric ...`, `prepare a UI proposal ...`).
+
+Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline):
+
+1. **`bdd round-trip`** — every `@decision` feature reproduces its dsl spec field
+   by field, and no dsl spec exists without a BDD source (bidirectional, zero
+   orphans).
+2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
+   sample state is registered (`bench/dsl_smoke_states.json`) it must route to
+   the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
+   61 of 99 specs carry behavioural states today (25 labelled expectation sets).
+   The 11 call-heavy decision workflows that need a model/network/CLI/secret are
+   validate-only offline *by design*.
+3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
+   step coverage.
+
+For an agent writing a decision workflow, the loop is: sketch the graph →
+write the `.feature` under `bdd/workflows/<cat>/` → validate mid-authoring with
+the `bdd_validate` MCP tool (or `bdd build`) → audit completeness with the
+`bdd_catalog` MCP tool → run `bdd round-trip` + `check.sh` → commit. The
+`.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
+hand-edited.
+
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 
 A vocabulary that only drives fixtures proves nothing about the web. The live
