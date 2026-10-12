@@ -356,9 +356,12 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
 
-For an agent writing a decision workflow, the loop is: sketch the graph →
-write the `.feature` under `bdd/workflows/<cat>/` → validate mid-authoring with
-the `bdd_validate` MCP tool (or `bdd build`) → audit completeness with the
+For an agent writing a decision workflow, the loop is: open a greenfield file
+with `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"` (emits a minimal
+valid `@decision` skeleton that already passes `bdd build`, with the authoring
+vocabulary as comments) → extend it under `bdd/workflows/<cat>/` → validate
+mid-authoring with the `bdd_validate` MCP tool (or `bdd build`) → emit the dsl
+spec with `bdd transpile <file> --out dsl/<cat>` → audit completeness with the
 `bdd_catalog` MCP tool → run `bdd round-trip` + `check.sh` → commit. The
 `.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
 hand-edited.

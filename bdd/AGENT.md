@@ -131,6 +131,9 @@ laya-workflow bdd run --profile production --base-url <real>
 
 ### 文件放哪 / 来源
 
+- **绿场起点**：`laya-workflow bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`
+  一条命令开出最小合法 `@decision` 骨架（自带 authoring 词汇注释、自验证能过 `bdd build`），
+  再扩展；`--stdout` 只打印不写文件，重复写需 `--force`
 - 源：`bdd/workflows/<cat>/<name>.feature`（层级镜像 `dsl/<cat>/`，如 routing/、agents/、capabilities/…）
 - 编译产物：`dsl/<cat>/<name>.json` —— **这是权威 spec，由 `bdd round-trip` 证明等价，不许手改**
 - 门禁：`laya-workflow bdd round-trip` —— 每个 `@decision` feature 必须逐字段复现其 dsl spec；

@@ -919,3 +919,38 @@ Feature: transpile_demo
     h.eq("bdd: transpile @decision --list rc", rc3, 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `bdd scaffold` generates a minimal valid `@decision` skeleton (already
+/// passing `bdd build`), so an agent starts the authoring loop from a legal
+/// file instead of a blank page. Asserts on the pure `scaffold_body` output
+/// and on the self-verifying CLI path (stdout mode, no filesystem writes).
+pub fn test_bdd_scaffold(h: &mut Harness) {
+    let body = bdd::scaffold_body(
+        "intake_triage",
+        "routing",
+        "option",
+        "Route an intake request to the owning team or escalate",
+    );
+    h.check("bdd: scaffold has @decision tag", body.contains("@decision\n"));
+    h.check("bdd: scaffold has Feature name", body.contains("Feature: intake_triage\n"));
+    h.check("bdd: scaffold has intent as description", body.contains("Route an intake request to the owning team or escalate"));
+    h.check("bdd: scaffold has starter question", body.contains("Given a choice question \"option\" asks \"Choose an option\""));
+    h.check("bdd: scaffold keeps the answer", body.contains("Then keep the answer to \"option\""));
+    // The skeleton must compile to a valid one-node decision graph.
+    let feature = bdd::parse(&body, "<scaffold>").expect("scaffold parses");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("scaffold compiles");
+    h.eq("bdd: scaffold node count", spec["nodes"].as_array().unwrap().len(), 1);
+    h.eq("bdd: scaffold start", spec["start"].clone(), json!("intake_triage"));
+    let _ = crate::spec::from_spec_with_dir(&spec, None, None).expect("scaffold validates");
+    // CLI stdout mode is self-verifying and returns 0.
+    let rc = bdd::scaffold(&bdd::ScaffoldOptions {
+        name: "intake_triage".into(),
+        cat: "routing".into(),
+        intent: None,
+        stdout: true,
+        force: false,
+        primary_q: String::new(),
+    })
+    .expect("scaffold CLI runs");
+    h.eq("bdd: scaffold stdout rc", rc, 0);
+}

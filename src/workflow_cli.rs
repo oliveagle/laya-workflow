@@ -389,6 +389,28 @@ enum BddCmd {
         #[arg(long)]
         chrome_bin: Option<String>,
     },
+    /// Open a greenfield decision workflow: write a minimal valid `@decision`
+    /// `.feature` skeleton from an intent, self-verified to pass `bdd build`.
+    Scaffold {
+        /// Workflow name (also the file stem).
+        #[arg(long)]
+        name: String,
+        /// Category subdir under bdd/workflows/ (default: routing).
+        #[arg(long, default_value = "routing")]
+        cat: String,
+        /// Natural-language intent; becomes the Feature description.
+        #[arg(long)]
+        intent: Option<String>,
+        /// Print the skeleton to stdout instead of writing a file.
+        #[arg(long, default_value_t = false)]
+        stdout: bool,
+        /// Overwrite an existing feature file.
+        #[arg(long, default_value_t = false)]
+        force: bool,
+        /// Primary question name for the starter node (default: option).
+        #[arg(long)]
+        primary_q: Option<String>,
+    },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
     /// Check the hand-written BDD probe specs without Chrome.
@@ -2356,6 +2378,21 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             *check,
             chrome_bin.as_deref(),
         )?,
+        BddCmd::Scaffold {
+            name,
+            cat,
+            intent,
+            stdout,
+            force,
+            primary_q,
+        } => bdd::scaffold(&bdd::ScaffoldOptions {
+            name: name.clone(),
+            cat: cat.clone(),
+            intent: intent.clone(),
+            stdout: *stdout,
+            force: *force,
+            primary_q: primary_q.clone().unwrap_or_default(),
+        })?,
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,
         BddCmd::ArgsProbeCheck => bdd::check_args_probes()?,
