@@ -18,7 +18,8 @@ Feature: support_routing
       | technical | "crash", "outage", "export", "integration", "bug", "broken", "error", "500" |
       | account | "login", "log in", "log into", "account", "password", "sign in", "profile", "locked out" |
     And a noul question "explicit_urgency" asks "Does message explicitly describe a time-critical operational impact or deadline? Judge the words, not the department."
-      | answer | meaning |
+      | truthy | Explicit deadline or ongoing work blocked by the issue. |
+      | falsy  | No explicit time-critical impact or deadline. |
     And answer "B" when the field "message" contains "due today", "deadline", "today", "urgent", "asap", "blocked", "cannot deliver", "before sprint" with hit 0.93 and miss 0.1
     When any other answer goes to "STOP"
     Then combine "department" with signal "explicit_urgency" fallback "other" review "human_review" requiring 0.8 high 0.85 low 0.15

@@ -3,6 +3,8 @@ Feature: support_ticket_router
   Multi-node routing: classify (choice) -> escalate (score threshold) or STOP.
   Demonstrates data-driven edges and ordered threshold rules.
 
+  Background:
+    Given the workflow runs at most 20 iterations
   Scenario: classify
     Given a choice question "category" asks "Which team should handle this ticket?"
       | answer    | meaning                      |

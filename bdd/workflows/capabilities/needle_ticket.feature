@@ -4,6 +4,16 @@ Feature: needle_ticket
   Background:
     Given the workflow runs at most 10 iterations
 
+    Given the policy
+      | allow_exec | false |
+      | allow_hosts |  |
+      | allow_paths | "${env.HOME}" |
+      | max_timeout_ms | 15000 |
+      | max_output | 65536 |
+
+    Given the capabilities
+      | cls | {"kind":"needle","op":"extract","cact":"${env.NEEDLE3_CACT}"} |
+      | ent | {"kind":"needle","op":"extract","cact":"${env.NEEDLE3_CACT}"} |
   Scenario: classify
     Given a choice question "go" asks ""
       | answer | meaning              |

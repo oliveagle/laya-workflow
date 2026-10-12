@@ -1,7 +1,9 @@
 @decision
-Feature: agents_task_quality_gate
+Feature: task_quality_gate
   Port of task_quality_gate: converted from dsl/agents/task_quality_gate.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 2 iterations
   Scenario: gate
     Given a choice question "compile_ok" asks "Did go build / cargo check succeed for the detected language?"
       | answer | meaning |

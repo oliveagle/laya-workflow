@@ -713,3 +713,66 @@ Feature: computer_use_bdd
     h.eq("bdd: ui_proposal call kind", step["action"]["kind"].clone(), json!("call"));
     h.eq("bdd: ui_proposal call cap", step["action"]["capability"].clone(), json!("ui"));
 }
+
+/// noul `truthy`/`falsy` annotations and `the sub workflow` reference nodes —
+/// the two vocabulary additions that closed the dsl round-trip for the noul
+/// (laya_mem / codegraph) and nested-pipeline (intake_pipeline_nested) corpora.
+pub fn test_bdd_decision_roundtrip_vocab(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: roundtrip_vocab
+
+  Scenario: route
+    Given a noul question "semantic" asks "Would finding related memories help?"
+      | truthy | Recall of related facts is useful. |
+      | falsy  | No related-memory lookup is needed. |
+    When any other answer goes to "STOP"
+
+  Scenario: intake
+    Given the sub workflow "support_ticket_router"
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse roundtrip vocab");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile roundtrip vocab");
+    let nodes = spec["nodes"].as_array().unwrap();
+    h.eq("bdd: node count", nodes.len(), 2);
+    let q = &nodes[0]["questions"]["semantic"];
+    h.eq("bdd: noul truthy", q["truthy"].clone(), json!("Recall of related facts is useful."));
+    h.eq("bdd: noul falsy", q["falsy"].clone(), json!("No related-memory lookup is needed."));
+    let sub = &nodes[1];
+    h.eq("bdd: sub workflow node name", sub["name"].clone(), json!("intake"));
+    h.eq("bdd: sub workflow ref", sub["workflow"].clone(), json!("support_ticket_router"));
+    h.eq("bdd: sub workflow has no primary_q", sub.get("primary_q").cloned().unwrap_or(json!(null)), Value::Null);
+
+    // mixing sub-workflow with node content must be a compile error
+    let bad = r#"
+@decision
+Feature: bad_sub
+  Scenario: intake
+    Given the sub workflow "support_ticket_router"
+    When any other answer goes to "STOP"
+"#;
+    let bf = bdd::parse(bad, "<test>").expect("parse bad sub");
+    h.eq("bdd: sub workflow refuses mixed content", bdd::compile_decision(&bf, &json!({})).is_err(), true);
+}
+
+/// `\|` escape in a table cell carries a literal pipe (a shell `df ... | tail`
+/// inside a JSON capability config), so it round-trips through `cells`.
+pub fn test_bdd_table_pipe_escape(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: pipe_caps
+
+  Scenario: check
+    Given a choice question "ok" asks "ok?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    When any other answer goes to "STOP"
+    Then call the capability "disk_check"
+      | with.cmd | echo 'x' \| tail -1 |
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse pipe escape");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile pipe escape");
+    let act = &spec["nodes"][0]["action"];
+    h.eq("bdd: pipe escaped in cell", act["with"]["cmd"].clone(), json!("echo 'x' | tail -1"));
+}

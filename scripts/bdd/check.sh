@@ -166,4 +166,15 @@ if [ "$decision_bad" -gt 0 ]; then
   exit 1
 fi
 
-echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage"
+# The round-trip gate: every @decision feature must also reproduce its checked-in
+# dsl/<cat>/<name>.json counterpart. The build gate above proves the features
+# *compile*; this proves the compiled spec is the same workflow the dsl says it
+# is (max_iterations, truthy/falsy annotations, policy/capabilities blocks, ...).
+# It needs no Chrome and no network.
+if ! "$BIN" bdd round-trip >/dev/null 2> "$out/roundtrip.err"; then
+  echo "bdd check: a decision feature drifted from its dsl spec:" >&2
+  cat "$out/roundtrip.err" >&2
+  exit 1
+fi
+
+echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage and round-trip to their dsl spec"

@@ -5,6 +5,8 @@ Feature: agents_quality_gate
   WARNING (exit 0) semantics: staged_placeholder B -> FAIL, any soft violation ->
   WARN, else PASS.
 
+  Background:
+    Given the workflow runs at most 3 iterations
   Scenario: gate
     Given a choice question "staged_placeholder" asks "Do the staged (git diff --cached) code files contain placeholder/TODO/stub patterns that must block the commit?"
       | answer | meaning                          |

@@ -1,7 +1,9 @@
 @decision
-Feature: agents_commit_msg_gate
+Feature: commit_msg_gate
   Port of commit_msg_gate: converted from dsl/agents/commit_msg_gate.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 2 iterations
   Scenario: check
     Given a choice question "msg_empty" asks "Is the commit message (after stripping comment/blank lines, first non-blank line) empty?"
       | answer | meaning |

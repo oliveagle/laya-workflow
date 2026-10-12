@@ -6,16 +6,28 @@ Feature: laya_mem_retrieve_loop
 
   Scenario: route
     Given a noul question "semantic" asks "Would finding topically or semantically related memories help answer `query`?"
+      | truthy | Recall of related facts is useful. |
+      | falsy  | No related-memory lookup is needed. |
     And answer "B" when the field "route_semantic" contains "high", "yes" with hit 0.85 and miss 0.1
     And a noul question "temporal" asks "Does answering `query` require event dates, durations, ordering or changes over time?"
+      | truthy | A time relation is needed to answer correctly. |
+      | falsy  | Dates or ordering are incidental to the answer. |
     And answer "B" when the field "route_temporal" contains "high", "yes" with hit 0.85 and miss 0.1
     And a noul question "causal" asks "Does answering `query` require explaining a cause, motivation, enabling condition or effect?"
+      | truthy | Causal or explanatory evidence is needed. |
+      | falsy  | Only factual association or chronology is requested. |
     And answer "B" when the field "route_causal" contains "high", "yes" with hit 0.85 and miss 0.1
     And a noul question "entity" asks "Would connecting mentions of the same person, place, object or organization help answer `query`?"
+      | truthy | Combining entity-specific facts or aliases is useful. |
+      | falsy  | Entity identity is irrelevant to the answer. |
     And answer "B" when the field "route_entity" contains "high", "yes" with hit 0.85 and miss 0.1
     And a noul question "multi_hop_need" asks "Does `query` require combining at least two distinct pieces of remembered evidence?"
+      | truthy | The question asks for a comparison, aggregation or chained inference. |
+      | falsy  | One direct remembered fact suffices. |
     And answer "B" when the field "route_multi_hop_need" contains "yes", "high" with hit 0.85 and miss 0.1
     And a noul question "recency_importance" asks "Does `query` require the latest applicable fact rather than a historical fact?"
+      | truthy | Current state, latest update or recent status is requested. |
+      | falsy  | Historical or timeless facts answer the question. |
     And answer "B" when the field "route_recency" contains "yes", "high" with hit 0.85 and miss 0.1
     When any other answer goes to "stop_check"
     Then keep the answer to "semantic"
@@ -27,12 +39,20 @@ Feature: laya_mem_retrieve_loop
 
   Scenario: stop_check
     Given a noul question "evidence_sufficient" asks "Does `evidence` contain support for every factual part of an answer to `query`?"
+      | truthy | A grounded answer can be given from these memories without inventing missing facts. |
+      | falsy  | Any required fact or reasoning link is unsupported; related topics alone are insufficient. |
     And answer "B" when the field "evidence_status" contains "sufficient" with hit 0.95
     And a noul question "continue_useful" asks "Given `query` and `evidence`, is another retrieval round likely to fill a specific gap or resolve a conflict?"
+      | truthy | An identifiable missing fact or conflict could benefit from more memory retrieval. |
+      | falsy  | No identifiable retrieval need remains or more memories are unlikely to help. |
     And answer "B" when the field "evidence_status" contains "sufficient" with hit 0.8 and miss 0.1
     And a noul question "missing_evidence" asks "Is at least one fact required by `query` absent from `evidence`?"
+      | truthy | A required detail, date, identity, count or linking fact is not supported. |
+      | falsy  | All required facts have explicit support in the supplied evidence. |
     And answer "B" when the field "missing_evidence" contains "missing", "true" with hit 0.9 and miss 0.05
     And a noul question "contradiction" asks "Does `evidence` contain conflicting claims relevant to `query` that the supplied time/context cannot reconcile?"
+      | truthy | A conflict still affects which answer is correct. |
+      | falsy  | Claims agree, differ only by explained temporal updates, or do not affect the answer. |
     And answer "B" when the field "contradiction" contains "contradiction", "true" with hit 0.95
     When any other answer goes to "STOP"
     Then label "CONTINUE_CONTRADICTION" when "contradiction" is at least 0.4

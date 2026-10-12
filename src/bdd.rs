@@ -150,7 +150,27 @@ fn cells(line: &str, lineno: usize) -> Result<Vec<String>> {
     let caps = row_re()
         .captures(line)
         .ok_or_else(|| anyhow!("line {lineno}: expected a `| a | b |` table row, got: {}", line.trim()))?;
-    Ok(caps[1].split('|').map(|c| c.trim().to_string()).collect())
+    // Split on `|`, honouring the standard Gherkin `\|` escape so a cell can
+    // carry a literal pipe (e.g. a shell `df ... | tail -1` inside a JSON
+    // capability config). Everything else passes through untouched — the
+    // downstream parsers (quoted_tokens_escaped etc.) still see the raw text.
+    let inner = &caps[1];
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'|') {
+            cur.push('|');
+            chars.next();
+        } else if c == '|' {
+            out.push(cur.trim().to_string());
+            cur = String::new();
+        } else {
+            cur.push(c);
+        }
+    }
+    out.push(cur.trim().to_string());
+    Ok(out)
 }
 
 /// Replace `<placeholder>` with the example row's value.
@@ -839,6 +859,10 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             (
                 Regex::new(r#"^a noul question "(?P<q>[^"]+)" asks "(?P<text>.*)"$"#).unwrap(),
                 "noul",
+            ),
+            (
+                Regex::new(r#"^the sub workflow "(?P<w>.+)"$"#).unwrap(),
+                "sub_workflow",
             ),
             (
                 Regex::new(r"^the workflow runs at most (?P<n>\d+) iterations$").unwrap(),
@@ -2018,6 +2042,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut combine_action: Option<Map<String, Value>> = None;
     let mut rubric_action: Option<Map<String, Value>> = None;
     let mut ui_proposal_action: Option<Map<String, Value>> = None;
+    let mut sub_workflow: Option<String> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -2068,7 +2093,31 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                         }
                         qv.insert("criteria".into(), Value::Array(levels));
                     }
-                    _ => {} // noul: no criteria
+                    "noul" => {
+                        // Optional | key | text | rows carry the yes/no
+                        // semantics annotations (`truthy` / `falsy`) that the
+                        // source DSL stores on noul questions.
+                        for row in &st.table {
+                            if row.len() < 2 || row[0].trim().is_empty() {
+                                bail!(
+                                    "line {}: noul question {q:?} table rows need | truthy | text | / | falsy | text |",
+                                    st.line
+                                );
+                            }
+                            let key = row[0].trim();
+                            let val = row[1].trim();
+                            match key {
+                                "truthy" | "falsy" => {
+                                    qv.insert(key.to_string(), json!(val));
+                                }
+                                _ => bail!(
+                                    "line {}: noul question {q:?} table key {key:?} must be `truthy` or `falsy`",
+                                    st.line
+                                ),
+                            }
+                        }
+                    }
+                    _ => {} // unreachable: tag is choice|score|noul here
                 }
                 if primary_q.is_none() {
                     primary_q = Some(q.clone());
@@ -2366,6 +2415,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "keep_state" => keep.push(caps["k"].to_string()),
             "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
             "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
+            "sub_workflow" => sub_workflow = Some(caps["w"].to_string()),
             "primary_q" => explicit_primary = Some(caps["q"].to_string()),
             "action_q" => action_q = Some(caps["q"].to_string()),
             "call" => {
@@ -2451,6 +2501,40 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             }
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
         }
+    }
+
+    // A sub-workflow reference node composes by reference: the whole node is
+    // `{"name": ..., "workflow": <ref>}` with no questions / edge / action of
+    // its own (the sub-graph owns all of those). Any other decision content in
+    // the same Scenario would be silently dropped, so refuse it instead.
+    if let Some(wf) = sub_workflow {
+        if !questions.is_empty()
+            || !edge_condition.is_empty()
+            || edge_default.is_some()
+            || !rules.is_empty()
+            || !copy_keys.is_empty()
+            || !keep.is_empty()
+            || min_confidence.is_some()
+            || max_retries.is_some()
+            || call_action.is_some()
+            || gate_action.is_some()
+            || merge_action.is_some()
+            || combine_action.is_some()
+            || rubric_action.is_some()
+            || ui_proposal_action.is_some()
+            || primary_q.is_some()
+            || last_question.is_some()
+        {
+            bail!(
+                "line {}: Scenario {:?} mixes `the sub workflow` with node content (questions/edges/actions) - a workflow-reference node carries only the reference",
+                scenario.line,
+                scenario.name
+            );
+        }
+        return Ok(json!({
+            "name": name,
+            "workflow": wf,
+        }));
     }
 
     // A decision node may have zero questions (a pure pass-through/stop node
@@ -5677,6 +5761,312 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
         println!("bdd score: (informational - pass --check to gate)");
     }
     Ok(if problems.is_empty() { 0 } else { 1 })
+}
+
+// ── round-trip gate (`laya-workflow bdd roundtrip`) ──────────────────────────
+//
+// Every `@decision` feature in `bdd/workflows/` must compile back to the same
+// decision-graph spec as its checked-in `dsl/<cat>/<name>.json` counterpart.
+// The dsl files are authoritative (the features were converted from them), so a
+// feature that compiles at 100% coverage can still *drift* — a `max_iterations`
+// line forgotten, a `truthy`/`falsy` annotation dropped, a question reworded.
+// The compile gate (`bdd build`) cannot see that; this gate can, and it is what
+// makes "bdd == dsl" a checked invariant rather than a claim.
+//
+// Comparison is semantic, not byte-equal: fields the engine defaults are
+// normalised before the diff so a dsl that omits an engine-defaulted key is
+// not flagged against a compiler that spells the default out:
+//   * `with: {}` on a `call` action            == absent `with`
+//   * `has_action`                             == derived from `action`
+//   * `min_confidence: 0.0`                    == absent
+//   * empty `instructions` on a question       == absent
+//   * edge `condition` entries whose target is the `default` == folded into
+//     the default (both spellings route identically)
+//   * threshold rule `when.question` equal to the action's `question` == implied
+//   * heuristic `p_hit`/`p_miss`/`p_mid`/`p_fallback` that equal the engine
+//     default (0.9/0.1/0.5/0.6)                == absent
+//   * `description` / `convergence_*`          == not compared (prose / tuning)
+
+pub struct RoundTripOptions {
+    /// Write the per-feature verdicts as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for RoundTripOptions {
+    fn default() -> Self {
+        Self { json: None }
+    }
+}
+
+/// Fill the heuristic defaults the engine applies when a key is absent, so a
+/// dsl that omits them compares equal to a compiler that spells them out.
+fn rt_norm_heuristic(h: &Value) -> Value {
+    let mut m = h.as_object().cloned().unwrap_or_default();
+    if m.contains_key("match_rules") {
+        m.entry("p_hit".to_string()).or_insert(json!(0.9));
+        m.entry("p_miss".to_string()).or_insert(json!(0.02));
+        m.entry("p_fallback".to_string()).or_insert(json!(0.6));
+    } else if m.contains_key("match_any")
+        || m.contains_key("match_regex")
+        || m.contains_key("extract_numeric")
+        || m.contains_key("match_mid_any")
+    {
+        m.entry("p_hit".to_string()).or_insert(json!(0.9));
+        m.entry("p_miss".to_string()).or_insert(json!(0.1));
+        if m.contains_key("match_mid_any") {
+            m.entry("p_mid".to_string()).or_insert(json!(0.5));
+        }
+    }
+    Value::Object(m)
+}
+
+/// Canonicalise a JSON number so `1` and `1.0` compare equal.
+fn rt_canon(v: Value) -> Value {
+    match v {
+        Value::Number(n) => Value::from(n.as_f64().unwrap_or(0.0)),
+        Value::Array(a) => Value::Array(a.into_iter().map(rt_canon).collect()),
+        Value::Object(o) => Value::Object(
+            o.into_iter().map(|(k, v)| (k, rt_canon(v))).collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Normalise one side of the round-trip comparison (see the module comment).
+fn rt_norm(v: &Value) -> Value {
+    let mut obj = v.as_object().cloned().unwrap_or_default();
+    // top-level: drop compiler metadata, prose and tuning we do not compare
+    for k in [
+        "_bdd",
+        "description",
+        "convergence_window",
+        "convergence_eps",
+        "dsl_version",
+    ] {
+        obj.remove(k);
+    }
+    // nodes: compare by name (array order is not load-bearing; `start` + edge
+    // references are), after normalising each node.
+    if let Some(nodes) = obj.get("nodes").cloned() {
+        let mut by_name = Map::new();
+        if let Some(arr) = nodes.as_array() {
+            for n in arr {
+                let name = n.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                by_name.insert(name, rt_norm_node(n));
+            }
+        }
+        obj.insert("nodes".to_string(), Value::Object(by_name));
+    }
+    rt_canon(Value::Object(obj))
+}
+
+/// Normalise one decision node for comparison.
+fn rt_norm_node(n: &Value) -> Value {
+    let mut no = n.as_object().cloned().unwrap_or_default();
+    no.remove("has_action");
+    if let Some(mc) = no.get("min_confidence") {
+        if mc.as_f64() == Some(0.0) {
+            no.remove("min_confidence");
+        }
+    }
+    // edge: fold condition entries that route to the default
+    if let Some(edge) = no.get_mut("edge").and_then(Value::as_object_mut) {
+        let default = edge.get("default").cloned();
+        if let Some(cond) = edge.get_mut("condition").and_then(Value::as_object_mut) {
+            if let Some(d) = &default {
+                cond.retain(|_, tgt| tgt != d);
+            }
+        }
+    }
+    // questions: empty instructions == absent; fill heuristic defaults
+    if let Some(qs) = no.get_mut("questions").and_then(Value::as_object_mut) {
+        for q in qs.values_mut() {
+            if let Some(go) = q.as_object_mut() {
+                if go.get("instructions").map(|i| i.as_str().unwrap_or("") == "") == Some(true) {
+                    go.remove("instructions");
+                }
+                if let Some(h) = go.get("heuristic").cloned() {
+                    go.insert("heuristic".to_string(), rt_norm_heuristic(&h));
+                }
+            }
+        }
+    }
+    // action: `with: {}` == absent; threshold rule `when.question` that
+    // repeats the action's own question == implied
+    if let Some(a) = no.get_mut("action").and_then(Value::as_object_mut) {
+        if a.get("with").map(|w| w.as_object().map(|m| m.is_empty()).unwrap_or(false))
+            == Some(true)
+        {
+            a.remove("with");
+        }
+        if a.get("kind").and_then(Value::as_str) == Some("threshold") {
+            let aq = a.get("question").cloned();
+            if let Some(rules) = a.get_mut("rules").and_then(Value::as_array_mut) {
+                for r in rules.iter_mut() {
+                    if let Some(w) = r.get_mut("when").and_then(Value::as_object_mut) {
+                        if let Some(q) = &aq {
+                            if w.get("question") == Some(q) {
+                                w.remove("question");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rt_canon(Value::Object(no))
+}
+
+/// First differing path between two JSON values (for a readable problem line).
+fn rt_first_diff<'a>(a: &'a Value, b: &'a Value, path: &str) -> Option<String> {
+    if a == b {
+        return None;
+    }
+    match (a, b) {
+        (Value::Object(am), Value::Object(bm)) => {
+            for k in am.keys().chain(bm.keys()) {
+                let av = am.get(k);
+                let bv = bm.get(k);
+                match (av, bv) {
+                    (Some(x), Some(y)) => {
+                        if let Some(d) = rt_first_diff(x, y, &format!("{path}.{k}")) {
+                            return Some(d);
+                        }
+                    }
+                    (Some(x), None) => {
+                        return Some(format!("{path}.{k}: present={x} dsl=absent"));
+                    }
+                    (None, Some(y)) => {
+                        return Some(format!("{path}.{k}: built=absent dsl={y}"));
+                    }
+                    (None, None) => {}
+                }
+            }
+            None
+        }
+        (Value::Array(xs), Value::Array(ys)) => {
+            if xs.len() != ys.len() {
+                return Some(format!("{path}: built.len={} dsl.len={}", xs.len(), ys.len()));
+            }
+            for (i, (x, y)) in xs.iter().zip(ys.iter()).enumerate() {
+                if let Some(d) = rt_first_diff(x, y, &format!("{path}[{i}]")) {
+                    return Some(d);
+                }
+            }
+            None
+        }
+        _ => Some(format!("{path}: built={a} dsl={b}")),
+    }
+}
+
+/// The round-trip gate: every `@decision` feature reproduces its dsl spec.
+pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
+    let root = repo_root();
+    let wf_root = root.join("bdd").join("workflows");
+    let mut features: Vec<PathBuf> = Vec::new();
+    if wf_root.is_dir() {
+        walk_features(&wf_root, &mut features);
+    }
+    features.sort();
+
+    let mut total = 0usize;
+    let mut matched = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+    let mut verdicts: Vec<Value> = Vec::new();
+
+    for f in &features {
+        let text = std::fs::read_to_string(f)
+            .with_context(|| format!("reading {}", f.display()))?;
+        let feature = parse(&text, &f.to_string_lossy())?;
+        if !has_tag(&feature.tags, "decision") {
+            continue;
+        }
+        total += 1;
+        let rel = f.strip_prefix(&wf_root).unwrap().to_string_lossy().into_owned();
+        let rel = rel.trim_start_matches('/');
+        let (cat, fname) = match rel.rsplit_once('/') {
+            Some((c, n)) => (c, n),
+            None => ("", rel),
+        };
+        let name = fname.strip_suffix(".feature").unwrap_or(fname);
+        let dsl_path = root.join("dsl").join(cat).join(format!("{name}.json"));
+
+        let spec = match compile_decision(&feature, &json!({})) {
+            Ok(s) => s,
+            Err(e) => {
+                problems.push(format!("{rel}: compile failed: {e:#}"));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("compile: {e:#}")}));
+                continue;
+            }
+        };
+        // Decision specs may reference scratch dirs (${env.LAYA_*}) in
+        // policy.allow_paths; guarantee them the same way `bdd build` does so
+        // validate resolves them in CI, where no such vars exist.
+        if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+            for (k, v) in env_map {
+                std::env::set_var(k, v);
+            }
+            let _ = crate::capability::secret::init(None);
+        }
+        if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
+            problems.push(format!("{rel}: generated spec fails validate: {e:#}"));
+            verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("validate: {e:#}")}));
+            continue;
+        }
+        let dsl_text = match std::fs::read_to_string(&dsl_path) {
+            Ok(t) => t,
+            Err(_) => {
+                problems.push(format!("{rel}: no dsl counterpart at {}", dsl_path.display()));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": "no dsl counterpart"}));
+                continue;
+            }
+        };
+        let dsl: Value = serde_json::from_str(&dsl_text)
+            .with_context(|| format!("parsing {}", dsl_path.display()))?;
+
+        let nb = rt_norm(&spec);
+        let nd = rt_norm(&dsl);
+        if nb == nd {
+            matched += 1;
+            verdicts.push(json!({"feature": rel, "ok": true}));
+        } else {
+            let diff = rt_first_diff(&nb, &nd, "spec").unwrap_or_else(|| "non-equal".to_string());
+            problems.push(format!("{rel}: {diff}"));
+            verdicts.push(json!({"feature": rel, "ok": false, "reason": diff}));
+        }
+    }
+
+    if o.json.is_some() {
+        let out = root.join(o.json.as_ref().unwrap());
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&verdicts)?)?;
+    }
+
+    println!("bdd roundtrip: {matched}/{total} decision workflows reproduce their dsl spec");
+    for p in &problems {
+        println!("  {p}");
+    }
+    if !problems.is_empty() {
+        eprintln!("bdd roundtrip: FAIL - {}/{} drifted", problems.len(), total);
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+/// Recursively collect `*.feature` files under a directory.
+fn walk_features(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk_features(&p, out);
+            } else if p.extension().map(|x| x == "feature").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
 }
 
 // ── live-fire corpus (`laya-workflow bdd live`) ─────────────────────────────

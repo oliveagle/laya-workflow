@@ -4,6 +4,17 @@ Feature: cua_desktop
   Background:
     Given the workflow runs at most 48 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | allow_hosts |  |
+      | allow_paths | "${env.HOME}/.laya-workflow" |
+      | max_timeout_ms | 120000 |
+      | max_output | 16777216 |
+      | retries | 0 |
+
+    Given the capabilities
+      | cua | {"kind":"plugin","plugin":"plugins/cua","timeout_ms":60000,"max_operations":4000000} |
+      | driver | {"kind":"exec","argv":["cua-driver","call","${state.step_tool}","--args","${state.step_args}"],"timeout_ms":60000,"max_output":16777216} |
   Scenario: decide
     Given a choice question "go" asks "Run the Cua Driver call the plugin planned? Answer B to stop here. Routing itself is decided by the `route` node from `step_verdict`."
       | answer | meaning              |

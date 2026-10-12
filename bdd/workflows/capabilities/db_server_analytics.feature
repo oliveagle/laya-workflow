@@ -4,6 +4,12 @@ Feature: db_server_analytics
   Background:
     Given the workflow runs at most 10 iterations
 
+    Given the policy
+      | max_output | 262144 |
+
+    Given the capabilities
+      | store_ro | {"kind":"db","mode":"server","endpoint":"http://127.0.0.1:18767"} |
+      | store_rw | {"kind":"db","mode":"server","endpoint":"http://127.0.0.1:18767","readonly":false} |
   Scenario: reset
     Given a choice question "go" asks "Reset the rows in SQLite (via the daemon)?"
       | answer | meaning              |

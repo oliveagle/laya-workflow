@@ -4,6 +4,17 @@ Feature: web_research_tinyfish
   Background:
     Given the workflow runs at most 10 iterations
 
+    Given the policy
+      | allow_exec | false |
+      | allow_hosts | "agent.tinyfish.ai", "docs.vllm.ai", "developers.redhat.com", "github.com" |
+      | max_timeout_ms | 60000 |
+      | max_output | 262144 |
+      | retries | 0 |
+      | allow_paths |  |
+
+    Given the capabilities
+      | search | {"kind":"web_search","endpoint":"https://agent.tinyfish.ai/v1/search","method":"GET","query_param":"query","max_results":5,"timeout_ms":30000,"headers":{"x-api-key":"${secret.TINYFISH_API_KEY}","accept":"application/json"}} |
+      | read_page | {"kind":"web_fetch","format":"markdown","endpoint":"https://agent.tinyfish.ai/v1/fetch","method":"POST","body_field":"urls","body_urls_array":true,"body":{"format":"markdown"},"result_path":"/results/0","text_field":"text","title_field":"title","timeout_ms":45000,"headers":{"x-api-key":"${secret.TINYFISH_API_KEY}","accept":"application/json"}} |
   Scenario: route
     Given a choice question "mode" asks "Research the web how?"
       | answer | meaning              |

@@ -4,6 +4,15 @@ Feature: dingtalk_chat_history
   Background:
     Given the workflow runs at most 6 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | max_timeout_ms | 60000 |
+      | max_output | 1048576 |
+      | retries | 0 |
+
+    Given the capabilities
+      | sessions | {"kind":"exec","argv":["${state.tool}","sessions","--json"],"timeout_ms":30000} |
+      | messages | {"kind":"exec","argv":["${state.tool}","chat","--json"],"timeout_ms":30000} |
   Scenario: fetch
     Given a choice question "read_ok" asks "Did reading the DingTalk conversation list return any conversations?"
       | answer | meaning              |

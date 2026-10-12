@@ -4,6 +4,14 @@ Feature: db_analytics
   Background:
     Given the workflow runs at most 10 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | allow_paths | "${env.LAYA_WORK_DIR}" |
+      | max_output | 262144 |
+
+    Given the capabilities
+      | store_ro | {"kind":"db","sqlite":"${env.LAYA_WORK_DIR}/shop.sqlite"} |
+      | store_rw | {"kind":"db","sqlite":"${env.LAYA_WORK_DIR}/shop.sqlite","readonly":false} |
   Scenario: ingest
     Given a choice question "go" asks "Write the raw rows into SQLite?"
       | answer | meaning              |

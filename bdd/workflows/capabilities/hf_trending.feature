@@ -4,6 +4,16 @@ Feature: hf_trending_monitor
   Background:
     Given the workflow runs at most 2 iterations
 
+    Given the policy
+      | allow_exec | false |
+      | allow_hosts | "huggingface.co" |
+      | allow_paths | "${env.HOME}/tmp/hf-trending" |
+      | max_timeout_ms | 120000 |
+      | max_output | 16777216 |
+      | retries | 0 |
+
+    Given the capabilities
+      | hf | {"kind":"plugin","plugin":"websites/hf-trending","timeout_ms":30000} |
   Scenario: monitor
     Given a choice question "done" asks "Fetch the current HuggingFace ranking and save the models + cards?"
       | answer | meaning              |

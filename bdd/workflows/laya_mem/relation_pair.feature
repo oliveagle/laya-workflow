@@ -6,12 +6,20 @@ Feature: laya_mem_relation_pair
 
   Scenario: relations
     Given a noul question "pair_0_semantic" asks "Would a semantic link between `new_memory.content` and `candidates[0].content` help retrieve a shared specific topic or fact?"
+      | truthy | A specific shared topic, fact or event makes the connection useful. |
+      | falsy  | Only generic conversational vocabulary or no meaningful semantic connection. |
     And answer "B" when the field "pair_0_semantic_status" contains "semantic" with hit 0.9
     And a noul question "pair_0_causes" asks "Does the event in `new_memory.content` cause, enable or explain the candidate event in `candidates[0].content`?"
+      | truthy | The supplied accounts support this direction of causal influence. |
+      | falsy  | Only similarity, chronology, a shared entity, or insufficient causal evidence. |
     And answer "B" when the field "pair_0_causes_status" contains "causes" with hit 0.9
     And a noul question "pair_0_caused_by" asks "Does the candidate event in `candidates[0].content` cause, enable or explain the event in `new_memory.content`?"
+      | truthy | The supplied accounts support this direction of causal influence. |
+      | falsy  | Only similarity, chronology, a shared entity, or insufficient causal evidence. |
     And answer "B" when the field "pair_0_caused_by_status" contains "caused_by" with hit 0.9
     And a noul question "pair_0_entity" asks "Using `new_memory.entities` and `candidates[0].entities`, do any names or aliases refer to the same real-world entity?"
+      | truthy | Context supports a shared identity despite differing names or aliases. |
+      | falsy  | Distinct entities or insufficient evidence to resolve the alias; similar names alone are insufficient. |
     And answer "B" when the field "share_entity" contains "yes" with hit 0.9
     When any other answer goes to "STOP"
     Then label "LINK_ENTITY" when "pair_0_entity" is at least 0.6

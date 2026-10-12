@@ -1,7 +1,9 @@
 @decision
-Feature: agents_version_gate
+Feature: version_gate
   Port of version_gate: converted from dsl/agents/version_gate.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 2 iterations
   Scenario: check
     Given a choice question "version_format_ok" asks "Is the VERSION string a well-formed x.y.z or x.y.z-rc.N? (B = well-formed; heuristic regex hits for valid versions)"
       | answer | meaning |

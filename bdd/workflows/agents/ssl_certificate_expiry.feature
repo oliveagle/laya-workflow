@@ -1,7 +1,9 @@
 @decision
-Feature: agents_ssl_certificate_expiry
+Feature: ssl_certificate_expiry
   Port of ssl_certificate_expiry: converted from dsl/agents/ssl_certificate_expiry.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 2 iterations
   Scenario: check
     Given a choice question "cert_readable" asks "Could the probe retrieve the certificate info?"
       | answer | meaning |

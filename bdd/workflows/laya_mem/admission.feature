@@ -25,10 +25,16 @@ Feature: laya_mem_admission
       | 3 major                        |
     And score "importance" from the numeric field "importance" with miss 0.5
     And a noul question "novelty" asks "Does `observation` add a fact absent from `recent_memories`, given the `exact_duplicate` flag?"
+      | truthy | At least one new detail, correction or time-specific update; no exact duplicate. |
+      | falsy  | An exact duplicate, or all recallable details are already in the supplied recent memories. |
     And answer "B" when the text contains "new", "added", "changed", "updated" with hit 0.9
     And a noul question "redundancy" asks "Is all recallable information in `observation` already present in `recent_memories`, or is `exact_duplicate` true?"
+      | truthy | An exact duplicate or paraphrase with no new detail, correction or temporal update. |
+      | falsy  | Adds any new detail or meaningful update; shared topic alone does not imply redundancy. |
     And answer "B" when the text contains "duplicate", "already", "same as", "repeat" with hit 0.9
     And a noul question "borderline" asks "Is `observation` weak or borderline — neither clearly drop nor clearly store? Triggers when observation hedges (`maybe`, `might`, `perhaps`, `unsure`), or when `recent_memories` already covers the topic."
+      | truthy | A genuine middle case where storing may help but is not necessary. |
+      | falsy  | Observation is either clearly empty/trivial or clearly carries new recallable detail. |
     And answer "B" when the field "observation" contains "maybe", "might", "perhaps", "unsure", "borderline", "could be", "not sure", "either way", "debating", "could go" with hit 0.85 and miss 0.2
     When any other answer goes to "STOP"
     Then label "BLOCK" when the answer is "A"

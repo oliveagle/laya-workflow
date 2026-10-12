@@ -4,6 +4,21 @@ Feature: integration_hub
   Background:
     Given the workflow runs at most 20 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | allow_hosts | "127.0.0.1", "localhost" |
+      | max_timeout_ms | 8000 |
+      | max_output | 65536 |
+      | retries | 1 |
+
+    Given the capabilities
+      | backend_rpc | {"kind":"rpc","url":"http://127.0.0.1:8792/rpc","timeout_ms":4000} |
+      | catalog | {"kind":"graphql","url":"http://127.0.0.1:8792/graphql","query":"query Lookup($q: String!) { search(q: $q) { id } }","timeout_ms":4000} |
+      | summarizer | {"kind":"llm","url":"http://127.0.0.1:8792/chat/completions","model":"mock-model","system":"Summarize briefly.","max_tokens":64,"timeout_ms":5000} |
+      | tool_gateway | {"kind":"mcp","transport":"http","url":"http://127.0.0.1:8792/mcp","tool":"echo","timeout_ms":4000} |
+      | index | {"kind":"vector","url":"http://127.0.0.1:8792/vector","op":"search","collection":"support-kb","timeout_ms":4000} |
+      | notify | {"kind":"webhook","url":"http://127.0.0.1:8792/webhook","sign_header":"x-signature","sign_secret":"${env.LAYA_WEBHOOK_SECRET}","timeout_ms":4000} |
+      | stream | {"kind":"sse","url":"http://127.0.0.1:8792/events","max_events":3,"timeout_ms":4000} |
   Scenario: lookup
     Given a choice question "channel" asks "Which integration channel should handle this request?"
       | answer | meaning              |

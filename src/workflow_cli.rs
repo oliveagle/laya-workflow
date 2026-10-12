@@ -473,6 +473,13 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Round-trip gate: every @decision feature must compile back to the same
+    /// decision-graph spec as its checked-in dsl/<cat>/<name>.json counterpart.
+    RoundTrip {
+        /// Write the per-feature verdicts as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Quantify BDD authoring vs hand-written JSON DSL on the live corpus.
     Compare {
         /// Write the comparison as JSON here.
@@ -2396,6 +2403,9 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             filter: filter.clone(),
             out: out.clone(),
             timeout_secs: *timeout_secs,
+            json: json.clone(),
+        })?,
+        BddCmd::RoundTrip { json } => bdd::round_trip(&bdd::RoundTripOptions {
             json: json.clone(),
         })?,
         BddCmd::Compare { json, cases } => bdd::compare(&bdd::CompareOptions {

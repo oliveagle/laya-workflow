@@ -4,6 +4,17 @@ Feature: feishu_unread_digest
   Background:
     Given the workflow runs at most 6 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | allow_hosts |  |
+      | allow_paths | "${env.HOME}/tmp" |
+      | max_timeout_ms | 180000 |
+      | max_output | 8388608 |
+      | retries | 0 |
+
+    Given the capabilities
+      | collect | {"kind":"shell","command":"sh websites/feishu.com/plugin/collect.sh \"${state.chats_limit}\" \"${state.page_size}\"","timeout_ms":170000} |
+      | classify | {"kind":"plugin","dir":"websites/feishu.com/plugin/classify.rhai","timeout_ms":60000,"max_operations":2000000} |
   Scenario: collect
     Given a choice question "collected_ok" asks "Did the Feishu unread collection succeed? Answer no if stdout carries ok:false, if exit_code is non-zero, or if stdout is not the collector's JSON - a stale lark-cli token and a network failure both look like this."
       | answer | meaning              |

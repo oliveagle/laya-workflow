@@ -1,7 +1,9 @@
 @decision
-Feature: agents_rebase_push_gate
+Feature: rebase_push_gate
   Port of rebase_push_gate: converted from dsl/agents/rebase_push_gate.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 2 iterations
   Scenario: decision
     Given a choice question "fetch_ok" asks "Did git fetch origin succeed?"
       | answer | meaning |

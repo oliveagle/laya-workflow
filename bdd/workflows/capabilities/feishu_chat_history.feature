@@ -4,6 +4,14 @@ Feature: feishu_chat_history
   Background:
     Given the workflow runs at most 6 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | max_timeout_ms | 60000 |
+      | max_output | 1048576 |
+      | retries | 0 |
+
+    Given the capabilities
+      | history | {"kind":"exec","argv":["lark-cli","im","+chat-messages-list","--chat-id","${state.chat_id}","--page-size","20","--order","desc","--no-reactions","--format","json"],"timeout_ms":30000} |
   Scenario: fetch
     Given a choice question "read_ok" asks "Did the Feishu history fetch return any messages?"
       | answer | meaning              |

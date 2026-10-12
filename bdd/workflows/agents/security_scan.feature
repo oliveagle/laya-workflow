@@ -2,6 +2,8 @@
 Feature: agents_security_scan
   Port of security_scan: converted from dsl/agents/security_scan.json (BDD round-trip).
 
+  Background:
+    Given the workflow runs at most 3 iterations
   Scenario: scan
     Given a choice question "critical_pattern_hit" asks "Does the file contain any CRITICAL-severity pattern (curl_to_shell / eval_base64 / silent_exfil / reverse_shell / suspicious_network)?"
       | answer | meaning |

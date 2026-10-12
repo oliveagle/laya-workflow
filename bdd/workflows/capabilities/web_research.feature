@@ -4,6 +4,18 @@ Feature: web_research
   Background:
     Given the workflow runs at most 10 iterations
 
+    Given the policy
+      | allow_exec | false |
+      | allow_hosts | "127.0.0.1", "localhost" |
+      | max_timeout_ms | 8000 |
+      | max_output | 32768 |
+      | retries | 1 |
+      | allow_paths |  |
+
+    Given the capabilities
+      | search | {"kind":"web_search","endpoint":"${env.LAYA_WEB_SEARCH_URL}","max_results":3,"timeout_ms":6000,"headers":{"accept":"application/json"}} |
+      | read_page | {"kind":"web_fetch","format":"text","timeout_ms":6000,"headers":{"user-agent":"laya-workflow/1.0"}} |
+      | read_markdown | {"kind":"web_fetch","format":"markdown","timeout_ms":6000} |
   Scenario: route
     Given a choice question "mode" asks "What should this request do with the internet?"
       | answer | meaning              |

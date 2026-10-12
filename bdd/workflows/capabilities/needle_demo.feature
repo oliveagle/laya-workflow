@@ -4,6 +4,17 @@ Feature: needle_demo
   Background:
     Given the workflow runs at most 12 iterations
 
+    Given the policy
+      | allow_exec | false |
+      | allow_hosts |  |
+      | allow_paths | "${env.HOME}" |
+      | max_timeout_ms | 15000 |
+      | max_output | 65536 |
+
+    Given the capabilities
+      | invoice_extract | {"kind":"needle","op":"extract","cact":"${env.NEEDLE3_CACT}"} |
+      | sentence_embed | {"kind":"needle","op":"embed","cact":"${env.NEEDLE3_CACT}"} |
+      | tool_call | {"kind":"needle","op":"complete","cact":"${env.NEEDLE3_CACT}"} |
   Scenario: extract
     Given a choice question "go" asks ""
       | answer | meaning              |

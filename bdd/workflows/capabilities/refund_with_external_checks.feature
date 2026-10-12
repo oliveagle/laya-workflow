@@ -4,6 +4,17 @@ Feature: refund_with_external_checks
   Background:
     Given the workflow runs at most 6 iterations
 
+    Given the policy
+      | allow_exec | true |
+      | allow_hosts | "127.0.0.1", "localhost" |
+      | max_timeout_ms | 5000 |
+      | max_output | 65536 |
+      | retries | 1 |
+
+    Given the capabilities
+      | risk_scorer | {"kind":"http","method":"POST","url":"http://127.0.0.1:8791/score","headers":{"content-type":"application/json"},"body":{"text":"${state.text}"},"timeout_ms":2000} |
+      | case_agent | {"kind":"agent","transport":"http","url":"http://127.0.0.1:8791/agent","session":"refund-case","timeout_ms":3000} |
+      | local_echo | {"kind":"exec","argv":["/bin/echo","risk-label=${projected_label}"],"timeout_ms":5000,"max_output":4096} |
   Scenario: score_risk
     Given a score question "amount_band" asks "Rough size of the refund request?"
       | level          |

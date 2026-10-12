@@ -6,12 +6,20 @@ Feature: codegraph_stopping
 
   Scenario: stop_check
     Given a noul question "evidence_sufficient" asks "Does the current `evidence` cover every part of `query` (entry point + call chain + supporting files) so a code-locating answer can be returned without guessing?"
+      | truthy | Every claim has explicit code support. |
+      | falsy  | Any required symbol or file is unsupported; related files alone are insufficient. |
     And answer "B" when the field "evidence_status" contains "sufficient" with hit 0.95
     And a noul question "continue_useful" asks "Would another codegraph round (another caller hop, another FTS pass, a recent-changes lookup) fill a specific gap or resolve a conflict in the current `evidence`?"
+      | truthy | An identifiable gap or conflict could benefit from another retrieval. |
+      | falsy  | No identifiable retrieval need remains. |
     And answer "B" when the field "evidence_status" contains "sufficient" with hit 0.8 and miss 0.1
     And a noul question "missing_evidence" asks "Is at least one symbol, file or call chain required by `query` absent from `evidence`?"
+      | truthy | A required detail, file, qualified_name or call link is missing. |
+      | falsy  | All required facts have explicit support. |
     And answer "B" when the field "missing_evidence" contains "missing", "true" with hit 0.9 and miss 0.05
     And a noul question "contradiction" asks "Does `evidence` contain conflicting symbols, files or call chains that the supplied context cannot reconcile?"
+      | truthy | A conflict still affects which answer is correct. |
+      | falsy  | Claims agree or differ only by explained updates. |
     And answer "B" when the field "contradiction" contains "contradiction", "true" with hit 0.95
     When any other answer goes to "STOP"
     Then label "CONTINUE_CONTRADICTION" when "contradiction" is at least 0.4

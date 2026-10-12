@@ -5,7 +5,7 @@ Feature: intake_pipeline_nested
     Given the workflow runs at most 30 iterations
 
   Scenario: intake
-    When any other answer goes to "STOP"
+    Given the sub workflow "support_ticket_router"
 
   Scenario: prefilter
     Given a choice question "is_noise" asks "Is this message noise that should be dropped before routing?"
