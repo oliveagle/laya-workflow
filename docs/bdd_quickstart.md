@@ -380,6 +380,8 @@ Feature: support_ticket_router
 | And（given） | `answer "B" when the text contains "a", "b" with hit 0.95` | `questions.Q.heuristic.match_any`（p_hit/p_miss） |
 | And（given） | `answer "B" when the field "f" contains "a" with hit 0.9` | `heuristic.field` + match_any |
 | And（given） | `score "Q" from the numeric field "f"`（可选 `with miss M`） | `heuristic.extract_numeric`（score 问题，`score_miss` 默认 0.0） |
+| And（given） | `answer "B" when the field "f" matches "^a$", "^b$" with hit 0.95 and miss 0.05` | `heuristic.field` + `match_regex`（正则串列表；内嵌 `"` 写作 `\"`，如 `['\"]`） |
+| And（given） | `answer "B" when the text matches "^rm", "cpuminer" with hit 0.9` | `heuristic.match_regex`（无 field，匹配整个 state 信封） |
 | When | `the answer "A" goes to "NODE"` | `edge.condition[A]` |
 | When | `any other answer goes to "NODE"` | `edge.default` |
 | Then | `label "X" when the answer to "Q" is "A"` | threshold rule `{when:{question,answer},label}` |

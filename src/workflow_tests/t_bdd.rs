@@ -332,3 +332,56 @@ Feature: rag_triage
     h.eq("bdd: mid preserves p_hit", hq["p_hit"].clone(), json!(0.9));
     h.eq("bdd: mid preserves p_miss", hq["p_miss"].clone(), json!(0.1));
 }
+pub fn test_bdd_decision_regex(h: &mut Harness) {
+    // match_regex heuristic: field-scoped (incl. an escaped `["']` inside a
+    // pattern), field + explicit miss, and the whole-envelope text variant.
+    let src = r#"
+@decision
+Feature: commit_msg_gate
+
+  Scenario: check
+    Given a choice question "msg_empty" asks "Is the commit message empty?"
+      | answer | meaning   |
+      | A      | non-empty |
+      | B      | empty     |
+    And answer "B" when the field "message" matches "^\s*$", "^.{0,4}$" with hit 0.95 and miss 0.05
+    Given a choice question "secret_clean" asks "Any credential pattern?"
+      | answer | meaning       |
+      | A      | no secret     |
+      | B      | credential hit |
+    And answer "B" when the field "secret_diff" matches "(?i)(api[_-]?key|secret|token)\s*[:=]\s*['\"]([a-z0-9]{16,}|sk-[a-zA-Z0-9]+)" with hit 0.95
+    Given a choice question "file_scan" asks "Any critical pattern?"
+      | answer | meaning            |
+      | A      | clean              |
+      | B      | critical found     |
+    And answer "B" when the text matches "curl.*\|.*sh", "eval.*base64" with hit 0.9 and miss 0.1
+    When any other answer goes to "STOP"
+    Then label "FAIL" when the answer to "msg_empty" is "B"
+    And label "PASS" otherwise
+"#;
+    let feature = bdd::parse(src, "<regex>").expect("parse regex feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile regex");
+    let n = &spec["nodes"][0];
+    let qs = &n["questions"];
+
+    // field + explicit miss
+    let h0 = &qs["msg_empty"]["heuristic"];
+    h.eq("bdd: regex field", h0["field"].clone(), json!("message"));
+    h.eq("bdd: regex match_regex", h0["match_regex"].clone(), json!(["^\\s*$", "^.{0,4}$"]));
+    h.eq("bdd: regex p_hit", h0["p_hit"].clone(), json!(0.95));
+    h.eq("bdd: regex p_miss", h0["p_miss"].clone(), json!(0.05));
+
+    // escaped literal double-quote survives round-trip: `['\"]` -> `['"]`
+    let h1 = &qs["secret_clean"]["heuristic"];
+    h.eq("bdd: regex esc field", h1["field"].clone(), json!("secret_diff"));
+    h.eq("bdd: regex esc pattern", h1["match_regex"][0].clone(),
+        json!("(?i)(api[_-]?key|secret|token)\\s*[:=]\\s*['\"]([a-z0-9]{16,}|sk-[a-zA-Z0-9]+)"));
+    h.eq("bdd: regex esc p_miss default", h1["p_miss"].clone(), json!(0.05));
+
+    // whole-envelope variant (no field), explicit miss
+    let h2 = &qs["file_scan"]["heuristic"];
+    h.check("bdd: regex text variant has no field", h2.get("field").is_none());
+    h.eq("bdd: regex text match_regex", h2["match_regex"].clone(), json!(["curl.*\\|.*sh", "eval.*base64"]));
+    h.eq("bdd: regex text p_hit", h2["p_hit"].clone(), json!(0.9));
+    h.eq("bdd: regex text p_miss", h2["p_miss"].clone(), json!(0.1));
+}

@@ -869,6 +869,20 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" matches (?P<patterns>.+) with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
+                )
+                .unwrap(),
+                "heur_regex_field",
+            ),
+            (
+                Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" when the text matches (?P<patterns>.+) with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
+                )
+                .unwrap(),
+                "heur_regex",
+            ),
+            (
+                Regex::new(
                     r#"^answer "(?P<ans>[^"]+)" with mid (?P<mid>\d+(?:\.\d+)?) when the field "(?P<field>[^"]+)" contains (?P<needles>.+)$"#,
                 )
                 .unwrap(),
@@ -1880,6 +1894,47 @@ fn quoted_tokens(text: &str) -> Vec<String> {
     re.captures_iter(text).map(|c| c[1].to_string()).collect()
 }
 
+/// Like `quoted_tokens` but honours `\"` escapes inside the quoted spans, so a
+/// regex pattern that contains a literal double-quote (e.g. `['"]`) can be
+/// written as `['\"]` inside the outer `"..."` delimiters. Backslashes that do
+/// not precede a quote or another backslash are preserved verbatim, so `\d`,
+/// `\s`, `\.` etc. survive round-trips.
+fn quoted_tokens_escaped(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut chars = text.char_indices().peekable();
+    while let Some((_, c)) = chars.next() {
+        if c != '"' {
+            continue;
+        }
+        let mut tok = String::new();
+        let mut closed = false;
+        while let Some((_, c2)) = chars.next() {
+            match c2 {
+                '\\' => match chars.peek() {
+                    Some(&(_, '"')) => {
+                        tok.push('"');
+                        chars.next();
+                    }
+                    Some(&(_, '\\')) => {
+                        tok.push('\\');
+                        chars.next();
+                    }
+                    _ => tok.push('\\'),
+                },
+                '"' => {
+                    closed = true;
+                    break;
+                }
+                _ => tok.push(c2),
+            }
+        }
+        if closed {
+            out.push(tok);
+        }
+    }
+    out
+}
+
 fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value> {
     let name = scenario.slug();
     let mut questions: Map<String, Value> = Map::new();
@@ -2016,6 +2071,34 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 })?;
                 ho.insert("match_mid_any".into(), json!(needles));
                 ho.insert("p_mid".into(), json!(mid));
+            }
+            "heur_regex" | "heur_regex_field" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let patterns = quoted_tokens_escaped(&caps["patterns"]);
+                if patterns.is_empty() {
+                    bail!("line {}: regex heuristic needs at least one pattern", st.line);
+                }
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = caps.name("field") {
+                    h.insert("field".into(), json!(f.as_str()));
+                }
+                h.insert("match_regex".into(), json!(patterns));
+                h.insert("p_hit".into(), json!(hit));
+                // explicit `and miss M` overrides the default 1-hit, rounded to
+                // avoid 0.050000000000000044 in f64.
+                let miss: f64 = match caps.name("miss") {
+                    Some(m) => m.as_str().parse()?,
+                    None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
+                };
+                h.insert("p_miss".into(), json!(miss));
+                q.insert("heuristic".into(), Value::Object(h));
             }
             "edge" => {
                 let a = caps["a"].to_string();
