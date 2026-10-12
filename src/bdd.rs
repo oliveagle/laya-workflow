@@ -35,6 +35,10 @@ pub struct Step {
     /// Step text with `<placeholders>` already substituted.
     pub text: String,
     pub line: usize,
+    /// Data-table rows attached to this step (`| a | b |` immediately after the
+    /// step line, outside an Examples block). Used by the decision vocabulary
+    /// to carry option/level tables. Empty for every browser step.
+    pub table: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +253,7 @@ fn read_include(rel: &str, including: &str, lineno: usize) -> Result<Vec<Step>> 
             kind,
             text: body,
             line: n + 1,
+            table: Vec::new(),
         });
     }
     if steps.is_empty() {
@@ -454,6 +459,32 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
             continue;
         }
 
+        // A `| a | b |` data-table row attached to the previous step. Used by
+        // the decision vocabulary to carry option/level tables. Rows inside an
+        // Examples block are handled above; anywhere else a row must belong to
+        // the step that immediately precedes it.
+        if row_re().captures(stripped).is_some() {
+            let row = cells(stripped, lineno)?;
+            if in_background {
+                match f.background.last_mut() {
+                    Some(st) => st.table.push(row),
+                    None => bail!("line {lineno}: table row without a preceding step"),
+                }
+            } else {
+                let Some(sc) = scenario.as_mut() else {
+                    bail!("line {lineno}: table row outside a Background/Scenario");
+                };
+                let Some(st) = sc.steps.last_mut() else {
+                    bail!("line {lineno}: table row without a preceding step");
+                };
+                st.table.push(row);
+                if let Some(last) = f.scenarios.last_mut() {
+                    *last = sc.clone();
+                }
+            }
+            continue;
+        }
+
         let Some(caps) = step_re().captures(line) else {
             bail!(
                 "line {lineno}: not a step, table or section header: {stripped:?}"
@@ -478,6 +509,7 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
             kind,
             text: body,
             line: lineno,
+            table: Vec::new(),
         };
         if in_background {
             f.background.push(st);
@@ -784,6 +816,140 @@ fn then_table() -> &'static Vec<(Regex, &'static str, &'static str)> {
     })
 }
 
+// ── decision-workflow vocabulary ────────────────────────────────────────────
+//
+// A `@decision` feature expresses a decision-graph workflow (the agentic core):
+// one Scenario per node, questions defined with Given, edge routing with When,
+// and ordered threshold rules / copy_keys with Then. Steps are recognised by
+// `dec_match`; they never go through the browser `compile_step` path.
+//
+// `(regex, tag)` — tag selects the handler in `compile_decision_node`.
+fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
+    static T: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        vec![
+            (
+                Regex::new(r#"^a choice question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                "choice",
+            ),
+            (
+                Regex::new(r#"^a score question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                "score",
+            ),
+            (
+                Regex::new(r#"^a noul question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                "noul",
+            ),
+            (
+                Regex::new(r"^the workflow runs at most (?P<n>\d+) iterations$").unwrap(),
+                "max_iterations",
+            ),
+            // ── heuristics (attach right after their question; they configure
+            //    the *most recent* question in the same Scenario) ──
+            (
+                Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_field_any",
+            ),
+            (
+                Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" when the text contains (?P<needles>.+) with hit (?P<hit>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_any",
+            ),
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" from the numeric field "(?P<field>[^"]+)"$"#,
+                )
+                .unwrap(),
+                "heur_numeric",
+            ),
+        ]
+    })
+}
+
+fn dec_when_table() -> &'static Vec<(Regex, &'static str)> {
+    static T: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        vec![
+            (
+                Regex::new(r#"^the answer "(?P<a>[^"]+)" goes to "(?P<node>.+)"$"#).unwrap(),
+                "edge",
+            ),
+            (
+                Regex::new(r#"^any other answer goes to "(?P<node>.+)"$"#).unwrap(),
+                "edge_default",
+            ),
+        ]
+    })
+}
+
+fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
+    static T: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        vec![
+            (
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer to "(?P<q>[^"]+)" is "(?P<a>.+)"$"#,
+                )
+                .unwrap(),
+                "label_eq",
+            ),
+            (
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when "(?P<q>[^"]+)" is at least (?P<n>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "label_gte",
+            ),
+            (
+                Regex::new(r#"^label "(?P<label>.+)" otherwise$"#).unwrap(),
+                "label_always",
+            ),
+            (
+                Regex::new(r#"^keep the answer to "(?P<q>.+)"$"#).unwrap(),
+                "copy_keys",
+            ),
+            (
+                Regex::new(r#"^keep the state key "(?P<k>.+)"$"#).unwrap(),
+                "keep_state",
+            ),
+            (
+                Regex::new(r"^require confidence at least (?P<n>\d+(?:\.\d+)?)$").unwrap(),
+                "min_conf",
+            ),
+            (
+                Regex::new(r"^allow up to (?P<n>\d+) retries$").unwrap(),
+                "max_retries",
+            ),
+        ]
+    })
+}
+
+/// Match a decision step and return `(captures, tag)`. Order is load-bearing:
+/// the specific `when the answer to ... is ...` rule is tried before the loose
+/// `when "Q" is at least N` rule, and both before `otherwise`.
+fn dec_match<'a>(
+    kind: &str,
+    text: &'a str,
+) -> Result<(regex_lite::Captures<'a>, &'static str)> {
+    let table = match kind {
+        "given" => dec_given_table(),
+        "when" => dec_when_table(),
+        "then" => dec_then_table(),
+        _ => bail!("unknown decision step kind {kind:?}"),
+    };
+    for (re, tag) in table.iter() {
+        if let Some(caps) = re.captures(text) {
+            return Ok((caps, tag));
+        }
+    }
+    bail!("unknown decision {kind} step: {text:?}")
+}
+
 /// Every step name / op the vocabulary covers (for `--list`-style output and
 /// "did you mean" hints).
 pub fn vocabulary() -> Vec<String> {
@@ -821,6 +987,19 @@ fn match_step<'a>(kind: &str, text: &'a str) -> Result<(regex_lite::Captures<'a>
     for (re, op, extra) in table.iter() {
         if let Some(caps) = re.captures(text) {
             return Ok((caps, op, extra));
+        }
+    }
+    // Decision-workflow vocabulary fallback (only valid inside @decision
+    // features; compile_step rejects these, compile_decision handles them).
+    let dtable = match kind {
+        "given" => dec_given_table(),
+        "when" => dec_when_table(),
+        "then" => dec_then_table(),
+        _ => bail!("unknown step kind {kind:?}"),
+    };
+    for (re, tag) in dtable.iter() {
+        if let Some(caps) = re.captures(text) {
+            return Ok((caps, tag, "dec"));
         }
     }
     let known = vocabulary();
@@ -1194,6 +1373,13 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
         })
         .into_owned();
     let (caps, op, extra) = match_step(&step.kind, &text)?;
+    if extra == "dec" {
+        bail!(
+            "line {}: decision step {text:?} is only valid in a @decision feature \
+             (bdd build compiles it into a decision-graph workflow, not a browser call chain)",
+            step.line
+        );
+    }
     let (mut args, instruction, needs_page, project_override) = build_args(op, extra, &caps)?;
 
     if needs_page && !has_page {
@@ -1619,6 +1805,272 @@ pub fn compile_scenario(
     Ok(spec)
 }
 
+// ── decision-workflow compiler (`@decision` features) ───────────────────────
+//
+// A `@decision` feature is one decision-graph workflow: each Scenario is one
+// node, all nodes merge into a single spec. This is the layer that lets BDD
+// express the agentic core (routing / gate / policy workflows) that a browser
+// step chain cannot.
+//
+//   * Background  — workflow-level settings (`the workflow runs at most N
+//                   iterations`).
+//   * Scenario    — one node. Given defines questions, When defines edge
+//                   routing, Then defines the action (ordered threshold rules
+//                   or copy_keys) and node metadata (min_confidence /
+//                   max_retries / state.keep).
+
+/// Extract every `"..."` token from a step fragment (heuristic needle list).
+fn quoted_tokens(text: &str) -> Vec<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#""([^"]+)""#).unwrap());
+    re.captures_iter(text).map(|c| c[1].to_string()).collect()
+}
+
+fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value> {
+    let name = scenario.slug();
+    let mut questions: Map<String, Value> = Map::new();
+    let mut primary_q: Option<String> = None;
+    let mut edge_condition: Map<String, Value> = Map::new();
+    let mut edge_default: Option<String> = None;
+    let mut rules: Vec<Value> = Vec::new();
+    let mut copy_keys: Vec<String> = Vec::new();
+    let mut keep: Vec<String> = Vec::new();
+    let mut min_confidence: Option<f64> = None;
+    let mut max_retries: Option<usize> = None;
+    let mut last_question: Option<String> = None;
+
+    for st in &scenario.steps {
+        let (caps, tag) = dec_match(&st.kind, &st.text)
+            .with_context(|| format!("line {}: {}", st.line, st.text))?;
+        match tag {
+            "choice" | "score" | "noul" => {
+                let q = caps["q"].to_string();
+                let text = caps["text"].to_string();
+                let mut qv = Map::new();
+                qv.insert("type".into(), json!(tag));
+                qv.insert("instructions".into(), json!(text));
+                match tag {
+                    "choice" => {
+                        // Gherkin step-table convention: the first row is the
+                        // column header (`| answer | meaning |`), the rest are
+                        // data rows.
+                        let mut criteria = Map::new();
+                        for row in st.table.iter().skip(1) {
+                            if row.len() < 2 || row[0].is_empty() {
+                                bail!(
+                                    "line {}: choice question {q:?} table rows need | answer | meaning |",
+                                    st.line
+                                );
+                            }
+                            criteria.insert(row[0].clone(), json!(row[1]));
+                        }
+                        if criteria.is_empty() {
+                            bail!(
+                                "line {}: choice question {q:?} needs at least one option row",
+                                st.line
+                            );
+                        }
+                        qv.insert("criteria".into(), Value::Object(criteria));
+                    }
+                    "score" => {
+                        // First row is the `| level |` header.
+                        let mut levels: Vec<Value> = Vec::new();
+                        for row in st.table.iter().skip(1) {
+                            if !row.is_empty() && !row[0].is_empty() {
+                                levels.push(json!(row[0]));
+                            }
+                        }
+                        if levels.is_empty() {
+                            bail!(
+                                "line {}: score question {q:?} needs at least one level row",
+                                st.line
+                            );
+                        }
+                        qv.insert("criteria".into(), Value::Array(levels));
+                    }
+                    _ => {} // noul: no criteria
+                }
+                if primary_q.is_none() {
+                    primary_q = Some(q.clone());
+                }
+                last_question = Some(q.clone());
+                questions.insert(q, Value::Object(qv));
+            }
+            // ── heuristics attach to the most recent question in this Scenario ──
+            "heur_any" | "heur_field_any" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let needles = quoted_tokens(&caps["needles"]);
+                if needles.is_empty() {
+                    bail!("line {}: heuristic needs at least one needle", st.line);
+                }
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = caps.name("field") {
+                    h.insert("field".into(), json!(f.as_str()));
+                }
+                h.insert("match_any".into(), json!(needles));
+                h.insert("p_hit".into(), json!(hit));
+                // 1 - 0.95 is 0.050000000000000044 in f64; round to avoid a
+                // spurious diff when the spec is compared/round-tripped.
+                h.insert("p_miss".into(), json!(((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0));
+                q.insert("heuristic".into(), Value::Object(h));
+            }
+            "heur_numeric" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps["field"].to_string();
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                h.insert("extract_numeric".into(), json!(field));
+                h.insert("score_miss".into(), json!(0.0));
+                q.insert("heuristic".into(), Value::Object(h));
+            }
+            "edge" => {
+                let a = caps["a"].to_string();
+                let node = caps["node"].to_string();
+                edge_condition.insert(a, json!(node));
+            }
+            "edge_default" => {
+                edge_default = Some(caps["node"].to_string());
+            }
+            "label_eq" => {
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "answer": caps["a"].to_string()},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_gte" => {
+                let n: f64 = caps["n"].to_string().parse()?;
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "value_gte": n},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_always" => {
+                rules.push(json!({
+                    "when": {"always": true},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "copy_keys" => copy_keys.push(caps["q"].to_string()),
+            "keep_state" => keep.push(caps["k"].to_string()),
+            "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
+            "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
+            other => bail!("line {}: unhandled decision tag {other:?}", st.line),
+        }
+    }
+
+    if questions.is_empty() {
+        bail!(
+            "Scenario {:?}: a decision node needs at least one question (Given a choice/score/noul question ...)",
+            scenario.name
+        );
+    }
+    let primary_q = primary_q.unwrap_or_else(|| "ok".to_string());
+
+    let action = if !rules.is_empty() {
+        Some(json!({
+            "kind": "threshold",
+            "question": primary_q,
+            "rules": rules
+        }))
+    } else if !copy_keys.is_empty() {
+        Some(json!({
+            "kind": "copy_keys",
+            "keys": copy_keys
+        }))
+    } else {
+        None
+    };
+
+    let edge = json!({
+        "condition": edge_condition,
+        "default": edge_default.unwrap_or_else(|| "STOP".to_string()),
+    });
+
+    let mut n = json!({
+        "name": name,
+        "primary_q": primary_q,
+        "questions": questions,
+        "edge": edge,
+        "min_confidence": min_confidence.unwrap_or(0.0),
+    });
+    if let Some(mr) = max_retries {
+        n["max_retries"] = json!(mr);
+    }
+    if let Some(a) = action {
+        n["action"] = a;
+    }
+    if !keep.is_empty() {
+        n["state"] = json!({"keep": keep});
+    }
+    Ok(n)
+}
+
+/// Compile a `@decision` feature into a single decision-graph workflow spec.
+pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut max_iterations: Option<usize> = None;
+
+    for st in &feature.background {
+        let (caps, tag) = dec_match(&st.kind, &st.text)
+            .with_context(|| format!("line {}: {}", st.line, st.text))?;
+        match tag {
+            "max_iterations" => max_iterations = Some(caps["n"].to_string().parse()?),
+            other => bail!(
+                "line {}: {other:?} is not a workflow-level setting; the Background of a @decision                  feature only accepts `Given the workflow runs at most N iterations`",
+                st.line
+            ),
+        }
+    }
+
+    for scenario in &feature.scenarios {
+        nodes.push(compile_decision_node(feature, scenario)?);
+    }
+    if nodes.is_empty() {
+        bail!("feature {:?} has no Scenario (a @decision feature needs at least one node)", feature.name);
+    }
+    let start = nodes[0]["name"].as_str().unwrap_or("s0").to_string();
+    let n_nodes = nodes.len();
+
+    let mut spec = json!({
+        "name": feature.slug(),
+        "dsl_version": 2,
+        "description": if feature.description.is_empty() {
+            format!("BDD decision workflow: {}", feature.name)
+        } else {
+            feature.description.clone()
+        },
+        "start": start,
+        "max_iterations": max_iterations.unwrap_or(10 + n_nodes * 2),
+        "convergence_window": 5,
+        "convergence_eps": 0.0001,
+        "nodes": nodes,
+    });
+    if let Some(p) = config.get("policy") {
+        spec["policy"] = p.clone();
+    }
+    if let Some(c) = config.get("capabilities") {
+        spec["capabilities"] = c.clone();
+    }
+    spec["_bdd"] = json!({
+        "feature": feature.name,
+        "feature_path": rel_path(&feature.path),
+        "mode": "decision",
+    });
+    Ok(spec)
+}
+
 /// Path relative to the repo root (matching Python's `os.path.relpath(..., ROOT)`).
 fn rel_path(p: &str) -> String {
     let root = repo_root();
@@ -1854,6 +2306,58 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
             }
         };
         let chrome_bin = config.get("chrome").and_then(|c| c.get("chrome_binary")).and_then(Value::as_str).unwrap_or(&chrome_wrapper);
+
+        // `@decision` features compile through the decision-graph path: the whole
+        // feature is ONE workflow (each Scenario = one node). Browser steps do
+        // not exist here, so coverage/validate run on the decision compiler's
+        // output instead of the per-scenario chain.
+        if has_tag(&feature.tags, "decision") {
+            let spec = match compile_decision(&feature, &config) {
+                Ok(s) => s,
+                Err(e) => {
+                    errors.push(format!(
+                        "{}: {e}",
+                        rel_path(&path.to_string_lossy())
+                    ));
+                    continue;
+                }
+            };
+            let spec_name = spec["name"].as_str().unwrap_or("").to_string();
+            let spec_file = format!("{spec_name}.json");
+            let spec_path = spec_dir.join(&spec_file);
+            let public = public_spec(&spec);
+            std::fs::write(
+                &spec_path,
+                format!("{}
+", serde_json::to_string_pretty(&public)?),
+            )?;
+            let (validated, vmsg) = if o.no_validate {
+                (true, String::new())
+            } else {
+                match validate_spec(&spec_path.to_string_lossy()) {
+                    Ok(()) => (true, String::new()),
+                    Err(msg) => (false, msg),
+                }
+            };
+            if !validated {
+                errors.push(format!(
+                    "{}: `validate` rejected the generated decision spec: {vmsg}",
+                    rel_path(&path.to_string_lossy())
+                ));
+            }
+            manifest.push(json!({
+                "feature": rel_path(&path.to_string_lossy()),
+                "scenario": feature.name,
+                "spec": format!("spec/{spec_file}"),
+                "tags": feature.tags,
+                "profile": profile,
+                "base_url": base_url,
+                "nodes": spec["nodes"].as_array().map(|a| a.len()).unwrap_or(0),
+                "validated": validated,
+                "mode": "decision",
+            }));
+            continue;
+        }
 
         for scenario in &feature.scenarios {
             let tags = &scenario.tags;
@@ -2481,6 +2985,7 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         kind: kind.to_string(),
         text: text.to_string(),
         line: 1,
+        table: Vec::new(),
     };
 
     // (kind, text, want_op, want_assertion, has_page)

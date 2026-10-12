@@ -22,6 +22,7 @@ mod secrets;
 mod t_apps;
 mod t_spec;
 mod t_state;
+mod t_bdd;
 mod timeouts;
 mod update;
 
@@ -94,6 +95,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-version", t_spec::test_spec_version),
         ("spec-layers", t_spec::test_spec_layers),
         ("state", t_state::test_state_home_override),
+        ("bdd-decision", t_bdd::test_bdd_decision),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

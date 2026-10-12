@@ -334,3 +334,72 @@ laya-workflow bdd run <feature> --live   # 单个实战用例
 抓到：BDD 的封闭词汇表把未知步骤直接编译报错（29/29）；JSON DSL 的 `validate` 只做结构校验，
 对语义错误——写错的 op、悬空的 edge、拼错的 assertion——一个都抓不到，只能在页面上运行时暴
 露（对照：同一个 `validate` 能抓出删掉的 `start`，所以这个 0 是真的门禁缺口，不是坏探针）。
+
+## 决策工作流（`@decision`）—— agentic workflow 的核心
+
+浏览器步链表达不了「路由 / 门禁 / 策略」这类**决策图**。带 `@decision` tag 的
+`.feature` 走独立的决策编译器：**一个 Feature = 一个决策图 workflow，一个 Scenario =
+一个决策节点**。产出经 `laya-workflow validate` 校验，且可用同一套 `bdd build` 门禁
+（100% 覆盖 + 未知 step 硬报错）。
+
+```gherkin
+@decision
+Feature: support_ticket_router
+  Route by category, then by severity.
+
+  Scenario: classify
+    Given a choice question "category" asks "Which team should handle this ticket?"
+      | answer    | meaning                      |
+      | billing   | invoices, payments, refunds  |
+      | technical | bugs, outages, system errors |
+      | other     | everything else              |
+    When the answer "technical" goes to "severity_probe"
+    And the answer "billing" goes to "severity_probe"
+    And any other answer goes to "STOP"
+    Then keep the answer to "category"
+    And require confidence at least 0.4
+    And allow up to 3 retries
+
+  Scenario: severity_probe
+    Given a score question "severity" asks "How severe is the impact?"
+      | level    |
+      | minor    |
+      | degraded |
+      | outage   |
+    When any other answer goes to "STOP"
+    Then label "PAGE_ONCALL" when "severity" is at least 1.5
+    And label "QUEUE_TODAY" when "severity" is at least 0.5
+    And label "BACKLOG" otherwise
+```
+
+### 决策词汇表
+
+| 行 | 模式 | 编译为 |
+|---|---|---|
+| Given | `a choice/score/noul question "Q" asks "..."`（后跟 `| 表 |`） | `questions.Q`（choice 的 criteria 表 `\| answer \| meaning \|`；score 的 `\| level \|`） |
+| And（given） | `answer "B" when the text contains "a", "b" with hit 0.95` | `questions.Q.heuristic.match_any`（p_hit/p_miss） |
+| And（given） | `answer "B" when the field "f" contains "a" with hit 0.9` | `heuristic.field` + match_any |
+| And（given） | `score "Q" from the numeric field "f"` | `heuristic.extract_numeric`（score 问题） |
+| When | `the answer "A" goes to "NODE"` | `edge.condition[A]` |
+| When | `any other answer goes to "NODE"` | `edge.default` |
+| Then | `label "X" when the answer to "Q" is "A"` | threshold rule `{when:{question,answer},label}` |
+| Then | `label "X" when "Q" is at least 1.5` | threshold rule `{when:{question,value_gte},label}` |
+| Then | `label "X" otherwise` | threshold rule `{when:{always},label}` |
+| Then | `keep the answer to "Q"` | `action.copy_keys` |
+| Then | `keep the state key "K"` | `state.keep` |
+| Then | `require confidence at least N` / `allow up to N retries` | `min_confidence` / `max_retries` |
+| Background | `the workflow runs at most N iterations` | `max_iterations` |
+
+规则按书写顺序保持（ordered threshold：第一条命中的 label 生效）。门禁与 browser 模式一致：
+**词汇表外的决策 step = 编译错误**，绝不明编译。
+
+### 已验证的转换（BDD ↔ 原 JSON 行为等价）
+
+| BDD 源 | 原 JSON | 验证 |
+|---|---|---|
+| `bdd/workflows/routing/support_ticket_router.feature` | `dsl/routing/support_ticket_router.json` | 引擎离线跑全部样本：label/answer/confidence 逐项一致 |
+| `bdd/workflows/agents/quality_gate.feature` | `dsl/agents/quality_gate.json` | 同上（含 heuristic match_any 命中） |
+
+```bash
+laya-workflow bdd build bdd/workflows/routing/support_ticket_router.feature   # 编译 + validate + 100% 覆盖
+```

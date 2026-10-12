@@ -109,7 +109,7 @@ laya-workflow bdd run --profile production --base-url <real>
 
 - `bdd/features/*.feature` — 正式场景（CI 门禁的 glob）
 - `bdd/features/setup/` — `include:` 拉入的步骤列表（无 Feature 头）
-- `bdd/workflows/` — 全部 BDD workflow 源（单一层级，镜像 `dsl/`）：`browser/`（29 实战站点 live 语料 + `_probe`）、`examples/`、`tasks/`
+- `bdd/workflows/` — 全部 BDD workflow 源（单一层级，镜像 `dsl/`）：`browser/`（29 实战站点 live 语料 + `_probe`）、`examples/`、`tasks/`、`routing/`、`agents/`（决策图 `@decision` 类别，随转换持续扩展）
 - `bdd/fixtures/` — 本地 hermetic 夹具页（`app.html` 是"无接口 UI 转工作流"的示例目标）
 - `bdd/features/workflow_capture.feature` — 工作流语义的端到端示例（extract/key/wait_until/条件点击/@outputs）
 - `laya-workflow bdd vocabulary-check` — 词汇表（step → op/assertion）
