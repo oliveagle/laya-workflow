@@ -206,11 +206,13 @@ Feature: support_ticket_router
 ### 作者循环（agent 怎么写一个决策 workflow）
 
 1. 想清楚决策图：几个节点？每个节点问什么问题、答什么路由、产出什么 label/动作。
-2. 在 `bdd/workflows/<cat>/<name>.feature` 写 `@decision` feature（先查词汇表，生造措辞会被拒）。
-3. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
+2. 绿场起点：**MCP `bdd_new`**（`name`+`cat`+`intent` → 最小合法 `@decision` `.feature` 骨架，
+   自验证能过 `bdd build`；`write=true` 落盘、`root` 指定工作区）或 CLI `laya-workflow bdd scaffold`。
+3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展（先查词汇表，生造措辞会被拒）。
+4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
    validate 逐行错误）或 CLI `laya-workflow bdd build`。
-4. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
-5. 全量门禁：`laya-workflow bdd round-trip`（99/99 复现）+ `scripts/bdd/check.sh`。
+5. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
+6. 全量门禁：`laya-workflow bdd round-trip`（99/99 复现）+ `scripts/bdd/check.sh`。
 6. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
 
 ### 为什么这样是 agentic workflow 的核心

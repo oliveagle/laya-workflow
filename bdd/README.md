@@ -356,15 +356,15 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
 
-For an agent writing a decision workflow, the loop is: open a greenfield file
-with `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"` (emits a minimal
-valid `@decision` skeleton that already passes `bdd build`, with the authoring
-vocabulary as comments) → extend it under `bdd/workflows/<cat>/` → validate
-mid-authoring with the `bdd_validate` MCP tool (or `bdd build`) → emit the dsl
-spec with `bdd transpile <file> --out dsl/<cat>` → audit completeness with the
-`bdd_catalog` MCP tool → run `bdd round-trip` + `check.sh` → commit. The
-`.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
-hand-edited.
+For an agent writing a decision workflow, the loop is fully callable
+in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
+that already passes `bdd build`, with the authoring vocabulary as comments) →
+extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
+emit the dsl spec with `bdd transpile <file> --out dsl/<cat>` → audit
+completeness with `bdd_catalog` → run `bdd round-trip` + `check.sh` → commit.
+The same greenfield start is available on the CLI as
+`bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The `.feature` is
+the source; the `dsl/*.json` is the compiled artifact and is never hand-edited.
 
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 

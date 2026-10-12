@@ -954,3 +954,48 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
     .expect("scaffold CLI runs");
     h.eq("bdd: scaffold stdout rc", rc, 0);
 }
+
+/// `bdd_new` MCP tool: from an intent, generate a minimal valid `@decision`
+/// `.feature` skeleton — the greenfield start of the in-process authoring loop
+/// (new → validate → extend → audit). Asserts the returned text compiles, and
+/// that `write=true` persists to the requested root without touching the repo.
+pub fn test_bdd_mcp_new(h: &mut Harness) {
+    let t = bdd_tool("bdd_new");
+    let r = t
+        .call(&json!({
+            "name": "intake_triage",
+            "cat": "routing",
+            "intent": "Route an intake request to the owning team or escalate",
+        }))
+        .unwrap();
+    h.eq("bdd_new: valid", r["valid"].as_bool().unwrap(), true);
+    h.eq("bdd_new: name", r["name"].clone(), json!("intake_triage"));
+    h.eq("bdd_new: node count", r["nodes"].as_u64().unwrap(), 1);
+    let text = r["feature_text"].as_str().unwrap_or("");
+    h.check("bdd_new: @decision tag", text.contains("@decision\n"));
+    h.check("bdd_new: Feature line", text.contains("Feature: intake_triage\n"));
+    h.check("bdd_new: intent as description", text.contains("Route an intake request to the owning team or escalate"));
+    h.check("bdd_new: write=false by default", r["written"].is_null());
+    // The returned text must itself pass the authoring gate.
+    let v = bdd_tool("bdd_validate").call(&json!({"feature_text": text})).unwrap();
+    h.eq("bdd_new: skeleton passes bdd_validate", v["ok"].as_bool().unwrap(), true);
+    // write=true persists under an explicit root (temp dir), not the repo.
+    let root = std::env::temp_dir().join(format!("laya-bdd-new-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let r2 = t
+        .call(&json!({"name": "intake_triage", "cat": "routing", "write": true, "root": root.to_string_lossy().into_owned()}))
+        .unwrap();
+    h.eq("bdd_new: written path set", r2["written"].is_string(), true);
+    let dest = r2["written"].as_str().unwrap().to_string();
+    h.check("bdd_new: file on disk", std::path::Path::new(&dest).is_file());
+    h.check("bdd_new: file under root", dest.starts_with(&root.to_string_lossy().into_owned()));
+    // Second write refuses (exists=true) without overwriting.
+    let r3 = t
+        .call(&json!({"name": "intake_triage", "cat": "routing", "write": true, "root": root.to_string_lossy().into_owned()}))
+        .unwrap();
+    h.eq("bdd_new: exists flag on second write", r3["exists"].as_bool().unwrap(), true);
+    h.eq("bdd_new: not overwritten", r3["written"].is_null(), true);
+    // Bad input: empty name errors instead of panicking.
+    h.check("bdd_new: empty name errors", t.call(&json!({"name": ""})).is_err());
+    let _ = std::fs::remove_dir_all(&root);
+}

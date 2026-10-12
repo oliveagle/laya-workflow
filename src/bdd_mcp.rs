@@ -29,7 +29,11 @@ impl McpToolSet for BddTools {
     }
 
     fn tools(&self) -> Vec<DynTool> {
-        vec![Arc::new(ValidateTool), Arc::new(CatalogTool)]
+        vec![
+            Arc::new(NewTool),
+            Arc::new(ValidateTool),
+            Arc::new(CatalogTool),
+        ]
     }
 }
 
@@ -239,6 +243,97 @@ impl McpTool for CatalogTool {
             "categories": cats_out,
             "orphan_specs": orphans,
             "features_without_spec": no_spec,
+        }))
+    }
+}
+
+
+/// `bdd_new`: open a greenfield decision workflow from an intent. Generates a
+/// minimal valid `@decision` `.feature` skeleton (self-verified to pass
+/// `bdd build`), returns the text for the agent to extend, and optionally
+/// writes it to `bdd/workflows/<cat>/<name>.feature` (or a `root` override).
+/// Together with `bdd_validate` and `bdd_catalog` this completes the authoring
+/// loop entirely in-process: new → validate → extend → audit.
+struct NewTool;
+
+impl McpTool for NewTool {
+    fn name(&self) -> &str {
+        "bdd_new"
+    }
+    fn description(&self) -> &str {
+        "Open a greenfield decision workflow: from an intent, generate a minimal valid @decision .feature skeleton that already passes bdd build — the cheapest valid start to the authoring loop. Returns the skeleton text (optionally writes it to bdd/workflows/<cat>/<name>.feature when write=true), the compile/validate verdict and next-step commands. Then extend + validate with bdd_validate and audit with bdd_catalog."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Workflow name (also the file stem and Feature name)."},
+                "cat": {"type": "string", "description": "Category subdir under bdd/workflows/ (default: routing)."},
+                "intent": {"type": "string", "description": "Natural-language intent; becomes the Feature description."},
+                "primary_q": {"type": "string", "description": "Primary question name for the starter node (default: option)."},
+                "write": {"type": "boolean", "description": "Write the skeleton to <root>/bdd/workflows/<cat>/<name>.feature (default false = return text only)."},
+                "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."}
+            },
+            "required": ["name"]
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("bdd_new: name is required"))?;
+        if name.trim().is_empty() {
+            return Err(anyhow!("bdd_new: name must not be empty"));
+        }
+        let cat = args.get("cat").and_then(|v| v.as_str()).unwrap_or("routing");
+        let cat = if cat.trim().is_empty() { "routing" } else { cat.trim() };
+        let primary_q = args.get("primary_q").and_then(|v| v.as_str()).unwrap_or("option");
+        let primary_q = if primary_q.trim().is_empty() { "option" } else { primary_q.trim() };
+        let intent = args.get("intent").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let write = args.get("write").and_then(|v| v.as_bool()).unwrap_or(false);
+        let root = args
+            .get("root")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(bdd::repo_root);
+
+        let desc = intent
+            .clone()
+            .unwrap_or_else(|| format!("The {name} decision workflow (scaffolded)."));
+        let body = bdd::scaffold_body(name, cat, &primary_q, &desc);
+        // Self-verify exactly as `bdd build` would.
+        let feature = bdd::parse(&body, "<bdd_new>")?;
+        let spec = bdd::compile_decision(&feature, &json!({}))?;
+        crate::spec::from_spec_with_dir(&spec, None, None)?;
+        let nodes = spec["nodes"].as_array().map(|a| a.len()).unwrap_or(0);
+
+        let mut written: Option<String> = None;
+        let mut exists = false;
+        if write {
+            let dir = root.join("bdd").join("workflows").join(cat);
+            std::fs::create_dir_all(&dir)?;
+            let dest = dir.join(format!("{name}.feature"));
+            if dest.exists() {
+                exists = true;
+            } else {
+                std::fs::write(&dest, &body)?;
+                written = Some(dest.to_string_lossy().into_owned());
+            }
+        }
+
+        Ok(json!({
+            "name": name,
+            "cat": cat,
+            "valid": true,
+            "nodes": nodes,
+            "exists": exists,
+            "written": written,
+            "feature_text": body,
+            "next": [
+                "extend the graph, then validate with bdd_validate (or `bdd build`)",
+                "emit the dsl spec with `bdd transpile <file> --out dsl/<cat>`",
+                "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
+            ]
         }))
     }
 }
