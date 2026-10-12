@@ -851,3 +851,71 @@ pub fn test_bdd_mcp_catalog(h: &mut Harness) {
     h.check("bdd_catalog: dsl specs == decision features", total == feats);
     h.check("bdd_catalog: at least 99 specs", total >= 99);
 }
+
+/// `bdd transpile` on an `@decision` feature emits the greenfield spec with
+/// dsl_version stripped (matching the checked-in dsl convention) — so an author
+/// writes a new .feature, generates its dsl/<cat>/<name>.json in one command,
+/// and `bdd round-trip` then proves the pair agree.
+pub fn test_bdd_transpile_decision(h: &mut Harness) {
+    let dir = std::env::temp_dir().join(format!("laya-bdd-transpile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = r#"
+@decision
+Feature: transpile_demo
+  A minimal one-node decision graph.
+
+  Scenario: classify
+    Given a choice question "category" asks "Which team should handle this ticket?"
+      | answer    | meaning                     |
+      | billing   | invoices, payments, refunds |
+      | technical | bugs, outages, system errors|
+    When the answer "technical" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then keep the answer to "category"
+"#;
+    let fp = dir.join("transpile_demo.feature");
+    std::fs::write(&fp, src).unwrap();
+    let out = dir.join("out");
+    let rc = bdd::transpile_cli(
+        &[fp.to_string_lossy().into_owned()],
+        Some(out.to_str().unwrap()),
+        false,
+        false,
+        None,
+    )
+    .expect("transpile @decision feature");
+    h.eq("bdd: transpile @decision rc", rc, 0);
+    let generated = out.join("transpile_demo.json");
+    h.check("bdd: transpile @decision wrote spec", generated.is_file());
+    let payload: Value =
+        serde_json::from_str(&std::fs::read_to_string(&generated).unwrap()).unwrap();
+    h.eq("bdd: transpile @decision name", payload["name"].clone(), json!("transpile_demo"));
+    h.check("bdd: transpile @decision dsl_version stripped", payload.get("dsl_version").is_none());
+    h.eq(
+        "bdd: transpile @decision node count",
+        payload["nodes"].as_array().unwrap().len(),
+        1,
+    );
+    let _ = crate::spec::from_spec_with_dir(&payload, None, None).expect("generated spec validates");
+    // --check and --list forms both succeed on the same feature.
+    let rc2 = bdd::transpile_cli(
+        &[fp.to_string_lossy().into_owned()],
+        Some(out.to_str().unwrap()),
+        false,
+        true,
+        None,
+    )
+    .expect("transpile @decision --check");
+    h.eq("bdd: transpile @decision --check rc", rc2, 0);
+    let rc3 = bdd::transpile_cli(
+        &[fp.to_string_lossy().into_owned()],
+        None,
+        true,
+        false,
+        None,
+    )
+    .expect("transpile @decision --list");
+    h.eq("bdd: transpile @decision --list rc", rc3, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

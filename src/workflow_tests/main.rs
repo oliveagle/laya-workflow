@@ -106,6 +106,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-decision-policy", t_bdd::test_bdd_decision_policy),
         ("bdd-decision-ui-proposal", t_bdd::test_bdd_decision_ui_proposal),
         ("bdd-decision-roundtrip-vocab", t_bdd::test_bdd_decision_roundtrip_vocab),
+        ("bdd-transpile-decision", t_bdd::test_bdd_transpile_decision),
         ("bdd-table-pipe-escape", t_bdd::test_bdd_table_pipe_escape),
         ("bdd-mcp-validate-ok", t_bdd::test_bdd_mcp_validate_ok),
         ("bdd-mcp-validate-err", t_bdd::test_bdd_mcp_validate_err),

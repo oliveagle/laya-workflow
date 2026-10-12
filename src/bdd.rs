@@ -3277,6 +3277,55 @@ pub fn transpile_cli(
             .and_then(|c| c.get("chrome_binary"))
             .and_then(Value::as_str)
             .unwrap_or(chrome_wrapper);
+        let base = Path::new(fp)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| fp.clone());
+        // An `@decision` feature is one whole decision graph (each Scenario one
+        // node), so it transpiles to a single spec — the exact file an author
+        // drops at dsl/<cat>/<name>.json. This closes the greenfield loop: write
+        // the .feature, transpile to the dsl spec, and `bdd round-trip` proves
+        // the two agree (the same semantic canonicalisation round-trip applies).
+        if has_tag(&feature.tags, "decision") {
+            total += 1;
+            let spec = match compile_decision(&feature, &config) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: {fp}: {e}");
+                    return Ok(1);
+                }
+            };
+            if list {
+                let n = spec["nodes"].as_array().map(|a| a.len()).unwrap_or(0);
+                println!("{base} :: {}  (@decision graph, {n} nodes)", spec["name"].as_str().unwrap_or(""));
+                continue;
+            }
+            if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
+                eprintln!("error: {base}: generated decision spec fails validate: {e:#}");
+                return Ok(1);
+            }
+            // Match the checked-in dsl convention (round-trip normalises
+            // dsl_version away, so either spelling round-trips; dsl specs omit it).
+            let mut payload = spec.clone();
+            if let Some(o) = payload.as_object_mut() {
+                o.remove("dsl_version");
+            }
+            let body = format!("{}\n", serde_json::to_string_pretty(&payload)?);
+            if check {
+                println!("ok: {base} :: {} ({} nodes)", spec["name"].as_str().unwrap_or(""), spec["nodes"].as_array().map(|a| a.len()).unwrap_or(0));
+                continue;
+            }
+            match out {
+                None => print!("{body}"),
+                Some(out) => {
+                    std::fs::create_dir_all(out)?;
+                    let dest = Path::new(out).join(format!("{}.json", spec["name"].as_str().unwrap_or("")));
+                    std::fs::write(&dest, body)?;
+                    println!("wrote {}", dest.display());
+                }
+            }
+            continue;
+        }
         for scenario in &feature.scenarios {
             let spec = match compile_scenario(&feature, scenario, &config, cb) {
                 Ok(s) => s,
@@ -3289,10 +3338,6 @@ pub fn transpile_cli(
             let meta = spec["_bdd"].clone();
             let need = required_state(&spec);
             let scenario_name = meta["scenario"].as_str().unwrap_or("").to_string();
-            let base = Path::new(fp)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| fp.clone());
             if list {
                 let mut line = format!("{base} :: {scenario_name}");
                 if !need.is_empty() {
