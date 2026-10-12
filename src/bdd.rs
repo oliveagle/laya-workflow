@@ -848,6 +848,10 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 Regex::new(r"^the policy$").unwrap(),
                 "policy",
             ),
+            (
+                Regex::new(r"^the capabilities$").unwrap(),
+                "capabilities",
+            ),
             // ── heuristics (attach right after their question; they configure
             //    the *most recent* question in the same Scenario) ──
             (
@@ -1043,6 +1047,13 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
                 )
                 .unwrap(),
                 "rubric",
+            ),
+            (
+                Regex::new(
+                    r#"^prepare a UI proposal from operation "(?P<op>[^"]+)" field "(?P<field>[^"]+)" amount "(?P<amt>[^"]+)" surface "(?P<surface>[^"]+)" hash "(?P<hash>[^"]+)" requiring (?P<min>\d+(?:\.\d+)?)(?: value "(?P<value_key>[^"]+)")?$"#,
+                )
+                .unwrap(),
+                "ui_proposal",
             ),
         ]
     })
@@ -2006,6 +2017,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut merge_action: Option<String> = None;
     let mut combine_action: Option<Map<String, Value>> = None;
     let mut rubric_action: Option<Map<String, Value>> = None;
+    let mut ui_proposal_action: Option<Map<String, Value>> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -2172,7 +2184,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                             st.line
                         );
                     }
-                    let needles = quoted_tokens(&row[1]);
+                    let needles = quoted_tokens_escaped(&row[1]);
                     if needles.is_empty() {
                         bail!("line {}: match_rules row {row:?} needs quoted needles", st.line);
                     }
@@ -2275,6 +2287,20 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     ]),
                 );
                 rubric_action = Some(m);
+            }
+            "ui_proposal" => {
+                let min: f64 = caps["min"].to_string().parse()?;
+                let mut m = Map::new();
+                m.insert("operation".into(), json!(caps["op"].to_string()));
+                m.insert("field".into(), json!(caps["field"].to_string()));
+                m.insert("amount".into(), json!(caps["amt"].to_string()));
+                m.insert("surface".into(), json!(caps["surface"].to_string()));
+                m.insert("snapshot_hash".into(), json!(caps["hash"].to_string()));
+                m.insert("min_confidence".into(), json!(min));
+                if let Some(vk) = caps.name("value_key") {
+                    m.insert("value_key".into(), json!(vk.as_str()));
+                }
+                ui_proposal_action = Some(m);
             }
             "edge" => {
                 let a = caps["a"].to_string();
@@ -2463,6 +2489,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     } else if let Some(mut m) = rubric_action {
         m.insert("kind".into(), json!("rubric"));
         Some(Value::Object(m))
+    } else if let Some(mut m) = ui_proposal_action {
+        m.insert("kind".into(), json!("ui_proposal"));
+        Some(Value::Object(m))
     } else if !copy_keys.is_empty() {
         Some(json!({
             "kind": "copy_keys",
@@ -2516,6 +2545,7 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
     let mut max_iterations: Option<usize> = None;
 
     let mut policy: Option<Value> = None;
+    let mut capabilities: Option<Value> = None;
     for st in &feature.background {
         let (caps, tag) = dec_match(&st.kind, &st.text)
             .with_context(|| format!("line {}: {}", st.line, st.text))?;
@@ -2557,8 +2587,38 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                 }
                 policy = Some(Value::Object(p));
             }
+            "capabilities" => {
+                if st.table.is_empty() {
+                    bail!(
+                        "line {}: `Given the capabilities` needs a | name | config | table ",
+                        st.line
+                    );
+                }
+                let mut caps: Map<String, Value> = Map::new();
+                for row in &st.table {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: capabilities table rows need | name | config |",
+                            st.line
+                        );
+                    }
+                    let name = row[0].trim();
+                    let raw = row[1].trim();
+                    let val: Value = serde_json::from_str(raw).map_err(|e| {
+                        anyhow!(
+                            "line {}: capabilities {name:?} expects a JSON config object, got {raw:?}: {e}",
+                            st.line
+                        )
+                    })?;
+                    caps.insert(name.to_string(), val);
+                }
+                if caps.is_empty() {
+                    bail!("line {}: capabilities table is empty", st.line);
+                }
+                capabilities = Some(Value::Object(caps));
+            }
             other => bail!(
-                "line {}: {other:?} is not a workflow-level setting; the Background of a @decision feature only accepts `Given the workflow runs at most N iterations` / `Given the policy`",
+                "line {}: {other:?} is not a workflow-level setting; the Background of a @decision feature only accepts `Given the workflow runs at most N iterations` / `Given the policy` / `Given the capabilities`",
                 st.line
             ),
         }
@@ -2599,7 +2659,9 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
         }
         spec["policy"] = merged_policy;
     }
-    if let Some(c) = config.get("capabilities") {
+    if let Some(c) = capabilities {
+        spec["capabilities"] = c;
+    } else if let Some(c) = config.get("capabilities") {
         spec["capabilities"] = c.clone();
     }
     spec["_bdd"] = json!({

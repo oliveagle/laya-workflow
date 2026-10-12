@@ -400,6 +400,7 @@ Feature: support_ticket_router
 | And（given） | `answer "B" with mid M when the field "f" contains "mid","maybe"` | `heuristic.match_mid_any` + `p_mid`（三带读出的中间带，并入同问题的 match_any） |
 | Background | `the workflow runs at most N iterations` | `max_iterations` |
 | Background | `Given the policy`（后跟 `\| key \| value \|` 表：`allow_exec` bool / `allow_hosts`、`allow_paths` 带引号 tokens / `max_timeout_ms`、`max_output`、`retries` int） | `policy`（原样输出，不做默认填充；缺省即无 policy 块） |
+| Background | `Given the capabilities`（后跟 `\| name \| JSON配置 \|` 表，值 JSON 解析） | `capabilities`（Gherkin 优先，其次 config sidecar） |
 | And（given） | `answer by rules on the field "f" with hit 0.93 and fallback "other"`（后跟 `\| label \| needles \|` 表，首行表头跳过） | `heuristic.field` + `match_rules`（label → 需匹配词列表）+ `p_hit`/`fallback` |
 | And（given） | `score "Q" when the field "f" contains "high" scoring 1.8 and "mid" scoring 1.0 miss 0.2` | `heuristic` + `match_any`/`match_mid_any` + `score_hit`/`score_mid`/`score_miss`（三带打分） |
 | And（given） | `the answer is always "A"` | `heuristic.answer`（确定性答案） |
@@ -408,6 +409,7 @@ Feature: support_ticket_router
 | Then | `merge open probabilities on "Q"` | `action {kind:merge_open_probs, question}` |
 | Then | `combine "C" with signal "S" fallback "F" review "R" requiring 0.8 high 0.85 low 0.15` | `action {kind:combine, choice, signal, fallback, review_label, min_confidence, high_threshold, low_threshold}` |
 | Then | `rubric "Q1" at 3 levels weight 0.6 and "Q2" at 4 levels weight 0.4 requiring 0.8` | `action {kind:rubric, min_confidence, dimensions:[{question,levels,weight}×2]}` |
+| Then | `prepare a UI proposal from operation "Q" field "Q" amount "Q" surface "K" hash "K" requiring 0.8 value "billing_contact"` | `action {kind:ui_proposal, operation, field, amount, surface, snapshot_hash, min_confidence, value_key}`（awesome-jev computer-use prepare 阶段：code 决定动作，低于 floor → human_review，wait/blocked 停循环） |
 | Then | `call the capability "X"` 的表中可含 `\| chain.<as>.capability \| cap \|`、`\| chain.<as>.with.<k> \| v \|`、`\| chain.<as>.project.<k> \| /ptr \|` | `action.chain`（嵌套 sub-call 数组，按 encounter 顺序每个 distinct `<as>` 一条） |
 
 规则按书写顺序保持（ordered threshold：第一条命中的 label 生效）。门禁与 browser 模式一致：
@@ -422,7 +424,7 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**70/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
+**72/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
 每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价：
 
 - routing：support_ticket_router
@@ -435,7 +437,7 @@ Feature: support_ticket_router
 - codegraph：routing_codegraph、stopping_codegraph、traversal_codegraph
 - versioned：refund_policy.v1、refund_policy.v2
 - pipelines：intake_pipeline_nested
-- capabilities（26）：agent_session_probe、cua_desktop、db_analytics、db_server_analytics、dingtalk/feishu chat、exec_preflight_guard、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、web_research、web_research_tinyfish、support_routing、quality_rubric、data_pipeline_local、stateful_pipeline、protocol_services、ticket_structuring、credentialed_integrations
+- capabilities（29）：agent_session_probe、cua_desktop、db_analytics、db_server_analytics、dingtalk/feishu chat、exec_preflight_guard、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、web_research、web_research_tinyfish、support_routing、quality_rubric、data_pipeline_local、stateful_pipeline、protocol_services、ticket_structuring、credentialed_integrations、computer_use、span_selection
 - laya_mem：+ persist_memory
 
 验证方法：`bdd build`（compile+validate+100% 覆盖）+ round-trip 逐字段对比 + `run --spec`

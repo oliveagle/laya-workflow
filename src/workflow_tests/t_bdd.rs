@@ -652,3 +652,64 @@ Feature: bare_workflow
     let sb = bdd::compile_decision(&fb, &json!({})).expect("compile bare");
     h.eq("bdd: bare no policy", sb.get("policy").is_none(), true);
 }
+
+pub fn test_bdd_decision_ui_proposal(h: &mut Harness) {
+    // ui_proposal action + capabilities background step.
+    let src = r#"
+@decision
+Feature: computer_use_bdd
+
+  Background:
+    Given the workflow runs at most 6 iterations
+    Given the capabilities
+      | ui | {"kind": "computer_use", "allowed_surface": "https://x.invalid/fixture"} |
+
+  Scenario: decide
+    Given a choice question "operation" asks "Next op?"
+      | answer | meaning        |
+      | fill   | edit a field   |
+      | done   | finished       |
+    And a choice question "field" asks "Which field?"
+      | answer | meaning |
+      | e1     | delivery |
+      | e2     | accounts payable |
+    And a choice question "amount" asks "Which amount?"
+      | answer | meaning |
+      | t1     | subtotal |
+      | t2     | total   |
+    When any other answer goes to "STOP"
+    Then prepare a UI proposal from operation "operation" field "field" amount "amount" surface "surface" hash "snapshot_hash" requiring 0.8 value "billing_contact"
+
+  Scenario: step
+    Given a choice question "go" asks "Go?"
+      | answer | meaning |
+      | A      | yes     |
+    When any other answer goes to "STOP"
+    Then call the capability "ui"
+      | with.op | fingerprint |
+"#;
+    let feature = bdd::parse(src, "<computer_use_bdd>").expect("parse computer_use_bdd feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile computer_use_bdd");
+
+    h.eq("bdd: ui_proposal capabilities", spec["capabilities"]["ui"]["kind"].clone(), json!("computer_use"));
+    h.eq("bdd: ui_proposal max_iterations", spec["max_iterations"].clone(), json!(6));
+
+    let nodes = &spec["nodes"];
+    let by_name = |n: &str| {
+        nodes.as_array().unwrap().iter().find(|x| x["name"] == n).cloned().unwrap()
+    };
+    let decide = by_name("decide");
+    let act = &decide["action"];
+    h.eq("bdd: ui_proposal kind", act["kind"].clone(), json!("ui_proposal"));
+    h.eq("bdd: ui_proposal operation", act["operation"].clone(), json!("operation"));
+    h.eq("bdd: ui_proposal field", act["field"].clone(), json!("field"));
+    h.eq("bdd: ui_proposal amount", act["amount"].clone(), json!("amount"));
+    h.eq("bdd: ui_proposal surface", act["surface"].clone(), json!("surface"));
+    h.eq("bdd: ui_proposal snapshot_hash", act["snapshot_hash"].clone(), json!("snapshot_hash"));
+    h.eq("bdd: ui_proposal min", act["min_confidence"].clone(), json!(0.8));
+    h.eq("bdd: ui_proposal value_key", act["value_key"].clone(), json!("billing_contact"));
+
+    let step = by_name("step");
+    h.eq("bdd: ui_proposal call kind", step["action"]["kind"].clone(), json!("call"));
+    h.eq("bdd: ui_proposal call cap", step["action"]["capability"].clone(), json!("ui"));
+}

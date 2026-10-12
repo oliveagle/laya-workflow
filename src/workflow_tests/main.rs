@@ -104,6 +104,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-decision-actions", t_bdd::test_bdd_decision_actions),
         ("bdd-decision-heuristics2", t_bdd::test_bdd_decision_heuristics2),
         ("bdd-decision-policy", t_bdd::test_bdd_decision_policy),
+        ("bdd-decision-ui-proposal", t_bdd::test_bdd_decision_ui_proposal),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

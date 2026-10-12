@@ -10,6 +10,8 @@ Feature: support_ticket_router_hybrid
       | allow_paths | "${env.HOME}" |
       | max_timeout_ms | 20000 |
       | max_output | 65536 |
+    Given the capabilities
+      | cls | {"kind":"needle","op":"complete","cact":"${env.NEEDLE3_CACT}"} |
 
   Scenario: classify
     Given a choice question "category" asks "Which team should handle this ticket?"

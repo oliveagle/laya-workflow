@@ -8,6 +8,8 @@ Feature: laya_mem_persist
       | allow_exec | true |
       | allow_paths | "${env.LAYA_WORK_DIR}" |
       | max_output | 262144 |
+    Given the capabilities
+      | mem_db | {"kind":"db","sqlite":"${env.LAYA_WORK_DIR}/laya_mem.sqlite","readonly":false} |
 
   Scenario: reset
     Given a choice question "go" asks "Reset the Laya-Mem tables?"

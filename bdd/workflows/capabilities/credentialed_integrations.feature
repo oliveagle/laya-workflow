@@ -11,6 +11,11 @@ Feature: credentialed_integrations
       | max_output | 32768 |
       | retries | 1 |
       | allow_paths | "${env.LAYA_STORE_DIR}" |
+    Given the capabilities
+      | signed_notify | {"kind":"webhook","url":"http://127.0.0.1:8791/webhook","sign_header":"x-signature","sign_secret":"${secret.LAYA_WEBHOOK_SECRET}","timeout_ms":4000} |
+      | vendor_api | {"kind":"http","method":"POST","url":"http://127.0.0.1:8791/score","headers":{"content-type":"application/json","authorization":"Bearer ${secret.LAYA_VENDOR_TOKEN}"},"body":{"text":"${state.text}"},"timeout_ms":4000} |
+      | mailer | {"kind":"smtp","host":"127.0.0.1","port":2526,"from":"workflow@example.com","username":"${secret.LAYA_SMTP_USER}","password":"${secret.LAYA_SMTP_PASS}","timeout_ms":5000} |
+      | cached_token | {"kind":"cache","op":"set","path":"${env.LAYA_STORE_DIR}/tokens.json","ttl_secs":900} |
 
   Scenario: route
     Given a choice question "channel" asks "Which credentialed integration should this request use?"

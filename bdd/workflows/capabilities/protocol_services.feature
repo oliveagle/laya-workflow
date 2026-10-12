@@ -10,6 +10,16 @@ Feature: protocol_services
       | max_timeout_ms | 8000 |
       | max_output | 65536 |
       | retries | 0 |
+    Given the capabilities
+      | ping_upstream | {"kind":"tcp","host":"127.0.0.1","port":6380,"timeout_ms":3000} |
+      | echo_udp | {"kind":"udp","host":"127.0.0.1","port":9999,"timeout_ms":3000} |
+      | cache_rw | {"kind":"redis","host":"127.0.0.1","port":6380,"timeout_ms":3000} |
+      | bus_publish | {"kind":"nats","host":"127.0.0.1","port":4223,"timeout_ms":3000} |
+      | iot_publish | {"kind":"mqtt","host":"127.0.0.1","port":1884,"client_id":"laya-workflow","timeout_ms":3000} |
+      | notify_mail | {"kind":"smtp","host":"127.0.0.1","port":2526,"from":"workflow@example.com","username":"${env.LAYA_SMTP_USER}","password":"${env.LAYA_SMTP_PASS}","timeout_ms":5000} |
+      | objects | {"kind":"s3","endpoint":"http://127.0.0.1:9000","bucket":"bucket","timeout_ms":5000} |
+      | metrics_endpoint | {"kind":"prometheus","url":"http://127.0.0.1:9091/metrics","timeout_ms":5000} |
+      | event_stream | {"kind":"kafka","url":"http://127.0.0.1:8083","topic":"events","timeout_ms":5000} |
 
   Scenario: route
     Given a choice question "channel" asks "Which protocol or service should carry this action?"
