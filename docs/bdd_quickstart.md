@@ -394,6 +394,8 @@ Feature: support_ticket_router
 | Then | `keep the answer to "Q"` | `action.copy_keys` |
 | Then | `keep the state key "K"` | `state.keep` |
 | Then | `require confidence at least N` / `allow up to N retries` | `min_confidence` / `max_retries` |
+| Then | `call the capability "X"`（后跟 `\| with.<k> \| v \|` / `\| project.<k> \| /ptr \|` 表） | `action {kind:call, capability, with, project}`（值支持 JSON 字面量：`true`/`1`/`[..]`/`{..}`） |
+| And（given） | `answer "B" with mid M when the field "f" contains "mid","maybe"` | `heuristic.match_mid_any` + `p_mid`（三带读出的中间带，并入同问题的 match_any） |
 | Background | `the workflow runs at most N iterations` | `max_iterations` |
 
 规则按书写顺序保持（ordered threshold：第一条命中的 label 生效）。门禁与 browser 模式一致：
@@ -408,7 +410,7 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**32/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
+**52/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
 每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价：
 
 - routing：support_ticket_router
@@ -419,6 +421,7 @@ Feature: support_ticket_router
 - codegraph：routing_codegraph、stopping_codegraph、traversal_codegraph
 - versioned：refund_policy.v1、refund_policy.v2
 - pipelines：intake_pipeline_nested
+- capabilities（20）：agent_session_probe、cua_desktop、db_analytics、db_server_analytics、dingtalk/feishu chat、exec_preflight_guard、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、web_research、web_research_tinyfish
 
 验证方法：`bdd build`（compile+validate+100% 覆盖）+ round-trip 逐字段对比 + `run --spec`
 用 `bench/dsl_smoke_states.json` 同状态跑原 JSON 与 BDD spec，比对 label/action_answer/confidence。
