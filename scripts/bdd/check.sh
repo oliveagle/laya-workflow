@@ -98,7 +98,7 @@ fi
 # that has Chrome.
 "$BIN" bdd score --check
 
-# The live-fire corpus (bdd/bench/live/*.feature), compiled offline. `bdd compare`
+# The live-fire corpus (bdd/workflows/browser/*.feature), compiled offline. `bdd compare`
 # compiles all 29 real-site workflows and runs the seeded-fault gate - no Chrome,
 # no network - so a live case that stops parsing is caught here, in CI, instead of
 # on the machine that happens to have a browser.

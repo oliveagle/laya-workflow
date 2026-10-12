@@ -2,7 +2,7 @@
 
 > **日期**: 2026-10-12
 > **环境**: laya-workflow release binary（构建于 2026-10-11，HEAD `71fb20e`），本地离线执行，无网络依赖
-> **语料**: `bdd/bench/live/*.feature` — 29 个真实网站 workflow（每个 >20 步，覆盖 Wikipedia/GitHub/PyPI/arXiv 等 29 个外部站点；另有 `_probe.feature` 探针不计入语料）
+> **语料**: `bdd/workflows/browser/*.feature` — 29 个真实网站 workflow（每个 >20 步，覆盖 Wikipedia/GitHub/PyPI/arXiv 等 29 个外部站点；另有 `_probe.feature` 探针不计入语料；2026-10-13 起语料源从 `bdd/bench/live/` 移至此处，`bdd compare` 结果数字不变）
 > **对照定义**: 「BDD」= `.feature` 源文件（作者手写）；「JSON」= 同一 workflow 经 `bdd transpile` 编译出的 spec（即手写 JSON DSL 需要表达的等价内容）
 > **原始数据**: `bdd/bench/metrics_raw_20261012.json`（所有数字可复现；`metrics2`/`extra` 中含 `_probe` 探针共 30 行，报告均值已剔除该探针按 29 case 计算）
 > **复现**: `laya-workflow bdd compare` / `bdd score` + `bdd/bench/metrics_raw_20261012.json` 内记录的各子脚本

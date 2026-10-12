@@ -34,7 +34,7 @@ bdd/*.feature  ── build ──┼─ 测试        manifest.json           (
 
 ## 完整例子：用户登录冒烟测试
 
-文件：`bdd/examples/login_smoke.feature`
+文件：`bdd/workflows/examples/login_smoke.feature`
 
 ```gherkin
 Feature: User login smoke
@@ -72,14 +72,14 @@ Feature: User login smoke
 ### 1) 本地构建（不需要 Chrome）
 
 ```bash
-laya-workflow bdd build bdd/examples/login_smoke.feature \
+laya-workflow bdd build bdd/workflows/examples/login_smoke.feature \
   --bin ./target/release/laya-workflow --out /tmp/bdd-example
 ```
 
 输出：
 
 ```
-  coverage 100.0%  14/14  ok   bdd/examples/login_smoke.feature
+  coverage 100.0%  14/14  ok   bdd/workflows/examples/login_smoke.feature
   profile local  base_url (local fixtures)
   specs 2  validated 2  assist-suggestions 0
   OK — every scenario compiled, every spec validated, coverage at the bar
@@ -88,7 +88,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
 ### 2) 生产 IT 计划
 
 ```bash
-laya-workflow bdd build bdd/examples/login_smoke.feature \
+laya-workflow bdd build bdd/workflows/examples/login_smoke.feature \
   --profile production --base-url https://app.example.com \
   --bin ./target/release/laya-workflow --out /tmp/bdd-example-it
 ```
@@ -96,7 +96,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
 输出：
 
 ```
-  coverage 100.0%  14/14  ok   bdd/examples/login_smoke.feature
+  coverage 100.0%  14/14  ok   bdd/workflows/examples/login_smoke.feature
   profile production  base_url https://app.example.com
   specs 1  validated 1  production-IT 1  assist-suggestions 0
 ```
@@ -161,7 +161,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
   "base_url": null,
   "scenarios": [
     {
-      "feature": "bdd/examples/login_smoke.feature",
+      "feature": "bdd/workflows/examples/login_smoke.feature",
       "scenario": "successful login with valid credentials",
       "spec": "spec/bdd_user_login_smoke_successful_login_with_valid_credentials.json",
       "tags": ["smoke"],
@@ -169,7 +169,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
       "nodes": 9, "validated": true
     },
     {
-      "feature": "bdd/examples/login_smoke.feature",
+      "feature": "bdd/workflows/examples/login_smoke.feature",
       "scenario": "login form renders correctly on production",
       "spec": "spec/bdd_user_login_smoke_login_form_renders_correctly_on_production.json",
       "tags": ["production"],
@@ -191,7 +191,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
   "base_url": "https://app.example.com",
   "scenarios": [
     {
-      "feature": "bdd/examples/login_smoke.feature",
+      "feature": "bdd/workflows/examples/login_smoke.feature",
       "scenario": "login form renders correctly on production",
       "spec": "spec/bdd_user_login_smoke_login_form_renders_correctly_on_production.json",
       "tags": ["production"],
@@ -210,7 +210,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
 
 ```json
 [
-  { "feature": "bdd/examples/login_smoke.feature",
+  { "feature": "bdd/workflows/examples/login_smoke.feature",
     "total": 14, "matched": 14, "coverage": 100.0, "unmatched": [] }
 ]
 ```
@@ -233,7 +233,7 @@ laya-workflow bdd build bdd/examples/login_smoke.feature \
 
 ```
 errors:
-  bdd/examples/login_smoke.feature: line 7: unknown then step: 'the heading "#hero" should be displayed'
+  bdd/workflows/examples/login_smoke.feature: line 7: unknown then step: 'the heading "#hero" should be displayed'
   supported: absent, assert, bdd, chrome, click, contains, equals, ...
   coverage  0.0%  0/1  LOW
 specs 0  validated 0
@@ -244,12 +244,12 @@ specs 0  validated 0
 ```bash
 # 本地：fixture server + headless Chrome
 laya-workflow bdd run                                    # 全部 bdd/features/*.feature
-laya-workflow bdd run bdd/examples/login_smoke.feature    # 单个 feature
+laya-workflow bdd run bdd/workflows/examples/login_smoke.feature    # 单个 feature
 laya-workflow bdd run --tags @smoke                       # 只跑带 @smoke tag 的
 laya-workflow bdd run --filter page_smoke                 # 按 feature 文件名子串
 
 # 生产集成测试（真目标，无本地 fixture）
-laya-workflow bdd run bdd/examples/login_smoke.feature \
+laya-workflow bdd run bdd/workflows/examples/login_smoke.feature \
   --profile production --base-url https://app.example.com
 ```
 
@@ -270,7 +270,7 @@ scripts/bdd/check.sh ./target/release/laya-workflow
 ```bash
 # 1. 写 feature
 # 2. 跑带 --assist 的 build
-laya-workflow bdd build bdd/examples/my.feature --assist --out /tmp/x
+laya-workflow bdd build bdd/workflows/examples/my.feature --assist --out /tmp/x
 # 3. 看建议（例：Then the heading "#hero" should be displayed -> op=type conf=0.06 guess）
 # 4. 在 `plugins/bdd/main.rhai` 加规则：_THEN 表加一行 (re.compile(r'^the heading (?P<sel>.+) should be (visible|displayed)$'), 'assert', 'visible')
 # 5. 重跑：`laya-workflow bdd build` exit 0，coverage 100%
@@ -318,10 +318,10 @@ laya-workflow bdd score --run       # 再加真实 Chrome e2e（需要 CHROME_BI
 
 ## 实战演练：29 个真实网站（`bdd live` / `bdd compare`）
 
-词汇表只在夹具上跑通说明不了什么。实战语料是 `bdd/bench/live/*.feature`——
+词汇表只在夹具上跑通说明不了什么。实战语料是 `bdd/workflows/browser/*.feature`——
 **29 个工作流打 29 个真实外部网站**，每个 ≥20 步，无夹具服务器、无 probe
 （`laya-workflow bdd live`）。一台 headless Chrome 串行跑：**29 passed, 0 failed / 842 steps**。
-完整报告（每站表格、BDD vs JSON 对比、首次跑暴露的坑）见 `bdd/bench/live/REPORT.md`。
+完整报告（每站表格、BDD vs JSON 对比、首次跑暴露的坑）见 `bdd/bench/live/REPORT.md`（源文件已移至 `bdd/workflows/browser/`）。
 
 ```bash
 laya-workflow bdd compare                # 离线：体积 + 造册门禁

@@ -455,9 +455,9 @@ enum BddCmd {
         #[arg(name = "tasks", num_args = 0..)]
         tasks: Vec<String>,
     },
-    /// Run the live-fire corpus (bdd/bench/live/*.feature) against real sites.
+    /// Run the live-fire corpus (bdd/workflows/browser/*.feature) against real sites.
     Live {
-        /// Feature files (default: every bdd/bench/live/*.feature).
+        /// Feature files (default: every bdd/workflows/browser/*.feature).
         #[arg(name = "features", num_args = 0..)]
         features: Vec<String>,
         /// Only features whose path contains this substring.

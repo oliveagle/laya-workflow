@@ -281,11 +281,11 @@ honestly.
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 
 A vocabulary that only drives fixtures proves nothing about the web. The live
-corpus is `bdd/bench/live/*.feature` — **29 workflows against 29 real, external
+corpus is `bdd/workflows/browser/*.feature` — **29 workflows against 29 real, external
 websites**, each ≥20 steps, run with no fixture server and no probes
 (`laya-workflow bdd live`). It is **29 passed, 0 failed / 842 steps** on one
 headless Chrome. The full write-up — per-site table, the BDD-vs-JSON comparison
-and the friction the first run exposed — is `bdd/bench/live/REPORT.md`.
+and the friction the first run exposed — is `bdd/bench/live/REPORT.md（源已移至 `bdd/workflows/browser/`）`.
 
 ```bash
 laya-workflow bdd compare                # offline: volume + the authoring gate

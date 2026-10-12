@@ -4569,9 +4569,9 @@ impl Default for LiveOptions {
     }
 }
 
-/// Every `bdd/bench/live/*.feature` except the `_`-prefixed development probe.
+/// Every `bdd/workflows/browser/*.feature` except the `_`-prefixed development probe.
 pub fn live_features() -> Result<Vec<PathBuf>> {
-    let dir = repo_root().join("bdd").join("bench").join("live");
+    let dir = repo_root().join("bdd").join("workflows").join("browser");
     if !dir.is_dir() {
         bail!("no live corpus at {} - nothing to run", dir.display());
     }

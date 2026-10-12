@@ -1,7 +1,7 @@
 {
   "id": "search_and_export",
   "intent": "On an app that was already consented to, search for ACME, press Enter, wait for the export button to be enabled, click it if present, then capture the app's exported marker and the page url.",
-  "feature": "bdd/bench/tasks/search_and_export.feature",
+  "feature": "bdd/workflows/tasks/search_and_export.feature",
   "expected_outputs": [
     "exported",
     "page_url"
