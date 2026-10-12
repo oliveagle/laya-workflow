@@ -5403,14 +5403,35 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
             .with_context(|| format!("reading {feature_rel}"))?;
         let feature = parse(&feature_text, &feature_path.to_string_lossy())?;
 
-        // expressiveness: every scenario compiles.
+        // expressiveness: every scenario compiles. A `@decision` feature is one
+        // decision-graph workflow (each Scenario = one node), so it compiles
+        // through `compile_decision`; the browser-step path (`compile_scenario`)
+        // rejects decision steps by design, so scoring a decision task through
+        // it would report every reference workflow as broken. The generated
+        // decision spec must also pass the same `validate` gate `bdd build`
+        // runs, or a task whose graph never validates would pass this half.
         let mut compile_ok = true;
         let mut compile_error = None;
-        for sc in &feature.scenarios {
-            if let Err(e) = compile_scenario(&feature, sc, &json!({}), "chrome-headless.sh") {
-                compile_ok = false;
-                compile_error = Some(format!("{}: {e:#}", sc.name));
-                break;
+        if has_tag(&feature.tags, "decision") {
+            match compile_decision(&feature, &json!({})) {
+                Ok(spec) => {
+                    if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
+                        compile_ok = false;
+                        compile_error = Some(format!("validate: {e:#}"));
+                    }
+                }
+                Err(e) => {
+                    compile_ok = false;
+                    compile_error = Some(format!("{}: {e:#}", feature.name));
+                }
+            }
+        } else {
+            for sc in &feature.scenarios {
+                if let Err(e) = compile_scenario(&feature, sc, &json!({}), "chrome-headless.sh") {
+                    compile_ok = false;
+                    compile_error = Some(format!("{}: {e:#}", sc.name));
+                    break;
+                }
             }
         }
         let cov = feature_coverage(&feature);

@@ -1,0 +1,73 @@
+{
+  "id": "decision_support_ticket",
+  "intent": "Route an incoming support ticket: classify it into a category (billing / technical / sales / other), send the technical and billing categories to a severity probe, stop on the rest, and on the probe score the severity and page on-call when severe, queue today when degraded, otherwise send to backlog.",
+  "feature": "bdd/workflows/routing/support_ticket_router.feature",
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "a choice question \"category\" asks \"Which team should handle this ticket?\""
+    },
+    {
+      "kind": "given",
+      "text": "a score question \"severity\" asks \"How severe is the impact?\""
+    },
+    {
+      "kind": "when",
+      "text": "the answer \"technical\" goes to \"severity_probe\""
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"STOP\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"PAGE_ONCALL\" when \"severity\" is at least 1.5"
+    },
+    {
+      "kind": "then",
+      "text": "label \"BACKLOG\" otherwise"
+    },
+    {
+      "kind": "then",
+      "text": "keep the answer to \"category\""
+    },
+    {
+      "kind": "then",
+      "text": "require confidence at least 0.4"
+    },
+    {
+      "kind": "then",
+      "text": "allow up to 3 retries"
+    },
+    {
+      "kind": "given",
+      "text": "the workflow runs at most 5 iterations"
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "given",
+      "text": "a decision question \"category\" asks \"Which team should handle this ticket?\""
+    },
+    {
+      "kind": "given",
+      "text": "a question \"category\" asks \"Which team should handle this ticket?\""
+    },
+    {
+      "kind": "when",
+      "text": "the answer \"technical\" leads to \"severity_probe\""
+    },
+    {
+      "kind": "when",
+      "text": "answer \"technical\" goes to \"severity_probe\""
+    },
+    {
+      "kind": "then",
+      "text": "assign label \"PAGE_ONCALL\" when \"severity\" is at least 1.5"
+    },
+    {
+      "kind": "then",
+      "text": "label \"PAGE_ONCALL\" when severity is high"
+    }
+  ]
+}
