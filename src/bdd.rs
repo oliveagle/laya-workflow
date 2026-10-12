@@ -829,15 +829,15 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
     T.get_or_init(|| {
         vec![
             (
-                Regex::new(r#"^a choice question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                Regex::new(r#"^a choice question "(?P<q>[^"]+)" asks "(?P<text>.*)"$"#).unwrap(),
                 "choice",
             ),
             (
-                Regex::new(r#"^a score question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                Regex::new(r#"^a score question "(?P<q>[^"]+)" asks "(?P<text>.*)"$"#).unwrap(),
                 "score",
             ),
             (
-                Regex::new(r#"^a noul question "(?P<q>[^"]+)" asks "(?P<text>.+)"$"#).unwrap(),
+                Regex::new(r#"^a noul question "(?P<q>[^"]+)" asks "(?P<text>.*)"$"#).unwrap(),
                 "noul",
             ),
             (
@@ -866,6 +866,13 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 )
                 .unwrap(),
                 "heur_numeric",
+            ),
+            (
+                Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" with mid (?P<mid>\d+(?:\.\d+)?) when the field "(?P<field>[^"]+)" contains (?P<needles>.+)$"#,
+                )
+                .unwrap(),
+                "heur_mid",
             ),
         ]
     })
@@ -967,6 +974,10 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             (
                 Regex::new(r#"^the action reads the question "(?P<q>.+)"$"#).unwrap(),
                 "action_q",
+            ),
+            (
+                Regex::new(r#"^call the capability "(?P<cap>.+)"$"#).unwrap(),
+                "call",
             ),
         ]
     })
@@ -1883,6 +1894,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut last_question: Option<String> = None;
     let mut explicit_primary: Option<String> = None;
     let mut action_q: Option<String> = None;
+    let mut call_action: Option<(String, Map<String, Value>, Map<String, Value>)> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -1988,6 +2000,23 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 h.insert("score_miss".into(), json!(miss));
                 q.insert("heuristic".into(), Value::Object(h));
             }
+            "heur_mid" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let needles = quoted_tokens(&caps["needles"]);
+                let mid: f64 = caps["mid"].to_string().parse()?;
+                let h = q.entry("heuristic".to_string()).or_insert_with(|| json!({}));
+                let ho = h.as_object_mut().ok_or_else(|| {
+                    anyhow!("line {}: heuristic not an object", st.line)
+                })?;
+                ho.insert("match_mid_any".into(), json!(needles));
+                ho.insert("p_mid".into(), json!(mid));
+            }
             "edge" => {
                 let a = caps["a"].to_string();
                 let node = caps["node"].to_string();
@@ -2054,6 +2083,34 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
             "primary_q" => explicit_primary = Some(caps["q"].to_string()),
             "action_q" => action_q = Some(caps["q"].to_string()),
+            "call" => {
+                let cap = caps["cap"].to_string();
+                let mut with: Map<String, Value> = Map::new();
+                let mut project: Map<String, Value> = Map::new();
+                for row in &st.table {
+                    if row.len() < 2 || row[0].is_empty() {
+                        bail!(
+                            "line {}: call step table rows need | with.<key> | value | or | project.<key> | ptr |",
+                            st.line
+                        );
+                    }
+                    let (kind, key) = match row[0].split_once('.') {
+                        Some((k, rest)) => (k, rest.to_string()),
+                        None => ("with", row[0].clone()),
+                    };
+                    let cell = row[1].trim();
+                    let val: Value = serde_json::from_str(cell).unwrap_or_else(|_| json!(cell));
+                    match kind {
+                        "with" => { with.insert(key, val); }
+                        "project" => { project.insert(key, val); }
+                        other => bail!(
+                            "line {}: call table row {other:?} must start with `with.` or `project.`",
+                            st.line
+                        ),
+                    }
+                }
+                call_action = Some((cap, with, project));
+            }
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
         }
     }
@@ -2080,6 +2137,17 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "kind": "copy_keys",
             "keys": copy_keys
         }))
+    } else if let Some((cap, with, project)) = call_action {
+        let mut a = Map::new();
+        a.insert("kind".into(), json!("call"));
+        a.insert("capability".into(), json!(cap));
+        if !with.is_empty() {
+            a.insert("with".into(), Value::Object(with));
+        }
+        if !project.is_empty() {
+            a.insert("project".into(), Value::Object(project));
+        }
+        Some(Value::Object(a))
     } else {
         None
     };

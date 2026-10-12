@@ -280,3 +280,55 @@ Feature: extended_shapes
     h.eq("bdd: passthrough empty questions", pt["questions"].as_object().map(|m| m.len()).unwrap_or(99), 0);
     h.eq("bdd: passthrough primary_q default", pt["primary_q"].clone(), json!("ok"));
 }
+
+/// `call the capability` + with/project table, and the `with mid M` middle-band
+/// heuristic (match_mid_any) — the two shapes that unblocked the capabilities
+/// batch (178 call nodes across the corpus).
+pub fn test_bdd_decision_call(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: textdigest_plugin
+
+  Scenario: digest
+    Given a choice question "done" asks "Digest the text with the local plugin?"
+      | answer | meaning |
+      | A      | yes     |
+      | B      | no      |
+    When any other answer goes to "STOP"
+    Then call the capability "digest"
+      | with.text      | ${state.text} |
+      | project.chars  | /chars        |
+      | project.words  | /words        |
+      | project.top    | /top          |
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse call feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile call");
+    let n = &spec["nodes"][0];
+    let act = &n["action"];
+    h.eq("bdd: call kind", act["kind"].clone(), json!("call"));
+    h.eq("bdd: call capability", act["capability"].clone(), json!("digest"));
+    h.eq("bdd: call with.text", act["with"]["text"].clone(), json!("${state.text}"));
+    h.eq("bdd: call project.chars", act["project"]["chars"].clone(), json!("/chars"));
+    h.eq("bdd: call project count", act["project"].as_object().map(|m| m.len()).unwrap_or(99), 3);
+
+    // middle-band heuristic
+    let src2 = r#"
+@decision
+Feature: rag_triage
+  Scenario: triage
+    Given a noul question "relevant" asks "Is the passage relevant?"
+    And answer "B" when the field "route_relevant" contains "high", "yes" with hit 0.9 and miss 0.1
+    And answer "B" with mid 0.5 when the field "route_relevant" contains "mid", "maybe", "unclear"
+    When any other answer goes to "STOP"
+    Then label "HIT" when "relevant" is at least 0.5
+    And label "MISS" otherwise
+"#;
+    let f2 = bdd::parse(src2, "<test2>").expect("parse mid feature");
+    let s2 = bdd::compile_decision(&f2, &json!({})).expect("compile mid");
+    let hq = &s2["nodes"][0]["questions"]["relevant"]["heuristic"];
+    h.eq("bdd: mid match_mid_any", hq["match_mid_any"].clone(), json!(["mid", "maybe", "unclear"]));
+    h.eq("bdd: mid p_mid", hq["p_mid"].clone(), json!(0.5));
+    h.eq("bdd: mid preserves match_any", hq["match_any"].clone(), json!(["high", "yes"]));
+    h.eq("bdd: mid preserves p_hit", hq["p_hit"].clone(), json!(0.9));
+    h.eq("bdd: mid preserves p_miss", hq["p_miss"].clone(), json!(0.1));
+}
