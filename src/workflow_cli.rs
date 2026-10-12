@@ -2202,8 +2202,9 @@ fn run_mcp(cmd: &McpCmd) -> Result<()> {
             };
             let cg = laya_workflow::codegraph::CodegraphTools::from_env();
             let nd = laya_workflow::capability::needle::NeedleTools;
+            let bddt = laya_workflow::bdd_mcp::BddTools;
             let sets: Vec<Box<dyn laya_workflow::mcp::McpToolSet>> =
-                vec![Box::new(mem), Box::new(cg), Box::new(nd)];
+                vec![Box::new(mem), Box::new(cg), Box::new(nd), Box::new(bddt)];
             laya_workflow::mcp::serve_stdio(info, sets)
         }
     }

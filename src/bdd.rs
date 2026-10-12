@@ -5973,6 +5973,9 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
     let mut matched = 0usize;
     let mut problems: Vec<String> = Vec::new();
     let mut verdicts: Vec<Value> = Vec::new();
+    // (cat, name) of every @decision feature, so the dsl/ walk below can prove
+    // the conversion is closed: no dsl spec may exist that has no BDD source.
+    let mut feature_names: BTreeSet<(String, String)> = BTreeSet::new();
 
     for f in &features {
         let text = std::fs::read_to_string(f)
@@ -5989,6 +5992,7 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
             None => ("", rel),
         };
         let name = fname.strip_suffix(".feature").unwrap_or(fname);
+        feature_names.insert((cat.to_string(), name.to_string()));
         let dsl_path = root.join("dsl").join(cat).join(format!("{name}.json"));
 
         let spec = match compile_decision(&feature, &json!({})) {
@@ -6033,6 +6037,44 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
             let diff = rt_first_diff(&nb, &nd, "spec").unwrap_or_else(|| "non-equal".to_string());
             problems.push(format!("{rel}: {diff}"));
             verdicts.push(json!({"feature": rel, "ok": false, "reason": diff}));
+        }
+    }
+
+    // Completeness, the reverse direction: every checked-in dsl spec must have
+    // a BDD source. A spec with no `.feature` is a known workflow that has not
+    // been converted — the round-trip loop above cannot see it (it walks the
+    // features), so it is proven here instead.
+    let dsl_root = root.join("dsl");
+    if dsl_root.is_dir() {
+        let mut specs: Vec<(String, String)> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&dsl_root) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.is_dir() {
+                    continue;
+                }
+                let cat = e.file_name().to_string_lossy().into_owned();
+                if let Ok(sd) = std::fs::read_dir(&p) {
+                    for f in sd.flatten() {
+                        let fp = f.path();
+                        if fp.extension().map(|x| x == "json").unwrap_or(false) {
+                            let name = fp
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                            specs.push((cat.clone(), name));
+                        }
+                    }
+                }
+            }
+        }
+        specs.sort();
+        for (cat, name) in specs {
+            if !feature_names.contains(&(cat.clone(), name.clone())) {
+                problems.push(format!(
+                    "dsl/{cat}/{name}.json has no @decision BDD source at bdd/workflows/{cat}/{name}.feature - convert it"
+                ));
+            }
         }
     }
 

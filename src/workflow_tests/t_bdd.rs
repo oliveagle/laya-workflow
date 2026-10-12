@@ -4,6 +4,7 @@
 #![allow(unused_imports)]
 use crate::*;
 use laya_workflow::bdd;
+use laya_workflow::mcp::{DynTool, McpTool, McpToolSet};
 
 pub fn test_bdd_decision(h: &mut Harness) {
     let src = r#"
@@ -775,4 +776,78 @@ Feature: pipe_caps
     let spec = bdd::compile_decision(&feature, &json!({})).expect("compile pipe escape");
     let act = &spec["nodes"][0]["action"];
     h.eq("bdd: pipe escaped in cell", act["with"]["cmd"].clone(), json!("echo 'x' | tail -1"));
+}
+
+// ─── BDD authoring MCP tools ──────────────────────────────────────────────────
+
+fn bdd_tool(name: &str) -> DynTool {
+    laya_workflow::bdd_mcp::BddTools
+        .tools()
+        .into_iter()
+        .find(|t| t.name() == name)
+        .unwrap_or_else(|| panic!("missing bdd mcp tool {name}"))
+}
+
+/// bdd_validate: a known-good `@decision` feature compiles and validates with
+/// 100% step coverage — the exact authoring gate an agent runs before commit.
+pub fn test_bdd_mcp_validate_ok(h: &mut Harness) {
+    let t = bdd_tool("bdd_validate");
+    let src = r#"
+@decision
+Feature: mcp_validate_ok
+  Route by category.
+
+  Scenario: classify
+    Given a choice question "category" asks "Which team?"
+      | answer | meaning  |
+      | A      | first    |
+      | B      | second   |
+    When any other answer goes to "STOP"
+    Then keep the answer to "category"
+"#;
+    let r = t.call(&json!({"feature_text": src})).unwrap();
+    h.eq("bdd_validate: ok true", r["ok"].as_bool().unwrap(), true);
+    h.eq("bdd_validate: decision", r["decision"].as_bool().unwrap(), true);
+    h.eq("bdd_validate: feature name", r["feature"].clone(), json!("mcp_validate_ok"));
+    h.eq("bdd_validate: coverage 100%", r["coverage"]["pct"].as_f64().unwrap(), 100.0);
+    h.check("bdd_validate: validate.ok", r["validate"]["ok"].as_bool().unwrap());
+    h.check("bdd_validate: scenario ok", r["scenarios"][0]["ok"].as_bool().unwrap());
+}
+
+/// bdd_validate: a broken feature fails with ok=false and a line-numbered
+/// error — so a mid-authoring agent sees the same red as `bdd build`.
+pub fn test_bdd_mcp_validate_err(h: &mut Harness) {
+    let t = bdd_tool("bdd_validate");
+    let src = r#"
+@decision
+Feature: mcp_validate_bad
+
+  Scenario: broken
+    Given a nonsense step that dec_match rejects
+"#;
+    let r = t.call(&json!({"feature_text": src})).unwrap();
+    h.eq("bdd_validate: broken ok false", r["ok"].as_bool().unwrap(), false);
+    h.check("bdd_validate: broken error set", r["validate"]["error"].is_string());
+    let err = r["validate"]["error"].as_str().unwrap_or("");
+    h.check("bdd_validate: error mentions line", err.contains("line"));
+}
+
+/// bdd_validate: no input errors cleanly instead of panicking.
+pub fn test_bdd_mcp_validate_no_input(h: &mut Harness) {
+    let t = bdd_tool("bdd_validate");
+    h.check("bdd_validate: no input errors", t.call(&json!({})).is_err());
+}
+
+/// bdd_catalog: the completeness audit behind "convert all known workflows to
+/// BDD" — every dsl spec has a @decision feature and vice versa.
+pub fn test_bdd_mcp_catalog(h: &mut Harness) {
+    let t = bdd_tool("bdd_catalog");
+    let r = t.call(&json!({})).unwrap();
+    h.eq("bdd_catalog: complete", r["complete"].as_bool().unwrap(), true);
+    h.check("bdd_catalog: no orphan specs", r["orphan_specs"].as_array().unwrap().is_empty());
+    h.check("bdd_catalog: no features without spec", r["features_without_spec"].as_array().unwrap().is_empty());
+    let total = r["total_dsl_specs"].as_u64().unwrap();
+    let feats = r["total_decision_features"].as_u64().unwrap();
+    h.check("bdd_catalog: dsl specs == decision features", total == feats);
+    h.check("bdd_catalog: at least 99 specs", total >= 99);
 }

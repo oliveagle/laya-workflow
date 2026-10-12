@@ -8,6 +8,7 @@
 pub mod rules;
 pub mod update;
 pub mod bdd;
+pub mod bdd_mcp;
 pub mod mock;
 pub mod accuracy;
 pub mod evaluate;
