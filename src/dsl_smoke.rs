@@ -61,7 +61,7 @@ fn summarize(payload: &str) -> Option<Value> {
 }
 
 /// Make the scratch env vars every spec may reference; create the dirs.
-fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
+pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     let base = std::env::temp_dir().join("laya_dsl_smoke_rust");
     let mut map = BTreeMap::new();
     for var in ["LAYA_STORE_DIR", "LAYA_WORK_DIR", "LAYA_GOAL_DIR"] {

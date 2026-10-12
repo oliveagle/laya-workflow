@@ -844,6 +844,10 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 Regex::new(r"^the workflow runs at most (?P<n>\d+) iterations$").unwrap(),
                 "max_iterations",
             ),
+            (
+                Regex::new(r"^the policy$").unwrap(),
+                "policy",
+            ),
             // ── heuristics (attach right after their question; they configure
             //    the *most recent* question in the same Scenario) ──
             (
@@ -887,6 +891,28 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 )
                 .unwrap(),
                 "heur_mid",
+            ),
+            (
+                Regex::new(
+                    r#"^answer by rules on the field "(?P<field>[^"]+)" with hit (?P<hit>\d+(?:\.\d+)?)(?: and fallback "(?P<fallback>[^"]+)")?$"#,
+                )
+                .unwrap(),
+                "heur_match_rules",
+            ),
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" contains "(?P<high>[^"]+)" scoring (?P<hit>\d+(?:\.\d+)?) and "(?P<mid>[^"]+)" scoring (?P<midv>\d+(?:\.\d+)?) miss (?P<miss>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_score_bands",
+            ),
+            (
+                Regex::new(r#"^the answer is always "(?P<a>.+)"$"#).unwrap(),
+                "heur_answer",
+            ),
+            (
+                Regex::new(r#"^the answer comes from the field "(?P<f>.+)"$"#).unwrap(),
+                "heur_answer_field",
             ),
         ]
     })
@@ -992,6 +1018,31 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             (
                 Regex::new(r#"^call the capability "(?P<cap>.+)"$"#).unwrap(),
                 "call",
+            ),
+            (
+                Regex::new(
+                    r#"^gate "(?P<q>.+)" on option "(?P<opt>.+)" with block (?P<block>\d+(?:\.\d+)?) allow (?P<allow>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "gate",
+            ),
+            (
+                Regex::new(r#"^merge open probabilities on "(?P<q>.+)"$"#).unwrap(),
+                "merge_open_probs",
+            ),
+            (
+                Regex::new(
+                    r#"^combine "(?P<choice>.+)" with signal "(?P<signal>.+)" fallback "(?P<fallback>.+)" review "(?P<review>.+)" requiring (?P<min>\d+(?:\.\d+)?) high (?P<high>\d+(?:\.\d+)?) low (?P<low>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "combine",
+            ),
+            (
+                Regex::new(
+                    r#"^rubric "(?P<q1>.+)" at (?P<l1>\d+) levels weight (?P<w1>\d+(?:\.\d+)?) and "(?P<q2>.+)" at (?P<l2>\d+) levels weight (?P<w2>\d+(?:\.\d+)?) requiring (?P<min>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "rubric",
             ),
         ]
     })
@@ -1950,6 +2001,11 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut explicit_primary: Option<String> = None;
     let mut action_q: Option<String> = None;
     let mut call_action: Option<(String, Map<String, Value>, Map<String, Value>)> = None;
+    let mut call_chain: Vec<Value> = Vec::new();
+    let mut gate_action: Option<(String, String, f64, f64)> = None;
+    let mut merge_action: Option<String> = None;
+    let mut combine_action: Option<Map<String, Value>> = None;
+    let mut rubric_action: Option<Map<String, Value>> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -2100,6 +2156,126 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 h.insert("p_miss".into(), json!(miss));
                 q.insert("heuristic".into(), Value::Object(h));
             }
+            "heur_match_rules" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps["field"].to_string();
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let fallback = caps.name("fallback").map(|m| m.as_str().to_string());
+                let mut rules: Map<String, Value> = Map::new();
+                // First row is the `| label | needles |` header; skip it.
+                for row in st.table.iter().skip(1) {
+                    if row.len() < 2 || row[0].is_empty() {
+                        bail!(
+                            "line {}: match_rules step needs | label | needles | rows",
+                            st.line
+                        );
+                    }
+                    let needles = quoted_tokens(&row[1]);
+                    if needles.is_empty() {
+                        bail!("line {}: match_rules row {row:?} needs quoted needles", st.line);
+                    }
+                    rules.insert(row[0].trim().to_string(), json!(needles));
+                }
+                if rules.is_empty() {
+                    bail!("line {}: match_rules needs at least one | label | needles | row", st.line);
+                }
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                h.insert("field".into(), json!(field));
+                h.insert("match_rules".into(), Value::Object(rules));
+                h.insert("p_hit".into(), json!(hit));
+                if let Some(fb) = fallback {
+                    h.insert("fallback".into(), json!(fb));
+                }
+                q.insert("heuristic".into(), Value::Object(h));
+            }
+            "heur_score_bands" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps["field"].to_string();
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let midv: f64 = caps["midv"].to_string().parse()?;
+                let miss: f64 = caps["miss"].to_string().parse()?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                h.insert("field".into(), json!(field));
+                h.insert("match_any".into(), json!([caps["high"].to_string()]));
+                h.insert("match_mid_any".into(), json!([caps["mid"].to_string()]));
+                h.insert("score_hit".into(), json!(hit));
+                h.insert("score_mid".into(), json!(midv));
+                h.insert("score_miss".into(), json!(miss));
+                q.insert("heuristic".into(), Value::Object(h));
+            }
+            "heur_answer" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                q.insert("heuristic".into(), json!({"answer": caps["a"].to_string()}));
+            }
+            "heur_answer_field" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                q.insert("heuristic".into(), json!({"answer_field": caps["f"].to_string()}));
+            }
+            "gate" => {
+                let q = caps["q"].to_string();
+                let opt = caps["opt"].to_string();
+                let block: f64 = caps["block"].to_string().parse()?;
+                let allow: f64 = caps["allow"].to_string().parse()?;
+                gate_action = Some((q, opt, block, allow));
+            }
+            "merge_open_probs" => {
+                merge_action = Some(caps["q"].to_string());
+            }
+            "combine" => {
+                let min: f64 = caps["min"].to_string().parse()?;
+                let high: f64 = caps["high"].to_string().parse()?;
+                let low: f64 = caps["low"].to_string().parse()?;
+                let mut m = Map::new();
+                m.insert("choice".into(), json!(caps["choice"].to_string()));
+                m.insert("signal".into(), json!(caps["signal"].to_string()));
+                m.insert("fallback".into(), json!(caps["fallback"].to_string()));
+                m.insert("review_label".into(), json!(caps["review"].to_string()));
+                m.insert("min_confidence".into(), json!(min));
+                m.insert("high_threshold".into(), json!(high));
+                m.insert("low_threshold".into(), json!(low));
+                combine_action = Some(m);
+            }
+            "rubric" => {
+                let min: f64 = caps["min"].to_string().parse()?;
+                let l1: usize = caps["l1"].to_string().parse()?;
+                let l2: usize = caps["l2"].to_string().parse()?;
+                let w1: f64 = caps["w1"].to_string().parse()?;
+                let w2: f64 = caps["w2"].to_string().parse()?;
+                let mut m = Map::new();
+                m.insert("min_confidence".into(), json!(min));
+                m.insert(
+                    "dimensions".into(),
+                    json!([
+                        {"question": caps["q1"].to_string(), "levels": l1, "weight": w1},
+                        {"question": caps["q2"].to_string(), "levels": l2, "weight": w2},
+                    ]),
+                );
+                rubric_action = Some(m);
+            }
             "edge" => {
                 let a = caps["a"].to_string();
                 let node = caps["node"].to_string();
@@ -2170,27 +2346,80 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 let cap = caps["cap"].to_string();
                 let mut with: Map<String, Value> = Map::new();
                 let mut project: Map<String, Value> = Map::new();
+                // `chain.<as>.<capability|with.<k>|project.<k>>` rows build the
+                // nested sub-call list in encounter order. Each distinct `<as>`
+                // becomes one `{capability, as, with?, project?}` entry.
+                let mut chain: Vec<(String, String, Map<String, Value>, Map<String, Value>)> = Vec::new();
+                let chain_idx = |chain: &Vec<(String, String, Map<String, Value>, Map<String, Value>)>, as_name: &str| {
+                    chain.iter().position(|(a, _, _, _)| a == as_name)
+                };
                 for row in &st.table {
                     if row.len() < 2 || row[0].is_empty() {
                         bail!(
-                            "line {}: call step table rows need | with.<key> | value | or | project.<key> | ptr |",
+                            "line {}: call step table rows need | with.<key> | value |, | project.<key> | ptr | or | chain.<as>.<key> | value |",
                             st.line
                         );
+                    }
+                    let cell = row[1].trim();
+                    let val: Value = serde_json::from_str(cell).unwrap_or_else(|_| json!(cell));
+                    if let Some(rest) = row[0].strip_prefix("chain.") {
+                        let (as_name, sub) = rest
+                            .split_once('.')
+                            .ok_or_else(|| anyhow!(
+                                "line {}: chain row {rest:?} must be chain.<as>.<capability|with.<k>|project.<k>>",
+                                st.line
+                            ))?;
+                        let as_name = as_name.to_string();
+                        let idx = chain_idx(&chain, &as_name);
+                        let idx = match idx {
+                            Some(i) => i,
+                            None => {
+                                chain.push((as_name.clone(), String::new(), Map::new(), Map::new()));
+                                chain.len() - 1
+                            }
+                        };
+                        if sub == "capability" {
+                            let capv: String = if let Ok(v2) = serde_json::from_str::<serde_json::Value>(cell) {
+                                v2.as_str().unwrap_or(cell).to_string()
+                            } else {
+                                cell.to_string()
+                            };
+                            chain[idx].1 = capv;
+                        } else if let Some(k) = sub.strip_prefix("with.") {
+                            chain[idx].2.insert(k.to_string(), val);
+                        } else if let Some(k) = sub.strip_prefix("project.") {
+                            chain[idx].3.insert(k.to_string(), val);
+                        } else {
+                            bail!(
+                                "line {}: chain row {sub:?} must be capability / with.<k> / project.<k>",
+                                st.line
+                            );
+                        }
+                        continue;
                     }
                     let (kind, key) = match row[0].split_once('.') {
                         Some((k, rest)) => (k, rest.to_string()),
                         None => ("with", row[0].clone()),
                     };
-                    let cell = row[1].trim();
-                    let val: Value = serde_json::from_str(cell).unwrap_or_else(|_| json!(cell));
                     match kind {
                         "with" => { with.insert(key, val); }
                         "project" => { project.insert(key, val); }
                         other => bail!(
-                            "line {}: call table row {other:?} must start with `with.` or `project.`",
+                            "line {}: call table row {other:?} must start with `with.`, `project.` or `chain.`",
                             st.line
                         ),
                     }
+                }
+                for (as_name, capv, cw, cp) in chain {
+                    if capv.is_empty() {
+                        bail!("line {}: chain entry {as_name:?} needs a `chain.{as_name}.capability` row", st.line);
+                    }
+                    let mut e = Map::new();
+                    e.insert("capability".into(), json!(capv));
+                    e.insert("as".into(), json!(as_name));
+                    if !cw.is_empty() { e.insert("with".into(), Value::Object(cw)); }
+                    if !cp.is_empty() { e.insert("project".into(), Value::Object(cp)); }
+                    call_chain.push(Value::Object(e));
                 }
                 call_action = Some((cap, with, project));
             }
@@ -2215,6 +2444,25 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "question": action_q.clone().unwrap_or_else(|| primary_q.clone()),
             "rules": rules
         }))
+    } else if let Some((q, opt, block, allow)) = gate_action {
+        Some(json!({
+            "kind": "gate",
+            "question": q,
+            "option": opt,
+            "block_at": block,
+            "allow_at": allow,
+        }))
+    } else if let Some(q) = merge_action {
+        Some(json!({
+            "kind": "merge_open_probs",
+            "question": q,
+        }))
+    } else if let Some(mut m) = combine_action {
+        m.insert("kind".into(), json!("combine"));
+        Some(Value::Object(m))
+    } else if let Some(mut m) = rubric_action {
+        m.insert("kind".into(), json!("rubric"));
+        Some(Value::Object(m))
     } else if !copy_keys.is_empty() {
         Some(json!({
             "kind": "copy_keys",
@@ -2224,6 +2472,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
         let mut a = Map::new();
         a.insert("kind".into(), json!("call"));
         a.insert("capability".into(), json!(cap));
+        if !call_chain.is_empty() {
+            a.insert("chain".into(), Value::Array(call_chain));
+        }
         if !with.is_empty() {
             a.insert("with".into(), Value::Object(with));
         }
@@ -2264,13 +2515,50 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
     let mut nodes: Vec<Value> = Vec::new();
     let mut max_iterations: Option<usize> = None;
 
+    let mut policy: Option<Value> = None;
     for st in &feature.background {
         let (caps, tag) = dec_match(&st.kind, &st.text)
             .with_context(|| format!("line {}: {}", st.line, st.text))?;
         match tag {
             "max_iterations" => max_iterations = Some(caps["n"].to_string().parse()?),
+            "policy" => {
+                if st.table.is_empty() {
+                    bail!(
+                        "line {}: `Given the policy` needs a | key | value | table ",
+                        st.line
+                    );
+                }
+                let mut p: Map<String, Value> = Map::new();
+                for row in &st.table {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: policy table rows need | key | value |",
+                            st.line
+                        );
+                    }
+                    let key = row[0].trim();
+                    let raw = row[1].trim();
+                    let val: Value = match key {
+                        "allow_exec" => json!(raw == "true"),
+                        "allow_hosts" | "allow_paths" => {
+                            json!(quoted_tokens_escaped(raw))
+                        }
+                        "max_timeout_ms" | "max_output" | "retries" => json!(
+                            raw.parse::<i64>().map_err(|e| {
+                                anyhow!(
+                                    "line {}: policy key {key:?} expects an integer, got {raw:?}: {e}",
+                                    st.line
+                                )
+                            })?
+                        ),
+                        _ => json!(raw),
+                    };
+                    p.insert(key.to_string(), val);
+                }
+                policy = Some(Value::Object(p));
+            }
             other => bail!(
-                "line {}: {other:?} is not a workflow-level setting; the Background of a @decision                  feature only accepts `Given the workflow runs at most N iterations`",
+                "line {}: {other:?} is not a workflow-level setting; the Background of a @decision feature only accepts `Given the workflow runs at most N iterations` / `Given the policy`",
                 st.line
             ),
         }
@@ -2299,8 +2587,17 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
         "convergence_eps": 0.0001,
         "nodes": nodes,
     });
-    if let Some(p) = config.get("policy") {
-        spec["policy"] = p.clone();
+    // Policy is emitted verbatim (Gherkin background step merged over an
+    // optional config-sidecar policy), *without* default-filling: the source
+    // DSL stores exactly the keys the author wrote, so default-filling would
+    // break the round-trip. Only emit the block when the author pinned one
+    // down at all.
+    if config.get("policy").is_some() || policy.is_some() {
+        let mut merged_policy = config.get("policy").cloned().unwrap_or_else(|| json!({}));
+        if let Some(bp) = &policy {
+            merge(&mut merged_policy, bp);
+        }
+        spec["policy"] = merged_policy;
     }
     if let Some(c) = config.get("capabilities") {
         spec["capabilities"] = c.clone();
@@ -2522,6 +2819,17 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
     let out_dir = Path::new(&o.out);
     let spec_dir = out_dir.join("spec");
     std::fs::create_dir_all(&spec_dir)?;
+
+    // Decision specs may reference the scratch dirs (${env.LAYA_STORE_DIR} &
+    // friends) in `policy.allow_paths`. Guarantee them the same way `dsl smoke`
+    // does, then re-snapshot the secrets store so `validate` can resolve the
+    // references in CI, where no such vars exist. Same treatment as dsl_smoke.rs.
+    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in env_map {
+            std::env::set_var(k, v);
+        }
+        let _ = crate::capability::secret::init(None);
+    }
 
     let mut manifest: Vec<Value> = Vec::new();
     let mut coverage_report: Vec<Coverage> = Vec::new();

@@ -385,3 +385,270 @@ Feature: commit_msg_gate
     h.eq("bdd: regex text p_hit", h2["p_hit"].clone(), json!(0.9));
     h.eq("bdd: regex text p_miss", h2["p_miss"].clone(), json!(0.1));
 }
+
+pub fn test_bdd_decision_actions(h: &mut Harness) {
+    // gate / merge_open_probs / combine / rubric / chain-in-call
+    let src = r#"
+@decision
+Feature: action_kinds
+
+  Scenario: gate_node
+    Given a choice question "is_destructive" asks "Does it destroy state?"
+      | answer | meaning |
+      | A      | safe    |
+      | B      | unsafe  |
+    When any other answer goes to "STOP"
+    Then gate "is_destructive" on option "B" with block 0.7 allow 0.7
+
+  Scenario: merge_node
+    Given a choice question "verdict" asks "Accept or revise?"
+      | answer | meaning |
+      | accept | good    |
+      | revise | improve |
+    When any other answer goes to "STOP"
+    Then merge open probabilities on "verdict"
+
+  Scenario: combine_node
+    Given a choice question "department" asks "Which team?"
+      | answer | meaning     |
+      | billing | money      |
+      | technical | crash    |
+    And a noul question "explicit_urgency" asks "Urgent?"
+    When any other answer goes to "STOP"
+    Then combine "department" with signal "explicit_urgency" fallback "other" review "human_review" requiring 0.8 high 0.85 low 0.15
+
+  Scenario: rubric_node
+    Given a score question "rubric_usefulness" asks "Useful?"
+      | level |
+      | poor  |
+      | good  |
+    And a score question "rubric_clarity" asks "Clear?"
+      | level |
+      | bad   |
+      | ok    |
+      | great |
+    When any other answer goes to "STOP"
+    Then rubric "rubric_usefulness" at 3 levels weight 0.6 and "rubric_clarity" at 4 levels weight 0.4 requiring 0.8
+
+  Scenario: chain_node
+    Given a choice question "go" asks "Go?"
+      | answer | meaning |
+      | A      | yes     |
+    When any other answer goes to "STOP"
+    Then call the capability "stamp"
+      | with.epoch              | ${with.clock.epoch} |
+      | project.stamped         | /text               |
+      | chain.clock.capability  | clock               |
+"#;
+    let feature = bdd::parse(src, "<actions>").expect("parse actions feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile actions");
+    let nodes = &spec["nodes"];
+    let by_name = |n: &str| {
+        nodes
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["name"] == n)
+            .cloned()
+            .unwrap()
+    };
+
+    let gate = by_name("gate_node");
+    h.eq("bdd: gate kind", gate["action"]["kind"].clone(), json!("gate"));
+    h.eq("bdd: gate question", gate["action"]["question"].clone(), json!("is_destructive"));
+    h.eq("bdd: gate option", gate["action"]["option"].clone(), json!("B"));
+    h.eq("bdd: gate block_at", gate["action"]["block_at"].clone(), json!(0.7));
+    h.eq("bdd: gate allow_at", gate["action"]["allow_at"].clone(), json!(0.7));
+
+    let merge = by_name("merge_node");
+    h.eq("bdd: merge kind", merge["action"]["kind"].clone(), json!("merge_open_probs"));
+    h.eq("bdd: merge question", merge["action"]["question"].clone(), json!("verdict"));
+
+    let combine = by_name("combine_node");
+    h.eq("bdd: combine kind", combine["action"]["kind"].clone(), json!("combine"));
+    h.eq("bdd: combine choice", combine["action"]["choice"].clone(), json!("department"));
+    h.eq("bdd: combine signal", combine["action"]["signal"].clone(), json!("explicit_urgency"));
+    h.eq("bdd: combine fallback", combine["action"]["fallback"].clone(), json!("other"));
+    h.eq("bdd: combine review", combine["action"]["review_label"].clone(), json!("human_review"));
+    h.eq("bdd: combine min", combine["action"]["min_confidence"].clone(), json!(0.8));
+    h.eq("bdd: combine high", combine["action"]["high_threshold"].clone(), json!(0.85));
+    h.eq("bdd: combine low", combine["action"]["low_threshold"].clone(), json!(0.15));
+
+    let rubric = by_name("rubric_node");
+    h.eq("bdd: rubric kind", rubric["action"]["kind"].clone(), json!("rubric"));
+    h.eq("bdd: rubric min", rubric["action"]["min_confidence"].clone(), json!(0.8));
+    h.eq("bdd: rubric dims", rubric["action"]["dimensions"].clone(),
+        json!([
+            {"question": "rubric_usefulness", "levels": 3, "weight": 0.6},
+            {"question": "rubric_clarity", "levels": 4, "weight": 0.4},
+        ]));
+
+    let chain = by_name("chain_node");
+    h.eq("bdd: chain kind", chain["action"]["kind"].clone(), json!("call"));
+    h.eq("bdd: chain list", chain["action"]["chain"].clone(),
+        json!([{"capability": "clock", "as": "clock"}]));
+    h.eq("bdd: chain with.epoch", chain["action"]["with"]["epoch"].clone(), json!("${with.clock.epoch}"));
+    h.eq("bdd: chain project.stamped", chain["action"]["project"]["stamped"].clone(), json!("/text"));
+}
+
+pub fn test_bdd_decision_heuristics2(h: &mut Harness) {
+    // match_rules / score bands / deterministic answer / answer_field
+    let src = r#"
+@decision
+Feature: heuristics2
+
+  Scenario: rules_node
+    Given a choice question "department" asks "Which team?"
+      | answer | meaning     |
+      | billing | money      |
+      | technical | crash    |
+    And answer by rules on the field "message" with hit 0.93 and fallback "other"
+      | label     | needles                    |
+      | billing   | "invoice", "charged"       |
+      | technical | "crash", "outage", "500"   |
+    When any other answer goes to "STOP"
+    Then label "BILLING" when the answer to "department" is "billing"
+    And label "PASS" otherwise
+
+  Scenario: score_bands_node
+    Given a score question "rubric_usefulness" asks "Useful?"
+      | level |
+      | poor  |
+      | good  |
+    And score "rubric_usefulness" when the field "rubric_usefulness_hint" contains "high" scoring 1.8 and "mid" scoring 1.0 miss 0.2
+    When any other answer goes to "STOP"
+    Then label "HIGH" when "rubric_usefulness" is at least 1.5
+
+  Scenario: answer_node
+    Given a choice question "go" asks "Go?"
+      | answer | meaning |
+      | A      | yes     |
+    And the answer is always "A"
+    When any other answer goes to "STOP"
+
+  Scenario: answer_field_node
+    Given a choice question "billing_contact" asks "Which contact?"
+      | answer | meaning |
+      | x      | one     |
+    And the answer comes from the field "selected_id"
+    When any other answer goes to "STOP"
+"#;
+    let feature = bdd::parse(src, "<h2>").expect("parse heuristics2");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile heuristics2");
+    let nodes = &spec["nodes"];
+    let by_name = |n: &str| {
+        nodes.as_array().unwrap().iter().find(|x| x["name"] == n).cloned().unwrap()
+    };
+
+    let rules = by_name("rules_node");
+    let hr = &rules["questions"]["department"]["heuristic"];
+    h.eq("bdd: mr field", hr["field"].clone(), json!("message"));
+    h.eq("bdd: mr rules.billing", hr["match_rules"]["billing"].clone(), json!(["invoice", "charged"]));
+    h.eq("bdd: mr rules.technical", hr["match_rules"]["technical"].clone(), json!(["crash", "outage", "500"]));
+    h.eq("bdd: mr p_hit", hr["p_hit"].clone(), json!(0.93));
+    h.eq("bdd: mr fallback", hr["fallback"].clone(), json!("other"));
+
+    let sb = by_name("score_bands_node");
+    let hs = &sb["questions"]["rubric_usefulness"]["heuristic"];
+    h.eq("bdd: sb field", hs["field"].clone(), json!("rubric_usefulness_hint"));
+    h.eq("bdd: sb match_any", hs["match_any"].clone(), json!(["high"]));
+    h.eq("bdd: sb match_mid_any", hs["match_mid_any"].clone(), json!(["mid"]));
+    h.eq("bdd: sb score_hit", hs["score_hit"].clone(), json!(1.8));
+    h.eq("bdd: sb score_mid", hs["score_mid"].clone(), json!(1.0));
+    h.eq("bdd: sb score_miss", hs["score_miss"].clone(), json!(0.2));
+
+    let an = by_name("answer_node");
+    h.eq("bdd: answer", an["questions"]["go"]["heuristic"].clone(), json!({"answer": "A"}));
+
+    let af = by_name("answer_field_node");
+    h.eq("bdd: answer_field", af["questions"]["billing_contact"]["heuristic"].clone(), json!({"answer_field": "selected_id"}));
+}
+
+pub fn test_bdd_decision_policy(h: &mut Harness) {
+    // policy background step + per-node max_retries/min_confidence/keep_state,
+    // and the `Then` keyword guarantee for a node with only When-edge steps.
+    let src = r#"
+@decision
+Feature: policy_workflow
+
+  Background:
+    Given the workflow runs at most 6 iterations
+    Given the policy
+      | allow_exec     | false                |
+      | allow_paths    | "${env.LAYA_WORK_DIR}" |
+      | max_timeout_ms | 8000                 |
+      | max_output     | 65536                |
+      | retries        | 1                    |
+
+  Scenario: route
+    Given a choice question "channel" asks "Which path?"
+      | answer | meaning  |
+      | inbox  | email    |
+      | api    | webhook  |
+    When any other answer goes to "STOP"
+    Then keep the answer to "channel"
+    Then allow up to 3 retries
+
+  Scenario: probe
+    Given a score question "severity" asks "How bad?"
+      | level |
+      | low   |
+      | high  |
+    When any other answer goes to "STOP"
+    Then label "PAGE" when "severity" is at least 1.5
+    And label "BACKLOG" otherwise
+    Then require confidence at least 0.4
+    Then keep the state key "ticket_id"
+"#;
+    let feature = bdd::parse(src, "<policy>").expect("parse policy feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile policy");
+
+    h.eq("bdd: policy max_iterations", spec["max_iterations"].clone(), json!(6));
+    h.eq("bdd: policy allow_exec", spec["policy"]["allow_exec"].clone(), json!(false));
+    h.eq("bdd: policy allow_paths", spec["policy"]["allow_paths"].clone(),
+        json!(["${env.LAYA_WORK_DIR}"]));
+    h.eq("bdd: policy max_timeout_ms", spec["policy"]["max_timeout_ms"].clone(), json!(8000));
+    h.eq("bdd: policy max_output", spec["policy"]["max_output"].clone(), json!(65536));
+    h.eq("bdd: policy retries", spec["policy"]["retries"].clone(), json!(1));
+
+    let nodes = &spec["nodes"];
+    let by_name = |n: &str| {
+        nodes
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["name"] == n)
+            .cloned()
+            .unwrap()
+    };
+    let route = by_name("route");
+    h.eq("bdd: policy node max_retries", route["max_retries"].clone(), json!(3));
+    h.eq("bdd: policy node copy_keys", route["action"].clone(),
+        json!({"kind": "copy_keys", "keys": ["channel"]}));
+
+    let probe = by_name("probe");
+    h.eq("bdd: policy node min_conf", probe["min_confidence"].clone(), json!(0.4));
+    h.eq("bdd: policy node keep", probe["state"].clone(), json!({"keep": ["ticket_id"]}));
+    h.eq("bdd: policy node threshold", probe["action"]["kind"].clone(), json!("threshold"));
+
+    // Sidecar config policy merges under the Gherkin policy for missing keys.
+    let cfg = json!({"policy": {"allow_hosts": ["127.0.0.1"]}});
+    let spec2 = bdd::compile_decision(&feature, &cfg).expect("compile policy + sidecar");
+    h.eq("bdd: policy merged hosts", spec2["policy"]["allow_hosts"].clone(), json!(["127.0.0.1"]));
+    h.eq("bdd: policy merged exec", spec2["policy"]["allow_exec"].clone(), json!(false));
+
+    // No policy authoring at all -> no policy block (round-trip stays clean).
+    let bare = r#"
+@decision
+Feature: bare_workflow
+
+  Scenario: only_node
+    Given a choice question "go" asks "Go?"
+      | answer | meaning |
+      | A      | yes     |
+    When any other answer goes to "STOP"
+"#;
+    let fb = bdd::parse(bare, "<bare>").expect("parse bare feature");
+    let sb = bdd::compile_decision(&fb, &json!({})).expect("compile bare");
+    h.eq("bdd: bare no policy", sb.get("policy").is_none(), true);
+}
