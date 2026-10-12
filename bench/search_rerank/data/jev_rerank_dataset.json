@@ -1,0 +1,1195 @@
+{
+  "n": 11,
+  "seed": 7,
+  "pool_size": 20,
+  "queries": [
+    {
+      "q": "What type of action figure did I buy from a thrift store?",
+      "ans": "a blue Snaggletooth",
+      "gold_snippet": "I'm trying to find a good way to display my vintage watch co",
+      "gold_index": 11,
+      "items": [
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        }
+      ]
+    },
+    {
+      "q": "How many model kits have I worked on or bought?",
+      "ans": "I have worked on or bought five model ki",
+      "gold_snippet": "I'm looking for some tips on weathering techniques for my mo",
+      "gold_index": 5,
+      "items": [
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        }
+      ]
+    },
+    {
+      "q": "What was my previous personal best time for the charity 5K r",
+      "ans": "27 minutes and 45 seconds",
+      "gold_snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and",
+      "gold_index": 11,
+      "items": [
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        }
+      ]
+    },
+    {
+      "q": "How many properties did I view before making an offer on the",
+      "ans": "I viewed four properties before making a",
+      "gold_snippet": "Hi! I'm in the process of buying a house and I need help wit",
+      "gold_index": 15,
+      "items": [
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        }
+      ]
+    },
+    {
+      "q": "Can you remind me what was the average improvement in framer",
+      "ans": "The average improvement in framerate was",
+      "gold_snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad",
+      "gold_index": 18,
+      "items": [
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        }
+      ]
+    },
+    {
+      "q": "Who gave me a new stand mixer as a birthday gift?",
+      "ans": "my sister",
+      "gold_snippet": "I actually got my new stand mixer as a birthday gift from my",
+      "gold_index": 2,
+      "items": [
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        }
+      ]
+    },
+    {
+      "q": "Where do I currently keep my old sneakers?",
+      "ans": "in a shoe rack in my closet",
+      "gold_snippet": "I'm thinking of getting a new pair of sandals with better qu",
+      "gold_index": 10,
+      "items": [
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        }
+      ]
+    },
+    {
+      "q": "Which task did I complete first, fixing the fence or trimmin",
+      "ans": "Fixing the fence",
+      "gold_snippet": "Congratulations on fixing that broken fence! It's great to h",
+      "gold_index": 15,
+      "items": [
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        }
+      ]
+    },
+    {
+      "q": "What charity event did I participate in a month ago?",
+      "ans": "the 'Walk for Hunger' charity event",
+      "gold_snippet": "I'm planning to volunteer at another charity event this week",
+      "gold_index": 17,
+      "items": [
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        }
+      ]
+    },
+    {
+      "q": "For the coffee-to-water ratio in my French press, did I swit",
+      "ans": "You switched to less water (5 ounces) pe",
+      "gold_snippet": "Coffee-to-water ratio experimentation! That's a great way to",
+      "gold_index": 5,
+      "items": [
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "I'm happy to help you plan a detailed",
+          "snippet": "I'm happy to help you plan a detailed crop rotation plan for"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "Happy belated birthday! A new stand mixer is",
+          "snippet": "Happy belated birthday! A new stand mixer is an amazing gift"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        }
+      ]
+    },
+    {
+      "q": "How many plants did I initially plant for tomatoes and chili",
+      "ans": "The information provided is not enough.",
+      "gold_snippet": "I've been enjoying the harvest immensely! I planted 5 tomato",
+      "gold_index": 14,
+      "items": [
+        {
+          "source": "web",
+          "title": "I'm trying to find a good way to",
+          "snippet": "I'm trying to find a good way to display my vintage watch co"
+        },
+        {
+          "source": "web",
+          "title": "Coffee-to-water ratio experimentation! That's a great way to",
+          "snippet": "Coffee-to-water ratio experimentation! That's a great way to"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of getting a new pair of",
+          "snippet": "I'm thinking of getting a new pair of sandals with better qu"
+        },
+        {
+          "source": "web",
+          "title": "Congratulations on fixing that broken fence! It's great",
+          "snippet": "Congratulations on fixing that broken fence! It's great to h"
+        },
+        {
+          "source": "web",
+          "title": "Electric fencing can be a great option for",
+          "snippet": "Electric fencing can be a great option for containing adult"
+        },
+        {
+          "source": "web",
+          "title": "I forgot to mention that I saw the",
+          "snippet": "I forgot to mention that I saw the 3-bedroom townhouse in th"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of buying a new pair of",
+          "snippet": "I'm thinking of buying a new pair of sandals with better qua"
+        },
+        {
+          "source": "web",
+          "title": "What a fantastic collection! You have a diverse",
+          "snippet": "What a fantastic collection! You have a diverse range of rar"
+        },
+        {
+          "source": "web",
+          "title": "That looks like a solid plan! I'm excited",
+          "snippet": "That looks like a solid plan! I'm excited to get started. On"
+        },
+        {
+          "source": "web",
+          "title": "I'm thinking of trying out a new coffee",
+          "snippet": "I'm thinking of trying out a new coffee recipe, but I'm not"
+        },
+        {
+          "source": "web",
+          "title": "I think I'll start with steps 1-3, which",
+          "snippet": "I think I'll start with steps 1-3, which involve defining th"
+        },
+        {
+          "source": "web",
+          "title": "I'm in the city of Oakdale. We'd like",
+          "snippet": "I'm in the city of Oakdale. We'd like to avoid downtown and"
+        },
+        {
+          "source": "web",
+          "title": "The \"Experimental Results\" section of the \"To Adapt",
+          "snippet": "The \"Experimental Results\" section of the \"To Adapt or Not t"
+        },
+        {
+          "source": "web",
+          "title": "I'm planning to volunteer at another charity event",
+          "snippet": "I'm planning to volunteer at another charity event this week"
+        },
+        {
+          "source": "web",
+          "title": "I've been enjoying the harvest immensely! I planted",
+          "snippet": "I've been enjoying the harvest immensely! I planted 5 tomato"
+        },
+        {
+          "source": "web",
+          "title": "Summary ------- The \"To Adapt or Not to",
+          "snippet": "Summary\n-------\n\nThe \"To Adapt or Not to Adapt? Real-Time Ad"
+        },
+        {
+          "source": "web",
+          "title": "I actually got my new stand mixer as",
+          "snippet": "I actually got my new stand mixer as a birthday gift from my"
+        },
+        {
+          "source": "web",
+          "title": "I'm looking for some tips on weathering techniques",
+          "snippet": "I'm looking for some tips on weathering techniques for my mo"
+        },
+        {
+          "source": "web",
+          "title": "Hi! I'm in the process of buying a",
+          "snippet": "Hi! I'm in the process of buying a house and I need help wit"
+        },
+        {
+          "source": "web",
+          "title": "I'm actually planning to participate in a charity",
+          "snippet": "I'm actually planning to participate in a charity cycling ev"
+        }
+      ]
+    }
+  ]
+}

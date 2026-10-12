@@ -1,0 +1,368 @@
+{
+  "bm25": {
+    "n": 11,
+    "p1": 0.2727272727272727,
+    "p3": 0.36363636363636365,
+    "p5": 0.45454545454545453,
+    "mrr5": 0.3409090909090909,
+    "ndcg5": 0.36923693742225916,
+    "avg_ms": 0.0,
+    "p95_ms": 0.0,
+    "per_row": [
+      {
+        "q": "What type of action figure did I buy from a thrift store?",
+        "gold_rank": 9,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "How many model kits have I worked on or bought?",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "What was my previous personal best time for the charity 5K r",
+        "gold_rank": 8,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "How many properties did I view before making an offer on the",
+        "gold_rank": 4,
+        "p1": false,
+        "p3": false,
+        "p5": true,
+        "rr": 0.25,
+        "ndcg5": 0.43067655807339306,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "Can you remind me what was the average improvement in framer",
+        "gold_rank": 10,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "Who gave me a new stand mixer as a birthday gift?",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "Where do I currently keep my old sneakers?",
+        "gold_rank": 7,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "Which task did I complete first, fixing the fence or trimmin",
+        "gold_rank": 7,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "What charity event did I participate in a month ago?",
+        "gold_rank": 2,
+        "p1": false,
+        "p3": true,
+        "p5": true,
+        "rr": 0.5,
+        "ndcg5": 0.6309297535714575,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "For the coffee-to-water ratio in my French press, did I swit",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 0.0
+      },
+      {
+        "q": "How many plants did I initially plant for tomatoes and chili",
+        "gold_rank": 13,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 0.0
+      }
+    ]
+  },
+  "laya": {
+    "n": 11,
+    "p1": 0.09090909090909091,
+    "p3": 0.18181818181818182,
+    "p5": 0.36363636363636365,
+    "mrr5": 0.1621212121212121,
+    "ndcg5": 0.21068448775526677,
+    "avg_ms": 296.19300263636364,
+    "p95_ms": 304.681108,
+    "per_row": [
+      {
+        "q": "What type of action figure did I buy from a thrift store?",
+        "gold_rank": 13,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 316.78709
+      },
+      {
+        "q": "How many model kits have I worked on or bought?",
+        "gold_rank": 4,
+        "p1": false,
+        "p3": false,
+        "p5": true,
+        "rr": 0.25,
+        "ndcg5": 0.43067655807339306,
+        "lat_ms": 287.827945
+      },
+      {
+        "q": "What was my previous personal best time for the charity 5K r",
+        "gold_rank": 16,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 289.68677399999996
+      },
+      {
+        "q": "How many properties did I view before making an offer on the",
+        "gold_rank": 17,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 301.42843200000004
+      },
+      {
+        "q": "Can you remind me what was the average improvement in framer",
+        "gold_rank": 17,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 290.647551
+      },
+      {
+        "q": "Who gave me a new stand mixer as a birthday gift?",
+        "gold_rank": 19,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 301.394158
+      },
+      {
+        "q": "Where do I currently keep my old sneakers?",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 304.681108
+      },
+      {
+        "q": "Which task did I complete first, fixing the fence or trimmin",
+        "gold_rank": 5,
+        "p1": false,
+        "p3": false,
+        "p5": true,
+        "rr": 0.2,
+        "ndcg5": 0.38685280723454163,
+        "lat_ms": 290.823877
+      },
+      {
+        "q": "What charity event did I participate in a month ago?",
+        "gold_rank": 16,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 291.271716
+      },
+      {
+        "q": "For the coffee-to-water ratio in my French press, did I swit",
+        "gold_rank": 10,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 292.03486699999996
+      },
+      {
+        "q": "How many plants did I initially plant for tomatoes and chili",
+        "gold_rank": 3,
+        "p1": false,
+        "p3": true,
+        "p5": true,
+        "rr": 0.3333333333333333,
+        "ndcg5": 0.5,
+        "lat_ms": 291.53951099999995
+      }
+    ]
+  },
+  "qwen": {
+    "n": 11,
+    "p1": 0.45454545454545453,
+    "p3": 0.7272727272727273,
+    "p5": 0.8181818181818182,
+    "mrr5": 0.5984848484848485,
+    "ndcg5": 0.6538669150196644,
+    "avg_ms": 7511.090909090909,
+    "p95_ms": 15854.0,
+    "per_row": [
+      {
+        "q": "What type of action figure did I buy from a thrift store?",
+        "gold_rank": 4,
+        "p1": false,
+        "p3": false,
+        "p5": true,
+        "rr": 0.25,
+        "ndcg5": 0.43067655807339306,
+        "lat_ms": 5056.0
+      },
+      {
+        "q": "How many model kits have I worked on or bought?",
+        "gold_rank": 13,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 4324.0
+      },
+      {
+        "q": "What was my previous personal best time for the charity 5K r",
+        "gold_rank": 6,
+        "p1": false,
+        "p3": false,
+        "p5": false,
+        "rr": 0.0,
+        "ndcg5": 0.0,
+        "lat_ms": 4798.0
+      },
+      {
+        "q": "How many properties did I view before making an offer on the",
+        "gold_rank": 2,
+        "p1": false,
+        "p3": true,
+        "p5": true,
+        "rr": 0.5,
+        "ndcg5": 0.6309297535714575,
+        "lat_ms": 4494.0
+      },
+      {
+        "q": "Can you remind me what was the average improvement in framer",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 4492.0
+      },
+      {
+        "q": "Who gave me a new stand mixer as a birthday gift?",
+        "gold_rank": 2,
+        "p1": false,
+        "p3": true,
+        "p5": true,
+        "rr": 0.5,
+        "ndcg5": 0.6309297535714575,
+        "lat_ms": 4298.0
+      },
+      {
+        "q": "Where do I currently keep my old sneakers?",
+        "gold_rank": 3,
+        "p1": false,
+        "p3": true,
+        "p5": true,
+        "rr": 0.3333333333333333,
+        "ndcg5": 0.5,
+        "lat_ms": 4131.0
+      },
+      {
+        "q": "Which task did I complete first, fixing the fence or trimmin",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 4579.0
+      },
+      {
+        "q": "What charity event did I participate in a month ago?",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 12983.0
+      },
+      {
+        "q": "For the coffee-to-water ratio in my French press, did I swit",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 17613.0
+      },
+      {
+        "q": "How many plants did I initially plant for tomatoes and chili",
+        "gold_rank": 1,
+        "p1": true,
+        "p3": true,
+        "p5": true,
+        "rr": 1.0,
+        "ndcg5": 1.0,
+        "lat_ms": 15854.0
+      }
+    ]
+  }
+}
