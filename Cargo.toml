@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "laya-tch"]
+members = [".", "laya-tch", "bench/search_rerank"]
 resolver = "2"
 
 [package]
