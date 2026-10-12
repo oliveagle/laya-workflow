@@ -174,3 +174,55 @@ Feature: content_safety_guard
     h.eq("bdd: moderate rule1 gte", rules[0]["when"]["value_gte"].clone(), json!(1.5));
     h.eq("bdd: moderate rule2 always", rules[1]["when"]["always"].clone(), json!(true));
 }
+
+/// `is one of "A", "B"` (answer_in) and bare `the answer is "A"` (implicit
+/// action.question) threshold rules, both used by the ole_eval ports.
+pub fn test_bdd_decision_rule_shapes(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: risk_edges
+  Scenario: screen
+    Given a choice question "intent" asks "Which intent?"
+      | answer  | meaning                 |
+      | ok      | normal                  |
+      | stuffing | credential stuffing     |
+      | takeover | account takeover        |
+    When any other answer goes to "STOP"
+    Then label "DENY" when the answer to "intent" is one of "stuffing", "takeover"
+    And label "ALLOW" otherwise
+
+  Scenario: confirm
+    Given a choice question "intent" asks "Confirm?"
+      | answer  | meaning           |
+      | confirm | confirm transfer  |
+      | cancel  | cancel            |
+    When any other answer goes to "STOP"
+    Then label "execute_transfer" when the answer is "confirm"
+    And label "abort" otherwise
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse rule-shapes feature");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile rule-shapes");
+
+    let screen = &spec["nodes"][0];
+    let rules = screen["action"]["rules"].as_array().unwrap();
+    h.eq("bdd: screen rule count", rules.len(), 2);
+    h.eq("bdd: answer_in question", rules[0]["when"]["question"].clone(), json!("intent"));
+    h.eq(
+        "bdd: answer_in list",
+        rules[0]["when"]["answer_in"].clone(),
+        json!(["stuffing", "takeover"]),
+    );
+    h.eq("bdd: answer_in label", rules[0]["label"].clone(), json!("DENY"));
+    h.eq("bdd: always fallback", rules[1]["when"]["always"].clone(), json!(true));
+
+    let confirm = &spec["nodes"][1];
+    let rules2 = confirm["action"]["rules"].as_array().unwrap();
+    h.eq("bdd: confirm rule count", rules2.len(), 2);
+    h.eq("bdd: implicit answer", rules2[0]["when"]["answer"].clone(), json!("confirm"));
+    h.eq(
+        "bdd: implicit answer has no question key",
+        rules2[0]["when"].get("question").is_none(),
+        true,
+    );
+    h.eq("bdd: implicit answer label", rules2[0]["label"].clone(), json!("execute_transfer"));
+}

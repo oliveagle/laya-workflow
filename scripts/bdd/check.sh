@@ -145,4 +145,25 @@ if [ ${#probe_bad[@]} -gt 0 ]; then
   exit 1
 fi
 
-echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate"
+# The decision-graph corpus (bdd/workflows/**/*.feature tagged @decision):
+# one whole workflow per feature, each Scenario one node. A decision step that
+# stops parsing, a generated spec `validate` rejects, or per-feature coverage
+# under the bar must fail CI here, the same way the browser corpus is gated.
+decision_n=0
+decision_bad=0
+while IFS= read -r feat; do
+  decision_n=$((decision_n + 1))
+  dout="$(mktemp -d)"
+  if ! "$BIN" bdd build "$feat" --out "$dout" >/dev/null 2> "$dout/build.err"; then
+    decision_bad=$((decision_bad + 1))
+    echo "bdd check: decision feature failed to build: $feat" >&2
+    cat "$dout/build.err" >&2
+  fi
+  rm -rf "$dout"
+done < <(grep -rl --include="*.feature" "^@decision" "$ROOT/bdd/workflows" | sort)
+if [ "$decision_bad" -gt 0 ]; then
+  echo "bdd check: $decision_bad/$decision_n decision features failed" >&2
+  exit 1
+fi
+
+echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage"

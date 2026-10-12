@@ -900,6 +900,20 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer to "(?P<q>[^"]+)" is one of (?P<list>.+)$"#,
+                )
+                .unwrap(),
+                "label_eq_in",
+            ),
+            (
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer is "(?P<a>.+)"$"#,
+                )
+                .unwrap(),
+                "label_eq_implicit",
+            ),
+            (
+                Regex::new(
                     r#"^label "(?P<label>[^"]+)" when "(?P<q>[^"]+)" is at least (?P<n>\d+(?:\.\d+)?)$"#,
                 )
                 .unwrap(),
@@ -1960,6 +1974,18 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "label_eq" => {
                 rules.push(json!({
                     "when": {"question": caps["q"].to_string(), "answer": caps["a"].to_string()},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_eq_in" => {
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "answer_in": quoted_tokens(&caps["list"])},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_eq_implicit" => {
+                rules.push(json!({
+                    "when": {"answer": caps["a"].to_string()},
                     "label": caps["label"].to_string()
                 }));
             }
