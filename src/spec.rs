@@ -530,6 +530,68 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
 }
 
 /// Core parser: `base_dir` is the directory used to resolve relative refs.
+/// Semantic graph validation beyond the structural parse. The engine would
+/// otherwise only fail (or silently misroute) at *runtime*, hiding the fault
+/// from `validate` / `bdd build` / the dsl smoke gate:
+///   * every edge target (condition + default) names an existing node or STOP
+///   * every action `kind` is one the runtime knows how to run
+///   * every threshold rule's `when.question` references a question on the node
+///     (or the node's own action question, which is implied)
+fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: &str) -> Result<()> {
+    let names: std::collections::HashSet<&str> =
+        nodes.iter().map(|n| n.name.as_str()).collect();
+    if !names.contains(start) {
+        bail!("spec start node {start:?} is not in the graph");
+    }
+    for n in nodes {
+        for dest in n.edge.condition.values() {
+            if dest != "STOP" && dest != "START" && !names.contains(dest.as_str()) {
+                bail!("node {}: edge condition targets unknown node {dest:?}", n.name);
+            }
+        }
+        if let Some(d) = &n.edge.default {
+            if d != "STOP" && d != "START" && !names.contains(d.as_str()) {
+                bail!("node {}: edge default targets unknown node {d:?}", n.name);
+            }
+        }
+    }
+    const KNOWN_KINDS: &[&str] = &[
+        "none", "copy_keys", "merge_open_probs", "threshold", "rubric",
+        "combine", "gate", "ui_proposal", "call",
+    ];
+    for n in node_list {
+        if n.get("workflow").is_some() {
+            continue; // reference node; its expanded nodes are validated above
+        }
+        let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        if let Some(action) = n.get("action") {
+            if let Some(kind) = action.get("kind").and_then(|v| v.as_str()) {
+                if !KNOWN_KINDS.contains(&kind) {
+                    bail!("node {name}: unknown action kind {kind:?}");
+                }
+                if kind == "threshold" {
+                    let aq = action.get("question").and_then(|v| v.as_str());
+                    let questions = n.get("questions").and_then(|v| v.as_object());
+                    if let Some(rules) = action.get("rules").and_then(|v| v.as_array()) {
+                        for r in rules {
+                            let wq = r.pointer("/when/question").and_then(|v| v.as_str());
+                            if let Some(q) = wq {
+                                let known = questions.map(|m| m.contains_key(q)).unwrap_or(false);
+                                if !known && aq != Some(q) {
+                                    bail!(
+                                        "node {name}: threshold rule references unknown question {q:?}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn from_spec_with_dir(
     spec: &Value,
     _parent: Option<&Value>,
@@ -553,6 +615,9 @@ pub fn from_spec_with_dir(
     }
 
     let mut nodes: Vec<WorkflowNode> = Vec::with_capacity(node_list.len());
+    // (sub_name, prefixed_start) pairs collected while expanding reference
+    // nodes, so edges that appear *after* the reference are redirected too.
+    let mut ref_redirects: Vec<(String, String)> = Vec::new();
     for n in node_list {
         // A node may be a `{"workflow": …}` *reference node*: it inlines the
         // referenced workflow's nodes into this graph (namespaced) so nesting
@@ -569,6 +634,7 @@ pub fn from_spec_with_dir(
             // `sub.start` is the sub's own start (unprefixed); the expanded nodes
             // above get `prefix`, so inbound edges must point at the prefixed name.
             let sub_start = format!("{prefix}{}", sub.start);
+            ref_redirects.push((sub_name.to_string(), sub_start.clone()));
             for existing in nodes.iter_mut() {
                 for dest in existing.edge.condition.values_mut() {
                     if dest == sub_name {
@@ -599,6 +665,22 @@ pub fn from_spec_with_dir(
         nodes.push(node_from_spec_with(n, Some(registry.clone()))?);
     }
 
+    // Order-independent reference redirect: a node that appears *after* the
+    // reference in the spec still points at the bare sub-name, which only
+    // exists as the prefixed expansion.
+    for existing in nodes.iter_mut() {
+        for (sub_name, sub_start) in &ref_redirects {
+            for dest in existing.edge.condition.values_mut() {
+                if dest == sub_name {
+                    *dest = sub_start.clone();
+                }
+            }
+            if existing.edge.default.as_deref() == Some(sub_name.as_str()) {
+                existing.edge.default = Some(sub_start.clone());
+            }
+        }
+    }
+
     // If `start` names a node that was expanded from a reference, redirect it to
     // that sub-workflow's own `start` (also namespaced).
     let mut start = start;
@@ -623,6 +705,8 @@ pub fn from_spec_with_dir(
             }
         }
     }
+
+    validate_graph_semantics(&nodes, node_list, &start)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
     if let Some(v) = spec.get("max_iterations").and_then(|v| v.as_u64()) {

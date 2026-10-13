@@ -69,11 +69,16 @@ fn summarize(payload: &str) -> Option<Value> {
 }
 
 
-/// Resolve a dotted path ("result.route", "trace.final_action") against a value.
+/// Resolve a dotted path ("result.route", "trace.final_action",
+/// "trace.steps.0.node") against a value. A purely-numeric segment indexes an
+/// array (serde_json `Value::get` dispatches on the key type).
 fn resolve_path<'v>(root: &'v Value, path: &str) -> Option<&'v Value> {
     let mut cur = root;
     for part in path.split('.') {
-        cur = cur.get(part)?;
+        cur = match part.parse::<usize>() {
+            Ok(i) => cur.get(i)?,
+            Err(_) => cur.get(part)?,
+        };
     }
     Some(cur)
 }

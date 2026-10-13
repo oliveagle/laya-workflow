@@ -172,7 +172,21 @@
     "outage": "QUEUE_TODAY"
   },
   "intake_pipeline_nested": {
-    "outage": "QUEUE_TODAY"
+    "outage": {
+      "result.label": "QUEUE_TODAY",
+      "trace.steps.0.node": "prefilter",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "intake::classify",
+      "trace.steps.1.action": "route",
+      "trace.steps.2.node": "intake::severity_probe",
+      "trace.steps.2.action": "stop",
+      "trace.step_count": 3
+    },
+    "noise": {
+      "trace.steps.0.node": "prefilter",
+      "trace.steps.0.action": "stop",
+      "trace.step_count": 1
+    }
   },
   "content_policy_gate": {
     "threat": "BLOCK",

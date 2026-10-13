@@ -21,6 +21,7 @@ mod persist;
 mod secrets;
 mod t_apps;
 mod t_spec;
+mod t_validate;
 mod t_state;
 mod t_bdd;
 mod timeouts;
@@ -94,6 +95,10 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-folders", t_spec::test_spec_folders),
         ("spec-version", t_spec::test_spec_version),
         ("spec-layers", t_spec::test_spec_layers),
+        ("validate-unknown-action-kind", t_validate::test_validate_unknown_action_kind),
+        ("validate-dangling-edge", t_validate::test_validate_dangling_edge),
+        ("validate-unknown-question-ref", t_validate::test_validate_unknown_question_ref),
+        ("validate-control-ok", t_validate::test_validate_control_ok),
         ("state", t_state::test_state_home_override),
         ("bdd-decision", t_bdd::test_bdd_decision),
         ("bdd-decision-primary-q", t_bdd::test_bdd_decision_primary_q),
