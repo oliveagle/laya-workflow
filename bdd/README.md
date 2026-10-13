@@ -378,13 +378,16 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    EXPECT assertions are enforced. The remaining 37 call-heavy stems that need a
    model/CLI/secret are validate-only offline *by design*.
    Since P31 every multi-node decision stem is **trace-pinned**: a state that
-   walks more than one node must assert its exact route
-   (`trace.steps.N.node`/`.action` + `trace.step_count`) in the expect table,
-   not just the final label. A final label alone lets an authored feature route
-   through wrong intermediate nodes and still pass; the trace assertions turn
-   "runs to the right answer" into "takes the right path", and `dsl smoke`
-   (plus `bdd score --run`'s decision e2e, which shares the table) fails any
-   multi-node state whose expect omits the route. All 17 multi-node stems are
+   walks more than one node must assert its **entire** route in the expect
+   table, not just the final label. A final label alone lets an authored feature
+   route through wrong intermediate nodes and still pass; the trace assertions
+   turn "runs to the right answer" into "takes the right path". Since P38 the
+   pin is complete per step — the *node*, the *action* verb and the routing
+   *answer* at every step (`trace.steps.N.node`/`.action`/`.answer`) plus
+   `trace.step_count` — so a first-hop-only or node-only pin is rejected too,
+   and `dsl smoke` (plus `bdd score --run`'s decision e2e, which shares the
+   table) fails any multi-node state whose expect pins an incomplete path. All
+   17 multi-node stems are
    pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
    integration_hub/protocol_services/refund_with_external_checks/span_selection/
    stateful_pipeline/memory_type/persist_memory/retrieve_loop/dialogue_policy/

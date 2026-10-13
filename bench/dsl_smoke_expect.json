@@ -46,11 +46,17 @@
       "result.page_status": 200,
       "result.page_title": "Deployment Guide",
       "result.page_chars": 144,
-      "trace.final_action": "stop",
       "trace.step_count": 3,
+      "trace.final_action": "stop",
       "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "search",
       "trace.steps.1.node": "do_search",
-      "trace.steps.2.node": "read_top"
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "yes",
+      "trace.steps.2.node": "read_top",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "yes"
     }
   },
   "workflow_guardian": {
@@ -139,43 +145,53 @@
   "memory_type": {
     "episodic": {
       "result.label": "TYPE_EPISODIC",
+      "trace.step_count": 2,
       "trace.steps.0.node": "type",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.8,
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.8
     },
     "semantic": {
       "result.label": "TYPE_SEMANTIC",
+      "trace.step_count": 2,
       "trace.steps.0.node": "type",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.1,
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.1
     },
     "procedural": {
       "result.label": "TYPE_PROCEDURAL",
+      "trace.step_count": 2,
       "trace.steps.0.node": "type",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.1,
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.1
     },
     "preference": {
       "result.label": "TYPE_PREFERENCE",
+      "trace.step_count": 2,
       "trace.steps.0.node": "type",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.1,
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.1
     },
     "other": {
       "result.label": "TYPE_OTHER",
+      "trace.step_count": 2,
       "trace.steps.0.node": "type",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.1,
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.1
     }
   },
   "admission": {
@@ -197,19 +213,23 @@
   "retrieve_loop": {
     "sufficient": {
       "result.label": "STOP_EVIDENCE_OK",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.85,
       "trace.steps.1.node": "stop_check",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.95
     },
     "insufficient": {
       "result.label": "CONTINUE_EVIDENCE_INSUFFICIENT",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 0.85,
       "trace.steps.1.node": "stop_check",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.05
     }
   },
   "stopping_codegraph": {
@@ -228,19 +248,23 @@
   "support_ticket_router_hybrid": {
     "technical": {
       "result.label": "QUEUE_TODAY",
+      "trace.step_count": 2,
       "trace.steps.0.node": "classify",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "technical",
       "trace.steps.1.node": "severity_probe",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.5
     },
     "billing": {
       "result.label": "QUEUE_TODAY",
+      "trace.step_count": 2,
       "trace.steps.0.node": "classify",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "billing",
       "trace.steps.1.node": "severity_probe",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.5
     }
   },
   "rag_triage": {
@@ -252,40 +276,50 @@
   "support_ticket_router": {
     "outage": {
       "result.label": "QUEUE_TODAY",
+      "trace.step_count": 2,
       "trace.steps.0.node": "classify",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "technical",
       "trace.steps.1.node": "severity_probe",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 0.5
     }
   },
   "intake_pipeline_nested": {
     "outage": {
       "result.label": "AUDIT_REQUIRED",
+      "trace.step_count": 4,
       "trace.steps.0.node": "prefilter",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "intake::classify",
       "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "technical",
       "trace.steps.2.node": "intake::severity_probe",
       "trace.steps.2.action": "route",
+      "trace.steps.2.answer": 0.5,
       "trace.steps.3.node": "audit",
       "trace.steps.3.action": "stop",
-      "trace.step_count": 4
+      "trace.steps.3.answer": "B"
     },
     "ticket": {
       "result.label": "AUDIT_SKIPPED",
+      "trace.step_count": 3,
       "trace.steps.0.node": "prefilter",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "intake::classify",
       "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "other",
       "trace.steps.2.node": "audit",
       "trace.steps.2.action": "stop",
-      "trace.step_count": 3
+      "trace.steps.2.answer": "A"
     },
     "noise": {
+      "trace.step_count": 1,
       "trace.steps.0.node": "prefilter",
       "trace.steps.0.action": "stop",
-      "trace.step_count": 1
+      "trace.steps.0.answer": "B"
     }
   },
   "content_policy_gate": {
@@ -325,27 +359,33 @@
   "triage_then_moderate": {
     "safety": {
       "result.gate_action": "CONFIRM",
+      "trace.step_count": 2,
       "trace.steps.0.node": "triage",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "safety_review",
       "trace.steps.1.node": "safety_gate",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "billing": {
       "result.gate_action": "CONFIRM",
+      "trace.step_count": 2,
       "trace.steps.0.node": "triage",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "safety_review",
       "trace.steps.1.node": "safety_gate",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "support": {
       "result.gate_action": "CONFIRM",
+      "trace.step_count": 2,
       "trace.steps.0.node": "triage",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "safety_review",
       "trace.steps.1.node": "safety_gate",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     }
   },
   "refund_policy.v1": {
@@ -358,39 +398,48 @@
   "refund_with_external_checks": {
     "high_risk": {
       "result.label": "REJECTED",
+      "trace.step_count": 2,
       "trace.steps.0.node": "score_risk",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 1.0,
       "trace.steps.1.node": "assess",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "reject"
     },
     "low_risk": {
       "result.label": "APPROVED",
+      "trace.step_count": 2,
       "trace.steps.0.node": "score_risk",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": 1.0,
       "trace.steps.1.node": "assess",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "approve"
     }
   },
   "dialogue_policy": {
     "start": {
       "result.intent": "identify",
+      "trace.step_count": 3,
       "trace.steps.0.node": "greeting",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "greet",
       "trace.steps.1.node": "identifying",
       "trace.steps.1.action": "retry",
+      "trace.steps.1.answer": "identify",
       "trace.steps.2.node": "identifying",
       "trace.steps.2.action": "retry",
-      "trace.step_count": 3
+      "trace.steps.2.answer": "identify"
     },
     "escalation": {
       "result.intent": "noop",
+      "trace.step_count": 2,
       "trace.steps.0.node": "greeting",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "escalate",
       "trace.steps.1.node": "escalated",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "noop"
     }
   },
   "exec_preflight_guard": {
@@ -416,11 +465,13 @@
   "stateful_pipeline": {
     "ticket": {
       "result.capability": "counters",
+      "trace.step_count": 2,
       "trace.steps.0.node": "intake",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "enqueue",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": 1.0
     }
   },
   "support_routing": {
@@ -454,45 +505,55 @@
   "data_pipeline_local": {
     "note": {
       "result.capability": "stamp",
+      "trace.step_count": 2,
       "trace.steps.0.node": "stamp",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "note",
       "trace.steps.1.node": "enrich",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "incident": {
       "result.capability": "stamp",
+      "trace.step_count": 2,
       "trace.steps.0.node": "stamp",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "note",
       "trace.steps.1.node": "enrich",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     }
   },
   "integration_hub": {
     "rpc_route": {
       "result.capability": "backend_rpc",
+      "trace.step_count": 2,
       "trace.steps.0.node": "lookup",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "rpc",
       "trace.steps.1.node": "via_rpc",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "llm_route": {
       "result.capability": "summarizer",
+      "trace.step_count": 2,
       "trace.steps.0.node": "lookup",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "llm",
       "trace.steps.1.node": "via_llm",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "sse_route": {
       "result.capability": "stream",
+      "trace.step_count": 2,
       "trace.steps.0.node": "lookup",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "stream",
       "trace.steps.1.node": "via_sse",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     }
   },
   "notify_macos": {
@@ -503,59 +564,74 @@
   "persist_memory": {
     "go": {
       "result.capability": "mem_db",
+      "trace.step_count": 5,
       "trace.steps.0.node": "reset",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "persist",
       "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "A",
       "trace.steps.2.node": "link",
       "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "A",
       "trace.steps.3.node": "verify",
       "trace.steps.3.action": "route",
+      "trace.steps.3.answer": "A",
       "trace.steps.4.node": "inspect",
       "trace.steps.4.action": "stop",
-      "trace.step_count": 5
+      "trace.steps.4.answer": "A"
     }
   },
   "protocol_services": {
     "tcp": {
       "result.capability": "ping_upstream",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "raw_socket",
       "trace.steps.1.node": "do_tcp",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "bus": {
       "result.capability": "bus_publish",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "message_bus",
       "trace.steps.1.node": "do_bus",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "mail": {
       "result.capability": "notify_mail",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "notification",
       "trace.steps.1.node": "do_mail",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "s3": {
       "result.capability": "objects",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "object_store",
       "trace.steps.1.node": "do_s3",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     },
     "metrics": {
       "result.capability": "metrics_endpoint",
+      "trace.step_count": 2,
       "trace.steps.0.node": "route",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "observability",
       "trace.steps.1.node": "do_metrics",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "A"
     }
   },
   "routing_codegraph": {
@@ -595,35 +671,43 @@
   "cua_desktop": {
     "route": {
       "result.capability": "cua",
+      "trace.step_count": 2,
       "trace.steps.0.node": "decide",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "route",
       "trace.steps.1.action": "stop",
-      "trace.step_count": 2
+      "trace.steps.1.answer": "B"
     }
   },
   "feishu_unread_digest": {
     "digest": {
       "result.capability": "classify",
+      "trace.step_count": 3,
       "trace.steps.0.node": "collect",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
       "trace.steps.1.node": "classify",
       "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "A",
       "trace.steps.2.node": "triage",
       "trace.steps.2.action": "stop",
-      "trace.step_count": 3
+      "trace.steps.2.answer": "A"
     }
   },
   "span_selection": {
     "select": {
       "result.capability": "spans",
+      "trace.step_count": 3,
       "trace.steps.0.node": "extract",
       "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "B",
       "trace.steps.1.node": "select",
       "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "none",
       "trace.steps.2.node": "not_found",
       "trace.steps.2.action": "stop",
-      "trace.step_count": 3
+      "trace.steps.2.answer": "A"
     }
   }
 }

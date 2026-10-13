@@ -90,6 +90,32 @@ fn resolve_path<'v>(root: &'v Value, path: &str) -> Option<&'v Value> {
 /// means the run satisfies the expectation. Shared by `dsl smoke` and
 /// `bdd score --run`'s decision e2e, so the authoring gate enforces the same
 /// decision-output semantics as the behavioural smoke.
+/// P38 structural half of the decision-trace gate: a decision state that walks
+/// more than one node must pin its **entire** execution path in the expect
+/// table — `node`, the `action` verb and the routing `answer` at *every* step,
+/// plus `trace.step_count` — so the gate proves "took the right path, via the
+/// right action, on the right answer", not merely "produced the right final
+/// label". A first-hop-only (or node-only) pin would let an authored feature
+/// route through different intermediate nodes/answers/verbs and still pass.
+/// Returns the missing keys (empty when the path is fully pinned).
+pub fn missing_trace_pins(want: &Value, step_count: usize) -> Vec<String> {
+    let mut missing: Vec<String> = Vec::new();
+    let m = want.as_object();
+    let has = |k: &str| m.map(|m| m.contains_key(k)).unwrap_or(false);
+    if !has("trace.step_count") {
+        missing.push("trace.step_count".into());
+    }
+    for i in 0..step_count {
+        for field in ["node", "action", "answer"] {
+            let k = format!("trace.steps.{i}.{field}");
+            if !has(&k) {
+                missing.push(k);
+            }
+        }
+    }
+    missing
+}
+
 pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec<String> {
     let res = out.to_json();
     let mut problems = Vec::new();
@@ -480,27 +506,24 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                         fails += 1;
                         eprintln!("       [FAIL] {label}: {msg}");
                     }
-                    // P31 structural half of the decision-trace gate: a state
-                    // that walks more than one node must pin its route
-                    // (trace.steps.N.node/.action + trace.step_count) in the
-                    // expect table. A final label alone would let an authored
-                    // feature route through wrong intermediate nodes and still
-                    // pass — this turns "runs to the right answer" into "takes
-                    // the right path". Runs in check.sh via dsl smoke, and
-                    // applies to bdd score --run's decision e2e (shared table).
+                    // P31/P38 structural half of the decision-trace gate: a
+                    // state that walks more than one node must pin its entire
+                    // route — node + action + answer at every step, plus
+                    // trace.step_count (see `missing_trace_pins`). A final label
+                    // alone, or a first-hop-only pin, would let an authored
+                    // feature route through wrong intermediate nodes / actions /
+                    // answers and still pass — this turns "runs to the right
+                    // answer" into "takes the right path on the right evidence".
+                    // Runs in check.sh via dsl smoke, and applies to
+                    // bdd score --run's decision e2e (shared table).
                     if steps.len() > 1 {
-                        let trace_pinned = want
-                            .as_object()
-                            .map(|m| {
-                                m.contains_key("trace.steps.0.node")
-                                    && m.contains_key("trace.step_count")
-                            })
-                            .unwrap_or(false);
-                        if !trace_pinned {
+                        let missing = missing_trace_pins(want, steps.len());
+                        if !missing.is_empty() {
                             fails += 1;
                             eprintln!(
-                                "       [FAIL] {label}: walks {} nodes but expect pins no trace path (add trace.steps.N.node/.action + trace.step_count)",
-                                steps.len()
+                                "       [FAIL] {label}: walks {} nodes but expect pins an incomplete trace path — missing {} (pin node/action/answer for every step + trace.step_count)",
+                                steps.len(),
+                                missing.join(", ")
                             );
                         }
                     }

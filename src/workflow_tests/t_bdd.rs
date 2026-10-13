@@ -1318,6 +1318,61 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
         .count();
     h.check("bdd: trace-pinned stems >= 17", trace_pinned_stems >= 17);
 
+    // P38 static floor: the corpus pins a routing *answer* at every step (on
+    // top of node+action), not just the first hop. Count the pinned
+    // trace.steps.N.answer keys across all stems.
+    let answer_pins: usize = expect_obj
+        .values()
+        .filter_map(Value::as_object)
+        .flat_map(|m| m.values())
+        .filter_map(Value::as_object)
+        .map(|o| {
+            o.keys()
+                .filter(|k| k.starts_with("trace.steps.") && k.ends_with(".answer"))
+                .count()
+        })
+        .sum();
+    h.check("bdd: trace answer pins >= 60", answer_pins >= 60);
+
+    // P38 pure checks on the shared gate: a first-hop-only pin is rejected (the
+    // pre-P38 gate accepted it), a fully pinned path is accepted, and a missing
+    // object (string label) for a multi-node walk is rejected wholesale.
+    let first_hop_only = serde_json::json!({
+        "trace.step_count": 3,
+        "trace.steps.0.node": "a",
+    });
+    h.check(
+        "bdd: first-hop-only trace pin is rejected",
+        !laya_workflow::dsl_smoke::missing_trace_pins(&first_hop_only, 3).is_empty(),
+    );
+    h.check(
+        "bdd: node-only path (no action/answer) is rejected",
+        !laya_workflow::dsl_smoke::missing_trace_pins(
+            &serde_json::json!({
+                "trace.step_count": 2,
+                "trace.steps.0.node": "a", "trace.steps.1.node": "b",
+            }),
+            2,
+        )
+        .is_empty(),
+    );
+    h.check(
+        "bdd: fully pinned trace path is accepted",
+        laya_workflow::dsl_smoke::missing_trace_pins(
+            &serde_json::json!({
+                "trace.step_count": 2,
+                "trace.steps.0.node": "a", "trace.steps.0.action": "route", "trace.steps.0.answer": "x",
+                "trace.steps.1.node": "b", "trace.steps.1.action": "stop", "trace.steps.1.answer": "A",
+            }),
+            2,
+        )
+        .is_empty(),
+    );
+    h.check(
+        "bdd: string label for a multi-node walk is rejected",
+        !laya_workflow::dsl_smoke::missing_trace_pins(&Value::String("PASS".into()), 2).is_empty(),
+    );
+
     // Runtime structural: discover dsl specs, run every registered state,
     // and require multi-node states to pin their trace path.
     let dsl_root = root.join("dsl");
@@ -1375,20 +1430,35 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
                         .unwrap_or_default();
                     if steps.len() > 1 {
                         multi_states += 1;
-                        let pinned = expect_obj
+                        let want = expect_obj
                             .get(&stem)
                             .and_then(|v| v.as_object())
                             .and_then(|m| m.get(label))
-                            .and_then(Value::as_object)
-                            .map(|o| {
-                                o.contains_key("trace.steps.0.node")
-                                    && o.contains_key("trace.step_count")
-                            })
-                            .unwrap_or(false);
+                            .cloned()
+                            .unwrap_or(Value::Null);
+                        let missing =
+                            laya_workflow::dsl_smoke::missing_trace_pins(&want, steps.len());
                         h.check(
-                            &format!("bdd: multi-node {stem}:{label} pins trace path"),
-                            pinned,
+                            &format!("bdd: multi-node {stem}:{label} pins full trace path"),
+                            missing.is_empty(),
                         );
+                        // P38 load-bearing negative: corrupt one pinned routing
+                        // answer and prove the shared check_expect catches it —
+                        // the answer pin actually discriminates, not just exists.
+                        if let Some(k) = want.as_object().and_then(|o| {
+                            o.keys()
+                                .find(|k| k.starts_with("trace.steps.") && k.ends_with(".answer"))
+                                .cloned()
+                        }) {
+                            let mut tampered = want.clone();
+                            tampered[k.as_str()] = Value::String("P38-TAMPER".into());
+                            let caught =
+                                !laya_workflow::dsl_smoke::check_expect(&out, &tampered).is_empty();
+                            h.check(
+                                &format!("bdd: tampering {stem}:{label}.{k} is caught"),
+                                caught,
+                            );
+                        }
                     }
                 }
                 Err(_e) => {
