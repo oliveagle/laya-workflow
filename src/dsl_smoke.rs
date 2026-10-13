@@ -234,6 +234,19 @@ pub(crate) fn spec_network_targets(spec: &Value) -> Vec<(String, u16)> {
     };
     for cdef in caps.values() {
         let Some(obj) = cdef.as_object() else { continue };
+        // A `plugin` capability declares no endpoint/url; its network targets
+        // live inside the plugin script (P33). Static scan: http_get calls +
+        // URL string literals, comments ignored.
+        if obj.get("kind").and_then(Value::as_str) == Some("plugin") {
+            if let Some(pid) = obj.get("plugin").and_then(Value::as_str) {
+                for t in crate::capability::plugin::plugin_script_network_targets(pid) {
+                    if !out.contains(&t) {
+                        out.push(t);
+                    }
+                }
+            }
+            continue;
+        }
         for field in ["endpoint", "url"] {
             let Some(raw) = obj.get(field).and_then(|v| v.as_str()) else {
                 continue;
@@ -275,6 +288,41 @@ pub fn network_bound_offline(spec: &Value) -> bool {
     !targets.iter().any(|(h, p)| tcp_reachable(h, *p))
 }
 
+/// True when a spec is network-bound and at least one declared target is an
+/// *external* host (not loopback / RFC1918 private / link-local). The offline
+/// smoke must never perform real internet I/O, so a spec that depends on the
+/// external network has its states skipped (validate-only) there; the
+/// integration / live job exercises them for real. Local mocks (127.0.0.1,
+/// 10.x, 192.168.x, ...) stay "online" and keep running against the harness.
+pub fn network_bound_external(spec: &Value) -> bool {
+    let targets = spec_network_targets(spec);
+    !targets.is_empty() && targets.iter().any(|(h, _)| !is_private_host(h))
+}
+
+/// Loopback, RFC1918 private, link-local and CGNAT address families — hosts
+/// that do not leave the machine / local network and are safe for the offline
+/// smoke to touch.
+fn is_private_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") || host == "::1" || host == "0.0.0.0" {
+        return true;
+    }
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let o0: Option<u16> = parts[0].parse().ok();
+    let o1: Option<u16> = parts[1].parse().ok();
+    match (o0, o1) {
+        (Some(10), _) => true,                                  // 10/8
+        (Some(127), _) => true,                                 // loopback
+        (Some(169), Some(254)) => true,                         // link-local
+        (Some(172), Some(o1)) if (16..=31).contains(&o1) => true, // 172.16/12
+        (Some(192), Some(168)) => true,                         // 192.168/16
+        (Some(100), Some(o1)) if (64..=127).contains(&o1) => true, // CGNAT 100.64/10
+        _ => false,
+    }
+}
+
 pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let root: PathBuf = match &opts.dsl_dir {
         Some(d) => PathBuf::from(d),
@@ -310,6 +358,12 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             Box::new(crate::backend::LayaBackend::new(u));
         (b, format!("laya-tch @ {u}"))
     } else {
+        // Offline smoke: bound plugin `http_get`/external I/O to a short
+        // timeout so a network call that slips past static detection fails
+        // fast (and is then skipped as external/offline) instead of hanging
+        // for the capability's full timeout. Local mocks answer in ms, so
+        // they are unaffected.
+        std::env::set_var("LAYA_SMOKE_NET_TIMEOUT_MS", "1500");
         let b: Box<dyn crate::workflow::Decide> =
             Box::new(crate::backend::HeuristicBackend);
         (b, "offline heuristic".to_string())
@@ -361,10 +415,27 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
         for (label, st) in state_map {
+            // P33: the offline smoke must not perform real internet I/O. A
+            // spec that is network-bound to an external (non-local) host has
+            // its states skipped here (validate-only) — e.g. the
+            // `hf_trending` plugin reaching huggingface.co was costing ~16 s
+            // per run before the static plugin-script scan classified it.
+            // The integration / live job runs these states for real.
+            if opts.base_url.is_none() && network_bound_external(&raw_spec) {
+                if !opts.quiet {
+                    eprintln!(
+                        "       {label}: external network target(s) — skipped, validate only (runs in the integration job)"
+                    );
+                }
+                skipped += 1;
+                continue;
+            }
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
                 Err(e) => {
-                    if network_bound_offline(&raw_spec) {
+                    if network_bound_offline(&raw_spec)
+                        || (opts.base_url.is_none() && network_bound_external(&raw_spec))
+                    {
                         if !opts.quiet {
                             eprintln!(
                                 "       {label}: offline (network endpoint(s) unreachable) — skipped, validate only"

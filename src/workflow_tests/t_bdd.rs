@@ -1094,7 +1094,7 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
 /// not the network.
 pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
     use laya_workflow::backend::HeuristicBackend;
-    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_offline};
+    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external, network_bound_offline};
     let root = bdd::repo_root();
     // Mirror dsl_smoke's startup so specs referencing ${env.X}/${secret.X}
     // (e.g. support_ticket_router_hybrid's allow_paths) resolve exactly as
@@ -1175,6 +1175,14 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
             }
         };
         for (label, st) in smap {
+            // Mirror dsl smoke's P33 rule: offline harness never performs
+            // external internet I/O, so a spec that is network-bound to an
+            // external host has its states skipped (validate-only), exactly
+            // like `dsl smoke`. hf_trending (huggingface.co via plugin) would
+            // otherwise hang the test for ~16 s.
+            if network_bound_external(&raw_spec) {
+                continue;
+            }
             match wf.run(&HeuristicBackend, st) {
                 Ok(out) => {
                     let steps = out
@@ -1203,10 +1211,13 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
                 }
                 Err(_e) => {
                     // Offline harness: a network-bound spec whose endpoints are
-                    // unreachable skips its states (validate-only), exactly like
-                    // `dsl smoke`. The mocks-up integration run checks those
-                    // for real.
-                    if !network_bound_offline(&raw_spec) {
+                    // unreachable (or that depends on an external host in this
+                    // offline run) skips its states (validate-only), exactly
+                    // like `dsl smoke`. The mocks-up integration run checks
+                    // those for real.
+                    if !(network_bound_offline(&raw_spec)
+                        || network_bound_external(&raw_spec))
+                    {
                         h.check(
                             &format!("bdd: trace {stem}:{label} runs offline"),
                             false,
@@ -1217,6 +1228,72 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
         }
     }
     h.check("bdd: multi-node trace states > 0", multi_states > 0);
+}
+
+/// P33 offline-external skip: a spec that is network-bound to an external
+/// (non-local) host must be classified so the offline smoke skips its states
+/// (validate-only) instead of performing real internet I/O. Before this, the
+/// `hf_trending` plugin spec reached huggingface.co for real and cost ~16 s
+/// per gate run. A comment that only *mentions* a URL (cua's github link) must
+/// NOT be misclassified, and local-mock endpoints must stay runnable.
+pub fn test_bdd_smoke_offline_external_skip(h: &mut Harness) {
+    use laya_workflow::capability::plugin::plugin_script_network_targets;
+    use laya_workflow::dsl_smoke::network_bound_external;
+    let root = bdd::repo_root();
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+
+    // Static script scan: the hf-trending plugin's http_get reaches
+    // huggingface.co:443.
+    let tgt = plugin_script_network_targets("websites/hf-trending");
+    h.check(
+        "p33: hf-trending plugin scans to huggingface.co",
+        tgt.iter().any(|(h, p)| h == "huggingface.co" && *p == 443),
+    );
+    let hf = load("dsl/capabilities/hf_trending.json");
+    h.check("p33: hf_trending spec is network-bound external", network_bound_external(&hf));
+
+    // cua's plugin only *mentions* github.com in a comment, never calls
+    // http_get → must not be classified external (it is a trace-pinned stem
+    // and must keep running offline).
+    let cua = load("dsl/capabilities/cua_desktop.json");
+    h.check(
+        "p33: cua_desktop comment URL not misclassified",
+        !network_bound_external(&cua),
+    );
+
+    // A local-mock spec (127.0.0.1) is not external; it is offline only when
+    // its local listener is absent.
+    let refund = load("dsl/capabilities/refund_with_external_checks.json");
+    h.check(
+        "p33: local mock spec not external",
+        !network_bound_external(&refund),
+    );
+
+    // End to end: the offline smoke skips hf_trending's state (exit 0) and
+    // reports the external-network skip instead of running it.
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let out = std::process::Command::new(&bin)
+        .args(["dsl", "smoke", "--filter", "hf_trending"])
+        .current_dir(&root)
+        .output()
+        .expect("run dsl smoke");
+    h.check("p33: hf_trending offline smoke exits 0", out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    h.check(
+        "p33: hf_trending state skipped external",
+        err.contains("external network target(s)"),
+    );
+
+    // network_bound_offline's P29 contract (local-mock spec offline when its
+    // listener is gone) is exercised by the P31 trace-path-floor test and the
+    // mocks-down integration run; not repeated here.
 }
 
 /// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the

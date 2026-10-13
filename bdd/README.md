@@ -366,6 +366,13 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    skipped (validate-only, reported as `offline: N network endpoint(s)
    unreachable — states skipped, validate only`) instead of failing — the same
    skip-don't-hang policy the rest of the harness applies to network sections.
+   Since P33 the offline smoke never performs real internet I/O: `plugin`-kind
+   capabilities (which declare no `endpoint`/`url`) are statically scanned for
+   `http_get` + URL literals in their rhai entry (comments ignored), and a spec
+   whose targets include an external host has its states skipped up front
+   (validate-only) — e.g. the `hf_trending` huggingface.co plugin went from
+   ~16 s per gate run to ~0 ms. Plugin `http_get` additionally carries a 1.5 s
+   timeout cap in offline smoke so dynamic URLs fail fast instead of hanging.
    With the mocks up (integration CI / `bench/mock_services.sh start` + the two
    `mock serve` processes on 8791/8792) every registered state runs and the
    EXPECT assertions are enforced. The remaining 37 call-heavy stems that need a

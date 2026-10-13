@@ -153,7 +153,144 @@ struct Sources {
     pages: Vec<(String, String)>,
     dir: Option<PathBuf>,
 }
-/// Plugins compiled into this binary (one layer of the resolution order).
+/// Best-effort static scan of a plugin's entry script for the network targets
+/// its `http_get` calls can reach. Used by the dsl-smoke offline detector
+/// (P33): a `plugin`-kind capability declares no `endpoint`/`url`, so without
+/// this scan its states would perform real internet I/O in the offline smoke
+/// (e.g. `hf_trending` → huggingface.co, ~16 s per run).
+///
+/// A plugin counts as network-bound only when its *code* (comments stripped,
+/// string literals kept) contains the `http_get` identifier **and** at least
+/// one `http(s)://host[:port]` string literal — so a docstring that merely
+/// mentions a URL (e.g. `cua`'s `https://github.com/trycua/cua` link) is not
+/// misclassified. Hosts whose URLs are built entirely dynamically are missed;
+/// the smoke harness falls back to a short network timeout for those.
+pub fn plugin_script_network_targets(plugin: &str) -> Vec<(String, u16)> {
+    let mut out: Vec<(String, u16)> = Vec::new();
+    if plugin.trim().is_empty() {
+        return out;
+    }
+    let cap = PluginCap {
+        plugin: plugin.to_string(),
+        ..Default::default()
+    };
+    let Ok(sources) = load_sources(&cap) else {
+        return out;
+    };
+    let (has_http_get, urls) = scan_plugin_entry(&sources.entry);
+    if !has_http_get {
+        return out;
+    }
+    for u in urls {
+        if let Some(t) = url_authority(&u) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// Comment-aware scan of a rhai plugin entry: returns whether the code calls
+/// `http_get` and the `http(s)://` URLs that appear in string literals.
+fn scan_plugin_entry(entry: &str) -> (bool, Vec<String>) {
+    let bytes = entry.as_bytes();
+    let mut i = 0usize;
+    let mut has_http_get = false;
+    let mut urls: Vec<String> = Vec::new();
+    // token buffer for identifiers
+    let mut ident = String::new();
+    let mut flush_ident = |ident: &mut String, has: &mut bool| {
+        if ident == "http_get" {
+            *has = true;
+        }
+        ident.clear();
+    };
+    while i < bytes.len() {
+        let c = bytes[i];
+        // line comment
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // block comment
+        if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        // string literal
+        if c == b'"' {
+            flush_ident(&mut ident, &mut has_http_get);
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            let lit = &entry[start..i.min(bytes.len())];
+            if lit.contains("http://") || lit.contains("https://") {
+                urls.push(lit.to_string());
+            }
+            if i < bytes.len() {
+                i += 1; // closing quote
+            }
+            continue;
+        }
+        // identifier characters
+        if c.is_ascii_alphanumeric() || c == b'_' {
+            ident.push(c as char);
+            i += 1;
+            continue;
+        }
+        flush_ident(&mut ident, &mut has_http_get);
+        i += 1;
+    }
+    flush_ident(&mut ident, &mut has_http_get);
+    (has_http_get, urls)
+}
+
+/// Parse an `http(s)://host[:port]` URL into (host, port).
+fn url_authority(url: &str) -> Option<(String, u16)> {
+    let is_https = url.starts_with("https://");
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+            (h, p.parse::<u16>().ok()?)
+        }
+        _ => (authority, if is_https { 443 } else { 80 }),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port))
+}
+
+/// Offline-smoke network timeout cap. `dsl smoke` (offline) sets
+/// `LAYA_SMOKE_NET_TIMEOUT_MS` so plugin `http_get` calls to external hosts
+/// fail fast (and are then skipped as external/offline) instead of hanging for
+/// the capability's full timeout. Unset in normal runs.
+fn smoke_capped_timeout(base: Duration) -> Duration {
+    let Ok(raw) = std::env::var("LAYA_SMOKE_NET_TIMEOUT_MS") else {
+        return base;
+    };
+    let Ok(ms) = raw.trim().parse::<u64>() else {
+        return base;
+    };
+    base.min(Duration::from_millis(ms.max(1)))
+}
+
 /// Split a plugin id into `(group, name)`; a bare name has an empty group.
 fn split_id(id: &str) -> (&str, &str) {
     match id.trim().rfind('/') {
@@ -195,6 +332,7 @@ fn child_id(manifest: &Manifest, root: &std::path::Path) -> String {
         None => manifest.name.clone(),
     }
 }
+/// Plugins compiled into this binary (one layer of the resolution order).
 fn builtin(name: &str) -> Option<Sources> {
     let (manifest, entry, pages): (&str, &str, Vec<(&str, &str)>) = match name {
         ALPHAXIV_PLUGIN => (
@@ -1006,7 +1144,7 @@ fn read_file_sources(file: &std::path::Path, fallback: &str) -> Result<Sources> 
         dir: parent.map(std::path::Path::to_path_buf),
     })
 }
-fn load_sources(cap: &PluginCap) -> Result<Sources> {
+pub(crate) fn load_sources(cap: &PluginCap) -> Result<Sources> {
     let dir = cap.dir.trim();
     let entry = cap.entry.trim();
     if !dir.is_empty() {
@@ -1320,9 +1458,11 @@ fn build_engine(max_operations: u64) -> Engine {
             let v = h
                 .with(|st| {
                     check_host(url, &st.policy)?;
-                    let agent = ureq::AgentBuilder::new()
-                        .timeout(bounded_timeout(st.timeout.as_millis() as u64, &st.policy))
-                        .build();
+                    let t = smoke_capped_timeout(bounded_timeout(
+                        st.timeout.as_millis() as u64,
+                        &st.policy,
+                    ));
+                    let agent = ureq::AgentBuilder::new().timeout(t).build();
                     let resp = agent
                         .get(url)
                         .call()
