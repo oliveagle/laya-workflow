@@ -386,7 +386,10 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    *answer* at every step (`trace.steps.N.node`/`.action`/`.answer`) plus
    `trace.step_count` — so a first-hop-only or node-only pin is rejected too,
    and `dsl smoke` (plus `bdd score --run`'s decision e2e, which shares the
-   table) fails any multi-node state whose expect pins an incomplete path. All
+   table) fails any multi-node state whose expect pins an incomplete path. Since P41 a multi-node state with *no* expect entry at all is a hard
+   failure too — it used to be silently skipped by `if let Some(want)` — so the
+   smoke gate and the `bdd-smoke-trace-path-floor` regression test can never
+   silently disagree. All
    17 multi-node stems are
    pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
    integration_hub/protocol_services/refund_with_external_checks/span_selection/
