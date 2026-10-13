@@ -35,6 +35,24 @@
     "fail_ph": "FAIL_PLACEHOLDER",
     "fail_links": "FAIL_LINKS"
   },
+  "web_research": {
+    "search": {
+      "result.mode": "search",
+      "result.query": "laya",
+      "result.search_status": 200,
+      "result.result_count": 2,
+      "result.top_title": "laya overview",
+      "result.top_url": "http://127.0.0.1:8792/page?name=guide",
+      "result.page_status": 200,
+      "result.page_title": "Deployment Guide",
+      "result.page_chars": 144,
+      "trace.final_action": "stop",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "route",
+      "trace.steps.1.node": "do_search",
+      "trace.steps.2.node": "read_top"
+    }
+  },
   "workflow_guardian": {
     "ok": "OK",
     "fail_task": "FAIL_TASK_LAYER",

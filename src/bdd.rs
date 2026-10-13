@@ -6071,6 +6071,22 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
                                             secs += out.trace.total_latency_ms / 1000.0;
                                         }
                                         Err(e) => {
+                                            // Offline detection: a state that
+                                            // errors only because it needs a
+                                            // network endpoint that is down
+                                            // (local mocks absent / no network)
+                                            // is skipped, not a regression — the
+                                            // structural half is the offline
+                                            // proof, and the integration job
+                                            // runs it for real.
+                                            if crate::dsl_smoke::network_bound_offline(&spec) {
+                                                eprintln!(
+                                                    "  {id}: state {label:?} skipped offline (network endpoint(s) unreachable), structural proof only",
+                                                    id = t.id,
+                                                    label = label
+                                                );
+                                                continue;
+                                            }
                                             fails += 1;
                                             problems.push(format!(
                                                 "{}: state {label:?} failed offline: {e:#}",

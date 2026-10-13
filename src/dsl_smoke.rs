@@ -3,7 +3,7 @@
 //! Rust replacement for `laya-workflow dsl smoke` — same logic, no Python.
 
 use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -113,6 +113,123 @@ pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     Ok(map)
 }
 
+// ─── offline detection ────────────────────────────────────────────────────────
+//
+// A spec whose capabilities talk to an external listener (web_search, web_fetch,
+// agent, rpc, http, webhook, ...) can only run its behavioural smoke states when
+// the listener is up. The local mocks make that possible offline; in CI the
+// integration job starts them and the plain `check` job does not. Rather than
+// report a regression when the environment simply has no listener, we probe the
+// spec's resolvable endpoints and skip the states (validate-only) when they are
+// all unreachable — the same "skip, don't hang or fail" policy the rest of the
+// harness already applies to network-dependent sections.
+
+/// Expand `${env.X}` / `${secret.X}` for a probe URL. Unlike the engine's
+/// strict resolver, a missing name leaves the reference literal (so the target
+/// simply does not resolve); probing must never error.
+fn expand_env_only_loose(s: &str) -> String {
+    if !s.contains("${") {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(i) = rest.find("${") {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 2..];
+        match after.find('}') {
+            Some(j) => {
+                let path = &after[..j];
+                match path.strip_prefix("env.").or_else(|| path.strip_prefix("secret.")) {
+                    Some(name) => {
+                        if let Ok(v) = std::env::var(name) {
+                            out.push_str(&v);
+                        } else if let Ok(v) = crate::capability::secret::get(name) {
+                            out.push_str(&v);
+                        }
+                        // unresolved → the URL stays partially literal, and
+                        // parse_http_host_port below declines it.
+                    }
+                    None => out.push_str(&format!("${{{path}}}")),
+                }
+                rest = &after[j + 1..];
+            }
+            None => break,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Parse an `http(s)://host[:port]` URL into (host, port).
+fn parse_http_host_port(url: &str) -> Option<(String, u16)> {
+    let is_https = url.starts_with("https://");
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let authority = rest.split('/').next()?;
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+            (h, p.parse::<u16>().ok()?)
+        }
+        _ => (authority, if is_https { 443 } else { 80 }),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((host.to_string(), port))
+}
+
+/// Collect the unique (host, port) network targets a spec's capabilities
+/// declare via their top-level `endpoint` / `url` fields. Web_search uses
+/// `endpoint`; agent/rpc/graphql/http/webhook/... use `url`.
+pub(crate) fn spec_network_targets(spec: &Value) -> Vec<(String, u16)> {
+    let mut out: Vec<(String, u16)> = Vec::new();
+    let Some(caps) = spec.get("capabilities").and_then(|v| v.as_object()) else {
+        return out;
+    };
+    for cdef in caps.values() {
+        let Some(obj) = cdef.as_object() else { continue };
+        for field in ["endpoint", "url"] {
+            let Some(raw) = obj.get(field).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let url = expand_env_only_loose(raw);
+            if let Some(t) = parse_http_host_port(&url) {
+                if !out.contains(&t) {
+                    out.push(t);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn tcp_reachable(host: &str, port: u16) -> bool {
+    use std::net::ToSocketAddrs;
+    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    let Some(addr) = addrs.next() else {
+        return false;
+    };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(500)).is_ok()
+}
+
+/// True when a spec is network-bound (it declares resolvable endpoint/url
+/// targets) and none of those targets currently accepts a TCP connection —
+/// i.e. the environment is offline with respect to this spec. Callers should
+/// skip its behavioural states (validate-only) rather than report a regression.
+/// A spec with no resolvable target (e.g. a web_fetch-only spec whose URL only
+/// appears in state) returns false: we cannot prove it offline, so it keeps the
+/// current run-and-report behaviour.
+pub(crate) fn network_bound_offline(spec: &Value) -> bool {
+    let targets = spec_network_targets(spec);
+    if targets.is_empty() {
+        return false;
+    }
+    !targets.iter().any(|(h, p)| tcp_reachable(h, *p))
+}
+
 pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let root: PathBuf = match &opts.dsl_dir {
         Some(d) => PathBuf::from(d),
@@ -155,6 +272,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
 
     let mut total: u32 = 0;
     let mut fails: u32 = 0;
+    let mut skipped: u32 = 0;
     for spec in &specs {
         let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
         if let Some(f) = &opts.filter {
@@ -187,10 +305,29 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
         let Some(state_map) = sample_states.as_object() else {
             continue;
         };
+        // The raw spec drives offline detection: when a network-bound spec's
+        // declared endpoints are all unreachable the environment is offline, and
+        // a state that *errors* because it needs one of those listeners is
+        // skipped (validate-only) instead of reported as a regression. States
+        // that run fine still run and assert, preserving offline coverage for
+        // specs whose sample states never touch the network.
+        let raw_spec: Value = std::fs::read_to_string(&spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
         for (label, st) in state_map {
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
                 Err(e) => {
+                    if network_bound_offline(&raw_spec) {
+                        if !opts.quiet {
+                            eprintln!(
+                                "       {label}: offline (network endpoint(s) unreachable) — skipped, validate only"
+                            );
+                        }
+                        skipped += 1;
+                        continue;
+                    }
                     fails += 1;
                     eprintln!("       [FAIL] {label}: run error: {e}");
                     continue;
@@ -272,6 +409,9 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     }
     let ok = total - fails;
     println!("\n{ok}/{total} specs OK");
+    if skipped > 0 {
+        println!("({skipped} state(s) skipped offline because a network endpoint was unreachable; they run in the integration job / with the local mocks up)");
+    }
     if fails > 0 {
         // callers (CI) want a non-zero exit
         bail!("{fails} spec run(s) failed");

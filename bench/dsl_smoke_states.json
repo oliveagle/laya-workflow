@@ -342,6 +342,12 @@
       "links_status": "broken_links"
     }
   },
+  "web_research": {
+    "search": {
+      "query": "laya",
+      "mode": "search"
+    }
+  },
   "workflow_guardian": {
     "ok": {
       "task_layer": "ok",

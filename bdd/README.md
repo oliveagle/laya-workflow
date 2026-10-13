@@ -356,9 +356,17 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   61 of 99 specs carry behavioural states today (35 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate).
-   The 11 call-heavy decision workflows that need a model/network/CLI/secret are
-   validate-only offline *by design*.
+   62 of 99 specs carry behavioural states today (36 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` chain over the local web mock).
+   Network-bound stems follow an **offline detection** rule: when a spec's
+   declared `endpoint`/`url` targets (web_search, web_fetch, agent, rpc, http,
+   webhook, ...) are all unreachable the local mocks are down and the states are
+   skipped (validate-only, reported as `offline: N network endpoint(s)
+   unreachable — states skipped, validate only`) instead of failing — the same
+   skip-don't-hang policy the rest of the harness applies to network sections.
+   With the mocks up (integration CI / `bench/mock_services.sh start` + the two
+   `mock serve` processes on 8791/8792) every registered state runs and the
+   EXPECT assertions are enforced. The remaining 37 call-heavy stems that need a
+   model/CLI/secret are validate-only offline *by design*.
 3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
 
