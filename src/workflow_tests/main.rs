@@ -114,6 +114,8 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-copy-keys", t_validate::test_validate_copy_keys),
         ("validate-combine-fallback", t_validate::test_validate_combine_fallback),
         ("validate-ref-cycle", t_validate::test_validate_ref_cycle),
+        ("validate-call-capability", t_validate::test_validate_call_capability),
+        ("validate-call-chain-capability", t_validate::test_validate_call_chain_capability),
         ("state", t_state::test_state_home_override),
         ("bdd-decision", t_bdd::test_bdd_decision),
         ("bdd-decision-primary-q", t_bdd::test_bdd_decision_primary_q),

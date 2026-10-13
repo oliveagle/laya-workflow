@@ -1266,6 +1266,11 @@ pub fn locate_semantic_error_line(feature: &Feature, msg: &str) -> Option<usize>
             .rev()
             .find(|(start, _)| *start < idx)
             .map(|(_, t)| *t)
+    } else if let Some(idx) = msg.find("capability") {
+        // P39: `action calls undeclared capability "X"` — the quoted name is the
+        // offending token; point the author at the exact `call the capability`
+        // step instead of the Scenario's first line.
+        tokens.iter().find(|(start, _)| *start > idx).map(|(_, t)| *t)
     } else {
         None
     };

@@ -619,7 +619,17 @@ fn suggest(target: &str, candidates: &[&str]) -> String {
 ///     makes the copy a silent no-op at runtime)
 ///   * `combine.fallback` is a possible answer of the `combine.choice` question
 ///     (an unknown fallback can never fire → silently dead branch)
-fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: &str) -> Result<()> {
+///   * (P39) every capability a node calls — `action.capability` and each
+///     `action.chain[].capability` — is declared in the spec's `capabilities`
+///     map (an undeclared name passes `validate` today but hard-fails at
+///     runtime: `capability "X" is not declared in this spec`; same bug class as
+///     a dangling edge or a dead `copy_keys` key)
+fn validate_graph_semantics(
+    nodes: &[WorkflowNode],
+    node_list: &[Value],
+    start: &str,
+    declared_caps: &std::collections::HashSet<String>,
+) -> Result<()> {
     let names: std::collections::HashSet<&str> =
         nodes.iter().map(|n| n.name.as_str()).collect();
     let name_candidates: Vec<&str> = names.iter().copied().collect();
@@ -897,6 +907,35 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                         }
                     }
                 }
+                if kind == "call" {
+                    // P39: a `call` node names a capability. An undeclared name
+                    // compiles and `validate`s clean but hard-fails at runtime
+                    // (`capability "X" is not declared in this spec`) — the same
+                    // dangling-reference class as P24 edges / P27 copy_keys.
+                    let mut cap_candidates: Vec<&str> =
+                        declared_caps.iter().map(|s| s.as_str()).collect();
+                    cap_candidates.sort_unstable();
+                    if let Some(cap) = action.get("capability").and_then(|v| v.as_str()) {
+                        if !declared_caps.contains(cap) {
+                            bail!(
+                                "node {name}: action calls undeclared capability {cap:?}{}",
+                                suggest(cap, &cap_candidates)
+                            );
+                        }
+                    }
+                    if let Some(chain) = action.get("chain").and_then(|v| v.as_array()) {
+                        for step in chain.iter().filter_map(|v| v.as_object()) {
+                            if let Some(cap) = step.get("capability").and_then(|v| v.as_str()) {
+                                if !declared_caps.contains(cap) {
+                                    bail!(
+                                        "node {name}: action chain step calls undeclared capability {cap:?}{}",
+                                        suggest(cap, &cap_candidates)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 if kind == "combine" {
                     for f in ["choice", "signal"] {
                         if let Some(q) = action.get(f).and_then(|v| v.as_str()) {
@@ -1124,7 +1163,12 @@ fn from_spec_with_dir_cycle(
         }
     }
 
-    validate_graph_semantics(&nodes, node_list, &start)?;
+    let declared_caps: std::collections::HashSet<String> = spec
+        .get("capabilities")
+        .and_then(|v| v.as_object())
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    validate_graph_semantics(&nodes, node_list, &start, &declared_caps)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
     if let Some(v) = spec.get("max_iterations").and_then(|v| v.as_u64()) {

@@ -435,3 +435,64 @@ pub fn test_validate_ref_cycle(h: &mut Harness) {
         ]});
     h.check("validate: diamond (shared leaf) parses", spec::from_spec(&outer2).is_ok());
 }
+
+
+/// Regression (P39): a `call` node whose `action.capability` is not declared in
+/// the spec's `capabilities` map must be rejected at parse time. Previously it
+/// passed `validate` cleanly and only hard-failed at runtime
+/// (`capability "ghost" is not declared in this spec`) — the same dangling-
+/// reference class as P24 edges / P27 copy_keys.
+pub fn test_validate_call_capability(h: &mut Harness) {
+    let spec = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "ghost"})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: call to undeclared capability rejected", r.is_err());
+    if let Err(e) = &r {
+        let m = e.to_string();
+        h.check("validate: call capability error names the node", m.contains("greet"));
+        h.check("validate: call capability error names the capability", m.contains("ghost"));
+    }
+}
+
+/// Regression (P39): every `action.chain[].capability` step is checked too, and
+/// a spec that declares every capability it calls (base + every chain step)
+/// still parses — no false positive.
+pub fn test_validate_call_chain_capability(h: &mut Harness) {
+    let mut bad = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "greet", "chain": [{"capability": "grete"}]})
+        )]),
+    );
+    bad["capabilities"] = json!({"greet": {"kind": "plugin", "plugin": "websites/x"}});
+    let r = spec::from_spec(&bad);
+    h.check("validate: call chain step undeclared capability rejected", r.is_err());
+    if let Err(e) = &r {
+        h.check("validate: call chain capability did-you-mean", e.to_string().contains("did you mean"));
+    }
+
+    let mut ok = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "greet", "chain": [{"capability": "wrap"}]})
+        )]),
+    );
+    ok["capabilities"] = json!({
+        "greet": {"kind": "plugin", "plugin": "websites/x"},
+        "wrap": {"kind": "plugin", "plugin": "websites/y"}
+    });
+    h.check("validate: declared call capabilities parse (no false positive)", spec::from_spec(&ok).is_ok());
+}

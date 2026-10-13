@@ -1077,6 +1077,58 @@ Feature: s_far
         bdd::locate_semantic_error_line(&feature, &err),
         Some(8),
     );
+
+    // P39: an undeclared `call` capability is a semantic error too, and it must
+    // localise to the `call the capability "..."` step (not the Scenario header)
+    // with a did-you-mean hint when a near-miss capability IS declared.
+    let cap_src = r#"@decision
+Feature: s_cap
+  Scenario: capcheck
+    Given a choice question "done" asks "digest?"
+      | answer | meaning |
+      | A      | yes     |
+      | B      | no      |
+    When any other answer goes to "STOP"
+    Then call the capability "digestt""#;
+    let cap_feature = bdd::parse(cap_src, "<sugcap>").expect("cap feature parses");
+    let want_line = cap_src
+        .lines()
+        .position(|l| l.contains(r#"call the capability "digestt""#))
+        .map(|n| n + 1);
+    // near-miss declared ("digest") -> did-you-mean hint + exact line
+    let cap_spec = bdd::compile_decision(
+        &cap_feature,
+        &json!({"capabilities": {"digest": {"kind": "plugin", "plugin": "websites/x"}}}),
+    )
+    .expect("cap feature compiles");
+    let cap_err = crate::spec::from_spec_with_dir(&cap_spec, None, None)
+        .err()
+        .expect("undeclared capability must fail validation")
+        .to_string();
+    h.check(
+        "bdd: suggestion [call capability] carries did-you-mean hint",
+        cap_err.contains("did you mean"),
+    );
+    h.eq(
+        "bdd: suggestion [call capability] locates the call line",
+        bdd::locate_semantic_error_line(&cap_feature, &cap_err),
+        want_line,
+    );
+    // nothing declared -> no hint, but the line still resolves
+    let cap_bare = bdd::compile_decision(&cap_feature, &json!({})).expect("cap feature compiles (bare)");
+    let cap_bare_err = crate::spec::from_spec_with_dir(&cap_bare, None, None)
+        .err()
+        .expect("bare undeclared capability must fail validation")
+        .to_string();
+    h.check(
+        "bdd: suggestion [call capability bare] has no hint",
+        !cap_bare_err.contains("did you mean"),
+    );
+    h.eq(
+        "bdd: suggestion [call capability bare] still locates the call line",
+        bdd::locate_semantic_error_line(&cap_feature, &cap_bare_err),
+        want_line,
+    );
 }
 
 /// `bdd scaffold` generates a minimal valid `@decision` skeleton (already
