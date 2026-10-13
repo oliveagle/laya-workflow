@@ -1,0 +1,441 @@
+{
+  "name": "order_tracker",
+  "_bdd": {
+    "feature": "order_tracker",
+    "feature_path": "bdd/workflows/ole_eval/order_tracker.feature",
+    "mode": "decision"
+  },
+  "description": "BDD decision workflow: order_tracker",
+  "start": "draft",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "draft",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is a draft. Translate the utterance into exactly one typed lifecycle event; the model only proposes the event, all eligibility and money are computed locally.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_draft"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "create": "created"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "create"
+            },
+            "label": "create"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "created",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is created and unpaid. pay records payment; cancel is allowed while unpaid. Any other event is illegal from here.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_created"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "pay": "paid",
+          "cancel": "cancelled_unpaid"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "pay"
+            },
+            "label": "pay"
+          },
+          {
+            "when": {
+              "question": "event",
+              "answer": "cancel"
+            },
+            "label": "cancel"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "paid",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is paid. pack starts fulfilment; cancel is allowed and keeps the payment so a later refund is eligible.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_paid"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "pack": "fulfilling",
+          "cancel": "cancelled_paid"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "pack"
+            },
+            "label": "pack"
+          },
+          {
+            "when": {
+              "question": "event",
+              "answer": "cancel"
+            },
+            "label": "cancel"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fulfilling",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is being fulfilled. ship dispatches it; cancel is still allowed and keeps the payment.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_fulfilling"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "ship": "shipped",
+          "cancel": "cancelled_paid"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "ship"
+            },
+            "label": "ship"
+          },
+          {
+            "when": {
+              "question": "event",
+              "answer": "cancel"
+            },
+            "label": "cancel"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shipped",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order has shipped. deliver is the only legal transition; cancellation is no longer possible.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_shipped"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "deliver": "delivered"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "deliver"
+            },
+            "label": "deliver"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delivered",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is delivered. refund is eligible (shipping is non-refundable, subtotal plus tax is returned).",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_delivered"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "refund": "refunded"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "refund"
+            },
+            "label": "refund"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancelled_paid",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order was cancelled after payment. refund is eligible here; anything else is illegal.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_cancelled_paid"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "refund": "refunded"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "refund"
+            },
+            "label": "refund"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject"
+          }
+        ]
+      }
+    },
+    {
+      "name": "cancelled_unpaid",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order was cancelled before payment: nothing is refundable, so refund is refused. This state is terminal.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_cancelled_unpaid"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "event"
+        ]
+      }
+    },
+    {
+      "name": "refunded",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "The order is refunded, a terminal state. No further transition is legal.",
+          "criteria": {
+            "create": "open a new order",
+            "pay": "record that payment was received",
+            "pack": "begin fulfilment",
+            "ship": "hand the parcel to the carrier",
+            "deliver": "mark the parcel delivered",
+            "cancel": "cancel the order",
+            "refund": "refund a cancelled or delivered order"
+          },
+          "heuristic": {
+            "answer_field": "ev_refunded"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "event"
+        ]
+      }
+    }
+  ]
+}
