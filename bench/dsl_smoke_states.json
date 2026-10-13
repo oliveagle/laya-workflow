@@ -1392,5 +1392,112 @@
       "ev_awaiting_amount": "fill_ok",
       "ev_awaiting_term": "unexpected"
     }
+  },
+  "sla_checker": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "rule_bad_schema": {
+      "ev_proposal": "accepted",
+      "ev_rule": "bad_schema",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "rule_conflict_dti": {
+      "ev_proposal": "accepted",
+      "ev_rule": "conflict",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "rule_overlap_windows": {
+      "ev_proposal": "accepted",
+      "ev_rule": "overlap",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "rule_duplicate_registry": {
+      "ev_proposal": "accepted",
+      "ev_rule": "duplicate",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "event_bad_schema": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "bad_schema",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "event_non_utc": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "bad_time",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "event_unknown_priority": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "unknown_priority",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "event_duplicate_ledger": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "duplicate",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "met_exact_boundary": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "met",
+      "ev_severity": "none"
+    },
+    "pending_unresolved": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "pending",
+      "ev_severity": "none"
+    },
+    "breach_critical_p1": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "breach",
+      "ev_severity": "critical"
+    },
+    "breach_high": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "breach",
+      "ev_severity": "high"
+    },
+    "breach_medium": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "breach",
+      "ev_severity": "medium"
+    },
+    "breach_low": {
+      "ev_proposal": "accepted",
+      "ev_rule": "ok",
+      "ev_event": "ok",
+      "ev_sla": "breach",
+      "ev_severity": "low"
+    }
   }
 }

@@ -1,0 +1,192 @@
+{
+  "name": "sla_checker",
+  "_bdd": {
+    "feature": "sla_checker",
+    "feature_path": "bdd/workflows/ole_eval/sla_checker.feature",
+    "mode": "decision"
+  },
+  "description": "Deterministic UTC SLA evaluation as a single triage node. The model proposes\ntyped facts about one {rule, event} proposal; this workflow owns schema\nvalidation, conflict detection, duplicate detection, SLO state and severity.\nPort of code/qwen_vm/app_scenarios/sla_checker.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (```json fence stripping, duplicate-key rejection,\n\"exactly {rule,event}\" shape) fold into the single `proposal` choice.\n- UTC business-window minute accumulation (add_business_minutes /\nbusiness_minutes_between: next-opening, day/window overlap, DST-free UTC\narithmetic) is deterministic clock arithmetic that does not belong in the\nDSL; it is computed locally and surfaces here only as the SLO `sla` and\n`severity` choices. The port judges the resulting state, never recomputes\na calendar.\n- response_minutes > resolution_minutes and overlapping business windows are\nboth `rule` = conflict / overlap; `_MAX_SLO_MINUTES` / `_MAX_TIMELINE_DAYS`\nbounds fold into the same schema bucket.\nEmitted labels: reject_proposal, reject_rule, reject_rule_conflict,\nreject_duplicate_rule, reject_event, reject_duplicate_event, breach_critical,\nbreach_high, breach_medium, breach_low, met, pending.",
+  "start": "sla",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "sla",
+      "primary_q": "severity",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the proposal parse as exactly one object {rule, event} (UTF-8, no duplicate JSON keys, no fence/extra text)?",
+          "criteria": {
+            "accepted": "parses to exactly {rule, event}, no duplicate keys",
+            "malformed": "parse error, duplicate JSON key, fence/extra text or wrong top shape"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "rule": {
+          "type": "choice",
+          "instructions": "Does the rule pass schema validation and registry admission (rule_id format, non-empty priorities with P1..P99 keys, response_minutes <= resolution_minutes, non-empty non-overlapping windows with start < end, id not already registered)?",
+          "criteria": {
+            "ok": "rule is schema-valid, conflict-free and new",
+            "bad_schema": "malformed id / empty priorities / bad P-key / bad duration",
+            "conflict": "a priority has response_minutes > resolution_minutes",
+            "overlap": "overlapping windows, empty days, or start >= end",
+            "duplicate": "rule_id already present in the registry"
+          },
+          "heuristic": {
+            "answer_field": "ev_rule"
+          }
+        },
+        "event": {
+          "type": "choice",
+          "instructions": "Does the event pass validation (all six keys present, UTC 'Z' timestamps only, responded_at >= created_at, resolved_at >= responded_at and >= created_at, priority key present in the rule, event_id not already evaluated)?",
+          "criteria": {
+            "ok": "event is schema-valid, time-consistent and new",
+            "bad_schema": "missing/extra key or non-boolean-safe field shape",
+            "bad_time": "non-UTC/DST offset, or timestamps out of order",
+            "unknown_priority": "priority is not one of the rule's priority keys",
+            "duplicate": "event_id was already evaluated in this ledger"
+          },
+          "heuristic": {
+            "answer_field": "ev_event"
+          }
+        },
+        "sla": {
+          "type": "choice",
+          "instructions": "Overall SLO state (after local UTC business-window arithmetic; PENDING when the event has no respond/resolve yet).",
+          "criteria": {
+            "met": "every applicable deadline was met",
+            "pending": "not yet responded and/or not yet resolved",
+            "breach": "at least one deadline was missed"
+          },
+          "heuristic": {
+            "answer_field": "ev_sla"
+          }
+        },
+        "severity": {
+          "type": "choice",
+          "instructions": "Breach severity from the SLO overrun ratio (max of response/resolution ratios): NONE when no deadline is missed; CRITICAL when the priority is P1 or any overrun ratio >= 2.0; HIGH at >= 1.5; MEDIUM at >= 1.2; else LOW.",
+          "criteria": {
+            "none": "no breach, severity NONE",
+            "low": "breach with overrun ratio < 1.2",
+            "medium": "breach with overrun ratio in [1.2, 1.5)",
+            "high": "breach with overrun ratio in [1.5, 2.0)",
+            "critical": "P1 breach, or overrun ratio >= 2.0"
+          },
+          "heuristic": {
+            "answer_field": "ev_severity"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "severity",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "rule",
+              "answer": "bad_schema"
+            },
+            "label": "reject_rule"
+          },
+          {
+            "when": {
+              "question": "rule",
+              "answer_in": [
+                "conflict",
+                "overlap"
+              ]
+            },
+            "label": "reject_rule_conflict"
+          },
+          {
+            "when": {
+              "question": "rule",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate_rule"
+          },
+          {
+            "when": {
+              "question": "event",
+              "answer_in": [
+                "bad_schema",
+                "bad_time",
+                "unknown_priority"
+              ]
+            },
+            "label": "reject_event"
+          },
+          {
+            "when": {
+              "question": "event",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate_event"
+          },
+          {
+            "when": {
+              "question": "severity",
+              "answer": "critical"
+            },
+            "label": "breach_critical"
+          },
+          {
+            "when": {
+              "question": "severity",
+              "answer": "high"
+            },
+            "label": "breach_high"
+          },
+          {
+            "when": {
+              "question": "severity",
+              "answer": "medium"
+            },
+            "label": "breach_medium"
+          },
+          {
+            "when": {
+              "question": "severity",
+              "answer": "low"
+            },
+            "label": "breach_low"
+          },
+          {
+            "when": {
+              "question": "sla",
+              "answer": "met"
+            },
+            "label": "met"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "pending"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "proposal_id"
+        ]
+      }
+    }
+  ]
+}

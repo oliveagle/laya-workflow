@@ -1354,5 +1354,22 @@
       "trace.steps.3.action": "stop",
       "trace.steps.3.answer": "unexpected"
     }
+  },
+  "sla_checker": {
+    "proposal_malformed": "reject_proposal",
+    "rule_bad_schema": "reject_rule",
+    "rule_conflict_dti": "reject_rule_conflict",
+    "rule_overlap_windows": "reject_rule_conflict",
+    "rule_duplicate_registry": "reject_duplicate_rule",
+    "event_bad_schema": "reject_event",
+    "event_non_utc": "reject_event",
+    "event_unknown_priority": "reject_event",
+    "event_duplicate_ledger": "reject_duplicate_event",
+    "met_exact_boundary": "met",
+    "pending_unresolved": "pending",
+    "breach_critical_p1": "breach_critical",
+    "breach_high": "breach_high",
+    "breach_medium": "breach_medium",
+    "breach_low": "breach_low"
   }
 }
