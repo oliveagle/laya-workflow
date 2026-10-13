@@ -5026,5 +5026,154 @@
       "ev_quantity": "ok",
       "ev_adjustment": "service_fallback"
     }
+  },
+  "privacy_retention_guard": {
+    "outcome_unlawful_none": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "reject_unlawful_basis_requires_deletion"
+    },
+    "outcome_delete_unlawful": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_delete_unlawful"
+    },
+    "outcome_legal_hold_preserve": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_legal_hold_preservation"
+    },
+    "outcome_legal_hold_precedence": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_legal_hold_precedence"
+    },
+    "outcome_expired_delete": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_retention_expired_delete"
+    },
+    "outcome_expired_pseudonymize": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_deletion_precedence_pseudonymization"
+    },
+    "outcome_expired_none": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_retention_expired_requires_deletion"
+    },
+    "outcome_min_retention": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_minimum_retention_not_reached"
+    },
+    "outcome_schedule_review": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_schedule_retention_review"
+    },
+    "outcome_retain_until_deadline": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_retain_until_deadline"
+    },
+    "outcome_pseudonymize_within": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_pseudonymization_within_retention"
+    },
+    "outcome_pseudonymize_instead": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_pseudonymization_instead_of_early_delete"
+    },
+    "outcome_early_delete_blocked": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_early_deletion_not_permitted"
+    },
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_retain_until_deadline"
+    },
+    "duplicate_record": {
+      "ev_proposal": "accepted",
+      "ev_record": "duplicate",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_delete_unlawful"
+    },
+    "data_class_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "mismatch",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "approve_delete_unlawful"
+    },
+    "jurisdiction_unconfigured": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "unconfigured",
+      "ev_outcome": "approve_delete_unlawful"
+    },
+    "precedence_proposal_before_duplicate": {
+      "ev_proposal": "malformed",
+      "ev_record": "duplicate",
+      "ev_data_class": "mismatch",
+      "ev_jurisdiction": "unconfigured",
+      "ev_outcome": "approve_delete_unlawful"
+    },
+    "precedence_duplicate_before_class": {
+      "ev_proposal": "accepted",
+      "ev_record": "duplicate",
+      "ev_data_class": "mismatch",
+      "ev_jurisdiction": "unconfigured",
+      "ev_outcome": "modify_early_deletion_not_permitted"
+    },
+    "precedence_jurisdiction_before_outcome": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "match",
+      "ev_jurisdiction": "unconfigured",
+      "ev_outcome": "approve_retain_until_deadline"
+    },
+    "precedence_reject_before_modify": {
+      "ev_proposal": "accepted",
+      "ev_record": "fresh",
+      "ev_data_class": "mismatch",
+      "ev_jurisdiction": "configured",
+      "ev_outcome": "modify_minimum_retention_not_reached"
+    }
   }
 }

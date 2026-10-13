@@ -1,0 +1,221 @@
+{
+  "name": "privacy_retention_guard",
+  "_bdd": {
+    "feature": "privacy_retention_guard",
+    "feature_path": "bdd/workflows/ole_eval/privacy_retention_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed retention / preservation / deletion choices over fixed\nabstract privacy records, as a single triage node. The model proposes only a\ntyped intent (data_class, retention_intent, deletion_intent); this workflow\nowns the record ledger, the data-class policy, the jurisdiction policy, the\nretention clock and deadline, the lawful-basis check, the legal hold, the\npseudonymization eligibility and the deletion/preservation precedence,\ncomputing the exact scheduled action and its timestamp itself. It never\ntouches a datastore. Port of code/qwen_vm/app_scenarios/privacy_retention_guard.\nThird three-valued port shape with the engine's own verbs: the engine returns\nAPPROVE / MODIFY / REJECT — the scheduled action is accepted, locally\ncorrected, or the proposal is refused.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (the 4 KiB raw cap, the exact {proposal:{data_class,\nretention_intent, deletion_intent}} shape, the data-class / retention-intent\n/ deletion-intent enums, the fixed record-id grammar, the duplicate-key\nscan, the non-finite-number rejection and the forbidden authority /\nside-effect fields) fold into the `proposal` choice.\n- The data-class policy table (retention days, retention clock, allowed\nlawful bases, pseudonymization eligibility) and the jurisdiction policy\ntable (deletion grace days, maximum extension days, pseudonymization\npermission) are a fixed fixture; the harness resolves them and hands the\nDSL one answer per check.\n- The record ledger (an abstract record id already evaluated by this guard),\nthe authoritative record class, the jurisdiction registration and the whole\npost-gate precedence chain are folded into the `record`, `data_class`,\n`jurisdiction` and `outcome` choices; one `outcome` question carries every\nremaining engine branch, so each reason keeps its own label without ten\nseparate questions, and the ladder emits the engine's own first-match in\nits own order.\nEmitted labels: reject_proposal, reject_duplicate, reject_data_class_mismatch,\nreject_jurisdiction, reject_unlawful_basis_requires_deletion,\napprove_delete_unlawful, approve_legal_hold_preservation,\nmodify_legal_hold_precedence, approve_retention_expired_delete,\nmodify_deletion_precedence_pseudonymization,\nmodify_retention_expired_requires_deletion,\nmodify_minimum_retention_not_reached, approve_schedule_retention_review,\napprove_retain_until_deadline, approve_pseudonymization_within_retention,\nmodify_pseudonymization_instead_of_early_delete,\nmodify_early_deletion_not_permitted.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {data_class, retention_intent, deletion_intent} object with valid enums, a valid record id and no authority or side-effect keys?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed privacy proposal",
+            "malformed": "parse error, missing/extra field, forbidden key, bad enum, oversize or duplicate key"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "record": {
+          "type": "choice",
+          "instructions": "Is the abstract record id unseen by this guard?",
+          "criteria": {
+            "fresh": "record id is new",
+            "duplicate": "record already evaluated"
+          },
+          "heuristic": {
+            "answer_field": "ev_record"
+          }
+        },
+        "data_class": {
+          "type": "choice",
+          "instructions": "Does the proposal data class equal the authoritative record class?",
+          "criteria": {
+            "match": "proposal class equals the record",
+            "mismatch": "proposal class differs from record"
+          },
+          "heuristic": {
+            "answer_field": "ev_data_class"
+          }
+        },
+        "jurisdiction": {
+          "type": "choice",
+          "instructions": "Does a fixed policy exist for the record's jurisdiction?",
+          "criteria": {
+            "configured": "jurisdiction policy resolved",
+            "unconfigured": "no fixed policy exists"
+          },
+          "heuristic": {
+            "answer_field": "ev_jurisdiction"
+          }
+        },
+        "outcome": {
+          "type": "choice",
+          "instructions": "Which single branch does the deterministic precedence chain take once the proposal, record, class and jurisdiction gates pass?",
+          "criteria": {
+            "reject_unlawful_basis_requires_deletion": "lawful basis not allowed and no deletion requested: refuse",
+            "approve_delete_unlawful": "lawful basis not allowed but deletion requested: schedule deletion",
+            "approve_legal_hold_preservation": "legal hold active and no deletion requested: preserve",
+            "modify_legal_hold_precedence": "legal hold active but deletion requested: hold wins",
+            "approve_retention_expired_delete": "retention expired and delete_now requested: schedule deletion",
+            "modify_deletion_precedence_pseudonymization": "retention expired but pseudonymize requested: delete wins",
+            "modify_retention_expired_requires_deletion": "retention expired and nothing requested: deletion required",
+            "modify_minimum_retention_not_reached": "within retention but expire requested: too early",
+            "approve_schedule_retention_review": "within retention, review requested: schedule review",
+            "approve_retain_until_deadline": "within retention, retain requested: retain until deadline",
+            "approve_pseudonymization_within_retention": "within retention, pseudonymize requested and eligible: pseudonymize",
+            "modify_pseudonymization_instead_of_early_delete": "within retention, early delete requested and eligible: pseudonymize",
+            "modify_early_deletion_not_permitted": "within retention and pseudonymization ineligible: preserve"
+          },
+          "heuristic": {
+            "answer_field": "ev_outcome"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "record",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate"
+          },
+          {
+            "when": {
+              "question": "data_class",
+              "answer": "mismatch"
+            },
+            "label": "reject_data_class_mismatch"
+          },
+          {
+            "when": {
+              "question": "jurisdiction",
+              "answer": "unconfigured"
+            },
+            "label": "reject_jurisdiction"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "reject_unlawful_basis_requires_deletion"
+            },
+            "label": "reject_unlawful_basis_requires_deletion"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_delete_unlawful"
+            },
+            "label": "approve_delete_unlawful"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_legal_hold_preservation"
+            },
+            "label": "approve_legal_hold_preservation"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "modify_legal_hold_precedence"
+            },
+            "label": "modify_legal_hold_precedence"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_retention_expired_delete"
+            },
+            "label": "approve_retention_expired_delete"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "modify_deletion_precedence_pseudonymization"
+            },
+            "label": "modify_deletion_precedence_pseudonymization"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "modify_retention_expired_requires_deletion"
+            },
+            "label": "modify_retention_expired_requires_deletion"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "modify_minimum_retention_not_reached"
+            },
+            "label": "modify_minimum_retention_not_reached"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_schedule_retention_review"
+            },
+            "label": "approve_schedule_retention_review"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_retain_until_deadline"
+            },
+            "label": "approve_retain_until_deadline"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "approve_pseudonymization_within_retention"
+            },
+            "label": "approve_pseudonymization_within_retention"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "modify_pseudonymization_instead_of_early_delete"
+            },
+            "label": "modify_pseudonymization_instead_of_early_delete"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "modify_early_deletion_not_permitted"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "record_id"
+        ]
+      }
+    }
+  ]
+}

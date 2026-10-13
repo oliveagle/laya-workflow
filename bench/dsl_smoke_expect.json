@@ -1751,5 +1751,28 @@
     "precedence_infeasible_before_quantity": "reject_infeasible",
     "precedence_reject_before_modify": "reject_infeasible",
     "precedence_modify_before_approve": "modify_service_fallback"
+  },
+  "privacy_retention_guard": {
+    "outcome_unlawful_none": "reject_unlawful_basis_requires_deletion",
+    "outcome_delete_unlawful": "approve_delete_unlawful",
+    "outcome_legal_hold_preserve": "approve_legal_hold_preservation",
+    "outcome_legal_hold_precedence": "modify_legal_hold_precedence",
+    "outcome_expired_delete": "approve_retention_expired_delete",
+    "outcome_expired_pseudonymize": "modify_deletion_precedence_pseudonymization",
+    "outcome_expired_none": "modify_retention_expired_requires_deletion",
+    "outcome_min_retention": "modify_minimum_retention_not_reached",
+    "outcome_schedule_review": "approve_schedule_retention_review",
+    "outcome_retain_until_deadline": "approve_retain_until_deadline",
+    "outcome_pseudonymize_within": "approve_pseudonymization_within_retention",
+    "outcome_pseudonymize_instead": "modify_pseudonymization_instead_of_early_delete",
+    "outcome_early_delete_blocked": "modify_early_deletion_not_permitted",
+    "proposal_malformed": "reject_proposal",
+    "duplicate_record": "reject_duplicate",
+    "data_class_mismatch": "reject_data_class_mismatch",
+    "jurisdiction_unconfigured": "reject_jurisdiction",
+    "precedence_proposal_before_duplicate": "reject_proposal",
+    "precedence_duplicate_before_class": "reject_duplicate",
+    "precedence_jurisdiction_before_outcome": "reject_jurisdiction",
+    "precedence_reject_before_modify": "reject_data_class_mismatch"
   }
 }
