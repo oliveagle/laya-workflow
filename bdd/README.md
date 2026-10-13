@@ -254,7 +254,7 @@ worked example: it drives the no-API fixture `bdd/fixtures/app.html` end to end
 The workflow vocabulary is only worth having if an agent can *author* a workflow
 from an intent quickly and correctly. That is a claim about a loop, so it has
 numbers, and `laya-workflow bdd score` recomputes them from the same gates the
-loop hits. The corpus is `bdd/bench/tasks/*.json` (11 tasks: 8 decision-graph `@decision` authoring tasks — `decision_support_ticket`, `decision_content_safety`, `decision_agent_probe`, `decision_pipeline_nested`, `decision_loop_refine`, `decision_noul_field_heuristic`, `decision_dialogue_state_machine`, `decision_memory_admission` — plus 3 browser-step tasks); each task carries an `intent`,
+loop hits. The corpus is `bdd/bench/tasks/*.json` (13 tasks: 10 decision-graph `@decision` authoring tasks — `decision_support_ticket`, `decision_content_safety`, `decision_agent_probe`, `decision_pipeline_nested`, `decision_loop_refine`, `decision_noul_field_heuristic`, `decision_dialogue_state_machine`, `decision_memory_admission`, `decision_gate_action`, `decision_risk_control` — plus 3 browser-step tasks); each task carries an `intent`,
 a reference `feature`, the outputs it promises, the phrasings an author would
 *want* to write, the phrasings that are not in the vocabulary, and the step whose
 removal should break an `@outputs` contract. It measures, per task and in total:

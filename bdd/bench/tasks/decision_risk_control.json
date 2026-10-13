@@ -1,0 +1,93 @@
+{
+  "id": "decision_risk_control",
+  "intent": "An adaptive risk control: ask the user intent, the dominant behaviour pattern, whether MFA failed while a challenge was pending, and the composite risk score; deny by intent membership or MFA failure or a high score, then review/challenge/allow by score bands, with the composite risk as the primary question and the request/actor ids carried through.",
+  "feature": "bdd/workflows/ole_eval/adaptive_risk_control.feature",
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "the workflow runs at most 5 iterations"
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"intent\" asks \"Which user intent does this event match?\""
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"behaviour\" asks \"Which behaviour pattern dominates this event?\""
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"mfa_failed_pending\" asks \"Did MFA fail while a challenge was already pending?\""
+    },
+    {
+      "kind": "given",
+      "text": "a score question \"composite_risk\" asks \"Composite risk score 0-100\""
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"STOP\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when the answer to \"intent\" is one of \"credential_stuffing\", \"card_testing\", \"account_takeover\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when the answer to \"mfa_failed_pending\" is \"B\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when \"composite_risk\" is at least 70"
+    },
+    {
+      "kind": "then",
+      "text": "label \"REVIEW\" when \"composite_risk\" is at least 40"
+    },
+    {
+      "kind": "then",
+      "text": "label \"CHALLENGE\" when \"composite_risk\" is at least 20"
+    },
+    {
+      "kind": "then",
+      "text": "label \"ALLOW\" otherwise"
+    },
+    {
+      "kind": "then",
+      "text": "the primary question is \"composite_risk\""
+    },
+    {
+      "kind": "then",
+      "text": "keep the state key \"request_id\""
+    },
+    {
+      "kind": "then",
+      "text": "keep the state key \"actor_id\""
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when the answer to \"intent\" is in \"credential_stuffing\", \"card_testing\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when the answer to intent is one of \"credential_stuffing\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"DENY\" when the answer \"intent\" is one of \"credential_stuffing\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"REVIEW\" if \"composite_risk\" is at least 40"
+    },
+    {
+      "kind": "then",
+      "text": "set the primary question to \"composite_risk\""
+    },
+    {
+      "kind": "then",
+      "text": "keep state \"request_id\""
+    }
+  ]
+}

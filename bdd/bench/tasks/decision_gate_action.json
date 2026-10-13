@@ -1,0 +1,26 @@
+{
+  "id": "decision_gate_action",
+  "intent": "An agent command gate: ask whether the command is destructive, whether it exfiltrates local data, and whether it matches the stated user intent, plus an overall risk score; gate on the destructive option with block/allow thresholds, and carry the command/intent/cwd state keys through.",
+  "feature": "bdd/workflows/guards/agent_command_gate.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 10 iterations" },
+    { "kind": "given", "text": "a choice question \"is_destructive\" asks \"Will this command delete files, drop data, kill processes, or otherwise destroy state?\"" },
+    { "kind": "given", "text": "a choice question \"is_exfiltration\" asks \"Does this command send local files, credentials, or secrets to a remote host?\"" },
+    { "kind": "given", "text": "a choice question \"intent_match\" asks \"Does the command match the stated user intent?\"" },
+    { "kind": "given", "text": "a score question \"risk\" asks \"Overall risk of running this command?\"" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "gate \"is_destructive\" on option \"B\" with block 0.7 allow 0.7" },
+    { "kind": "then", "text": "allow up to 2 retries" },
+    { "kind": "then", "text": "keep the state key \"command\"" },
+    { "kind": "then", "text": "keep the state key \"intent\"" },
+    { "kind": "then", "text": "keep the state key \"cwd\"" }
+  ],
+  "unknown_steps": [
+    { "kind": "then", "text": "gate on \"is_destructive\" option \"B\" with block 0.7 allow 0.7" },
+    { "kind": "then", "text": "block \"is_destructive\" on option \"B\" with block 0.7 allow 0.7" },
+    { "kind": "then", "text": "gate \"is_destructive\" when option \"B\" with block 0.7 allow 0.7" },
+    { "kind": "then", "text": "gate \"is_destructive\" on option B with block 0.7 allow 0.7" },
+    { "kind": "then", "text": "save the state key \"command\"" },
+    { "kind": "then", "text": "allow up to two retries" }
+  ]
+}

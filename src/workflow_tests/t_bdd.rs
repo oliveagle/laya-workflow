@@ -1112,7 +1112,7 @@ pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
         .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
         .collect();
     files.sort();
-    h.check("bdd: score corpus tasks >= 11", files.len() >= 11);
+    h.check("bdd: score corpus tasks >= 13", files.len() >= 13);
     let mut decision = 0usize;
     let mut browser = 0usize;
     for f in &files {
@@ -1133,6 +1133,6 @@ pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
             browser += 1;
         }
     }
-    h.check("bdd: decision score tasks >= 8", decision >= 8);
+    h.check("bdd: decision score tasks >= 10", decision >= 10);
     h.check("bdd: browser score tasks >= 3", browser >= 3);
 }
