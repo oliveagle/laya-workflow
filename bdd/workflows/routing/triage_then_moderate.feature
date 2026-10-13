@@ -12,6 +12,7 @@ Feature: triage_then_moderate
       | billing | money-related requests |
       | support | product or technical questions |
       | drop | low value, no action |
+    And the answer comes from the field "queue"
     When any other answer goes to "STOP"
     And the answer "safety_review" goes to "safety_gate"
     And the answer "billing" goes to "billing_gate"
@@ -30,6 +31,7 @@ Feature: triage_then_moderate
       | answer | meaning |
       | A | no, it is informational |
       | B | yes, it requests a refund or credit |
+    And the answer comes from the field "is_refund"
     When any other answer goes to "STOP"
     And the answer "B" goes to "refund_amount"
     Then keep the answer to "is_refund"

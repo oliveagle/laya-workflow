@@ -368,24 +368,24 @@
       "trace.steps.1.answer": "A"
     },
     "billing": {
-      "result.gate_action": "CONFIRM",
-      "trace.step_count": 2,
+      "result.label": "AUTO_APPROVE",
+      "result.is_refund": "B",
+      "trace.step_count": 3,
       "trace.steps.0.node": "triage",
       "trace.steps.0.action": "route",
-      "trace.steps.0.answer": "safety_review",
-      "trace.steps.1.node": "safety_gate",
-      "trace.steps.1.action": "stop",
-      "trace.steps.1.answer": "A"
+      "trace.steps.0.answer": "billing",
+      "trace.steps.1.node": "billing_gate",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "B",
+      "trace.steps.2.node": "refund_amount",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": 1.0
     },
     "support": {
-      "result.gate_action": "CONFIRM",
-      "trace.step_count": 2,
+      "trace.step_count": 1,
       "trace.steps.0.node": "triage",
-      "trace.steps.0.action": "route",
-      "trace.steps.0.answer": "safety_review",
-      "trace.steps.1.node": "safety_gate",
-      "trace.steps.1.action": "stop",
-      "trace.steps.1.answer": "A"
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "support"
     }
   },
   "refund_policy.v1": {
@@ -554,6 +554,46 @@
       "trace.steps.1.node": "via_sse",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "A"
+    },
+    "graphql_route": {
+      "result.capability": "catalog",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "graphql",
+      "trace.steps.1.node": "via_graphql",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
+    },
+    "mcp_route": {
+      "result.capability": "tool_gateway",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "mcp",
+      "trace.steps.1.node": "via_mcp",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
+    },
+    "vector_route": {
+      "result.capability": "index",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "vector",
+      "trace.steps.1.node": "via_vector",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
+    },
+    "notify_route": {
+      "result.capability": "notify",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "notify",
+      "trace.steps.1.node": "via_webhook",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
     }
   },
   "notify_macos": {
@@ -630,6 +670,16 @@
       "trace.steps.0.action": "route",
       "trace.steps.0.answer": "observability",
       "trace.steps.1.node": "do_metrics",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
+    },
+    "cache": {
+      "result.capability": "cache_rw",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "cache",
+      "trace.steps.1.node": "do_redis",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "A"
     }

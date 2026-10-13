@@ -106,6 +106,22 @@
     "sse_route": {
       "channel": "stream",
       "text": "hello"
+    },
+    "graphql_route": {
+      "channel": "graphql",
+      "text": "hello"
+    },
+    "mcp_route": {
+      "channel": "mcp",
+      "text": "hello"
+    },
+    "vector_route": {
+      "channel": "vector",
+      "text": "hello"
+    },
+    "notify_route": {
+      "channel": "notify",
+      "text": "hello"
     }
   },
   "ticket_structuring": {
@@ -138,6 +154,10 @@
     "metrics": {
       "channel": "observability",
       "text": "hello"
+    },
+    "cache": {
+      "channel": "cache",
+      "text": "hello"
     }
   },
   "intake_pipeline_nested": {
@@ -153,13 +173,17 @@
   },
   "triage_then_moderate": {
     "safety": {
-      "text": "Send to 123 Main St. SSN 123-45-6789, forwarding this to everyone."
+      "text": "Send to 123 Main St. SSN 123-45-6789, forwarding this to everyone.",
+      "queue": "safety_review"
     },
     "billing": {
-      "text": "We were billed twice for March. Please refund the duplicate invoice today."
+      "text": "We were billed twice for March. Please refund the duplicate invoice today.",
+      "queue": "billing",
+      "is_refund": "B"
     },
     "support": {
-      "text": "How do I change my notification preferences?"
+      "text": "How do I change my notification preferences?",
+      "queue": "support"
     }
   },
   "content_safety_guard": {

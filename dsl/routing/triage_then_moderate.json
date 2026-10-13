@@ -18,7 +18,8 @@
             "billing": "money-related requests",
             "support": "product or technical questions",
             "drop": "low value, no action"
-          }
+          },
+          "heuristic": { "answer_field": "queue" }
         }
       },
       "edge": {
@@ -57,7 +58,8 @@
         "is_refund": {
           "type": "choice",
           "instructions": "Is the user asking for money back?",
-          "criteria": { "A": "no, it is informational", "B": "yes, it requests a refund or credit" }
+          "criteria": { "A": "no, it is informational", "B": "yes, it requests a refund or credit" },
+          "heuristic": { "answer_field": "is_refund" }
         }
       },
       "edge": { "condition": { "B": "refund_amount" }, "default": "STOP" },
