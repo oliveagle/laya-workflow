@@ -1,0 +1,219 @@
+{
+  "name": "self_healing_gate",
+  "_bdd": {
+    "feature": "self_healing_gate",
+    "feature_path": "bdd/workflows/ole_eval/self_healing_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Deterministic, fixture-only self-healing decision gate as a single triage\nnode. The model proposes exactly one typed diagnosis (fault_class, evidence,\ncandidate_remediation); this workflow owns the fault classification, evidence\nverification, action permission, priority, cooldown, rate limit, blast radius,\nrollback and terminal-state handling. Port of\ncode/qwen_vm/app_scenarios/self_healing_gate.\nThe deterministic classifier is a fixed evidence-priority chain (crash_loop\nbeats deployment_changed+error_rate_high beats dependency_timeout beats\ntraffic_above_capacity beats zone_unhealthy beats memory_growth beats\nunknown). A malformed / injected / unknown-action proposal folds into one\nschema choice and is rejected before anything else. The service state machine\n(DEGRADED -> STABILIZING / RECOVERED / ROLLED_BACK / TERMINAL) folds into one\nservice_state choice; the terminal set {recovered, rolled_back, terminal} is\ndenied re-entry. The per-service+action cooldown and the per-window rate limit\nare clock/history state and fold into one stream choice. The in-memory effect\n(action_success / recovered / rollback_success) folds into one effect choice.\nEmitted labels: reject_diagnosis, deny_terminal, escalate_human,\ndefer_cooldown, defer_rate_limit, execute_stabilizing, execute_recovered,\nexecute_rolled_back, execute_terminal.",
+  "start": "gate",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "gate",
+      "primary_q": "effect",
+      "questions": {
+        "proposal_schema": {
+          "type": "choice",
+          "instructions": "Is the model's proposal one schema-valid typed diagnosis (exactly fault_class / evidence / candidate_remediation, all enum values, non-empty known evidence and one known candidate remediation)?",
+          "criteria": {
+            "accepted": "exactly one valid typed diagnosis proposal",
+            "rejected": "malformed, injected/unknown field, unknown enum, or unknown action"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal_schema"
+          }
+        },
+        "service_state": {
+          "type": "choice",
+          "instructions": "Lifecycle state of the target service before this incident.",
+          "criteria": {
+            "degraded": "degraded but still actionable",
+            "stabilizing": "a prior action is still stabilising",
+            "recovered": "already recovered (terminal)",
+            "rolled_back": "already rolled back (terminal)",
+            "terminal": "unrecoverable, terminal"
+          },
+          "heuristic": {
+            "answer_field": "ev_service_state"
+          }
+        },
+        "evidence": {
+          "type": "choice",
+          "instructions": "Is every proposed evidence key non-empty and actually present in the incident fixture (no invented key)?",
+          "criteria": {
+            "pass": "all proposed evidence is fixture-backed and non-empty",
+            "fail": "empty evidence or at least one invented key"
+          },
+          "heuristic": {
+            "answer_field": "ev_evidence"
+          }
+        },
+        "fault": {
+          "type": "choice",
+          "instructions": "Does the proposed fault_class match the deterministic classifier's fault class for this fixture?",
+          "criteria": {
+            "pass": "matches the deterministic class",
+            "fail": "mismatch, requires human escalation"
+          },
+          "heuristic": {
+            "answer_field": "ev_fault"
+          }
+        },
+        "permission": {
+          "type": "choice",
+          "instructions": "Is the deterministic fault class allowed by the candidate action's policy (restart->process_crash, drain_bad_instance->memory_leak, rollback_deployment->deployment_regression, failover->dependency_latency or zone_isolation, scale_out->traffic_overload)?",
+          "criteria": {
+            "pass": "the action is permitted for this fault",
+            "fail": "the action is not allowed for this fault"
+          },
+          "heuristic": {
+            "answer_field": "ev_permission"
+          }
+        },
+        "stream": {
+          "type": "choice",
+          "instructions": "Per service+action history: is the action clear of the cooldown (ticks since the last action >= cooldown) and under the rate limit (window count < limit)?",
+          "criteria": {
+            "idle": "outside cooldown and under the rate limit",
+            "cooldown": "an identical action ran within the cooldown window",
+            "rate_limited": "the rate-limit window already holds the max count"
+          },
+          "heuristic": {
+            "answer_field": "ev_stream"
+          }
+        },
+        "blast": {
+          "type": "choice",
+          "instructions": "Blast radius: is this a protected service about to receive a service-wide (non single-instance) action?",
+          "criteria": {
+            "pass": "single-instance action, or unprotected service",
+            "escalate": "service-wide action on a protected service"
+          },
+          "heuristic": {
+            "answer_field": "ev_blast"
+          }
+        },
+        "effect": {
+          "type": "choice",
+          "instructions": "In-memory effect of executing the action (fixture only).",
+          "criteria": {
+            "stabilized": "action_success, not recovered -> STABILIZING",
+            "recovered": "action_success and recovered -> RECOVERED (terminal)",
+            "rolled_back": "action failed, rollback succeeded -> ROLLED_BACK (terminal)",
+            "terminal": "action failed, rollback failed -> TERMINAL"
+          },
+          "heuristic": {
+            "answer_field": "ev_effect"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "effect",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal_schema",
+              "answer": "rejected"
+            },
+            "label": "reject_diagnosis"
+          },
+          {
+            "when": {
+              "question": "service_state",
+              "answer_in": [
+                "recovered",
+                "rolled_back",
+                "terminal"
+              ]
+            },
+            "label": "deny_terminal"
+          },
+          {
+            "when": {
+              "question": "evidence",
+              "answer": "fail"
+            },
+            "label": "escalate_human"
+          },
+          {
+            "when": {
+              "question": "fault",
+              "answer": "fail"
+            },
+            "label": "escalate_human"
+          },
+          {
+            "when": {
+              "question": "permission",
+              "answer": "fail"
+            },
+            "label": "escalate_human"
+          },
+          {
+            "when": {
+              "question": "stream",
+              "answer": "cooldown"
+            },
+            "label": "defer_cooldown"
+          },
+          {
+            "when": {
+              "question": "stream",
+              "answer": "rate_limited"
+            },
+            "label": "defer_rate_limit"
+          },
+          {
+            "when": {
+              "question": "blast",
+              "answer": "escalate"
+            },
+            "label": "escalate_human"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "rolled_back"
+            },
+            "label": "execute_rolled_back"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "terminal"
+            },
+            "label": "execute_terminal"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "recovered"
+            },
+            "label": "execute_recovered"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "execute_stabilizing"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "service",
+          "incident_id"
+        ]
+      }
+    }
+  ]
+}

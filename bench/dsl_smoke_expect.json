@@ -1145,5 +1145,19 @@
     "cooldown_cpu": "cooldown",
     "low_severity_db_offpeak": "low_severity",
     "reject_context": "reject_context"
+  },
+  "self_healing_gate": {
+    "restart_stabilizing": "execute_stabilizing",
+    "failover_recovered": "execute_recovered",
+    "rollback_success_rolled_back": "execute_rolled_back",
+    "rollback_failure_terminal": "execute_terminal",
+    "cooldown_defers": "defer_cooldown",
+    "rate_limit_defers": "defer_rate_limit",
+    "invented_evidence_escalates": "escalate_human",
+    "fault_mismatch_escalates": "escalate_human",
+    "action_not_permitted_escalates": "escalate_human",
+    "protected_service_escalates": "escalate_human",
+    "malformed_proposal_rejected": "reject_diagnosis",
+    "terminal_state_denied": "deny_terminal"
   }
 }

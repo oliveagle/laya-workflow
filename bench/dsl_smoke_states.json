@@ -1206,5 +1206,127 @@
       "ev_business_period": "normal",
       "ev_severity": "high"
     }
+  },
+  "self_healing_gate": {
+    "restart_stabilizing": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "failover_recovered": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "recovered"
+    },
+    "rollback_success_rolled_back": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "rolled_back"
+    },
+    "rollback_failure_terminal": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "terminal"
+    },
+    "cooldown_defers": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "cooldown",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "rate_limit_defers": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "rate_limited",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "invented_evidence_escalates": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "fail",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "fault_mismatch_escalates": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "fail",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "action_not_permitted_escalates": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "fail",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "protected_service_escalates": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "escalate",
+      "ev_effect": "stabilized"
+    },
+    "malformed_proposal_rejected": {
+      "ev_proposal_schema": "rejected",
+      "ev_service_state": "degraded",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    },
+    "terminal_state_denied": {
+      "ev_proposal_schema": "accepted",
+      "ev_service_state": "terminal",
+      "ev_evidence": "pass",
+      "ev_fault": "pass",
+      "ev_permission": "pass",
+      "ev_stream": "idle",
+      "ev_blast": "pass",
+      "ev_effect": "stabilized"
+    }
   }
 }
