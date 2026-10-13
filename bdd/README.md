@@ -378,6 +378,12 @@ shape — add nodes by cloning a Scenario and re-wiring edges, or pass `--single
 for a 1-node start. The `.feature` is the source; the `dsl/*.json` is the
 compiled artifact and is never hand-edited.
 
+When `bdd build` cannot match a step in an `@decision` feature, the coverage
+gate error names the step **and** suggests the closest decision-vocabulary
+template (`did you mean the decision when step: the answer "<a>" goes to "<node>"?`),
+so a typo (or a `Then` step accidentally written under `Given`/`And`) is fixable
+without digging — no `--assist` needed.
+
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 
 A vocabulary that only drives fixtures proves nothing about the web. The live

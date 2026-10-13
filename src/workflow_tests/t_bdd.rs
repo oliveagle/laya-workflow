@@ -1253,3 +1253,33 @@ Feature: nested_continue
     );
     h.eq("bdd: sub continue edge condition", sub["edge"]["condition"].clone(), json!({}));
 }
+
+/// P28: unmatched decision steps get a "did you mean" suggestion from the
+/// decision vocabulary (same-kind typo + wrong-keyword-kind), not a browser op.
+pub fn test_bdd_decision_suggest(h: &mut Harness) {
+    // same-kind typo: missing "the" in the edge-routing step
+    let s1 = bdd::decision_suggest("when", r#"answer "A" goes to "STOP""#);
+    h.check(
+        "bdd: suggest edge template for missing 'the'",
+        s1.as_deref().unwrap_or("").contains(r#"the answer "<a>" goes to "<node>""#),
+    );
+    // wrong keyword kind: primary_q is a Then step, author wrote it as Given/And
+    let s2 = bdd::decision_suggest("given", r#"the primary question is "nope""#);
+    h.check(
+        "bdd: suggest primary_q template across kinds",
+        s2.as_deref().unwrap_or("").contains(r#"the primary question is "<q>""#),
+    );
+    // a fully-valid step (already handled by match_step) still suggests the
+    // *same* template — decision_suggest is only consulted after a match miss,
+    // so this is harmless; what matters is it never points at a wrong template.
+    let s3 = bdd::decision_suggest("when", r#"the answer "A" goes to "STOP""#);
+    h.check(
+        "bdd: valid edge step suggests the edge template",
+        s3.as_deref().unwrap_or("").contains(r#"the answer "<a>" goes to "<node>""#),
+    );
+    // unrelated text produces no suggestion (no false positive)
+    h.check(
+        "bdd: unrelated text has no suggestion",
+        bdd::decision_suggest("given", "take out the trash").is_none(),
+    );
+}

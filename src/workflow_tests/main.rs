@@ -137,6 +137,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-mcp-catalog", t_bdd::test_bdd_mcp_catalog),
         ("bdd-mcp-new", t_bdd::test_bdd_mcp_new),
         ("bdd-mcp-transpile", t_bdd::test_bdd_mcp_transpile),
+        ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

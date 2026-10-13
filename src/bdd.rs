@@ -1135,6 +1135,98 @@ pub fn vocabulary_patterns() -> Vec<&'static str> {
     v
 }
 
+/// Human-readable templates for the decision-workflow vocabulary, derived from
+/// the `dec_given/when/then_table` regexes (capture groups → `<name>`). Used to
+/// turn an unmatched step in an @decision feature into an actionable
+/// "did you mean <template>?" suggestion (P28 usability axis).
+fn decision_templates() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("given", "a choice question \"<q>\" asks \"<text>\" (table: | answer | meaning |)"),
+        ("given", "a score question \"<q>\" asks \"<text>\" (table: | level |)"),
+        ("given", "a noul question \"<q>\" asks \"<text>\" (table: | truthy/falsy | text |)"),
+        ("given", "the sub workflow \"<name>\""),
+        ("given", "when the sub workflow completes continue at \"<node>\""),
+        ("given", "the workflow runs at most <n> iterations"),
+        ("given", "the policy (table: | key | value |)"),
+        ("given", "the capabilities (table: | name | config |)"),
+        ("given", "answer \"<ans>\" when the field \"<field>\" contains <needles> with hit <hit>"),
+        ("given", "answer \"<ans>\" when the text contains <needles> with hit <hit>"),
+        ("given", "answer \"<ans>\" when the field \"<field>\" matches <patterns> with hit <hit>"),
+        ("given", "answer \"<ans>\" with mid <mid> when the field \"<field>\" contains <needles>"),
+        ("given", "answer by rules on the field \"<field>\" with hit <hit>"),
+        ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
+        ("given", "the answer is always \"<a>\""),
+        ("given", "the answer comes from the field \"<f>\""),
+        ("when", "the answer \"<a>\" goes to \"<node>\""),
+        ("when", "any other answer goes to \"<node>\""),
+        ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\""),
+        ("then", "label \"<label>\" when the answer to \"<q>\" is one of <list>"),
+        ("then", "label \"<label>\" when the answer is \"<a>\""),
+        ("then", "label \"<label>\" when \"<q>\" is at least <n>"),
+        ("then", "label \"<label>\" when \"<q>\" is below <n>"),
+        ("then", "label \"<label>\" otherwise"),
+        ("then", "keep the answer to \"<q>\""),
+        ("then", "keep the state key \"<k>\""),
+        ("then", "require confidence at least <n>"),
+        ("then", "allow up to <n> retries"),
+        ("then", "the primary question is \"<q>\""),
+        ("then", "the action reads the question \"<q>\""),
+        ("then", "call the capability \"<cap>\""),
+        ("then", "gate \"<q>\" on option \"<opt>\" with block <block> allow <allow>"),
+        ("then", "merge open probabilities on \"<q>\""),
+        ("then", "combine \"<choice>\" with signal \"<signal>\" fallback \"<fallback>\" review \"<review>\" requiring <min> high <high> low <low>"),
+        ("then", "rubric \"<q1>\" at <l1> levels weight <w1> and \"<q2>\" at <l2> levels weight <w2> requiring <min>"),
+        ("then", "prepare a UI proposal from operation \"<op>\" field \"<field>\" amount \"<amt>\" surface \"<surface>\" hash \"<hash>\" requiring <min>"),
+    ]
+}
+
+/// "did you mean" suggestion from the decision vocabulary for an unmatched step.
+/// Tokenises the step text and each template's literal words (capture placeholders
+/// `<name>` ignored), prefers the same keyword kind, and returns the closest
+/// template when >=2 literal words overlap.
+pub fn decision_suggest(kind: &str, text: &str) -> Option<String> {
+    // Stopwords that carry no signal when matching literal step words.
+    const STOP: [&str; 4] = ["the", "and", "with", "any"];
+    let words: std::collections::HashSet<&str> = text
+        .split(|c: char| !c.is_ascii_lowercase() && c != '_')
+        .filter(|w| w.len() >= 3 && !STOP.contains(w))
+        .collect();
+    if words.is_empty() {
+        return None;
+    }
+    // Distinct literal words of a template (capture placeholders `<name>` and
+    // stopwords ignored) that also appear in the step text.
+    let overlap = |tmpl: &str| {
+        let tw: std::collections::HashSet<&str> = tmpl
+            .split(|c: char| !c.is_ascii_lowercase() && c != '_')
+            .filter(|w| w.len() >= 3 && !w.starts_with('<') && !STOP.contains(w))
+            .collect();
+        tw.iter().filter(|w| words.contains(*w)).count()
+    };
+    let mut best: Option<(usize, &'static str)> = None;
+    // Pass 1: same keyword kind, >=2 shared literal words.
+    for &(tkind, tmpl) in decision_templates() {
+        if tkind != kind {
+            continue;
+        }
+        let shared = overlap(tmpl);
+        if shared >= 2 && best.map(|(b, _)| shared > b).unwrap_or(true) {
+            best = Some((shared, tmpl));
+        }
+    }
+    // Pass 2: no same-kind hit → accept a cross-kind template (the author put
+    // a `Then` step under `Given`/`And`, or vice versa). Only fills the gap.
+    if best.is_none() {
+        for &(_, tmpl) in decision_templates() {
+            let shared = overlap(tmpl);
+            if shared >= 2 && best.map(|(b, _)| shared > b).unwrap_or(true) {
+                best = Some((shared, tmpl));
+            }
+        }
+    }
+    best.map(|(_, tmpl)| tmpl.to_string())
+}
+
 fn match_step<'a>(kind: &str, text: &'a str) -> Result<(regex_lite::Captures<'a>, &'static str, &'static str)> {
     let table = match kind {
         "given" => given_table(),
@@ -1172,11 +1264,21 @@ fn match_step<'a>(kind: &str, text: &'a str) -> Result<(regex_lite::Captures<'a>
         })
         .cloned()
         .collect();
-    let hint = if close.is_empty() {
+    let mut hint = if close.is_empty() {
         String::new()
     } else {
         format!(" (did you mean: {}?)", close.join(", "))
     };
+    // @decision features have their own vocabulary; point the author at the
+    // closest decision step so a typo is fixable without --assist (P28).
+    if let Some(t) = decision_suggest(kind, text) {
+        let extra = format!("did you mean the decision {kind} step: {t}?");
+        hint = if hint.is_empty() {
+            format!(" ({extra})")
+        } else {
+            format!("{hint} ({extra})")
+        };
+    }
     bail!(
         "unknown {kind} step: {text:?}{hint}\n  supported: {}",
         known.join(", ")
@@ -3149,12 +3251,27 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
     // Per-feature coverage gate (strict = 100% by default).
     for cov in &coverage_report {
         if cov.coverage < o.coverage_min {
+            // For an @decision feature, point at the closest decision-vocabulary
+            // step so the author can fix the typo without digging (P28). Each
+            // unmatched entry is "<kind> <text>".
+            let mut annotated: Vec<String> = Vec::new();
+            for u in &cov.unmatched {
+                if let Some((kind, text)) = u.split_once(' ') {
+                    let mut entry = u.clone();
+                    if let Some(t) = decision_suggest(kind, text) {
+                        entry = format!("{u} (did you mean the decision {kind} step: {t}?)");
+                    }
+                    annotated.push(entry);
+                } else {
+                    annotated.push(u.clone());
+                }
+            }
             errors.push(format!(
                 "{}: step coverage {}% < {}% (unmatched: {})",
                 cov.feature,
                 cov.coverage,
                 o.coverage_min,
-                cov.unmatched.join(", ").chars().take(200).collect::<String>()
+                annotated.join(", ").chars().take(400).collect::<String>()
             ));
         }
     }
