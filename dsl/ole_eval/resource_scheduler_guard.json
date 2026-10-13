@@ -1,0 +1,137 @@
+{
+  "name": "resource_scheduler_guard",
+  "_bdd": {
+    "feature": "resource_scheduler_guard",
+    "feature_path": "bdd/workflows/ole_eval/resource_scheduler_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed scheduling preferences as a single triage node. The model\nproposes only one typed preference set (job preferences plus a soft objective);\nthis workflow owns the fixed authority (jobs, resources, eligibility, DAG,\nwindows, capacity, preemption policy), the bounded exhaustive solver and the\ndeterministic override of soft preferences, and returns the approve / modify /\nreject decision itself. It never launches jobs or an external scheduler. Port of\ncode/qwen_vm/app_scenarios/resource_scheduler_guard.\nThe engine's own verbs: APPROVE / MODIFY / REJECT — the preferences are honoured,\nthe solver overrode some of them, or the proposal cannot be scheduled.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed scheduler envelope, the duplicate-key\nrejection and the job / resource / objective grammar) folds into the\n`proposal` choice.\n- The authority (jobs, resources, per-job eligible resources, DAG edges windows,\ncapacity, preemption policy, the bounded search limit) is a fixed fixture; the\nharness resolves it and hands the DSL one answer per check.\n- The ordered preference-domain checks, the bounded-search refusal and the\ninfeasibility are folded into the `reject_reason` choice (the engine's own\nfirst-appended reason); the honest override of a feasible schedule's soft\npreferences is folded into the `outcome` choice. The ladder mirrors the\nengine's REJECT-before-(APPROVE/MODIFY) order.\nEmitted labels: reject_unknown_job, reject_unknown_resource,\nreject_ineligible_resource, reject_duplicate_job_preference,\nreject_combinatorial_limit_exceeded, reject_infeasible_schedule,\nmodify_preferences_overridden, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed scheduler proposal {job_preferences, soft_objective} with valid identifiers and a valid objective?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed proposal",
+            "malformed": "parse error, duplicate key or an invalid shape"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Against the fixed authority, which single ordered scheduler check refuses first?",
+          "criteria": {
+            "none": "no refusal: a feasible schedule exists",
+            "unknown_job": "a preference names a job outside the authority",
+            "unknown_resource": "a preference names a resource outside the authority",
+            "ineligible_resource": "the resource is not eligible for that job",
+            "duplicate_job_preference": "a job is given two preferences",
+            "combinatorial_limit_exceeded": "the bounded exhaustive search refused unbounded expansion",
+            "infeasible_schedule": "no discrete schedule satisfies DAG, capacity, window and preemption limits"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "outcome": {
+          "type": "choice",
+          "instructions": "When a feasible schedule exists, how does the deterministic solver resolve the soft preferences?",
+          "criteria": {
+            "preferences_honoured": "every typed preference matches the feasible schedule",
+            "preferences_overridden": "the solver found a feasible schedule but moved some jobs"
+          },
+          "heuristic": {
+            "answer_field": "ev_outcome"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_job"
+            },
+            "label": "reject_unknown_job"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_resource"
+            },
+            "label": "reject_unknown_resource"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "ineligible_resource"
+            },
+            "label": "reject_ineligible_resource"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_job_preference"
+            },
+            "label": "reject_duplicate_job_preference"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "combinatorial_limit_exceeded"
+            },
+            "label": "reject_combinatorial_limit_exceeded"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "infeasible_schedule"
+            },
+            "label": "reject_infeasible_schedule"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "preferences_overridden"
+            },
+            "label": "modify_preferences_overridden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

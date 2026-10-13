@@ -5908,5 +5908,278 @@
       "ev_reject_reason": "merge_same_entity",
       "ev_revision": "merge_direction_normalized"
     }
+  },
+  "data_contract_schema_guard": {
+    "accept_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "reject_duplicate_field": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_field",
+      "ev_revision": "none"
+    },
+    "reject_unknown_field": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_field",
+      "ev_revision": "none"
+    },
+    "reject_source_mapping_unauthorized": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "source_mapping_unauthorized",
+      "ev_revision": "none"
+    },
+    "reject_semantic_conflict": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "semantic_conflict",
+      "ev_revision": "none"
+    },
+    "reject_migration_intent_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "migration_intent_not_allowed",
+      "ev_revision": "none"
+    },
+    "reject_type_incompatible": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "type_incompatible",
+      "ev_revision": "none"
+    },
+    "reject_historical_values_invalid": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "historical_values_invalid",
+      "ev_revision": "none"
+    },
+    "reject_primary_key_not_unique": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "primary_key_not_unique",
+      "ev_revision": "none"
+    },
+    "reject_foreign_key_violations": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "foreign_key_violations",
+      "ev_revision": "none"
+    },
+    "reject_pii_reclassification_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "pii_reclassification_not_allowed",
+      "ev_revision": "none"
+    },
+    "reject_required_without_default": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "required_without_default",
+      "ev_revision": "none"
+    },
+    "reject_incomplete_backfill_no_default": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "incomplete_backfill_no_default",
+      "ev_revision": "none"
+    },
+    "reject_optional_without_default": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "optional_without_default",
+      "ev_revision": "none"
+    },
+    "reject_non_nullable_incomplete_backfill": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "non_nullable_incomplete_backfill",
+      "ev_revision": "none"
+    },
+    "revise_backfill_default_required": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "backfill_default_required"
+    },
+    "revise_default_replaces_nullable": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "default_replaces_nullable"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "unknown_field",
+      "ev_revision": "backfill_default_required"
+    },
+    "precedence_reject_before_revise": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_field",
+      "ev_revision": "default_replaces_nullable"
+    }
+  },
+  "resource_scheduler_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_unknown_job": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_job",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_unknown_resource": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_resource",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_ineligible_resource": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "ineligible_resource",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_duplicate_job_preference": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_job_preference",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_combinatorial_limit_exceeded": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "combinatorial_limit_exceeded",
+      "ev_outcome": "preferences_honoured"
+    },
+    "reject_infeasible_schedule": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "infeasible_schedule",
+      "ev_outcome": "preferences_honoured"
+    },
+    "modify_preferences_overridden": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_outcome": "preferences_overridden"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "unknown_job",
+      "ev_outcome": "preferences_overridden"
+    },
+    "precedence_reject_before_approve": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "infeasible_schedule",
+      "ev_outcome": "preferences_overridden"
+    }
+  },
+  "policy_as_code": {
+    "allow_clean": {
+      "ev_proposal": "compiled",
+      "ev_activation": "ok",
+      "ev_effect": "allow"
+    },
+    "reject_policy": {
+      "ev_proposal": "malformed",
+      "ev_activation": "ok",
+      "ev_effect": "allow"
+    },
+    "reject_version_conflict": {
+      "ev_proposal": "compiled",
+      "ev_activation": "version_conflict",
+      "ev_effect": "allow"
+    },
+    "reject_rollback_conflict": {
+      "ev_proposal": "compiled",
+      "ev_activation": "rollback_conflict",
+      "ev_effect": "allow"
+    },
+    "deny": {
+      "ev_proposal": "compiled",
+      "ev_activation": "ok",
+      "ev_effect": "deny"
+    },
+    "review": {
+      "ev_proposal": "compiled",
+      "ev_activation": "ok",
+      "ev_effect": "review"
+    },
+    "deny_no_matching_rule": {
+      "ev_proposal": "compiled",
+      "ev_activation": "ok",
+      "ev_effect": "no_matching_rule"
+    },
+    "precedence_proposal_before_activation": {
+      "ev_proposal": "malformed",
+      "ev_activation": "version_conflict",
+      "ev_effect": "deny"
+    },
+    "precedence_activation_before_effect": {
+      "ev_proposal": "compiled",
+      "ev_activation": "rollback_conflict",
+      "ev_effect": "allow"
+    }
+  },
+  "test_case_generator": {
+    "accepted_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "rejected_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "rejected_input_boundary": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "input_boundary_or_safety",
+      "ev_repair": "none"
+    },
+    "rejected_duplicate_no_safe_repair": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_no_safe_repair",
+      "ev_repair": "none"
+    },
+    "rejected_repaired_duplicate_exists": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "repaired_duplicate_exists",
+      "ev_repair": "none"
+    },
+    "rejected_no_new_coverage": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "no_new_coverage",
+      "ev_repair": "none"
+    },
+    "repaired_inputs": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "inputs"
+    },
+    "repaired_inputs_and_intent": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "inputs_and_intent"
+    },
+    "repaired_oracle": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "oracle"
+    },
+    "repaired_inputs_and_oracle": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "inputs_and_oracle"
+    },
+    "repaired_inputs_intent_and_oracle": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "inputs_intent_and_oracle"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "no_new_coverage",
+      "ev_repair": "inputs"
+    },
+    "precedence_reject_before_repair": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_no_safe_repair",
+      "ev_repair": "oracle"
+    }
   }
 }

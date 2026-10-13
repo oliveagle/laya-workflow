@@ -1,0 +1,121 @@
+{
+  "name": "policy_as_code",
+  "_bdd": {
+    "feature": "policy_as_code",
+    "feature_path": "bdd/workflows/ole_eval/policy_as_code.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed policies-as-code as a single triage node. The model\nproposes only one typed policy document (fields, rules with priority / condition\n/ action); this workflow owns the field-schema validation, the dangerous-text\nscan, the condition / action compilation, the versioned registry (atomic\nactivation, explicit rollback) and the first-priority rule evaluation with a\ndefault DENY, and returns the effect itself. It never executes the policy\nelsewhere. Port of code/qwen_vm/app_scenarios/policy_as_code.\nThe engine's own verbs: ALLOW / DENY / REVIEW — the active policy evaluates the\nsubject to allow, deny or review it; a proposal or a version step that fails is\nREJECTED.\nFolding boundaries (documented, not computed in the DSL):\n- Policy compilation (the exact typed document envelope, the balanced-JSON\nscan, the duplicate-key / constant rejection, the dangerous-text walk, the\nfield-schema validation and the condition / action parse) folds into the\n`proposal` choice.\n- The registry history and the high-water mark are fixed; the harness resolves\nthe version steps and hands the DSL one answer per check.\n- The activation / rollback outcome is folded into the `activation` choice; the\nfirst-priority rule match (or the default DENY when nothing matches) is folded\ninto the `effect` choice. The ladder mirrors the engine's\nREJECT-before-effect order.\nEmitted labels: reject_policy, reject_version_conflict, reject_rollback_conflict,\nallow, deny, review, deny_no_matching_rule.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed policy document {version, fields, rules} that compiles (field schema, safe text, conditions and actions)?",
+          "criteria": {
+            "compiled": "exactly one structurally valid, compilable policy document",
+            "malformed": "parse error, duplicate key, unsafe text or a compile error"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "activation": {
+          "type": "choice",
+          "instructions": "Against the fixed versioned registry, do the atomic activation and the optional rollback succeed?",
+          "criteria": {
+            "ok": "activation (and any requested rollback) succeed",
+            "version_conflict": "the activated version is not the expected contiguous one",
+            "rollback_conflict": "a rollback was requested and refused (not older / unknown)"
+          },
+          "heuristic": {
+            "answer_field": "ev_activation"
+          }
+        },
+        "effect": {
+          "type": "choice",
+          "instructions": "Against the active policy, what does the deterministic first-priority rule evaluation return for the subject?",
+          "criteria": {
+            "allow": "a matched rule's action effect is ALLOW",
+            "deny": "a matched rule's action effect is DENY",
+            "review": "a matched rule's action effect is REVIEW",
+            "no_matching_rule": "no rule matched -> the default DENY \"no matching policy rule\""
+          },
+          "heuristic": {
+            "answer_field": "ev_effect"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_policy"
+          },
+          {
+            "when": {
+              "question": "activation",
+              "answer": "version_conflict"
+            },
+            "label": "reject_version_conflict"
+          },
+          {
+            "when": {
+              "question": "activation",
+              "answer": "rollback_conflict"
+            },
+            "label": "reject_rollback_conflict"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "allow"
+            },
+            "label": "allow"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "review"
+            },
+            "label": "review"
+          },
+          {
+            "when": {
+              "question": "effect",
+              "answer": "no_matching_rule"
+            },
+            "label": "deny_no_matching_rule"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "deny"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "policy_version"
+        ]
+      }
+    }
+  ]
+}

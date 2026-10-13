@@ -1,0 +1,153 @@
+{
+  "name": "test_case_generator",
+  "_bdd": {
+    "feature": "test_case_generator",
+    "feature_path": "bdd/workflows/ole_eval/test_case_generator.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed test cases as a single triage node. The model proposes\nonly one typed test case (target, test_intent, inputs, oracle_kind); this\nworkflow owns the input boundary / safety validation, the pure fixture oracles,\nthe duplicate fingerprint ledger, the deterministic repair catalogue and the\ncoverage catalogue, and returns the accept / repair / reject outcome itself. It\nnever runs the proposal against real code. Port of\ncode/qwen_vm/app_scenarios/test_case_generator.\nThe engine's own verbs: ACCEPTED / REPAIRED / REJECTED — the test case is taken\nas written, taken after a local repair, or refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed test-case envelope, the balanced-JSON scan,\nthe target / intent / oracle-kind enums and the inputs shape) folds into the\n`proposal` choice.\n- The input boundaries, the safety scan, the pure fixture oracles, the repair\ncatalogue, the coverage catalogue and the fingerprint ledger are fixed; the\nharness resolves them and hands the DSL one answer per check.\n- The ordered reject chain (bad input boundary / unsafe input, an unrepairable\nduplicate, a repaired duplicate that already exists, no new coverage) is\nfolded into the `reject_reason` choice (the engine's own first reason); the\ndeterministic repair of the inputs / intent / oracle is folded into the\n`repair` choice. The ladder mirrors the engine's REJECTED-before-REPAIRED-\nbefore-ACCEPTED order.\nEmitted labels: rejected_proposal, rejected_input_boundary,\nrejected_duplicate_no_safe_repair, rejected_repaired_duplicate_exists,\nrejected_no_new_coverage, repaired, accepted.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed test case {target, test_intent, inputs, oracle_kind} (duration_parser / decimal_calculator / order_state; happy_path / boundary / invalid_input / duplicate; value / error)?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed test case",
+            "malformed": "parse error, bad enum or an invalid inputs shape"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Against the fixed boundaries, oracles and catalogues, which single ordered gate refuses the test case first?",
+          "criteria": {
+            "none": "no refusal: the test case is taken (after any repair)",
+            "input_boundary_or_safety": "the inputs break a boundary or fail the safety scan",
+            "duplicate_no_safe_repair": "the fingerprint is a duplicate with no safe catalog repair",
+            "repaired_duplicate_exists": "the repaired candidate is itself already present",
+            "no_new_coverage": "the test adds no new coverage tag"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "repair": {
+          "type": "choice",
+          "instructions": "When the gate takes the test case, which deterministic repair does the engine record first?",
+          "criteria": {
+            "none": "no repair: accepted exactly as written",
+            "inputs": "only the inputs were replaced from the catalog",
+            "inputs_and_intent": "the inputs and the test intent were replaced",
+            "oracle": "only the oracle kind was corrected to the local fixture",
+            "inputs_and_oracle": "the inputs and the oracle kind were repaired",
+            "inputs_intent_and_oracle": "the inputs, the intent and the oracle kind were all repaired"
+          },
+          "heuristic": {
+            "answer_field": "ev_repair"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "rejected_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "input_boundary_or_safety"
+            },
+            "label": "rejected_input_boundary"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_no_safe_repair"
+            },
+            "label": "rejected_duplicate_no_safe_repair"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "repaired_duplicate_exists"
+            },
+            "label": "rejected_repaired_duplicate_exists"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "no_new_coverage"
+            },
+            "label": "rejected_no_new_coverage"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "inputs"
+            },
+            "label": "repaired"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "inputs_and_intent"
+            },
+            "label": "repaired"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "oracle"
+            },
+            "label": "repaired"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "inputs_and_oracle"
+            },
+            "label": "repaired"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "inputs_intent_and_oracle"
+            },
+            "label": "repaired"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accepted"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "test_id"
+        ]
+      }
+    }
+  ]
+}

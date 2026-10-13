@@ -1,0 +1,209 @@
+{
+  "name": "data_contract_schema_guard",
+  "_bdd": {
+    "feature": "data_contract_schema_guard",
+    "feature_path": "bdd/workflows/ole_eval/data_contract_schema_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed data-contract field migrations as a single triage node.\nThe model proposes only one typed contract proposal (a list of field proposals:\nfield, source_field, semantic, migration_intent); this workflow owns the\nauthoritative target schema, the source-mapping authority, the type / historic\n/ key / PII compatibility tables, the backfill coverage and the deterministic\ndefault backfill, and returns the accept / revise / reject decision itself. It\nnever runs SQL or code. Port of\ncode/qwen_vm/app_scenarios/data_contract_schema_guard.\nThe engine's own verbs: ACCEPT / REVISE / REJECT — every field proposal is\naccepted, some need a deterministic backfill revision, or at least one violates\nthe contract.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed contract envelope, the duplicate-key\nrejection and the per-field shape) folds into the `proposal` choice.\n- The target schema, the authorized source mappings, the type / historic / key /\nPII compatibility tables and the default-backfill set are fixed fixtures; the\nharness resolves them and hands the DSL one answer per check.\n- The per-field ordered reject checks are folded into the `reject_reason`\nchoice (the engine's own first-appended reason, taken across the whole\nproposal); the two deterministic default-backfill revisions are folded into\nthe `revision` choice. The ladder mirrors the engine's\nREJECT-before-REVISE-before-ACCEPT aggregate order.\nEmitted labels: reject_duplicate_field, reject_unknown_field,\nreject_source_mapping_unauthorized, reject_semantic_conflict,\nreject_migration_intent_not_allowed, reject_type_incompatible,\nreject_historical_values_invalid, reject_primary_key_not_unique,\nreject_foreign_key_violations, reject_pii_reclassification_not_allowed,\nreject_required_without_default, reject_incomplete_backfill_no_default,\nreject_optional_without_default, reject_non_nullable_incomplete_backfill,\nrevise_backfill_default_required, revise_default_replaces_nullable, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed contract proposal whose field proposals carry the required keys with valid enums?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed contract proposal",
+            "malformed": "parse error, duplicate key or an invalid field-proposal shape"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Across the whole proposal, which single ordered contract check does the deterministic authority refuse first?",
+          "criteria": {
+            "none": "no field proposal is rejected",
+            "duplicate_field": "the same field is proposed twice",
+            "unknown_field": "the field is not in the authoritative target schema",
+            "source_mapping_unauthorized": "the source mapping is not authorized for the field",
+            "semantic_conflict": "the proposed semantic conflicts with local authority",
+            "migration_intent_not_allowed": "the migration intent is not allowed for the field",
+            "type_incompatible": "the source-to-target type change is lossy or incompatible",
+            "historical_values_invalid": "historical values fall outside the target enum / range",
+            "primary_key_not_unique": "a primary-key candidate is not unique",
+            "foreign_key_violations": "the foreign-key mapping has referential violations",
+            "pii_reclassification_not_allowed": "the PII reclassification is not on the semantic allowlist",
+            "required_without_default": "a required field without default breaks nullable / incomplete history",
+            "incomplete_backfill_no_default": "a required field has incomplete backfill and no default",
+            "optional_without_default": "an optional field has no authoritative default",
+            "non_nullable_incomplete_backfill": "a non-nullable conversion has no complete backfill"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "revision": {
+          "type": "choice",
+          "instructions": "When no field proposal is rejected, which single deterministic default-backfill revision does the authority record first?",
+          "criteria": {
+            "none": "no revision: every field proposal is accepted as written",
+            "backfill_default_required": "an authoritative default must backfill the uncovered records",
+            "default_replaces_nullable": "a default must replace the nullable or missing values"
+          },
+          "heuristic": {
+            "answer_field": "ev_revision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_field"
+            },
+            "label": "reject_duplicate_field"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_field"
+            },
+            "label": "reject_unknown_field"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "source_mapping_unauthorized"
+            },
+            "label": "reject_source_mapping_unauthorized"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "semantic_conflict"
+            },
+            "label": "reject_semantic_conflict"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "migration_intent_not_allowed"
+            },
+            "label": "reject_migration_intent_not_allowed"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "type_incompatible"
+            },
+            "label": "reject_type_incompatible"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "historical_values_invalid"
+            },
+            "label": "reject_historical_values_invalid"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "primary_key_not_unique"
+            },
+            "label": "reject_primary_key_not_unique"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "foreign_key_violations"
+            },
+            "label": "reject_foreign_key_violations"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "pii_reclassification_not_allowed"
+            },
+            "label": "reject_pii_reclassification_not_allowed"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "required_without_default"
+            },
+            "label": "reject_required_without_default"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "incomplete_backfill_no_default"
+            },
+            "label": "reject_incomplete_backfill_no_default"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "optional_without_default"
+            },
+            "label": "reject_optional_without_default"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "non_nullable_incomplete_backfill"
+            },
+            "label": "reject_non_nullable_incomplete_backfill"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "backfill_default_required"
+            },
+            "label": "revise_backfill_default_required"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "default_replaces_nullable"
+            },
+            "label": "revise_default_replaces_nullable"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "contract_id"
+        ]
+      }
+    }
+  ]
+}
