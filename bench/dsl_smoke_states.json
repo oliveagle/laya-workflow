@@ -5530,5 +5530,383 @@
       "ev_reject_reason": "none",
       "ev_revision": "plural_incomplete"
     }
+  },
+  "experiment_design_gate": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_authority": "none",
+      "ev_design": "within_budget"
+    },
+    "reject_invalid_proposal": {
+      "ev_proposal": "malformed",
+      "ev_authority": "none",
+      "ev_design": "within_budget"
+    },
+    "reject_infeasible_treatments": {
+      "ev_proposal": "accepted",
+      "ev_authority": "too_many_treatments",
+      "ev_design": "no_reduction"
+    },
+    "reject_infeasible_replicates": {
+      "ev_proposal": "accepted",
+      "ev_authority": "too_many_replicates",
+      "ev_design": "within_budget"
+    },
+    "modify_reduced_design": {
+      "ev_proposal": "accepted",
+      "ev_authority": "none",
+      "ev_design": "reduced_fits"
+    },
+    "reject_no_feasible_reduction": {
+      "ev_proposal": "accepted",
+      "ev_authority": "none",
+      "ev_design": "no_reduction"
+    },
+    "precedence_invalid_before_infeasible": {
+      "ev_proposal": "malformed",
+      "ev_authority": "too_many_treatments",
+      "ev_design": "within_budget"
+    },
+    "precedence_infeasible_before_design": {
+      "ev_proposal": "accepted",
+      "ev_authority": "too_many_replicates",
+      "ev_design": "reduced_fits"
+    },
+    "precedence_three_way_invalid_first": {
+      "ev_proposal": "malformed",
+      "ev_authority": "too_many_replicates",
+      "ev_design": "no_reduction"
+    }
+  },
+  "crawler_schema_guard": {
+    "accept_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "reject_duplicate_request_id": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_request_id",
+      "ev_repair": "none"
+    },
+    "reject_unknown_schema": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_schema",
+      "ev_repair": "none"
+    },
+    "reject_unknown_page_fixture": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_page_fixture",
+      "ev_repair": "none"
+    },
+    "reject_url_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "url_not_allowed",
+      "ev_repair": "none"
+    },
+    "reject_selector_outside_schema": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "selector_outside_schema",
+      "ev_repair": "none"
+    },
+    "reject_required_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "required_missing",
+      "ev_repair": "none"
+    },
+    "reject_normalizer_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "normalizer_not_allowed",
+      "ev_repair": "none"
+    },
+    "reject_value_invalid": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "value_invalid",
+      "ev_repair": "none"
+    },
+    "reject_cardinality_conflict": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "cardinality_conflict",
+      "ev_repair": "none"
+    },
+    "repair_duplicate_collapse": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "duplicate_collapse"
+    },
+    "repair_normalization": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "normalization_repair"
+    },
+    "repair_fallback_selector": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "fallback_selector_repair"
+    },
+    "repair_pii_applied": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "pii_applied"
+    },
+    "precedence_reject_before_repair": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "required_missing",
+      "ev_repair": "pii_applied"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "unknown_schema",
+      "ev_repair": "pii_applied"
+    }
+  },
+  "rpa_action_guard": {
+    "allow_clean": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "none",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_proposal": {
+      "ev_proposal": "malformed",
+      "ev_deny_reason": "none",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_action_not_whitelisted": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "action_not_whitelisted",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_unknown_intent": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "unknown_intent",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_unknown_page_fixture": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "unknown_page_fixture",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_url_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "url_not_allowed",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_page_state_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "page_state_mismatch",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_selector_outside_target_schema": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "selector_outside_target_schema",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_target_not_found": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "target_not_found",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_action_does_not_match_intent": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "action_does_not_match_intent",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_action_not_supported_by_target": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "action_not_supported_by_target",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_target_disabled": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "target_disabled",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_sensitive_field_read": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "sensitive_field_read",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_sensitive_raw_value": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "sensitive_raw_value",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_sensitive_value_ref": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "sensitive_value_ref",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_value_ref_only_for_sensitive": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "value_ref_only_for_sensitive",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_typed_action_requires_value": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "typed_action_requires_value",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_non_typing_carries_value": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "non_typing_carries_value",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_retry_limit_exceeded": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "retry_limit_exceeded",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_non_contiguous_retry": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "non_contiguous_retry",
+      "ev_policy_outcome": "allow"
+    },
+    "deny_not_permitted_by_policy": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "none",
+      "ev_policy_outcome": "policy_deny"
+    },
+    "review_high_risk_action": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "none",
+      "ev_policy_outcome": "review"
+    },
+    "precedence_deny_before_policy": {
+      "ev_proposal": "accepted",
+      "ev_deny_reason": "sensitive_field_read",
+      "ev_policy_outcome": "review"
+    },
+    "precedence_proposal_before_deny": {
+      "ev_proposal": "malformed",
+      "ev_deny_reason": "action_not_whitelisted",
+      "ev_policy_outcome": "policy_deny"
+    }
+  },
+  "knowledge_graph_guard": {
+    "accept_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "reject_invalid_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "reject_duplicate_entity_id": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_entity_id",
+      "ev_revision": "none"
+    },
+    "reject_unique_key_conflict": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unique_key_conflict",
+      "ev_revision": "none"
+    },
+    "reject_referential_integrity_subject": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "referential_integrity_subject",
+      "ev_revision": "none"
+    },
+    "reject_referential_integrity_object": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "referential_integrity_object",
+      "ev_revision": "none"
+    },
+    "reject_self_relation_conflict": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "self_relation_conflict",
+      "ev_revision": "none"
+    },
+    "reject_duplicate_relation_triple": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_relation_triple",
+      "ev_revision": "none"
+    },
+    "reject_merge_source_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "merge_source_missing",
+      "ev_revision": "none"
+    },
+    "reject_merge_target_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "merge_target_missing",
+      "ev_revision": "none"
+    },
+    "reject_merge_same_entity": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "merge_same_entity",
+      "ev_revision": "none"
+    },
+    "reject_retire_entity_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "retire_entity_missing",
+      "ev_revision": "none"
+    },
+    "reject_invariant_subject_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_subject_missing",
+      "ev_revision": "none"
+    },
+    "reject_invariant_object_missing": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_object_missing",
+      "ev_revision": "none"
+    },
+    "reject_invariant_duplicate_triple": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_duplicate_triple",
+      "ev_revision": "none"
+    },
+    "reject_invariant_self_relation": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_self_relation",
+      "ev_revision": "none"
+    },
+    "reject_invariant_duplicate_unique_key": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_duplicate_unique_key",
+      "ev_revision": "none"
+    },
+    "reject_invariant_cycle": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_cycle",
+      "ev_revision": "none"
+    },
+    "revise_merge_direction_normalized": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "merge_direction_normalized"
+    },
+    "revise_duplicate_relation_retired": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "duplicate_relation_retired"
+    },
+    "revise_dependent_relations_retired": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "dependent_relations_retired"
+    },
+    "precedence_reject_before_revise": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_relation_triple",
+      "ev_revision": "merge_direction_normalized"
+    },
+    "precedence_invariant_before_revise": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "invariant_cycle",
+      "ev_revision": "dependent_relations_retired"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "merge_same_entity",
+      "ev_revision": "merge_direction_normalized"
+    }
   }
 }

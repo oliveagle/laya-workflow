@@ -1,0 +1,113 @@
+{
+  "name": "experiment_design_gate",
+  "_bdd": {
+    "feature": "experiment_design_gate",
+    "feature_path": "bdd/workflows/ole_eval/experiment_design_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed design-of-experiments as a single triage node. The model\nproposes only one typed experiment proposal (factors, levels, budget); this\nworkflow owns the authoritative factor domain, the typed-factor validation, the\nfull-factorial treatment combinatorics, the power/replicate requirement, the\nDecimal budget and the deterministic two-factor reduction, and returns the\ndesign decision itself. It never launches an experiment. Port of\ncode/qwen_vm/app_scenarios/experiment_design_gate.\nThe engine's own verbs: APPROVE / MODIFY / REJECT — the proposal is approved as\nwritten, reduced to a feasible design, or refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed proposal envelope, the duplicate-key\nrejection, the factor-name / level grammar and the at-least-two-levels rule)\nfolds into the `proposal` choice.\n- The authority (factor-name domain, per-factor level allow-lists, min / max\nfactor counts, max treatments, required power to replicate count, max\nreplicates per treatment, the Decimal budget and the max total runs) is a\nfixed fixture; the harness resolves it and hands the DSL one answer per\ncheck.\n- The treatment count and the replicate requirement are folded into the\n`authority` choice; the budget / run feasibility and the deterministic\ntwo-factor reduction are folded into the `design` choice. The engine returns\nearly per reject, so each choice carries the engine's own first reason and\nthe ladder mirrors the engine's\nREJECT(invalid)-before-REJECT(infeasible)-before-APPROVE/MODIFY/REJECT order.\nEmitted labels: reject_invalid_proposal, reject_infeasible_treatments,\nreject_infeasible_replicates, reject_no_feasible_reduction,\nmodify_reduced_design, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed experiment proposal whose factors pass the authoritative schema (unique names, known domains, legal and unique levels, at least two levels, factor count within bounds)?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed proposal",
+            "malformed": "parse error, duplicate key, or a factor schema violation"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "authority": {
+          "type": "choice",
+          "instructions": "Within the authoritative design limits, which single hard limit does the deterministic authority report first?",
+          "criteria": {
+            "none": "the full-factorial design is inside both hard limits",
+            "too_many_treatments": "the full-factorial treatment count exceeds the maximum",
+            "too_many_replicates": "the required replicates exceed the per-treatment maximum"
+          },
+          "heuristic": {
+            "answer_field": "ev_authority"
+          }
+        },
+        "design": {
+          "type": "choice",
+          "instructions": "When the design is inside the hard limits, how does the deterministic budget and run evaluation resolve it?",
+          "criteria": {
+            "within_budget": "the full design fits the budget and run limits -> approve",
+            "reduced_fits": "only the two-factor reduction fits budget and run limits",
+            "no_reduction": "neither the full design nor the two-factor reduction fits"
+          },
+          "heuristic": {
+            "answer_field": "ev_design"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_invalid_proposal"
+          },
+          {
+            "when": {
+              "question": "authority",
+              "answer": "too_many_treatments"
+            },
+            "label": "reject_infeasible_treatments"
+          },
+          {
+            "when": {
+              "question": "authority",
+              "answer": "too_many_replicates"
+            },
+            "label": "reject_infeasible_replicates"
+          },
+          {
+            "when": {
+              "question": "design",
+              "answer": "no_reduction"
+            },
+            "label": "reject_no_feasible_reduction"
+          },
+          {
+            "when": {
+              "question": "design",
+              "answer": "reduced_fits"
+            },
+            "label": "modify_reduced_design"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "experiment_id"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,233 @@
+{
+  "name": "knowledge_graph_guard",
+  "_bdd": {
+    "feature": "knowledge_graph_guard",
+    "feature_path": "bdd/workflows/ole_eval/knowledge_graph_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed knowledge-graph operations as a single triage node. The\nmodel proposes only one typed graph operation (add_entity / add_relation /\nmerge_entities / retire_entity); this workflow owns the graph state, the entity\nids, the unique keys, the referential integrity, the cycles, the versions, the\ntransactions, the local merge / retire repairs and the invariant rollback, and\nreturns the accept / revise / reject decision itself. It never mutates a live\ngraph. Port of code/qwen_vm/app_scenarios/knowledge_graph_guard.\nThe engine's own verbs: ACCEPT / REVISE / REJECT — the operation is applied,\napplied after a local revision, or refused with a rollback.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed proposal envelope, the operation enum, the\nper-operation field sets, the id / key grammar and the safe-text scan) folds\ninto the `proposal` choice.\n- The graph state and the DAG relation types are fixed; the harness resolves\nthem and hands the DSL one answer per check.\n- The per-operation early refusals and the post-apply invariant rollback are\nfolded into the `reject_reason` choice, which carries the engine's own first\nreason; the local merge / retire revisions are folded into the `revision`\nchoice. The ladder mirrors the engine's\nREJECT(op)-before-REJECT(invariant-rollback)-before-REVISE-before-ACCEPT\norder.\nEmitted labels: reject_invalid_proposal, reject_duplicate_entity_id,\nreject_unique_key_conflict, reject_referential_integrity_subject,\nreject_referential_integrity_object, reject_self_relation_conflict,\nreject_duplicate_relation_triple, reject_merge_source_missing,\nreject_merge_target_missing, reject_merge_same_entity,\nreject_retire_entity_missing, reject_invariant_subject_missing,\nreject_invariant_object_missing, reject_invariant_duplicate_triple,\nreject_invariant_self_relation, reject_invariant_duplicate_unique_key,\nreject_invariant_cycle, revise_merge_direction_normalized,\nrevise_duplicate_relation_retired, revise_dependent_relations_retired, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed graph operation (add_entity / add_relation / merge_entities / retire_entity) with the operation's exact fields and a valid safe-text grammar?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed operation",
+            "malformed": "parse error, unknown operation, bad field set or unsafe text"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Against the fixed graph state, which single deterministic refusal does the validator report first (a per-operation check, or a post-apply invariant that triggers a rollback)?",
+          "criteria": {
+            "none": "no refusal: the operation commits",
+            "duplicate_entity_id": "the entity id already exists",
+            "unique_key_conflict": "an active entity shares the type and canonical name",
+            "referential_integrity_subject": "the relation subject is missing or inactive",
+            "referential_integrity_object": "the relation object is missing or inactive",
+            "self_relation_conflict": "the relation subject equals its object",
+            "duplicate_relation_triple": "an identical active triple already exists",
+            "merge_source_missing": "the merge source is missing or inactive",
+            "merge_target_missing": "the merge target is missing or inactive",
+            "merge_same_entity": "the merge source equals its target",
+            "retire_entity_missing": "the retire target is missing or inactive",
+            "invariant_subject_missing": "a post-apply invariant finds an active relation without a live subject",
+            "invariant_object_missing": "a post-apply invariant finds an active relation without a live object",
+            "invariant_duplicate_triple": "a post-apply invariant finds a duplicate active triple",
+            "invariant_self_relation": "a post-apply invariant finds an active self relation",
+            "invariant_duplicate_unique_key": "a post-apply invariant finds a duplicate active unique key",
+            "invariant_cycle": "a post-apply invariant finds a cycle in a DAG relation type"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "revision": {
+          "type": "choice",
+          "instructions": "When no refusal fires, which single local revision does the deterministic engine record first?",
+          "criteria": {
+            "none": "no revision: the operation commits as written",
+            "merge_direction_normalized": "the merge direction is swapped so the higher-degree node survives",
+            "duplicate_relation_retired": "a relation that became a duplicate is retired after the merge",
+            "dependent_relations_retired": "a retired entity's dependent relations are retired in the same transaction"
+          },
+          "heuristic": {
+            "answer_field": "ev_revision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_invalid_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_entity_id"
+            },
+            "label": "reject_duplicate_entity_id"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unique_key_conflict"
+            },
+            "label": "reject_unique_key_conflict"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "referential_integrity_subject"
+            },
+            "label": "reject_referential_integrity_subject"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "referential_integrity_object"
+            },
+            "label": "reject_referential_integrity_object"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "self_relation_conflict"
+            },
+            "label": "reject_self_relation_conflict"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_relation_triple"
+            },
+            "label": "reject_duplicate_relation_triple"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "merge_source_missing"
+            },
+            "label": "reject_merge_source_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "merge_target_missing"
+            },
+            "label": "reject_merge_target_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "merge_same_entity"
+            },
+            "label": "reject_merge_same_entity"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "retire_entity_missing"
+            },
+            "label": "reject_retire_entity_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_subject_missing"
+            },
+            "label": "reject_invariant_subject_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_object_missing"
+            },
+            "label": "reject_invariant_object_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_duplicate_triple"
+            },
+            "label": "reject_invariant_duplicate_triple"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_self_relation"
+            },
+            "label": "reject_invariant_self_relation"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_duplicate_unique_key"
+            },
+            "label": "reject_invariant_duplicate_unique_key"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "invariant_cycle"
+            },
+            "label": "reject_invariant_cycle"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "merge_direction_normalized"
+            },
+            "label": "revise_merge_direction_normalized"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "duplicate_relation_retired"
+            },
+            "label": "revise_duplicate_relation_retired"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "dependent_relations_retired"
+            },
+            "label": "revise_dependent_relations_retired"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "proposal_id"
+        ]
+      }
+    }
+  ]
+}

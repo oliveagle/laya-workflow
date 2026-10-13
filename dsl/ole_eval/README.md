@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 48 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 52 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -59,6 +59,10 @@
 | `subscription_entitlement_guard.json` | `subscription_entitlement_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 27/27 | 模型只提 typed intent（request_id/subscription_id/requested_effective_date/target_plan/target_seats/add_on_intents）；subscription 台账·plan/add-on 目录·term/billing 窗口·依赖·seat policy·commitment·proration+credit preview·control-total 本地裁决 → reject 首因(10) / modify 首因(4) / approve |
 | `contract_conflict_guard.json` | `contract_conflict_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 CONFLICT/NO_CONFLICT/REVIEW**）| 16/16 | 模型只提 typed clause（clause_type/party/role/modality/start/end/priority/exception）；固定合同 fixture·本地 clause id·区间重叠·modal/deadline 冲突·优先级覆盖·exception 引用由本地校验器裁决 → review(2) / conflict(2) / no_conflict |
 | `accessibility_content_guard.json` | `accessibility_content_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 ACCEPT/REVISE/REJECT**）| 20/20 | 模型只提 typed remediation（content_id/issue_intent/target_node/remediation_intent/reason）；不可变内容快照上的确定性 scoped checklist：意图·目标匹配·remediation allow-list·未解决项 → reject 首因(5) / revise 首因(2) / approve |
+| `experiment_design_gate.json` | `experiment_design_gate/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 9/9 | 模型只提 typed proposal（factors/levels/budget）；权威 factor 域·typed-factor 校验·全因子组合数·power→replicates·Decimal 预算·确定性两因子缩减由本地裁决 → reject(4) / modify / approve |
+| `crawler_schema_guard.json` | `crawler_schema_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 ACCEPT/REPAIR/REJECT**）| 17/17 | 模型只提 typed extraction proposal（request_id/schema_name/page_id/field_mappings）；固定 schema·page fixture·URL 政策·selector 归属·required/normalizer·value 校验·cardinality·PII transform·请求台账本地裁决 → reject(10) / repair(4) / accept |
+| `rpa_action_guard.json` | `rpa_action_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 ALLOW/REVIEW/DENY**）| 24/24 | 模型只提 typed action（request_id/intent/action/selector/value/value_ref/page_state/attempt）；固定 intent 政策表·page/DOM fixture·URL 政策·selector 归属·target 能力·sensitive 规则·value_ref 规则·typing 规则·retry 台账本地裁决 → deny(20) / review / allow |
+| `knowledge_graph_guard.json` | `knowledge_graph_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 ACCEPT/REVISE/REJECT**）| 24/24 | 模型只提 typed graph op（add_entity/add_relation/merge_entities/retire_entity）；固定图状态·id/unique key·referential integrity·cycle·version/transaction·merge/retire 本地修订·不变量回滚本地裁决 → reject(17) / revise(3) / accept |
 ## 映射方式
 
 原始 Python 里的**确定性表格查找**（taxonomy 基础严重度、audience 最小年龄、
@@ -89,14 +93,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 42 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 52 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 42 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 52 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行

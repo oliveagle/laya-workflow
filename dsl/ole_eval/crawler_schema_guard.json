@@ -1,0 +1,185 @@
+{
+  "name": "crawler_schema_guard",
+  "_bdd": {
+    "feature": "crawler_schema_guard",
+    "feature_path": "bdd/workflows/ole_eval/crawler_schema_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed crawler field-mappings as a single triage node. The model\nproposes only one typed extraction proposal (request_id, schema_name, page_id,\nfield_mappings); this workflow owns the fixed extraction schema, the page\nfixtures, the URL policy, the selector membership, the required-field and\nnormalizer rules, the value validation, the cardinality, the PII transform and\nthe request ledger, and returns the accept / repair / reject decision itself. It\nnever fetches or extracts from a page. Port of\ncode/qwen_vm/app_scenarios/crawler_schema_guard.\nThe engine's own verbs: ACCEPT / REPAIR / REJECT — the mapping is accepted as\nwritten, repaired locally, or refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed proposal envelope, the JSON balanced-object\nscan, the duplicate-key rejection and the field-mapping shape) folds into the\n`proposal` choice.\n- The extraction schema, the page fixtures, the URL allow / forbid policy and\nthe request ledger are fixed fixtures; the harness resolves them and hands\nthe DSL one answer per check.\n- The whole ordered reject chain (duplicate request id, unknown schema, unknown\npage fixture, URL policy, selector-outside-schema, required-missing,\nnormalizer-not-allowed, value validation, cardinality) is folded into the\n`reject_reason` choice, which carries the engine's own first-appended reason;\nthe local repairs are folded into the `repair` choice. The ladder mirrors the\nengine's REJECT-before-REPAIR-before-ACCEPT order.\nEmitted labels: reject_duplicate_request_id, reject_unknown_schema,\nreject_unknown_page_fixture, reject_url_not_allowed,\nreject_selector_outside_schema, reject_required_missing,\nreject_normalizer_not_allowed, reject_value_invalid,\nreject_cardinality_conflict, repair_duplicate_collapse,\nrepair_normalization, repair_fallback_selector, repair_pii_applied, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed extraction proposal {request_id, schema_name, page_id, field_mappings} with valid mapping shapes?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed proposal",
+            "malformed": "parse error, duplicate key or an invalid mapping shape"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Against the fixed schema and page fixtures, which single ordered check does the deterministic validator refuse first?",
+          "criteria": {
+            "none": "no rejection: the mapping clears every reject check",
+            "duplicate_request_id": "the request ledger already holds this request_id",
+            "unknown_schema": "the schema_name is not in the authoritative schema table",
+            "unknown_page_fixture": "the page_id has no authoritative page fixture",
+            "url_not_allowed": "the page URL fails the authoritative allow / forbid policy",
+            "selector_outside_schema": "a mapped selector is not in the field's authoritative set",
+            "required_missing": "a required field has no extracted value",
+            "normalizer_not_allowed": "a mapped normalizer is not in the field's allowed set",
+            "value_invalid": "a normalized value fails format / range / enum validation",
+            "cardinality_conflict": "the distinct value count is outside the field's min..max"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "repair": {
+          "type": "choice",
+          "instructions": "When the mapping clears every reject check, which single local repair does the deterministic engine record first?",
+          "criteria": {
+            "none": "no repair needed",
+            "duplicate_collapse": "repeated identical raw values collapse to one",
+            "normalization_repair": "a normalizer changed the value",
+            "fallback_selector_repair": "a fallback selector was used instead of the mapped one",
+            "pii_applied": "a PII action was applied to a present field"
+          },
+          "heuristic": {
+            "answer_field": "ev_repair"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_request_id"
+            },
+            "label": "reject_duplicate_request_id"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_schema"
+            },
+            "label": "reject_unknown_schema"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_page_fixture"
+            },
+            "label": "reject_unknown_page_fixture"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "url_not_allowed"
+            },
+            "label": "reject_url_not_allowed"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "selector_outside_schema"
+            },
+            "label": "reject_selector_outside_schema"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "required_missing"
+            },
+            "label": "reject_required_missing"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "normalizer_not_allowed"
+            },
+            "label": "reject_normalizer_not_allowed"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "value_invalid"
+            },
+            "label": "reject_value_invalid"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "cardinality_conflict"
+            },
+            "label": "reject_cardinality_conflict"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "duplicate_collapse"
+            },
+            "label": "repair_duplicate_collapse"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "normalization_repair"
+            },
+            "label": "repair_normalization"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "fallback_selector_repair"
+            },
+            "label": "repair_fallback_selector"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "pii_applied"
+            },
+            "label": "repair_pii_applied"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}
