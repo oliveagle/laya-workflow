@@ -1,0 +1,97 @@
+{
+  "name": "shipping_route_guard",
+  "_bdd": {
+    "feature": "shipping_route_guard",
+    "feature_path": "bdd/workflows/ole_eval/shipping_route_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed shipping route preferences as a single triage node. The\nmodel proposes one typed route preference (request_id, shipment_id,\npreference_intent, preferred_mode) and *only* that; this workflow owns the\nlogistics graph search, the capacity/temperature/hazard/document constraints,\nthe best-route selection and the cost-vs-limit check. It never routes a\nshipment or takes a logistics action. Port of\ncode/qwen_vm/app_scenarios/shipping_route_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (exact four-field shape, request_id grammar, known\nshipment_id, valid preference_intent and preferred_mode enums) fold into the\n`proposal` choice.\n- The logistics graph solver (lane search with capacity / temperature / hazard\n/ document / mode filters) folds into the `feasible` choice: the harness\nruns the deterministic DFS and hands the DSL `ok` or `none`.\n- The cost computation and the shipment cost_limit comparison fold into the\n`cost` choice.\nEmitted labels: reject_proposal, reject_no_route, reject_over_cost, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, shipment_id, preference_intent, preferred_mode} object with a valid request id, known shipment and valid enums?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed route preference",
+            "malformed": "parse error, missing/extra field, bad request id, unknown shipment or bad enum"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "feasible": {
+          "type": "choice",
+          "instructions": "Does the lane graph admit at least one route from origin to destination honouring capacity, temperature, hazard, document and mode constraints?",
+          "criteria": {
+            "ok": "at least one feasible route",
+            "none": "no feasible route"
+          },
+          "heuristic": {
+            "answer_field": "ev_feasible"
+          }
+        },
+        "cost": {
+          "type": "choice",
+          "instructions": "Is the best route's computed cost within the shipment cost limit?",
+          "criteria": {
+            "ok": "cost <= cost_limit",
+            "over": "cost > cost_limit"
+          },
+          "heuristic": {
+            "answer_field": "ev_cost"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "feasible",
+              "answer": "none"
+            },
+            "label": "reject_no_route"
+          },
+          {
+            "when": {
+              "question": "cost",
+              "answer": "over"
+            },
+            "label": "reject_over_cost"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,277 @@
+{
+  "name": "incident_response_guard",
+  "_bdd": {
+    "feature": "incident_response_guard",
+    "feature_path": "bdd/workflows/ole_eval/incident_response_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed incident remediation actions as a single triage node.\nThe model proposes one typed action (incident_id, incident_semantic,\naction_intent, target_service, reason) and *only* that; this workflow owns the\nincident id/semantic match, the idempotency fingerprint, the runbook allowlist,\nthe target validity, the terminal-state check, the approval quorum, the\naction preconditions and the acknowledge/mitigation SLA checks. It never\nexecutes remediation or touches infrastructure. Port of\ncode/qwen_vm/app_scenarios/incident_response_guard.\nThis guard is the first port that emits a *three-valued* decision: the\ndeterministic engine returns APPROVE / REVISE / REJECT, so the label ladder\ncarries a `revise_*` rung between the `reject_*` hard gates and `approve`.\nEvery `reject_*` label is a REJECT, every `revise_*` label is a REVISE, and\n`approve` is the only APPROVE.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (exact five-field shape, incident_id grammar\nINC-<digits>, semantic/action enums, bounded identifier, safe reason text)\nfold into the `proposal` choice.\n- The fixed fixtures (RUNBOOK_ALLOWLIST, ACTION_TARGETS, ACTION_RISKS,\nSLA_SECONDS, the dependency graph and the approval-role table) fold into the\nchoice questions: the harness evaluates them against the local incident and\nthe model proposal, and hands the DSL one answer per question.\nEmitted labels: reject_proposal, reject_incident_mismatch,\nreject_semantic_conflict, reject_replay, reject_runbook, reject_target,\nreject_target_scope, reject_resolved, reject_state, revise_ack_then_page,\nrevise_missing_roles, revise_precondition, revise_mitigation_sla, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {incident_id, incident_semantic, action_intent, target_service, reason} object with a bounded identifier, valid enums and safe reason text?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed action",
+            "malformed": "parse error, missing/extra field, bad id, bad enum or unsafe reason"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "incident_match": {
+          "type": "choice",
+          "instructions": "Does the proposal incident_id equal the local incident id?",
+          "criteria": {
+            "match": "ids are equal",
+            "mismatch": "ids differ"
+          },
+          "heuristic": {
+            "answer_field": "ev_incident_match"
+          }
+        },
+        "semantics": {
+          "type": "choice",
+          "instructions": "Does the proposal incident_semantic equal the authoritative observed semantic?",
+          "criteria": {
+            "match": "semantics agree",
+            "conflict": "semantics conflict with record"
+          },
+          "heuristic": {
+            "answer_field": "ev_semantics"
+          }
+        },
+        "fingerprint": {
+          "type": "choice",
+          "instructions": "Is the command fingerprint unused by the local incident?",
+          "criteria": {
+            "unused": "not in applied_fingerprints",
+            "replay": "already applied, idempotent replay"
+          },
+          "heuristic": {
+            "answer_field": "ev_fingerprint"
+          }
+        },
+        "runbook": {
+          "type": "choice",
+          "instructions": "Is the action_intent within the runbook allowlist for this incident's semantic?",
+          "criteria": {
+            "allowed": "in the runbook allowlist",
+            "outside": "outside the runbook allowlist"
+          },
+          "heuristic": {
+            "answer_field": "ev_runbook"
+          }
+        },
+        "target_allowed": {
+          "type": "choice",
+          "instructions": "Is the target_service a valid target for the proposed action_intent?",
+          "criteria": {
+            "ok": "target is valid for the action",
+            "invalid": "target is invalid for the action"
+          },
+          "heuristic": {
+            "answer_field": "ev_target_allowed"
+          }
+        },
+        "target_scope": {
+          "type": "choice",
+          "instructions": "Does the target_service equal the incident's authoritative affected service?",
+          "criteria": {
+            "ok": "target is the affected service",
+            "outside": "target is outside the affected service"
+          },
+          "heuristic": {
+            "answer_field": "ev_target_scope"
+          }
+        },
+        "resolved": {
+          "type": "choice",
+          "instructions": "Is the local incident already in the terminal RESOLVED state?",
+          "criteria": {
+            "no": "not resolved",
+            "yes": "RESOLVED, terminal"
+          },
+          "heuristic": {
+            "answer_field": "ev_resolved"
+          }
+        },
+        "state": {
+          "type": "choice",
+          "instructions": "Is the local incident state a known state?",
+          "criteria": {
+            "known": "state is in the state set",
+            "unknown": "state is not recognised"
+          },
+          "heuristic": {
+            "answer_field": "ev_state"
+          }
+        },
+        "ack_first": {
+          "type": "choice",
+          "instructions": "If the incident is OPEN, has the responder been paged first?",
+          "criteria": {
+            "ok": "not OPEN, or the action is page_oncall",
+            "needed": "OPEN and the action is not page_oncall"
+          },
+          "heuristic": {
+            "answer_field": "ev_ack_first"
+          }
+        },
+        "roles": {
+          "type": "choice",
+          "instructions": "Are all approval roles required by the action risk present?",
+          "criteria": {
+            "complete": "required roles all approved",
+            "missing": "an approval quorum is missing"
+          },
+          "heuristic": {
+            "answer_field": "ev_roles"
+          }
+        },
+        "precondition": {
+          "type": "choice",
+          "instructions": "Do the action's preconditions hold (rollback/failover/scale/close)?",
+          "criteria": {
+            "ok": "preconditions hold, or none apply",
+            "failed": "a precondition failed"
+          },
+          "heuristic": {
+            "answer_field": "ev_precondition"
+          }
+        },
+        "mitigation_sla": {
+          "type": "choice",
+          "instructions": "Is the mitigation SLA within bounds, or is the action the SLA-exempt page_oncall?",
+          "criteria": {
+            "ok": "within SLA, or the action is page_oncall",
+            "missed": "mitigation SLA breached by a non-page action"
+          },
+          "heuristic": {
+            "answer_field": "ev_mitigation_sla"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "incident_match",
+              "answer": "mismatch"
+            },
+            "label": "reject_incident_mismatch"
+          },
+          {
+            "when": {
+              "question": "semantics",
+              "answer": "conflict"
+            },
+            "label": "reject_semantic_conflict"
+          },
+          {
+            "when": {
+              "question": "fingerprint",
+              "answer": "replay"
+            },
+            "label": "reject_replay"
+          },
+          {
+            "when": {
+              "question": "runbook",
+              "answer": "outside"
+            },
+            "label": "reject_runbook"
+          },
+          {
+            "when": {
+              "question": "target_allowed",
+              "answer": "invalid"
+            },
+            "label": "reject_target"
+          },
+          {
+            "when": {
+              "question": "target_scope",
+              "answer": "outside"
+            },
+            "label": "reject_target_scope"
+          },
+          {
+            "when": {
+              "question": "resolved",
+              "answer": "yes"
+            },
+            "label": "reject_resolved"
+          },
+          {
+            "when": {
+              "question": "state",
+              "answer": "unknown"
+            },
+            "label": "reject_state"
+          },
+          {
+            "when": {
+              "question": "ack_first",
+              "answer": "needed"
+            },
+            "label": "revise_ack_then_page"
+          },
+          {
+            "when": {
+              "question": "roles",
+              "answer": "missing"
+            },
+            "label": "revise_missing_roles"
+          },
+          {
+            "when": {
+              "question": "precondition",
+              "answer": "failed"
+            },
+            "label": "revise_precondition"
+          },
+          {
+            "when": {
+              "question": "mitigation_sla",
+              "answer": "missed"
+            },
+            "label": "revise_mitigation_sla"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "incident_id"
+        ]
+      }
+    }
+  ]
+}

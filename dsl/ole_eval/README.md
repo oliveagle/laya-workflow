@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 34 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 38 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -45,6 +45,10 @@
 | `compliance_audit_evidence_guard.json` | `compliance_audit_evidence_guard/` | 合规审计证据闸门单节点判定：模型只提 typed checklist（request_id/audit_id/evidence_items[{evidence_id,description,status,category}]/compliance_framework），schema 校验（request_id·audit_id 语法 / 非空 items / status 枚举 / 危险 token）、缺项检查：missing+pending→ESCALATE（**优先于** REJECT）、必需类目覆盖、零采集、missing% 上限由本地有序 rules 裁决 → `reject_proposal` / `escalate_wip` / `reject_uncovered` / `reject_none_collected` / `reject_missing_pct` / `approve` |
 | `workflow_dag_validator.json` | `workflow_dag_validator/` | 工作流 DAG 校验闸门单节点判定：模型只提 typed DAG（request_id/workflow_name/nodes[{id,type}]/edges[{from,to,condition}]），schema 校验（节点 id 语法·唯一 / type·condition 枚举 / 端点存在 / 危险 token）、节点·边上限、无环、单 start、有 end、blocked 节点类型、approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_node_count` / `reject_edge_count` / `reject_cycle` / `reject_no_start` / `reject_multiple_starts` / `reject_no_end` / `reject_blocked_type` / `reject_dangerous` / `escalate_approval` / `approve` |
 
+| `incident_response_guard.json` | `incident_response_guard/` | 事故响应动作闸门单节点判定：模型只提 typed action（incident_id / incident_semantic / action_intent / target_service / reason），incident id·语义匹配 / 幂等指纹重放 / runbook allowlist / 目标合法性与 affected-service 范围 / RESOLVED 终态 / 未知状态 → REJECT；未先 page oncall / 审批法定人数缺失 / rollback·failover·scale·close 前置条件 / mitigation SLA 已破 → REVISE，否则 APPROVE；**首个三值（APPROVE/REVISE/REJECT）端口** → `reject_proposal` / `reject_incident_mismatch` / `reject_semantic_conflict` / `reject_replay` / `reject_runbook` / `reject_target` / `reject_target_scope` / `reject_resolved` / `reject_state` / `revise_ack_then_page` / `revise_missing_roles` / `revise_precondition` / `revise_mitigation_sla` / `approve` |
+| `shipping_route_guard.json` | `shipping_route_guard/` | 运输路线闸门单节点判定：模型只提 typed route preference（request_id / shipment_id / preference_intent / preferred_mode），物流图求解（容量 / 温度 / 危险品 / 单据 / 模式约束）折叠成 choice、成本 vs 上限，由本地有序 rules 裁决 → `reject_proposal` / `reject_no_route` / `reject_over_cost` / `approve` |
+| `credential_issuance_guard.json` | `credential_issuance_guard/` | 凭据签发闸门单节点判定：模型只提 typed request（request_id / subject_id / credential_kind / operation / requested_audience / device_binding_requested），subject/policy 解析 + proofing·assurance·MFA·device·risk·revocation·rotation 检查，引擎三值 **ISSUE / MODIFY / REJECT** → `reject_*`（proposal / duplicate / unknown_subject / unknown_kind / subject_type / audience / ial / proofing / mfa / phishing / trusted_device / device_binding / risk / subject_inactive / credential_inactive / rotation_early）/ `modify_*`（rotation_required / device_binding_required / risk_lifetime / risk_scope / step_up）/ `issue` |
+| `refactor_plan_guard.json` | `refactor_plan_guard/` | 重构计划闸门单节点判定：模型只提 typed plan（request_id / intent{operation,target_module,objective} / steps[{step_id,action,source_module,target_module,test_ids,requires}] / rollback / proposed_risk），operation scope + step DAG + per-action payload·scope + 原子性 checkpoint + rollback + 行为等价测试 + risk 对齐，由本地有序 rules 裁决 → `reject_*`（proposal / duplicate / unknown_operation / intent_target / intent_objective / duplicate_step_id / dependency_cycle / unknown_dependency / missing_action / checkpoint_payload / create_payload / module_scope / move_payload / move_scope / update_payload / dependency_boundary / update_source / update_target / test_payload / step_order / checkpoint_count / rollback_strategy / rollback_checkpoint / checkpoint_order / behavior_equivalence）/ `modify_*`（optional_tests / risk_upgraded / risk_downgraded）/ `approve` |
 ## 映射方式
 
 原始 Python 里的**确定性表格查找**（taxonomy 基础严重度、audience 最小年龄、
@@ -75,14 +79,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 34 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 38 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 34 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 38 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
