@@ -2350,5 +2350,188 @@
       "ev_text": "dangerous",
       "ev_approval": "required"
     }
+  },
+  "rate_limit_budget_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_endpoint": "known",
+      "ev_budget": "ok"
+    },
+    "unknown_endpoint": {
+      "ev_proposal": "accepted",
+      "ev_endpoint": "unknown",
+      "ev_budget": "ok"
+    },
+    "over_budget": {
+      "ev_proposal": "accepted",
+      "ev_endpoint": "known",
+      "ev_budget": "over"
+    },
+    "near_budget": {
+      "ev_proposal": "accepted",
+      "ev_endpoint": "known",
+      "ev_budget": "near"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_endpoint": "known",
+      "ev_budget": "ok"
+    },
+    "precedence_unknown_before_over": {
+      "ev_proposal": "accepted",
+      "ev_endpoint": "unknown",
+      "ev_budget": "over"
+    }
+  },
+  "rate_limiter_config_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_algorithm": "ok",
+      "ev_rate": "ok",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    },
+    "bad_algorithm": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "invalid",
+      "ev_rate": "ok",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    },
+    "rate_below": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "ok",
+      "ev_rate": "below",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    },
+    "rate_above": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "ok",
+      "ev_rate": "above",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    },
+    "bad_burst": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "ok",
+      "ev_rate": "ok",
+      "ev_burst": "invalid",
+      "ev_endpoint": "ok"
+    },
+    "suspicious_endpoint": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "ok",
+      "ev_rate": "ok",
+      "ev_burst": "ok",
+      "ev_endpoint": "suspicious"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "ok",
+      "ev_rate": "ok",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    },
+    "precedence_algorithm_before_rate": {
+      "ev_proposal": "accepted",
+      "ev_algorithm": "invalid",
+      "ev_rate": "below",
+      "ev_burst": "ok",
+      "ev_endpoint": "ok"
+    }
+  },
+  "network_bandwidth_allocation_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_link": "ok",
+      "ev_capacity": "ok"
+    },
+    "unknown_link": {
+      "ev_proposal": "accepted",
+      "ev_link": "unknown",
+      "ev_capacity": "ok"
+    },
+    "over_capacity": {
+      "ev_proposal": "accepted",
+      "ev_link": "ok",
+      "ev_capacity": "over"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_link": "ok",
+      "ev_capacity": "ok"
+    },
+    "precedence_unknown_before_over": {
+      "ev_proposal": "accepted",
+      "ev_link": "unknown",
+      "ev_capacity": "over"
+    }
+  },
+  "api_key_rotation_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_key_id": "ok",
+      "ev_age": "ok",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    },
+    "bad_key_id": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "invalid",
+      "ev_age": "ok",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    },
+    "age_over": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "ok",
+      "ev_age": "over",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    },
+    "new_key_too_short": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "ok",
+      "ev_age": "ok",
+      "ev_new_key": "too_short",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    },
+    "early_rotation": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "ok",
+      "ev_age": "ok",
+      "ev_new_key": "not_rotate",
+      "ev_early": "too_early",
+      "ev_extension": "not_extend"
+    },
+    "extension_too_long": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "ok",
+      "ev_age": "ok",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "too_long"
+    },
+    "revoke_approve": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "ok",
+      "ev_age": "ok",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    },
+    "precedence_key_id_before_age": {
+      "ev_proposal": "accepted",
+      "ev_key_id": "invalid",
+      "ev_age": "over",
+      "ev_new_key": "not_rotate",
+      "ev_early": "not_rotate",
+      "ev_extension": "not_extend"
+    }
   }
 }

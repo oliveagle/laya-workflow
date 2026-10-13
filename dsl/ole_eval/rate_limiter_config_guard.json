@@ -1,0 +1,141 @@
+{
+  "name": "rate_limiter_config_guard",
+  "_bdd": {
+    "feature": "rate_limiter_config_guard",
+    "feature_path": "bdd/workflows/ole_eval/rate_limiter_config_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed rate-limiter configuration as a single triage node.\nThe model proposes one typed config (request_id, endpoint, algorithm,\nrate_per_second, burst_size, reason); this workflow owns the algorithm\nvocabulary, the rate band, the burst bound and the endpoint path check.\nPort of code/qwen_vm/app_scenarios/rate_limiter_config_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (dangerous tokens, required fields, JSON object) fold\ninto the `proposal` choice.\n- The policy band (min_rate_per_second / max_rate_per_second /\nmax_burst_size) plus the constants (1..1_000_000, burst <= 100x rate) are a\nfixed fixture; each check folds into one verdict choice. The Python engine\naccumulates every error; the port expresses «first failing check» in the\nPython source order (algorithm, rate, burst, endpoint), documented here.\nEmitted labels: reject_proposal, reject_algorithm, reject_rate,\nreject_burst, reject_endpoint, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "rate",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, endpoint, algorithm, rate_per_second, reason} object (no dangerous tokens, all required fields present)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid config",
+            "malformed": "dangerous token, bad JSON or missing field"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "algorithm": {
+          "type": "choice",
+          "instructions": "Is the proposed algorithm one of the allowed set token_bucket / sliding_window / fixed_window / leaky_bucket?",
+          "criteria": {
+            "ok": "algorithm is in the set",
+            "invalid": "algorithm is not allowed"
+          },
+          "heuristic": {
+            "answer_field": "ev_algorithm"
+          }
+        },
+        "rate": {
+          "type": "choice",
+          "instructions": "Is rate_per_second inside the allowed band (>= minimum, <= maximum, and within the policy band)?",
+          "criteria": {
+            "ok": "rate is within the band",
+            "below": "rate is below the allowed minimum",
+            "above": "rate exceeds the allowed maximum"
+          },
+          "heuristic": {
+            "answer_field": "ev_rate"
+          }
+        },
+        "burst": {
+          "type": "choice",
+          "instructions": "Is burst_size within bounds (0 means unset; otherwise >= 1, <= 100x rate and <= policy max_burst_size)?",
+          "criteria": {
+            "ok": "burst is unset or within bounds",
+            "invalid": "burst is below 1 or above its bound"
+          },
+          "heuristic": {
+            "answer_field": "ev_burst"
+          }
+        },
+        "endpoint": {
+          "type": "choice",
+          "instructions": "Is the endpoint path free of directory-traversal markers?",
+          "criteria": {
+            "ok": "endpoint path is clean",
+            "suspicious": "endpoint contains a .. marker"
+          },
+          "heuristic": {
+            "answer_field": "ev_endpoint"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "rate",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "algorithm",
+              "answer": "invalid"
+            },
+            "label": "reject_algorithm"
+          },
+          {
+            "when": {
+              "question": "rate",
+              "answer": "below"
+            },
+            "label": "reject_rate"
+          },
+          {
+            "when": {
+              "question": "rate",
+              "answer": "above"
+            },
+            "label": "reject_rate"
+          },
+          {
+            "when": {
+              "question": "burst",
+              "answer": "invalid"
+            },
+            "label": "reject_burst"
+          },
+          {
+            "when": {
+              "question": "endpoint",
+              "answer": "suspicious"
+            },
+            "label": "reject_endpoint"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "name": "network_bandwidth_allocation_guard",
+  "_bdd": {
+    "feature": "network_bandwidth_allocation_guard",
+    "feature_path": "bdd/workflows/ole_eval/network_bandwidth_allocation_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed bandwidth allocations as a single triage node. The\nmodel proposes one typed allocation set (request_id, allocations\n[{link_id, bandwidth_mbps, priority}]); this workflow owns the link catalog,\nthe per-link capacity check (capacity minus reserved) and the unknown-link\nrejection. Port of code/qwen_vm/app_scenarios/network_bandwidth_allocation_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required keys, request_id grammar, non-empty\nallocations list, positive bandwidth_mbps, priority in high/medium/low,\ndangerous-token rejection) fold into the `proposal` choice.\n- The link catalog (link_id -> capacity_mbps / reserved_mbps) is a fixed\nfixture. The per-link total-vs-available comparison is folded into one\n`capacity` verdict choice over every referenced link.\nEmitted labels: reject_proposal, reject_unknown_link,\nreject_over_capacity, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "capacity",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, allocations [{link_id, bandwidth_mbps, priority}]} object (request_id grammar, non-empty list, positive bandwidth, priority in high/medium/low, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid allocation set",
+            "malformed": "parse error, missing key, bad request_id, bad bandwidth or bad priority"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "link": {
+          "type": "choice",
+          "instructions": "Is every referenced link_id present in the local link catalog?",
+          "criteria": {
+            "ok": "every link_id is in the catalog",
+            "unknown": "at least one link_id is unknown"
+          },
+          "heuristic": {
+            "answer_field": "ev_link"
+          }
+        },
+        "capacity": {
+          "type": "choice",
+          "instructions": "For every referenced link, is the summed requested bandwidth within its available capacity (capacity_mbps minus reserved_mbps)?",
+          "criteria": {
+            "ok": "every link's total <= its available capacity",
+            "over": "some link's total > its available capacity"
+          },
+          "heuristic": {
+            "answer_field": "ev_capacity"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "capacity",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "link",
+              "answer": "unknown"
+            },
+            "label": "reject_unknown_link"
+          },
+          {
+            "when": {
+              "question": "capacity",
+              "answer": "over"
+            },
+            "label": "reject_over_capacity"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

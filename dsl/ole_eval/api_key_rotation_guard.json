@@ -1,0 +1,154 @@
+{
+  "name": "api_key_rotation_guard",
+  "_bdd": {
+    "feature": "api_key_rotation_guard",
+    "feature_path": "bdd/workflows/ole_eval/api_key_rotation_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed API key lifecycle actions as a single triage node. The\nmodel proposes one typed action (request_id, key_id, action\nrotate/revoke/extend, age_days, new_key_length, extend_days, reason); this\nworkflow owns the key_id format, the age hard limit, the new-key length, the\nearly-rotation rule and the extension bound. Port of\ncode/qwen_vm/app_scenarios/api_key_rotation_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (dangerous tokens, JSON object, required fields,\naction enum) fold into the `proposal` choice.\n- The policy table (max_age_days / recommended_age_days /\nforce_early_rotation) is a fixed fixture; each check folds into one verdict\nchoice. The Python engine accumulates every error; the port expresses\n«first failing check» in the Python source order (key_id, age, rotate\nlength, early rotation, extension), documented here. revoke carries no\nextra check and therefore approves whenever the schema is valid.\nEmitted labels: reject_proposal, reject_key_id, reject_age,\nreject_new_key_length, reject_early_rotation, reject_extension, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "age",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, key_id, action, reason} object (no dangerous tokens, all required fields present, action in rotate/revoke/extend)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid action",
+            "malformed": "dangerous token, bad JSON, missing field or bad action"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "key_id": {
+          "type": "choice",
+          "instructions": "Does key_id match the key-[A-Za-z0-9]{8,64} format?",
+          "criteria": {
+            "ok": "key_id format is valid",
+            "invalid": "key_id format is invalid"
+          },
+          "heuristic": {
+            "answer_field": "ev_key_id"
+          }
+        },
+        "age": {
+          "type": "choice",
+          "instructions": "Is the key age within the policy hard limit (age_days <= max_age_days)?",
+          "criteria": {
+            "ok": "age is within hard limit",
+            "over": "age exceeds hard limit"
+          },
+          "heuristic": {
+            "answer_field": "ev_age"
+          }
+        },
+        "new_key": {
+          "type": "choice",
+          "instructions": "For a rotate action, is the new key length at least 32 characters? (not_rotate when the action is not rotate)",
+          "criteria": {
+            "not_rotate": "action is not rotate",
+            "ok": "new key length meets the minimum",
+            "too_short": "new key length is below minimum"
+          },
+          "heuristic": {
+            "answer_field": "ev_new_key"
+          }
+        },
+        "early": {
+          "type": "choice",
+          "instructions": "For a rotate action, is the rotation allowed (key age >= recommended, or force_early_rotation set)? (not_rotate when the action is not rotate)",
+          "criteria": {
+            "not_rotate": "action is not rotate",
+            "allowed": "rotation timing is allowed",
+            "too_early": "rotation is earlier than recommended"
+          },
+          "heuristic": {
+            "answer_field": "ev_early"
+          }
+        },
+        "extension": {
+          "type": "choice",
+          "instructions": "For an extend action, does extend_days stay within the remaining hard limit (extend_days <= max_age_days - age_days)? (not_extend when the action is not extend)",
+          "criteria": {
+            "not_extend": "action is not extend",
+            "ok": "extension stays within the hard limit",
+            "too_long": "extension would exceed the hard limit"
+          },
+          "heuristic": {
+            "answer_field": "ev_extension"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "age",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "key_id",
+              "answer": "invalid"
+            },
+            "label": "reject_key_id"
+          },
+          {
+            "when": {
+              "question": "age",
+              "answer": "over"
+            },
+            "label": "reject_age"
+          },
+          {
+            "when": {
+              "question": "new_key",
+              "answer": "too_short"
+            },
+            "label": "reject_new_key_length"
+          },
+          {
+            "when": {
+              "question": "early",
+              "answer": "too_early"
+            },
+            "label": "reject_early_rotation"
+          },
+          {
+            "when": {
+              "question": "extension",
+              "answer": "too_long"
+            },
+            "label": "reject_extension"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

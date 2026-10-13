@@ -1486,5 +1486,40 @@
     "approve_clean": "approve",
     "precedence_type_before_joins": "reject_blocked_query_type",
     "precedence_joins_before_rows": "reject_too_many_joins"
+  },
+  "rate_limit_budget_guard": {
+    "proposal_malformed": "reject_proposal",
+    "unknown_endpoint": "reject_unknown_endpoint",
+    "over_budget": "reject_over_budget",
+    "near_budget": "escalate_near_budget",
+    "approve_clean": "approve",
+    "precedence_unknown_before_over": "reject_unknown_endpoint"
+  },
+  "rate_limiter_config_guard": {
+    "proposal_malformed": "reject_proposal",
+    "bad_algorithm": "reject_algorithm",
+    "rate_below": "reject_rate",
+    "rate_above": "reject_rate",
+    "bad_burst": "reject_burst",
+    "suspicious_endpoint": "reject_endpoint",
+    "approve_clean": "approve",
+    "precedence_algorithm_before_rate": "reject_algorithm"
+  },
+  "network_bandwidth_allocation_guard": {
+    "proposal_malformed": "reject_proposal",
+    "unknown_link": "reject_unknown_link",
+    "over_capacity": "reject_over_capacity",
+    "approve_clean": "approve",
+    "precedence_unknown_before_over": "reject_unknown_link"
+  },
+  "api_key_rotation_guard": {
+    "proposal_malformed": "reject_proposal",
+    "bad_key_id": "reject_key_id",
+    "age_over": "reject_age",
+    "new_key_too_short": "reject_new_key_length",
+    "early_rotation": "reject_early_rotation",
+    "extension_too_long": "reject_extension",
+    "revoke_approve": "approve",
+    "precedence_key_id_before_age": "reject_key_id"
   }
 }
