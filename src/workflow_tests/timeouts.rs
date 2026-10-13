@@ -662,8 +662,14 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let bad_stub = bin.join("cxgo");
             std::fs::write(&bad_stub, "#!/bin/sh\necho boom >&2\nexit 3\n").unwrap();
             for f in [&ok_stub, &bad_stub] {
-                use std::os::unix::fs::PermissionsExt as _;
-                std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755)).unwrap();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt as _;
+                    std::fs::set_permissions(f, std::fs::Permissions::from_mode(0o755))
+                        .unwrap();
+                }
+                #[cfg(not(unix))]
+                let _ = f;
             }
 
             let prev_bin = std::env::var("LAYA_AGENT_BIN_DIR").ok();

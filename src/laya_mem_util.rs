@@ -278,23 +278,17 @@ pub(crate) fn audit_log(db_path: &Path, op: &str, memory_id: &str, details: &Val
 }
 
 pub(crate) fn now_iso() -> String {
-    extern "C" {
-        fn time(t: *mut i64) -> i64;
-    }
-    unsafe {
-        let mut t: i64 = 0;
-        time(&mut t as *mut i64);
-        let mut tm = std::mem::MaybeUninit::<libc::tm>::uninit();
-        let ok = libc::localtime_r(&t, tm.as_mut_ptr());
-        if ok.is_null() {
-            return String::new();
-        }
-        let tm = tm.assume_init();
-        format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-            tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-            tm.tm_hour, tm.tm_min, tm.tm_sec
-        )
+    // Portable: unix resolves the local offset through `localtime_r` (via
+    // capability::util), any other target falls back to UTC. No raw FFI here —
+    // `libc::localtime_r` does not exist on windows-msvc.
+    use crate::capability::util as timeutil;
+    let ms = timeutil::now_unix_ms();
+    let off = timeutil::local_offset_secs_at((ms / 1000) as i64).unwrap_or(0);
+    let full = timeutil::rfc3339_from_unix_ms_offset(ms as i64, off);
+    // Keep the historical `YYYY-MM-DDTHH:MM:SS` shape (no fraction, no zone).
+    match full.find('.') {
+        Some(i) => full[..i].to_string(),
+        None => full,
     }
 }
 
