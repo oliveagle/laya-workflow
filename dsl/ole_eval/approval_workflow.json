@@ -1,0 +1,1067 @@
+{
+  "name": "approval_workflow",
+  "_bdd": {
+    "feature": "approval_workflow",
+    "feature_path": "bdd/workflows/ole_eval/approval_workflow.feature",
+    "mode": "decision"
+  },
+  "description": "Multi-role order approval as a finite-state decision graph. The model proposes\nexactly one typed proposal per turn (a role plus an action); this workflow owns\nquorum-by-amount-band, one vote per role, requester self-approval and the\nterminal-state rules. Port of code/qwen_vm/app_scenarios/approval_workflow.\nsubmit folds the amount into a band (small = 0.01..1000.00 manager only;\nmedium = 1000.01..10000.00 manager + finance; large = 10000.01..100000.00\nmanager + finance + security). A rejected proposal ends the episode and the\nworkflow state is unchanged; an accepted proposal advances it.",
+  "start": "submitted",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "submitted",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "A new approval request is open and nobody has voted. Classify the utterance into one typed proposal; the band is read from the amount.",
+          "criteria": {
+            "submit_small": "the requester submits 0.01..1000.00 (manager only)",
+            "submit_medium": "the requester submits 1000.01..10000.00 (manager + finance)",
+            "submit_large": "the requester submits 10000.01..100000.00 (manager + finance + security)",
+            "cancel": "the original requester cancels before any review"
+          },
+          "heuristic": {
+            "answer_field": "ev_submitted"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "submit_small": "await_manager",
+          "submit_medium": "await_mgr_fin",
+          "submit_large": "await_mfs",
+          "cancel": "cancelled"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "submit_small"
+            },
+            "label": "start_review"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "submit_medium"
+            },
+            "label": "start_review"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "submit_large"
+            },
+            "label": "start_review"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "cancel"
+            },
+            "label": "cancel_request"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_manager",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Small-band review: one manager approval already meets quorum. A reject vote fails the request; an extra role, a requester self-vote or anything else is refused.",
+          "criteria": {
+            "manager_approve": "the manager approves; quorum is met",
+            "manager_reject": "the manager rejects the request",
+            "extra_role": "finance or security tries to approve, but is not required",
+            "requester_attempt": "the requester tries to approve their own request",
+            "self_approval": "a reviewer whose actor id is the requester approves"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_manager"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "approved",
+          "manager_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "extra_role"
+            },
+            "label": "role_not_required"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "self_approval"
+            },
+            "label": "self_approval_forbidden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mgr_fin",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Medium-band review with no vote yet: manager and finance must both approve. Either may vote first.",
+          "criteria": {
+            "manager_approve": "the manager approves; finance is still missing",
+            "finance_approve": "finance approves; the manager is still missing",
+            "manager_reject": "the manager rejects the request",
+            "finance_reject": "finance rejects the request",
+            "extra_role": "security tries to approve, but is not required",
+            "requester_attempt": "the requester tries to approve their own request",
+            "self_approval": "a reviewer whose actor id is the requester approves"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mgr_fin"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "await_mgr",
+          "finance_approve": "await_fin",
+          "manager_reject": "rejected",
+          "finance_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "extra_role"
+            },
+            "label": "role_not_required"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "self_approval"
+            },
+            "label": "self_approval_forbidden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mgr",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Medium-band review with the manager already approved: only finance is missing. A repeat manager vote is a duplicate.",
+          "criteria": {
+            "finance_approve": "finance approves; quorum is met",
+            "finance_reject": "finance rejects the request",
+            "manager_again": "the manager votes a second time",
+            "requester_attempt": "the requester tries to approve their own request",
+            "self_approval": "a reviewer whose actor id is the requester approves"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mgr"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "finance_approve": "approved",
+          "finance_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "self_approval"
+            },
+            "label": "self_approval_forbidden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_fin",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Medium-band review with finance already approved: only the manager is missing. A repeat finance vote is a duplicate.",
+          "criteria": {
+            "manager_approve": "the manager approves; quorum is met",
+            "manager_reject": "the manager rejects the request",
+            "finance_again": "finance votes a second time",
+            "requester_attempt": "the requester tries to approve their own request",
+            "self_approval": "a reviewer whose actor id is the requester approves"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_fin"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "approved",
+          "manager_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "self_approval"
+            },
+            "label": "self_approval_forbidden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with no vote yet: manager, finance and security must all approve. Any of the three may vote first.",
+          "criteria": {
+            "manager_approve": "the manager approves; finance and security are still missing",
+            "finance_approve": "finance approves; manager and security are still missing",
+            "security_approve": "security approves; manager and finance are still missing",
+            "manager_reject": "the manager rejects the request",
+            "finance_reject": "finance rejects the request",
+            "security_reject": "security rejects the request",
+            "requester_attempt": "the requester tries to approve their own request",
+            "self_approval": "a reviewer whose actor id is the requester approves"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "await_mfs_m",
+          "finance_approve": "await_mfs_f",
+          "security_approve": "await_mfs_s",
+          "manager_reject": "rejected",
+          "finance_reject": "rejected",
+          "security_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "self_approval"
+            },
+            "label": "self_approval_forbidden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_m",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with the manager already approved: finance and security are still missing. A repeat manager vote is a duplicate.",
+          "criteria": {
+            "finance_approve": "finance approves; security is still missing",
+            "security_approve": "security approves; finance is still missing",
+            "finance_reject": "finance rejects the request",
+            "security_reject": "security rejects the request",
+            "manager_again": "the manager votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_m"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "finance_approve": "await_mfs_mf",
+          "security_approve": "await_mfs_ms",
+          "finance_reject": "rejected",
+          "security_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_f",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with finance already approved: manager and security are still missing. A repeat finance vote is a duplicate.",
+          "criteria": {
+            "manager_approve": "the manager approves; security is still missing",
+            "security_approve": "security approves; the manager is still missing",
+            "manager_reject": "the manager rejects the request",
+            "security_reject": "security rejects the request",
+            "finance_again": "finance votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_f"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "await_mfs_mf",
+          "security_approve": "await_mfs_fs",
+          "manager_reject": "rejected",
+          "security_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_s",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with security already approved: manager and finance are still missing. A repeat security vote is a duplicate.",
+          "criteria": {
+            "manager_approve": "the manager approves; finance is still missing",
+            "finance_approve": "finance approves; the manager is still missing",
+            "manager_reject": "the manager rejects the request",
+            "finance_reject": "finance rejects the request",
+            "security_again": "security votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_s"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "await_mfs_ms",
+          "finance_approve": "await_mfs_fs",
+          "manager_reject": "rejected",
+          "finance_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "record_approval"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_mf",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with manager and finance already approved: only security is missing. That approval is the final quorum vote.",
+          "criteria": {
+            "security_approve": "security approves; quorum is met",
+            "security_reject": "security rejects the request",
+            "manager_again": "the manager votes a second time",
+            "finance_again": "finance votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_mf"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "security_approve": "approved",
+          "security_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_ms",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with manager and security already approved: only finance is missing. That approval is the final quorum vote.",
+          "criteria": {
+            "finance_approve": "finance approves; quorum is met",
+            "finance_reject": "finance rejects the request",
+            "manager_again": "the manager votes a second time",
+            "security_again": "security votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_ms"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "finance_approve": "approved",
+          "finance_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "await_mfs_fs",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Large-band review with finance and security already approved: only the manager is missing. That approval is the final quorum vote.",
+          "criteria": {
+            "manager_approve": "the manager approves; quorum is met",
+            "manager_reject": "the manager rejects the request",
+            "finance_again": "finance votes a second time",
+            "security_again": "security votes a second time",
+            "requester_attempt": "the requester tries to approve their own request"
+          },
+          "heuristic": {
+            "answer_field": "ev_await_mfs_fs"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "manager_approve": "approved",
+          "manager_reject": "rejected"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_approve"
+            },
+            "label": "approve_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "manager_reject"
+            },
+            "label": "reject_request"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "finance_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "security_again"
+            },
+            "label": "duplicate_role_vote"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "requester_attempt"
+            },
+            "label": "requester_cannot_vote"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_proposal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "approved",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "The request is approved, a terminal state. A fresh proposal here is refused and the state does not change; the accept path enters with noop.",
+          "criteria": {
+            "cancel": "the requester tries to cancel an approved request",
+            "noop": "the accept path enters here; no further action"
+          },
+          "heuristic": {
+            "answer_field": "ev_approved"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "proposal"
+        ]
+      }
+    },
+    {
+      "name": "rejected",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "The request was rejected, a terminal state. The decision and reason were already recorded by the voting node.",
+          "criteria": {
+            "noop": "no further action"
+          },
+          "heuristic": {
+            "answer_field": "ev_rejected"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "proposal"
+        ]
+      }
+    },
+    {
+      "name": "cancelled",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "The request was cancelled by the requester, a terminal state. The decision was already recorded by the submitting node.",
+          "criteria": {
+            "noop": "no further action"
+          },
+          "heuristic": {
+            "answer_field": "ev_cancelled"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "proposal"
+        ]
+      }
+    }
+  ]
+}

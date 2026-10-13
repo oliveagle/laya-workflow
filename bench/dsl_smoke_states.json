@@ -1052,27 +1052,85 @@
     }
   },
   "order_tracker": {
-      "happy_refund": {
-        "ev_draft": "create",
-        "ev_created": "pay",
-        "ev_paid": "pack",
-        "ev_fulfilling": "ship",
-        "ev_shipped": "deliver",
-        "ev_delivered": "refund"
-      },
-      "cancel_paid_refund": {
-        "ev_draft": "create",
-        "ev_created": "pay",
-        "ev_paid": "cancel",
-        "ev_cancelled_paid": "refund"
-      },
-      "cancel_unpaid": {
-        "ev_draft": "create",
-        "ev_created": "cancel",
-        "ev_cancelled_unpaid": "refund"
-      },
-      "illegal_draft": {
-        "ev_draft": "pay"
-      }
+    "happy_refund": {
+      "ev_draft": "create",
+      "ev_created": "pay",
+      "ev_paid": "pack",
+      "ev_fulfilling": "ship",
+      "ev_shipped": "deliver",
+      "ev_delivered": "refund"
+    },
+    "cancel_paid_refund": {
+      "ev_draft": "create",
+      "ev_created": "pay",
+      "ev_paid": "cancel",
+      "ev_cancelled_paid": "refund"
+    },
+    "cancel_unpaid": {
+      "ev_draft": "create",
+      "ev_created": "cancel",
+      "ev_cancelled_unpaid": "refund"
+    },
+    "illegal_draft": {
+      "ev_draft": "pay"
     }
+  },
+  "approval_workflow": {
+    "accept_small": {
+      "ev_submitted": "submit_small",
+      "ev_await_manager": "manager_approve",
+      "ev_approved": "noop"
+    },
+    "accept_medium_mgr_first": {
+      "ev_submitted": "submit_medium",
+      "ev_await_mgr_fin": "manager_approve",
+      "ev_await_mgr": "finance_approve",
+      "ev_approved": "noop"
+    },
+    "accept_medium_fin_first": {
+      "ev_submitted": "submit_medium",
+      "ev_await_mgr_fin": "finance_approve",
+      "ev_await_fin": "manager_approve",
+      "ev_approved": "noop"
+    },
+    "accept_large_mfs": {
+      "ev_submitted": "submit_large",
+      "ev_await_mfs": "manager_approve",
+      "ev_await_mfs_m": "finance_approve",
+      "ev_await_mfs_mf": "security_approve",
+      "ev_approved": "noop"
+    },
+    "accept_large_smf": {
+      "ev_submitted": "submit_large",
+      "ev_await_mfs": "security_approve",
+      "ev_await_mfs_s": "manager_approve",
+      "ev_await_mfs_ms": "finance_approve",
+      "ev_approved": "noop"
+    },
+    "accept_large_fsm": {
+      "ev_submitted": "submit_large",
+      "ev_await_mfs": "finance_approve",
+      "ev_await_mfs_f": "security_approve",
+      "ev_await_mfs_fs": "manager_approve",
+      "ev_approved": "noop"
+    },
+    "cancel_before_review": {
+      "ev_submitted": "cancel",
+      "ev_cancelled": "noop"
+    },
+    "reject_vote": {
+      "ev_submitted": "submit_large",
+      "ev_await_mfs": "manager_reject",
+      "ev_rejected": "noop"
+    },
+    "requester_attempt": {
+      "ev_submitted": "submit_small",
+      "ev_await_manager": "requester_attempt"
+    },
+    "duplicate_role": {
+      "ev_submitted": "submit_large",
+      "ev_await_mfs": "manager_approve",
+      "ev_await_mfs_m": "manager_again"
+    }
+  }
 }

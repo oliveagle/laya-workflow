@@ -360,7 +360,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   65 of 100 specs carry behavioural states today (62 labelled expectation sets; +11 pinned in the decision workflows: order_tracker/ support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
+   66 of 101 specs carry behavioural states today (63 labelled expectation sets; +12 pinned in the decision workflows: approval_workflow/ order_tracker/ support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
    Network-bound stems follow an **offline detection** rule: when a spec's
    declared `endpoint`/`url` targets (web_search, web_fetch, agent, rpc, http,
    webhook, ...) are all unreachable the local mocks are down and the states are
@@ -407,12 +407,13 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
    `ensure_env_dirs` seeds `${env.NEEDLE3_CACT}`, the activation blob every
    `kind: needle` capability interpolates (`needle_demo` / `needle_ticket` also
    gained offline states this way). All
-   17 multi-node stems are
+   21 multi-node stems are
    pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
    integration_hub/protocol_services/refund_with_external_checks/span_selection/
    stateful_pipeline/memory_type/persist_memory/retrieve_loop/dialogue_policy/
-   support_ticket_router/support_ticket_router_hybrid/triage_then_moderate, plus
-   web_research/intake_pipeline_nested already pinned), and the
+   support_ticket_router/support_ticket_router_hybrid/triage_then_moderate,
+   plus web_research/intake_pipeline_nested already pinned, plus
+   order_tracker/approval_workflow and needle_demo/needle_ticket), and the
    `bdd-smoke-trace-path-floor` regression test (runs the engine like dsl smoke,
    offline-skips network-bound stems, requires every multi-node state to pin its
    route) makes the pinning structural, not a one-off.
@@ -423,7 +424,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
    offline smoke cannot (`reason`). `dsl smoke` fails on a spec that is neither
    (a workflow nothing would ever flag), and on a stale entry (its spec became
    registered, or vanished), so coverage cannot silently shrink. Today:
-   65 offline-verified + 35 live-declared = 100.
+   66 offline-verified + 35 live-declared = 101.
 4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
    Since P45 `validate` also refuses four shapes that used to compile but
