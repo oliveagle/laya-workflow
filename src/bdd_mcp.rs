@@ -65,7 +65,12 @@ fn compile_and_validate(text: &str, path: &str) -> Result<Value> {
                 scenarios.push(json!({"name": feature.name, "ok": true}));
                 if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
                     validate_ok = false;
-                    validate_error = Some(format!("{e:#}"));
+                    let msg = format!("{e:#}");
+                    // P35: pin the .feature line the semantic error refers to.
+                    validate_error = Some(match bdd::locate_semantic_error_line(&feature, &msg) {
+                        Some(l) => format!("line {l}: {msg}"),
+                        None => msg,
+                    });
                 }
             }
             Err(e) => {

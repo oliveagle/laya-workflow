@@ -216,9 +216,10 @@ Feature: support_ticket_router
 - **决策 trace 全钉（P31）**：一个 state 走 >1 个节点时，它的 expect **必须**钉 `trace.steps.N.node`/`.action` + `trace.step_count`——最终 label 对但中间走错节点的 feature 会被拦（`walks N nodes but expect pins no trace path`）。17/17 multi-node stem 已钉死（dialogue_policy 状态机 retry 自环、persist_memory 5 节点链、triage_then_moderate gate_action 等）。回归测试 `bdd-smoke-trace-path-floor` 让这条要求是结构性的。
 - **offline-detection（P29）**：网络型 stem（web_search/web_fetch/agent/rpc/http/webhook…）在本地 mocks 全不可达时 state 判 skip（validate-only），不误报回归；mocks up 时（`bench/mock_services.sh start` + 8791/8792 `mock serve`）全量强断言。
 - **offline-external skip（P33，效率轴）**：离线 smoke **绝不对外网做真实 I/O**。`plugin` 型 capability 没有 `endpoint`/`url` 字段，改从插件脚本静态扫描 `http_get` 调用 + URL 字面量（去注释、识别字符串）判定网络依赖；spec 的网络目标只要含外部 host（非 loopback/RFC1918/link-local/CGNAT）就在离线 smoke 里整 state skip（validate-only，集成/live 任务真跑）。插件 `http_get` 在离线 smoke 里再叠一层 1.5s 超时上限兜底动态 URL。效果：`hf_trending`（huggingface.co 插件）从每次门禁 **16s → 0.2s**，check.sh 从 **15.5s → 1.8s**；注释里提 URL 的插件（如 cua 的 github 链接）不会误判。回归测试 `bdd-smoke-offline-external-skip`。
-- **did-you-mean（P28）**：决策步骤拼错/放错关键词时，`bdd build` 覆盖门禁逐条给 `did you mean the decision <kind> step: <tmpl>?` 建议，作者直接看到该改成什么。
+- **did-you-mean（P28 + P34）**：拼错有两层兜底 —— ① **步骤层（P28）**：决策步骤拼错/放错关键词时，`bdd build` 覆盖门禁逐条给 `did you mean the decision <kind> step: <tmpl>?`；② **语义层（P34）**：`validate_graph_semantics` 的**每个未知引用**（routing 目标 / start / primary_q / action kind / 问题引用 / answer key / gate option / combine fallback / when 运算符）都追加 `(did you mean "..."?)`，候选来自图内真实标识符（节点名 + answer 值 / 问题名 / 已知 kind），相似度 <0.5 直接不给（绝不误报）。作者在 build 报错处就能看到该改成什么。
+- **错误定位线号（P35）**：语义校验错误**自带 `.feature` 行号**（`line N: node X: ...`）—— `validate_graph_semantics` 在 `spec.rs` 里跑、离 feature 文本很远，`bdd build` / `bdd transpile` / MCP `bdd_validate` 三处出口都用 `locate_semantic_error_line` 按错误语法（`unknown "X"` / `"X" is not ...`）从 parsed step 里反查最可能的出错行。agent 拿到的是「哪一行 + 改成什么」，不是一句裸拒绝。
 
-expect 表现况：59 个 stem（28 个 object 形态 dotted-path 断言、17 个钉死 trace 路径）；`laya-workflow-tests` 1805/0（mocks up）/ 1728/0（mocks down，+6 = P33 offline-external-skip 回归）。
+expect 表现况：59 个 stem（28 个 object 形态 dotted-path 断言、17 个钉死 trace 路径）；`laya-workflow-tests` 1834/0（mocks up）/ 1757/0（mocks down）。
 
 ### 作者循环（agent 怎么写一个决策 workflow）
 
@@ -227,8 +228,8 @@ expect 表现况：59 个 stem（28 个 object 形态 dotted-path 断言、17 �
    自验证能过 `bdd build`；`write=true` 落盘、`root` 指定工作区）或 CLI `laya-workflow bdd scaffold`。
 3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展（先查词汇表，生造措辞会被拒）。
 4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
-   validate 逐行错误）或 CLI `laya-workflow bdd build`。拼错/放错关键词的决策步骤会收到
-   `did you mean ...?` 建议（P28），照建议改即可。
+   validate 逐行错误）或 CLI `laya-workflow bdd build`。拼错会收到 **`line N:` + `did you mean ...?`**
+   （P28 步骤层 + P34 语义层 + P35 行号），照建议在对应行改即可。
 5. 出 spec：**MCP `bdd_transpile`**（feature → dsl spec，`@decision` 单图 / browser 逐 scenario；
    dsl_version 剥离对齐 dsl 约定；`write=true` 落盘 dsl/<cat>/ 带 exists 防覆盖）或 CLI
    `laya-workflow bdd transpile <file> --out dsl/<cat>`。

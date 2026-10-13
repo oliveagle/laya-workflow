@@ -416,7 +416,14 @@ When `bdd build` cannot match a step in an `@decision` feature, the coverage
 gate error names the step **and** suggests the closest decision-vocabulary
 template (`did you mean the decision when step: the answer "<a>" goes to "<node>"?`),
 so a typo (or a `Then` step accidentally written under `Given`/`And`) is fixable
-without digging — no `--assist` needed.
+without digging — no `--assist` needed. A step that *compiles* but whose
+decision graph is semantically wrong (a routing target, `primary_q`, question
+reference, edge condition key, gate option or combine fallback that names
+something the graph does not contain) gets the same treatment one layer down:
+the `validate` error now carries the offending `.feature` **line number** and a
+`(did you mean "<closest>"?)` hint drawn from the graph's real identifiers — so
+the author sees *which line* and *what value* at the error site
+(`line 10: node classify: edge condition targets unknown node "biling" (did you mean "billing"?)`).
 
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 

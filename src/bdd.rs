@@ -1227,6 +1227,70 @@ pub fn decision_suggest(kind: &str, text: &str) -> Option<String> {
     best.map(|(_, tmpl)| tmpl.to_string())
 }
 
+/// P35: a semantic-validation error names the offending node (a Scenario slug)
+/// and quotes the identifier(s) it cannot resolve. `validate_graph_semantics`
+/// runs in `spec.rs` on the compiled JSON, far from the `.feature` text, so the
+/// error carries no line. Map it back here: pull the offending identifier out of
+/// the error grammar (the token next to `unknown ...`, else the token just
+/// before `is not`), then report the first step whose text contains it. Falls
+/// back to the named scenario's first step (e.g. an unreachable-node error,
+/// which quotes only the dead node).
+pub fn locate_semantic_error_line(feature: &Feature, msg: &str) -> Option<usize> {
+    // Every `"..."` literal in the error, with its byte offset.
+    let mut tokens: Vec<(usize, &str)> = Vec::new();
+    let b = msg.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            if let Some(rel) = msg[i + 1..].find('"') {
+                let tok = &msg[i + 1..i + 1 + rel];
+                if !tok.is_empty() {
+                    tokens.push((i + 1, tok));
+                }
+                i += rel + 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    // Offending identifier by error grammar: the token right after the first
+    // `unknown` marker (`unknown node "X"` / `references unknown question "Q"`),
+    // else the token immediately before `is not` (`primary_q "X" is not ...` /
+    // `edge condition key "X" is not an answer of primary question "PQ"` — where
+    // the trailing `PQ` is a valid reference and must not win).
+    let offending = if let Some(idx) = msg.find("unknown") {
+        tokens.iter().find(|(start, _)| *start > idx).map(|(_, t)| *t)
+    } else if let Some(idx) = msg.find("is not") {
+        tokens
+            .iter()
+            .rev()
+            .find(|(start, _)| *start < idx)
+            .map(|(_, t)| *t)
+    } else {
+        None
+    };
+    if let Some(tok) = offending {
+        if let Some(line) = feature
+            .scenarios
+            .iter()
+            .flat_map(|s| s.steps.iter())
+            .find(|st| st.text.contains(tok))
+            .map(|st| st.line)
+        {
+            return Some(line);
+        }
+    }
+    // Fallback: the named scenario's first step line.
+    let rest = msg.strip_prefix("node ")?;
+    let end = rest.find([':', ' ']).unwrap_or(rest.len());
+    let node = &rest[..end];
+    feature
+        .scenarios
+        .iter()
+        .find(|s| s.slug() == node)
+        .and_then(|s| s.steps.first().map(|st| st.line))
+}
+
 fn match_step<'a>(kind: &str, text: &'a str) -> Result<(regex_lite::Captures<'a>, &'static str, &'static str)> {
     let table = match kind {
         "given" => given_table(),
@@ -3170,8 +3234,14 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
                 }
             };
             if !validated {
+                // P35: pin the .feature line the semantic error refers to, so
+                // the author fixes the right step instead of hunting.
+                let located = match locate_semantic_error_line(&feature, &vmsg) {
+                    Some(l) => format!("line {l}: {vmsg}"),
+                    None => vmsg,
+                };
                 errors.push(format!(
-                    "{}: `validate` rejected the generated decision spec: {vmsg}",
+                    "{}: `validate` rejected the generated decision spec: {located}",
                     rel_path(&path.to_string_lossy())
                 ));
             }
@@ -3450,7 +3520,12 @@ pub fn transpile_cli(
                 continue;
             }
             if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
-                eprintln!("error: {base}: generated decision spec fails validate: {e:#}");
+                let msg = format!("{e:#}");
+                let located = match locate_semantic_error_line(&feature, &msg) {
+                    Some(l) => format!("line {l}: {msg}"),
+                    None => msg,
+                };
+                eprintln!("error: {base}: generated decision spec fails validate: {located}");
                 return Ok(1);
             }
             // Match the checked-in dsl convention (round-trip normalises

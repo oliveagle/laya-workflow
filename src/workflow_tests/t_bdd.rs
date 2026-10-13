@@ -920,13 +920,14 @@ Feature: transpile_demo
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// P34: semantic-validation errors carry a "did you mean ...?" hint naming the
-/// closest known identifier, so an author sees the fix at the error site
-/// instead of a bare rejection. Each case is a feature that compiles cleanly
-/// (100% step coverage) but fails `validate_graph_semantics` on one typo — the
-/// hint must appear in the generated error text.
+/// P34/P35: semantic-validation errors carry a "did you mean ...?" hint naming
+/// the closest known identifier, and P35 adds the `.feature` line the offending
+/// step sits on — so an agent author sees both *what* to change and *where*.
+/// Each case compiles cleanly (100% step coverage) but fails
+/// `validate_graph_semantics` on one typo.
 pub fn test_bdd_validate_suggestion(h: &mut Harness) {
-    let cases: Vec<(&str, &str)> = vec![
+    // (label, feature source, unique snippet of the offending line)
+    let cases: Vec<(&str, &str, &str)> = vec![
         (
             "routing target",
             r#"@decision
@@ -940,6 +941,7 @@ Feature: s_routing
     And any other answer goes to "STOP"
     Then label "ok" otherwise
     Then allow up to 1 retries"#,
+            r#"goes to "biling""#,
         ),
         (
             "primary question",
@@ -954,6 +956,7 @@ Feature: s_primaryq
     Then the primary question is "intet"
     Then label "ok" otherwise
     Then allow up to 1 retries"#,
+            r#"the primary question is "intet""#,
         ),
         (
             "question ref in rule",
@@ -968,6 +971,7 @@ Feature: s_qref
     Then label "ok" when the answer to "intet" is "billing"
     Then label "nope" otherwise
     Then allow up to 1 retries"#,
+            r#"the answer to "intet""#,
         ),
         (
             "answer edge key",
@@ -982,6 +986,7 @@ Feature: s_answer
     And any other answer goes to "STOP"
     Then label "ok" otherwise
     Then allow up to 1 retries"#,
+            r#"the answer "billng""#,
         ),
         (
             "gate option",
@@ -994,6 +999,7 @@ Feature: s_gateopt
       | reject | bad |
     When any other answer goes to "STOP"
     Then gate "verdict" on option "aprove" with block 0.6 allow 0.7"#,
+            r#"on option "aprove""#,
         ),
         (
             "combine fallback",
@@ -1011,9 +1017,10 @@ Feature: s_combine
       | high |
     When any other answer goes to "STOP"
     Then combine "department" with signal "explicit_urgency" fallback "otrher" review "human_review" requiring 0.8 high 0.85 low 0.15"#,
+            r#"fallback "otrher""#,
         ),
     ];
-    for (what, src) in cases {
+    for (what, src, snippet) in cases {
         let feature = bdd::parse(src, "<sug>").expect("suggestion feature parses");
         let spec =
             bdd::compile_decision(&feature, &json!({})).expect("suggestion feature compiles");
@@ -1028,6 +1035,17 @@ Feature: s_combine
         h.check(
             &format!("bdd: suggestion [{what}] hints at a concrete value"),
             err.contains('"'),
+        );
+        // P35: the locator must return the offending step's real line.
+        let expected = src
+            .lines()
+            .position(|l| l.contains(snippet))
+            .map(|n| n + 1)
+            .expect("snippet present in source");
+        h.eq(
+            &format!("bdd: suggestion [{what}] locates the offending line"),
+            bdd::locate_semantic_error_line(&feature, &err),
+            Some(expected),
         );
     }
     // Negative: a name that is far from every candidate must NOT get a guess —
@@ -1052,6 +1070,12 @@ Feature: s_far
     h.check(
         "bdd: suggestion far-from-everything has no hint",
         !err.contains("did you mean"),
+    );
+    // Even with no hint, the offending answer key still localises to its line.
+    h.eq(
+        "bdd: suggestion far-from-everything still locates the line",
+        bdd::locate_semantic_error_line(&feature, &err),
+        Some(8),
     );
 }
 
