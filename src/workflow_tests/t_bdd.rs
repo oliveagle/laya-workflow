@@ -1813,7 +1813,10 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
             *hit,
         );
     }
-    h.check("bdd: branch coverage checked >= 40 specs", checked >= 40);
+    h.check(
+        &format!("bdd: branch coverage checked {checked} specs (floor 40)"),
+        checked >= 40,
+    );
 }
 
 /// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the
