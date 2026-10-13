@@ -5426,5 +5426,109 @@
       "ev_reject_reason": "none",
       "ev_revision": "missing_add_on_disable_ignored"
     }
+  },
+  "contract_conflict_guard": {
+    "no_conflict_clean": {
+      "ev_proposal": "accepted",
+      "ev_exception": "resolved",
+      "ev_conflict": "none"
+    },
+    "review_invalid_proposal": {
+      "ev_proposal": "malformed",
+      "ev_exception": "resolved",
+      "ev_conflict": "none"
+    },
+    "review_missing_exception_reference": {
+      "ev_proposal": "accepted",
+      "ev_exception": "missing",
+      "ev_conflict": "none"
+    },
+    "conflict_modal_contradiction": {
+      "ev_proposal": "accepted",
+      "ev_exception": "resolved",
+      "ev_conflict": "modal_contradiction"
+    },
+    "conflict_deadline_conflict": {
+      "ev_proposal": "accepted",
+      "ev_exception": "resolved",
+      "ev_conflict": "deadline_conflict"
+    },
+    "precedence_review_before_conflict": {
+      "ev_proposal": "malformed",
+      "ev_exception": "missing",
+      "ev_conflict": "modal_contradiction"
+    },
+    "precedence_exception_before_conflict": {
+      "ev_proposal": "accepted",
+      "ev_exception": "missing",
+      "ev_conflict": "deadline_conflict"
+    },
+    "precedence_conflict_before_no_conflict": {
+      "ev_proposal": "accepted",
+      "ev_exception": "resolved",
+      "ev_conflict": "modal_contradiction"
+    }
+  },
+  "accessibility_content_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "rejected_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "content_id_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "content_id_mismatch",
+      "ev_revision": "none"
+    },
+    "no_issue_contradiction": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "no_issue_contradiction",
+      "ev_revision": "none"
+    },
+    "unsupported_intent": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unsupported_intent",
+      "ev_revision": "none"
+    },
+    "target_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "target_mismatch",
+      "ev_revision": "none"
+    },
+    "remediation_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "remediation_not_allowed",
+      "ev_revision": "none"
+    },
+    "revise_plural_incomplete": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "plural_incomplete"
+    },
+    "revise_unresolved_issues": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "unresolved_issues"
+    },
+    "precedence_rejected_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "content_id_mismatch",
+      "ev_revision": "unresolved_issues"
+    },
+    "precedence_reject_before_revise": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "target_mismatch",
+      "ev_revision": "plural_incomplete"
+    },
+    "precedence_revise_before_approve": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "plural_incomplete"
+    }
   }
 }

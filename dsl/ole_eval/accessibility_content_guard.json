@@ -1,0 +1,137 @@
+{
+  "name": "accessibility_content_guard",
+  "_bdd": {
+    "feature": "accessibility_content_guard",
+    "feature_path": "bdd/workflows/ole_eval/accessibility_content_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed accessibility remediations as a single triage node. The\nmodel proposes only one typed remediation (content_id, issue_intent,\ntarget_node, remediation_intent, reason); this workflow owns the immutable\ncontent snapshot, the deterministic scoped checklist, the issue detection, the\nintent / target matching and the remediation allow-list, and returns the\ndecision itself. It never edits a real page. Port of\ncode/qwen_vm/app_scenarios/accessibility_content_guard.\nThe engine's own verbs: ACCEPT / REVISE / REJECT — the remediation is\naccepted, locally revised, or refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed remediation shape, the content-id and\nintent grammars, the reason length bound and the unsafe-text scan) folds\ninto the `proposal` choice.\n- The immutable content snapshot and the deterministic issue list are a fixed\nfixture; the harness resolves them and hands the DSL one answer per check.\n- The checklist, the intent / target matching, the remediation allow-list and\nthe resolution state are folded into the `reject_reason` and `revision`\nchoices; the engine returns early per reject, so each choice carries the\nengine's own first-appended reason and the ladder mirrors the engine's\nREJECT-before-REVISE-before-ACCEPT order.\nEmitted labels: reject_proposal, reject_content_id_mismatch,\nreject_no_issue_contradiction, reject_unsupported_intent,\nreject_target_mismatch, reject_remediation_not_allowed,\nrevise_plural_incomplete, revise_unresolved_issues, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {content_id, issue_intent, target_node, remediation_intent, reason} object with valid identifiers and safe reason text?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed remediation",
+            "malformed": "parse error, bad identifier, bad intent or unsafe reason text"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Against the immutable snapshot, which single scoped-checklist failure does the deterministic reviewer report first?",
+          "criteria": {
+            "none": "no rejection: the remediation at least clears the hard checks",
+            "content_id_mismatch": "the proposal content_id differs from the snapshot",
+            "no_issue_contradiction": "the proposal claims no issue while the snapshot has findings",
+            "unsupported_intent": "the issue_intent is not in the authoritative snapshot",
+            "target_mismatch": "the target_node differs from the authoritative target",
+            "remediation_not_allowed": "the remediation_intent is not allowed for the issue"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "revision": {
+          "type": "choice",
+          "instructions": "When the remediation clears the hard checks, which single local revision does the engine record first?",
+          "criteria": {
+            "none": "nothing left to revise",
+            "plural_incomplete": "a single plural form does not cover every missing category",
+            "unresolved_issues": "the proposal leaves other deterministic issues unresolved"
+          },
+          "heuristic": {
+            "answer_field": "ev_revision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "content_id_mismatch"
+            },
+            "label": "reject_content_id_mismatch"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "no_issue_contradiction"
+            },
+            "label": "reject_no_issue_contradiction"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unsupported_intent"
+            },
+            "label": "reject_unsupported_intent"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "target_mismatch"
+            },
+            "label": "reject_target_mismatch"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "remediation_not_allowed"
+            },
+            "label": "reject_remediation_not_allowed"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "plural_incomplete"
+            },
+            "label": "revise_plural_incomplete"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "unresolved_issues"
+            },
+            "label": "revise_unresolved_issues"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "content_id"
+        ]
+      }
+    }
+  ]
+}

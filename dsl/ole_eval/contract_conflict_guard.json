@@ -1,0 +1,105 @@
+{
+  "name": "contract_conflict_guard",
+  "_bdd": {
+    "feature": "contract_conflict_guard",
+    "feature_path": "bdd/workflows/ole_eval/contract_conflict_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed contract clauses as a single triage node. The model\nproposes only one typed clause (clause_type, party, role, modality, start,\nend, priority, exception); this workflow owns the fixed contract fixture, the\nlocal clause id, the interval overlap, the modal and deadline conflicts, the\npriority effects and the exception references, and returns the review\noutcome itself. It never edits a contract. Port of\ncode/qwen_vm/app_scenarios/contract_conflict_guard.\nThe engine's own verbs: CONFLICT / NO_CONFLICT / REVIEW — the proposal is\nrejected as a conflict, accepted as conflict-free, or sent for human review.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (the exact typed clause shape, the clause-type / party /\nrole / modality / priority / exception enums, the fixed party-role pairs, the\nISO date grammar and the start<=end window) folds into the `proposal` choice.\n- The contract fixture (existing clauses) is fixed; the harness resolves it\nand hands the DSL one answer per check.\n- The schema, exception reference, interval overlap and the whole\nconflict / priority / exception comparison are folded into the `exception`\nand `conflict` choices; `conflict` carries the engine's own first\ncontributing comparison kind, and the ladder mirrors the engine's\nREVIEW-before-CONFLICT-before-NO_CONFLICT order.\nEmitted labels: review_invalid_proposal, review_missing_exception_reference,\nconflict_modal_contradiction, conflict_deadline_conflict, no_conflict.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one typed clause {clause_type, party, role, modality, start, end, priority, exception} with valid enums and a valid date window?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed clause",
+            "malformed": "parse error, bad enum or bad date window"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "exception": {
+          "type": "choice",
+          "instructions": "When the clause names an exception, does it resolve a conflict against the fixed contract?",
+          "criteria": {
+            "resolved": "no exception named, or it references a real exception clause",
+            "missing": "the named exception has no reference in the contract"
+          },
+          "heuristic": {
+            "answer_field": "ev_exception"
+          }
+        },
+        "conflict": {
+          "type": "choice",
+          "instructions": "Against the fixed contract, what is the first contributing conflict the deterministic comparison reports?",
+          "criteria": {
+            "none": "no same-scope overlapping clause contributes a conflict",
+            "modal_contradiction": "a same-scope overlapping clause contradicts this obligation",
+            "deadline_conflict": "a same-scope overlapping clause conflicts on the deadline"
+          },
+          "heuristic": {
+            "answer_field": "ev_conflict"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "review_invalid_proposal"
+          },
+          {
+            "when": {
+              "question": "exception",
+              "answer": "missing"
+            },
+            "label": "review_missing_exception_reference"
+          },
+          {
+            "when": {
+              "question": "conflict",
+              "answer": "modal_contradiction"
+            },
+            "label": "conflict_modal_contradiction"
+          },
+          {
+            "when": {
+              "question": "conflict",
+              "answer": "deadline_conflict"
+            },
+            "label": "conflict_deadline_conflict"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "no_conflict"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "clause_id"
+        ]
+      }
+    }
+  ]
+}

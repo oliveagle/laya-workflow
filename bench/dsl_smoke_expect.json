@@ -1829,5 +1829,29 @@
     "precedence_rejected_before_reject": "rejected_proposal",
     "precedence_reject_before_modify": "reject_unknown_target_plan",
     "precedence_modify_before_approve": "modify_missing_add_on_disable_ignored"
+  },
+  "contract_conflict_guard": {
+    "no_conflict_clean": "no_conflict",
+    "review_invalid_proposal": "review_invalid_proposal",
+    "review_missing_exception_reference": "review_missing_exception_reference",
+    "conflict_modal_contradiction": "conflict_modal_contradiction",
+    "conflict_deadline_conflict": "conflict_deadline_conflict",
+    "precedence_review_before_conflict": "review_invalid_proposal",
+    "precedence_exception_before_conflict": "review_missing_exception_reference",
+    "precedence_conflict_before_no_conflict": "conflict_modal_contradiction"
+  },
+  "accessibility_content_guard": {
+    "approve_clean": "approve",
+    "rejected_proposal": "reject_proposal",
+    "content_id_mismatch": "reject_content_id_mismatch",
+    "no_issue_contradiction": "reject_no_issue_contradiction",
+    "unsupported_intent": "reject_unsupported_intent",
+    "target_mismatch": "reject_target_mismatch",
+    "remediation_not_allowed": "reject_remediation_not_allowed",
+    "revise_plural_incomplete": "revise_plural_incomplete",
+    "revise_unresolved_issues": "revise_unresolved_issues",
+    "precedence_rejected_before_reject": "reject_proposal",
+    "precedence_reject_before_revise": "reject_target_mismatch",
+    "precedence_revise_before_approve": "revise_plural_incomplete"
   }
 }
