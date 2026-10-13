@@ -1328,5 +1328,69 @@
       "ev_blast": "pass",
       "ev_effect": "stabilized"
     }
+  },
+  "loan_dialogue": {
+    "full_approve": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "fill_ok",
+      "ev_outcome": "approve"
+    },
+    "full_reject_dti": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "fill_ok",
+      "ev_outcome": "reject_dti"
+    },
+    "full_reject_payment": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "fill_ok",
+      "ev_outcome": "reject_payment"
+    },
+    "full_reject_both": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "fill_ok",
+      "ev_outcome": "reject_both"
+    },
+    "duplicate_after_complete": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "fill_ok",
+      "ev_outcome": "duplicate"
+    },
+    "bad_income": {
+      "ev_awaiting_income": "invalid"
+    },
+    "skip_at_income": {
+      "ev_awaiting_income": "unexpected"
+    },
+    "bad_debt": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "invalid"
+    },
+    "skip_at_amount": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "unexpected"
+    },
+    "bad_term": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "invalid"
+    },
+    "skip_at_term": {
+      "ev_awaiting_income": "fill_ok",
+      "ev_awaiting_debt": "fill_ok",
+      "ev_awaiting_amount": "fill_ok",
+      "ev_awaiting_term": "unexpected"
+    }
   }
 }

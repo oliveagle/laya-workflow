@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 10 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 11 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -20,6 +20,7 @@
 | `approval_workflow.json` | `approval_workflow/` | 多角色法定人数审批状态机（15 节点）：**submitted →（按金额分档）reviewing → approved / rejected / cancelled**；金额档 small（经理）/ medium（经理+财务）/ large（经理+财务+安全），角色集合以乘积状态节点保真（medium 3、large 7）；模型只提 typed proposal，法定人数/单角色单票/自批/重复票/越权由 edge routing + `label`（`start_review`/`record_approval`/`approve_request`/`reject_request`/`cancel_request`/`duplicate_role_vote`/`requester_cannot_vote`/`self_approval_forbidden`/`role_not_required`/`reject_proposal`）本地裁决 |
 | `alert_noise_reduction.json` | `alert_noise_reduction/` | 告警降噪单节点判定：模型只提 typed context（`cause_group` / `release_correlation` / `business_period`），阈值（每指标可配）/ 趋势 / 去重窗口（300s）/ 冷却窗口（900s）/ 严重度合成全部由本地规则引擎裁决 → action `page` / `ticket`（升级）或 `clear` / `duplicate` / `cooldown` / `low_severity` / `reject_context`（抑制）|
 | `self_healing_gate.json` | `self_healing_gate/` | 自愈决策闸门单节点判定：模型只提 typed diagnosis（`fault_class` / `evidence` / `candidate_remediation`），确定性分类链 / 证据核验 / action 权限 / cooldown / rate limit / blast radius / rollback / 终态全部由本地规则引擎裁决 → `reject_diagnosis` / `deny_terminal` / `escalate_human` / `defer_cooldown` / `defer_rate_limit` / `execute_stabilizing` / `execute_recovered` / `execute_rolled_back` / `execute_terminal` |
+| `loan_dialogue.json` | `loan_dialogue/` | 贷款申请 slot-filling 对话 DFA（5 节点）+ 承保：**awaiting_income → awaiting_debt → awaiting_amount → awaiting_term → complete**；模型只提 typed facts（annual_income/monthly_debt/loan_amount/term_months），每轮须恰好填期望槽位（skip-step/多字段/越界/非法值/完成后重复均本地拒绝）；Decimal 摊销与 DTI>43.00 / payment-to-income>28.00 阈值折算进终态 `outcome` → `APPROVE`/`REJECT`（+ `reject_duplicate`/`reject_value`/`reject_skip`）|
 
 ## 映射方式
 
@@ -51,14 +52,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 10 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 11 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 10 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 11 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
@@ -82,7 +83,7 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 ## 边界说明
 
 - DSL `Edge` 目前只按 `answer → node` 路由（无分支式数值条件），所以这些
-  单节点"判定 → 出结论"的策略（7 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
+  单节点"判定 → 出结论"的策略（7 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
   可把 `REVIEW` 语义拆成单独节点。
 - DSL action kinds 仅 `none` / `copy_keys` / `merge_open_probs` / `threshold`
   / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 7 个 spec

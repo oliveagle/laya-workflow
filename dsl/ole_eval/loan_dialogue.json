@@ -1,0 +1,309 @@
+{
+  "name": "loan_dialogue",
+  "_bdd": {
+    "feature": "loan_dialogue",
+    "feature_path": "bdd/workflows/ole_eval/loan_dialogue.feature",
+    "mode": "decision"
+  },
+  "description": "Deterministic loan-application slot-filling dialogue and underwriting as a\nmulti-node DFA. The model only maps one applicant utterance to typed facts\n(annual_income / monthly_debt / loan_amount / term_months); collection order,\nnumeric validation, exact Decimal amortization, the debt-to-income and\npayment-to-income ratios, and the final underwriting verdict are all computed\nlocally. Port of code/qwen_vm/app_scenarios/loan_dialogue.\nStates: AWAITING_ANNUAL_INCOME -> AWAITING_MONTHLY_DEBT -> AWAITING_LOAN_AMOUNT\n-> AWAITING_TERM_MONTHS -> COMPLETE. Each turn must fill exactly the expected\nslot: a skip-step / multi-field turn, an out-of-bounds or malformed value, and\na turn after completion are all rejected locally. The exact Decimal arithmetic\nand the ratio thresholds (debt-to-income > 43.00, payment-to-income > 28.00;\nloan_amount bounds are folded into the slot choices) are folded into the\nterminal COMPLETE node's outcome choice; the verdict is emitted as the\nengine's APPROVE / REJECT label.",
+  "start": "awaiting_income",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "awaiting_income",
+      "primary_q": "turn",
+      "questions": {
+        "turn": {
+          "type": "choice",
+          "instructions": "AWAITING_ANNUAL_INCOME: classify the applicant's turn relative to the expected slot annual_income (0 < value <= 100000000).",
+          "criteria": {
+            "fill_ok": "the turn fills annual_income with a value inside the bounds",
+            "invalid": "annual_income present but <= 0 or > 100000000",
+            "unexpected": "skip-step or multi-field: the turn fills any other field"
+          },
+          "heuristic": {
+            "answer_field": "ev_awaiting_income"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fill_ok": "awaiting_debt"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "turn",
+        "rules": [
+          {
+            "when": {
+              "question": "turn",
+              "answer": "fill_ok"
+            },
+            "label": "annual_income"
+          },
+          {
+            "when": {
+              "question": "turn",
+              "answer": "invalid"
+            },
+            "label": "reject_value"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_skip"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "application_id"
+        ]
+      }
+    },
+    {
+      "name": "awaiting_debt",
+      "primary_q": "turn",
+      "questions": {
+        "turn": {
+          "type": "choice",
+          "instructions": "AWAITING_MONTHLY_DEBT: classify the applicant's turn relative to the expected slot monthly_debt (0 <= value <= 10000000).",
+          "criteria": {
+            "fill_ok": "the turn fills monthly_debt with a value inside the bounds",
+            "invalid": "monthly_debt present but < 0 or > 10000000",
+            "unexpected": "skip-step or multi-field: the turn fills any other field"
+          },
+          "heuristic": {
+            "answer_field": "ev_awaiting_debt"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fill_ok": "awaiting_amount"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "turn",
+        "rules": [
+          {
+            "when": {
+              "question": "turn",
+              "answer": "fill_ok"
+            },
+            "label": "monthly_debt"
+          },
+          {
+            "when": {
+              "question": "turn",
+              "answer": "invalid"
+            },
+            "label": "reject_value"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_skip"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "application_id"
+        ]
+      }
+    },
+    {
+      "name": "awaiting_amount",
+      "primary_q": "turn",
+      "questions": {
+        "turn": {
+          "type": "choice",
+          "instructions": "AWAITING_LOAN_AMOUNT: classify the applicant's turn relative to the expected slot loan_amount (0 < value <= 10000000).",
+          "criteria": {
+            "fill_ok": "the turn fills loan_amount with a value inside the bounds",
+            "invalid": "loan_amount present but <= 0 or > 10000000",
+            "unexpected": "skip-step or multi-field: the turn fills any other field"
+          },
+          "heuristic": {
+            "answer_field": "ev_awaiting_amount"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fill_ok": "awaiting_term"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "turn",
+        "rules": [
+          {
+            "when": {
+              "question": "turn",
+              "answer": "fill_ok"
+            },
+            "label": "loan_amount"
+          },
+          {
+            "when": {
+              "question": "turn",
+              "answer": "invalid"
+            },
+            "label": "reject_value"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_skip"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "application_id"
+        ]
+      }
+    },
+    {
+      "name": "awaiting_term",
+      "primary_q": "turn",
+      "questions": {
+        "turn": {
+          "type": "choice",
+          "instructions": "AWAITING_TERM_MONTHS: classify the applicant's turn relative to the expected slot term_months (one of 12, 24, 36, 48, 60, 72, 84).",
+          "criteria": {
+            "fill_ok": "the turn fills term_months with one of the allowed terms",
+            "invalid": "term_months present but not one of 12/24/36/48/60/72/84",
+            "unexpected": "skip-step or multi-field: the turn fills any other field"
+          },
+          "heuristic": {
+            "answer_field": "ev_awaiting_term"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fill_ok": "complete"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "turn",
+        "rules": [
+          {
+            "when": {
+              "question": "turn",
+              "answer": "fill_ok"
+            },
+            "label": "term_months"
+          },
+          {
+            "when": {
+              "question": "turn",
+              "answer": "invalid"
+            },
+            "label": "reject_value"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_skip"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "application_id"
+        ]
+      }
+    },
+    {
+      "name": "complete",
+      "primary_q": "outcome",
+      "questions": {
+        "outcome": {
+          "type": "choice",
+          "instructions": "COMPLETE (terminal, underwriting): all four facts are collected. The exact Decimal amortization and the ratio thresholds (debt-to-income > 43.00 or payment-to-income > 28.00 reject) are computed locally; a further applicant turn after completion is a duplicate.",
+          "criteria": {
+            "approve": "both ratios within limits -> APPROVE",
+            "reject_dti": "debt-to-income ratio exceeds 43.00",
+            "reject_payment": "payment-to-income ratio exceeds 28.00",
+            "reject_both": "both ratios exceed their limits",
+            "duplicate": "another applicant turn arrived after completion"
+          },
+          "heuristic": {
+            "answer_field": "ev_outcome"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "outcome",
+        "rules": [
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "reject_dti"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "reject_payment"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "outcome",
+              "answer": "reject_both"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "APPROVE"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "application_id"
+        ]
+      }
+    }
+  ]
+}
