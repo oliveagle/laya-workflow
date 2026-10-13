@@ -77,6 +77,9 @@
             "vector": "a retrieval / vector search",
             "notify": "fire-and-forget notification",
             "stream": "watch an event stream"
+          },
+          "heuristic": {
+            "answer_field": "channel"
           }
         }
       },

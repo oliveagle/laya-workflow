@@ -87,6 +87,9 @@
             "notification": "an outbound notification",
             "object_store": "an object storage operation",
             "observability": "metrics or observability data"
+          },
+          "heuristic": {
+            "answer_field": "channel"
           }
         }
       },

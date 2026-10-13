@@ -279,5 +279,56 @@
     "ticket": {
       "result.capability": "fingerprint"
     }
+  },
+  "agent_session_probe": {
+    "investigate": {
+      "result.capability": "app_server"
+    }
+  },
+  "data_pipeline_local": {
+    "note": {
+      "result.capability": "stamp"
+    },
+    "incident": {
+      "result.capability": "stamp"
+    }
+  },
+  "integration_hub": {
+    "rpc_route": {
+      "result.capability": "backend_rpc"
+    },
+    "llm_route": {
+      "result.capability": "summarizer"
+    },
+    "sse_route": {
+      "result.capability": "stream"
+    }
+  },
+  "notify_macos": {
+    "note": {
+      "result.capability": "banner"
+    }
+  },
+  "persist_memory": {
+    "go": {
+      "result.capability": "mem_db"
+    }
+  },
+  "protocol_services": {
+    "tcp": {
+      "result.capability": "ping_upstream"
+    },
+    "bus": {
+      "result.capability": "bus_publish"
+    },
+    "mail": {
+      "result.capability": "notify_mail"
+    },
+    "s3": {
+      "result.capability": "objects"
+    },
+    "metrics": {
+      "result.capability": "metrics_endpoint"
+    }
   }
 }

@@ -30,6 +30,7 @@ Feature: protocol_services
       | notification | an outbound notification |
       | object_store | an object storage operation |
       | observability | metrics or observability data |
+    And the answer comes from the field "channel"
     When any other answer goes to "STOP"
     And the answer "raw_socket" goes to "do_tcp"
     And the answer "cache" goes to "do_redis"

@@ -79,6 +79,8 @@ fn resolve_path<'v>(root: &'v Value, path: &str) -> Option<&'v Value> {
 }
 
 /// Make the scratch env vars every spec may reference; create the dirs.
+/// Directory vars get a scratch dir; plain secret-like vars get a dummy value.
+/// Only set when absent, so a real environment (CI, live) is never clobbered.
 pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     let base = std::env::temp_dir().join("laya_dsl_smoke_rust");
     let mut map = BTreeMap::new();
@@ -87,6 +89,20 @@ pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
             let dir = base.join(var.to_lowercase());
             std::fs::create_dir_all(&dir)?;
             map.insert(var.to_string(), dir.to_string_lossy().into_owned());
+        }
+    }
+    // Plain scratch values for the secret/webhook/search env refs the specs
+    // use; the local mocks accept any value, so these are just placeholders.
+    for (var, val) in [
+        ("LAYA_SMTP_USER", "smoke@example.com"),
+        ("LAYA_SMTP_PASS", "smoke-pass"),
+        ("LAYA_WEBHOOK_SECRET", "smoke-webhook-secret"),
+        ("LAYA_WEB_SEARCH_URL", "http://127.0.0.1:8792/search"),
+        ("NAME", "laya-smoke"),
+        ("NEEDLE", "laya-smoke-needle"),
+    ] {
+        if std::env::var(var).is_err() {
+            map.insert(var.to_string(), val.to_string());
         }
     }
     Ok(map)

@@ -29,6 +29,7 @@ Feature: integration_hub
       | vector | a retrieval / vector search    |
       | notify | fire-and-forget notification   |
       | stream | watch an event stream          |
+    And the answer comes from the field "channel"
     When the answer "rpc" goes to "via_rpc"
     And the answer "graphql" goes to "via_graphql"
     And the answer "llm" goes to "via_llm"
