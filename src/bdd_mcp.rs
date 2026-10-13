@@ -271,8 +271,9 @@ impl McpTool for NewTool {
                 "cat": {"type": "string", "description": "Category subdir under bdd/workflows/ (default: routing)."},
                 "intent": {"type": "string", "description": "Natural-language intent; becomes the Feature description."},
                 "primary_q": {"type": "string", "description": "Primary question name for the starter node (default: option)."},
-                "write": {"type": "boolean", "description": "Write the skeleton to <root>/bdd/workflows/<cat>/<name>.feature (default false = return text only)."},
-                "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."}
+                "write": {"type": "boolean", "description": "Write the skeleton to the workspace root bdd/workflows/<cat>/<name>.feature (default false = return text only)."},
+                "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."},
+                "single": {"type": "boolean", "description": "Emit a 1-node start instead of the 2-node canonical graph (default false)."}
             },
             "required": ["name"]
         })
@@ -291,6 +292,7 @@ impl McpTool for NewTool {
         let primary_q = if primary_q.trim().is_empty() { "option" } else { primary_q.trim() };
         let intent = args.get("intent").and_then(|v| v.as_str()).map(|s| s.to_string());
         let write = args.get("write").and_then(|v| v.as_bool()).unwrap_or(false);
+        let single = args.get("single").and_then(|v| v.as_bool()).unwrap_or(false);
         let root = args
             .get("root")
             .and_then(|v| v.as_str())
@@ -300,7 +302,7 @@ impl McpTool for NewTool {
         let desc = intent
             .clone()
             .unwrap_or_else(|| format!("The {name} decision workflow (scaffolded)."));
-        let body = bdd::scaffold_body(name, cat, &primary_q, &desc);
+        let body = bdd::scaffold_body(name, cat, &primary_q, &desc, if single { 1 } else { 2 });
         // Self-verify exactly as `bdd build` would.
         let feature = bdd::parse(&body, "<bdd_new>")?;
         let spec = bdd::compile_decision(&feature, &json!({}))?;

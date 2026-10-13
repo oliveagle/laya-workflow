@@ -930,18 +930,28 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
         "routing",
         "option",
         "Route an intake request to the owning team or escalate",
+        2,
     );
     h.check("bdd: scaffold has @decision tag", body.contains("@decision\n"));
     h.check("bdd: scaffold has Feature name", body.contains("Feature: intake_triage\n"));
     h.check("bdd: scaffold has intent as description", body.contains("Route an intake request to the owning team or escalate"));
     h.check("bdd: scaffold has starter question", body.contains("Given a choice question \"option\" asks \"Choose an option\""));
     h.check("bdd: scaffold keeps the answer", body.contains("Then keep the answer to \"option\""));
-    // The skeleton must compile to a valid one-node decision graph.
+    // 2-node canonical starter: a score node with threshold labels is present.
+    h.check("bdd: scaffold has score node", body.contains("Given a score question \"severity\" asks \"How severe is the impact?\""));
+    h.check("bdd: scaffold has threshold label", body.contains("label \"PAGE_ONCALL\" when \"severity\" is at least 1.5"));
+    // The skeleton must compile to a valid two-node decision graph.
     let feature = bdd::parse(&body, "<scaffold>").expect("scaffold parses");
     let spec = bdd::compile_decision(&feature, &json!({})).expect("scaffold compiles");
-    h.eq("bdd: scaffold node count", spec["nodes"].as_array().unwrap().len(), 1);
+    h.eq("bdd: scaffold node count", spec["nodes"].as_array().unwrap().len(), 2);
     h.eq("bdd: scaffold start", spec["start"].clone(), json!("intake_triage"));
     let _ = crate::spec::from_spec_with_dir(&spec, None, None).expect("scaffold validates");
+    // --single emits a 1-node start that is still valid.
+    let single = bdd::scaffold_body("intake_triage", "routing", "option", "one node", 1);
+    let f1 = bdd::parse(&single, "<scaffold>").expect("single parses");
+    let s1 = bdd::compile_decision(&f1, &json!({})).expect("single compiles");
+    h.eq("bdd: scaffold --single node count", s1["nodes"].as_array().unwrap().len(), 1);
+    let _ = crate::spec::from_spec_with_dir(&s1, None, None).expect("single validates");
     // CLI stdout mode is self-verifying and returns 0.
     let rc = bdd::scaffold(&bdd::ScaffoldOptions {
         name: "intake_triage".into(),
@@ -950,6 +960,7 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
         stdout: true,
         force: false,
         primary_q: String::new(),
+        single: false,
     })
     .expect("scaffold CLI runs");
     h.eq("bdd: scaffold stdout rc", rc, 0);
@@ -970,12 +981,16 @@ pub fn test_bdd_mcp_new(h: &mut Harness) {
         .unwrap();
     h.eq("bdd_new: valid", r["valid"].as_bool().unwrap(), true);
     h.eq("bdd_new: name", r["name"].clone(), json!("intake_triage"));
-    h.eq("bdd_new: node count", r["nodes"].as_u64().unwrap(), 1);
+    h.eq("bdd_new: node count (2-node default)", r["nodes"].as_u64().unwrap(), 2);
     let text = r["feature_text"].as_str().unwrap_or("");
     h.check("bdd_new: @decision tag", text.contains("@decision\n"));
     h.check("bdd_new: Feature line", text.contains("Feature: intake_triage\n"));
     h.check("bdd_new: intent as description", text.contains("Route an intake request to the owning team or escalate"));
+    h.check("bdd_new: score node in default", text.contains("Given a score question \"severity\" asks"));
     h.check("bdd_new: write=false by default", r["written"].is_null());
+    // single=true emits a 1-node start.
+    let r1 = t.call(&json!({"name": "intake_triage", "single": true})).unwrap();
+    h.eq("bdd_new: single node count", r1["nodes"].as_u64().unwrap(), 1);
     // The returned text must itself pass the authoring gate.
     let v = bdd_tool("bdd_validate").call(&json!({"feature_text": text})).unwrap();
     h.eq("bdd_new: skeleton passes bdd_validate", v["ok"].as_bool().unwrap(), true);

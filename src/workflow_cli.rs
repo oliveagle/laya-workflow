@@ -410,6 +410,9 @@ enum BddCmd {
         /// Primary question name for the starter node (default: option).
         #[arg(long)]
         primary_q: Option<String>,
+        /// Emit a 1-node start instead of the 2-node canonical graph.
+        #[arg(long, default_value_t = false)]
+        single: bool,
     },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
@@ -2385,6 +2388,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             stdout,
             force,
             primary_q,
+            single,
         } => bdd::scaffold(&bdd::ScaffoldOptions {
             name: name.clone(),
             cat: cat.clone(),
@@ -2392,6 +2396,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             stdout: *stdout,
             force: *force,
             primary_q: primary_q.clone().unwrap_or_default(),
+            single: *single,
         })?,
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,

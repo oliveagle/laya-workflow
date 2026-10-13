@@ -363,8 +363,12 @@ extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
 emit the dsl spec with `bdd transpile <file> --out dsl/<cat>` → audit
 completeness with `bdd_catalog` → run `bdd round-trip` + `check.sh` → commit.
 The same greenfield start is available on the CLI as
-`bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The `.feature` is
-the source; the `dsl/*.json` is the compiled artifact and is never hand-edited.
+`bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The starter is the
+canonical 2-node graph (choice → score → STOP, with threshold labels and a
+copy_keys node) so a real multi-node workflow starts from a representative
+shape — add nodes by cloning a Scenario and re-wiring edges, or pass `--single`
+for a 1-node start. The `.feature` is the source; the `dsl/*.json` is the
+compiled artifact and is never hand-edited.
 
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 

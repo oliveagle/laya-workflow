@@ -3390,11 +3390,12 @@ pub struct ScaffoldOptions {
     pub stdout: bool,
     pub force: bool,
     pub primary_q: String,
+    pub single: bool,
 }
 
 /// The scaffolded `.feature` text. Kept as a pure function so tests can assert
 /// on the skeleton without touching the filesystem.
-pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str) -> String {
+pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str, nodes: usize) -> String {
     let mut body = String::new();
     body.push_str("# Scaffold for \"");
     body.push_str(name);
@@ -3409,7 +3410,9 @@ pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str) -> Stri
     body.push_str("#   routing:      `When the answer \"<a>\" goes to \"<node>\"` / `And any other answer goes to \"STOP\"`\n");
     body.push_str("#   outcomes:     `Then label \"<L>\" when the answer to \"<q>\" is ...` / `And keep the answer to \"<q>\"`\n");
     body.push_str("#   capabilities: `Given the policy | key | value |` (background) / `Then run the \"<cap>\" capability ...`\n");
-    body.push_str("# Keep this file the single source of truth, then:\n");
+    body.push_str("# Starter: 2-node canonical graph (choice -> score -> STOP). Clone a\n");
+    body.push_str("# Scenario and re-wire its edges to grow the graph; use --single for a\n");
+    body.push_str("# 1-node start. Keep this file the single source of truth, then:\n");
     body.push_str("#   laya-workflow bdd build <file>                     # compile + validate + 100% coverage\n");
     body.push_str("#   laya-workflow bdd transpile <file> --out dsl/<cat> # emit the dsl spec\n");
     body.push_str("#   laya-workflow bdd round-trip                       # prove .feature == dsl spec\n");
@@ -3421,9 +3424,24 @@ pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str) -> Stri
     body.push_str("      | answer   | meaning       |\n");
     body.push_str("      | option_a | first choice  |\n");
     body.push_str("      | option_b | second choice |\n");
-    body.push_str("    When the answer \"option_a\" goes to \"STOP\"\n");
-    body.push_str("    And any other answer goes to \"STOP\"\n");
-    body.push_str(&format!("    Then keep the answer to \"{primary_q}\"\n"));
+    if nodes >= 2 {
+        body.push_str(&format!("    When the answer \"option_a\" goes to \"severity_probe\"\n"));
+        body.push_str("    And any other answer goes to \"STOP\"\n");
+        body.push_str(&format!("    Then keep the answer to \"{primary_q}\"\n"));
+        body.push_str("\n");
+        body.push_str("  Scenario: severity_probe\n");
+        body.push_str("    Given a score question \"severity\" asks \"How severe is the impact?\"\n");
+        body.push_str("      | level    |\n");
+        body.push_str("      | minor    |\n");
+        body.push_str("      | outage   |\n");
+        body.push_str("    When any other answer goes to \"STOP\"\n");
+        body.push_str("    Then label \"PAGE_ONCALL\" when \"severity\" is at least 1.5\n");
+        body.push_str("    And label \"BACKLOG\" otherwise\n");
+    } else {
+        body.push_str("    When the answer \"option_a\" goes to \"STOP\"\n");
+        body.push_str("    And any other answer goes to \"STOP\"\n");
+        body.push_str(&format!("    Then keep the answer to \"{primary_q}\"\n"));
+    }
     body
 }
 
@@ -3454,7 +3472,7 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     } else {
         intent.to_string()
     };
-    let body = scaffold_body(name, &cat, &primary_q, &desc);
+    let body = scaffold_body(name, &cat, &primary_q, &desc, if o.single { 1 } else { 2 });
 
     // Self-verify: the skeleton must compile to a valid decision graph.
     let feature = match parse(&body, "<scaffold>") {
