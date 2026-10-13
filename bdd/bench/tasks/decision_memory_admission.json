@@ -1,0 +1,26 @@
+{
+  "id": "decision_memory_admission",
+  "intent": "A memory-admission gate: given an observation and recent memories, decide whether to store it — ask a choice (drop/store/borderline), score future utility and importance from their numeric fields, ask noul novelty/redundancy/borderline questions, drive some answers from text/field contains heuristics, then label BLOCK / CONFIRM / ALLOW by thresholds.",
+  "feature": "bdd/workflows/laya_mem/admission.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 3 iterations" },
+    { "kind": "given", "text": "a choice question \"should_store\" asks \"Given observation and recent memories, should this be stored as a memory?\"" },
+    { "kind": "given", "text": "answer \"B\" when the text contains \"thanks\", \"ok\", \"got it\", \"acknowledge\" with hit 0.1" },
+    { "kind": "given", "text": "a score question \"future_utility\" asks \"How likely is this observation to be useful in a future recall?\"" },
+    { "kind": "given", "text": "score \"future_utility\" from the numeric field \"future_utility\" with miss 0.5" },
+    { "kind": "given", "text": "a noul question \"novelty\" asks \"Does observation add a fact absent from recent memories?\"" },
+    { "kind": "given", "text": "answer \"B\" when the field \"observation\" contains \"maybe\", \"might\", \"perhaps\" with hit 0.85 and miss 0.2" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "label \"BLOCK\" when the answer is \"A\"" },
+    { "kind": "then", "text": "label \"CONFIRM\" when \"borderline\" is at least 0.5" },
+    { "kind": "then", "text": "label \"ALLOW\" otherwise" }
+  ],
+  "unknown_steps": [
+    { "kind": "given", "text": "answer \"B\" when the text has \"thanks\" with hit 0.1" },
+    { "kind": "given", "text": "score \"future_utility\" from field \"future_utility\" with miss 0.5" },
+    { "kind": "given", "text": "a boolean question \"novelty\" asks \"Is the observation novel?\"" },
+    { "kind": "then", "text": "label \"CONFIRM\" if \"borderline\" is at least 0.5" },
+    { "kind": "then", "text": "label \"BLOCK\" when the user answers \"A\"" },
+    { "kind": "given", "text": "answer \"B\" when the text contains \"thanks\"" }
+  ]
+}

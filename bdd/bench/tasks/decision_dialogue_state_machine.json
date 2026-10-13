@@ -1,0 +1,26 @@
+{
+  "id": "decision_dialogue_state_machine",
+  "intent": "A multi-node conversational state machine: at each turn ask the user's intent and route across states (greet → identifying → authenticated → collecting → confirm → done/escalated/aborted), carry the intent answer and the user/request/recipient/amount/currency/purpose state keys through every node, and at the confirm node label the single sensitive execute_transfer action once or noop otherwise.",
+  "feature": "bdd/workflows/ole_eval/dialogue_policy.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 12 iterations" },
+    { "kind": "given", "text": "a choice question \"intent\" asks \"What is the user's intent at this turn?\"" },
+    { "kind": "when", "text": "the answer \"greet\" goes to \"identifying\"" },
+    { "kind": "when", "text": "the answer \"escalate\" goes to \"escalated\"" },
+    { "kind": "when", "text": "the answer \"abort\" goes to \"aborted\"" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "keep the answer to \"intent\"" },
+    { "kind": "then", "text": "keep the state key \"user_id\"" },
+    { "kind": "then", "text": "keep the state key \"reason\"" },
+    { "kind": "then", "text": "label \"execute_transfer\" when the answer is \"confirm\"" },
+    { "kind": "then", "text": "label \"noop\" otherwise" }
+  ],
+  "unknown_steps": [
+    { "kind": "when", "text": "the answer \"greet\" transitions to \"identifying\"" },
+    { "kind": "when", "text": "the user answers \"escalate\" to \"escalated\"" },
+    { "kind": "then", "text": "retain the answer to \"intent\"" },
+    { "kind": "then", "text": "preserve the state key \"user_id\"" },
+    { "kind": "then", "text": "label \"execute_transfer\" if the answer is \"confirm\"" },
+    { "kind": "given", "text": "the flow runs at most 12 iterations" }
+  ]
+}
