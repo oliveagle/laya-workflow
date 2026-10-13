@@ -198,3 +198,7 @@ echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes pr
 # an unaccounted spec or a stale declaration, so this line cannot overstate the
 # coverage it prints.
 grep -oE "coverage ledger: .*specs" "$out/smoke.log" | tail -1 || true
+# The two-tree separation the user requires: bdd/ holds no json, dsl/ holds no
+# feature, both hierarchical. `dsl smoke` fails on any violation, so this line
+# only prints when the invariant holds.
+grep -oE "isolation: .*hierarchical" "$out/smoke.log" | tail -1 || true

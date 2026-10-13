@@ -2163,3 +2163,87 @@ pub fn test_bdd_decision_suggest(h: &mut Harness) {
         bdd::decision_suggest("given", "take out the trash").is_none(),
     );
 }
+
+/// P44: the bdd/json separation invariant, as a gate. `bdd/` (all `.feature`
+/// sources) and `dsl/` (all workflow `.json` specs) are two fully separate,
+/// hierarchical trees — a `.json` in `bdd/`, a `.feature` in `dsl/`, a source
+/// loose at either tree root, or a `.feature` anywhere else all break it. The
+/// live repo must pass; a synthetic tree must pass while each of the four
+/// violations is flagged, so the check cannot go green by accident on an
+/// empty or mis-shaped tree.
+pub fn test_bdd_json_isolation(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::isolation_audit;
+
+    // Positive: the checked-in repo satisfies the invariant.
+    let repo = bdd::repo_root();
+    let problems = isolation_audit(&repo);
+    h.check(
+        &format!(
+            "bdd: repo bdd/dsl separation holds ({} problem(s))",
+            problems.len()
+        ),
+        problems.is_empty(),
+    );
+    for p in &problems {
+        h.check(&format!("bdd: isolation problem — {p}"), false);
+    }
+
+    // A throwaway tree drives the positive + negative cases. Start from a
+    // well-formed layout plus a support file that must NOT trip the check.
+    let base = std::env::temp_dir().join(format!("laya-iso-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let mk = |rel: &str| {
+        let p = base.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "x").unwrap();
+    };
+    mk("bdd/features/a.feature");
+    mk("bdd/workflows/routing/a.feature");
+    mk("bdd/fixtures/a.html");
+    mk("dsl/routing/a.json");
+    h.check(
+        "bdd: a well-formed two-tree layout passes isolation",
+        isolation_audit(&base).is_empty(),
+    );
+
+    // Negative 1: a json dropped into the BDD tree.
+    mk("bdd/routing/leak.json");
+    let p = isolation_audit(&base);
+    h.check(
+        "bdd: json in bdd/ is flagged",
+        p.iter().any(|m| {
+            m.contains("bdd/routing/leak.json") && m.contains("json in the BDD tree")
+        }),
+    );
+    std::fs::remove_file(base.join("bdd/routing/leak.json")).unwrap();
+
+    // Negative 2: a .feature dropped into the json tree.
+    mk("dsl/routing/leak.feature");
+    let p = isolation_audit(&base);
+    h.check(
+        "bdd: .feature in dsl/ is flagged",
+        p.iter().any(|m| {
+            m.contains("dsl/routing/leak.feature") && m.contains("json tree")
+        }),
+    );
+    std::fs::remove_file(base.join("dsl/routing/leak.feature")).unwrap();
+
+    // Negative 3: a source loose at a tree root (not filed under a category).
+    mk("dsl/loose.json");
+    let p = isolation_audit(&base);
+    h.check(
+        "bdd: a loose dsl/loose.json is flagged (hierarchy enforced)",
+        p.iter().any(|m| m.contains("dsl/loose.json") && m.contains("loose")),
+    );
+    std::fs::remove_file(base.join("dsl/loose.json")).unwrap();
+
+    // Negative 4: a .feature outside the one bdd/ tree.
+    mk("elsewhere/stray.feature");
+    let p = isolation_audit(&base);
+    h.check(
+        "bdd: a .feature outside bdd/ is flagged",
+        p.iter().any(|m| m.contains("outside bdd/")),
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}

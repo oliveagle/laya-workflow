@@ -351,7 +351,8 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   tables), and composed actions (`gate ...`, `merge open probabilities on "Q"`,
   `combine ...`, `rubric ...`, `prepare a UI proposal ...`).
 
-Four gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline):
+Four gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline),
+and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
 
 1. **`bdd round-trip`** — every `@decision` feature reproduces its dsl spec field
    by field, and no dsl spec exists without a BDD source (bidirectional, zero
@@ -425,6 +426,15 @@ Four gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline)
    64 offline-verified + 35 live-declared = 99.
 4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
+
+The **bdd/json separation invariant** rides along in gate 2: `bdd/` and `dsl/` are
+two fully separate, hierarchical trees — no `.json` anywhere under `bdd/`, no
+`.feature` under `dsl/`, no source loose at either tree root (`bdd/*.feature` /
+`dsl/*.json` must be filed under a category folder), and no `.feature` outside
+the single `bdd/` tree. `dsl smoke` fails on any violation and otherwise prints
+`isolation: bdd/ holds no json, dsl/ holds no feature; both trees are
+hierarchical`; the `bdd-json-isolation` regression test drives each of the four
+violations and proves it is caught.
 
 For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton

@@ -450,6 +450,125 @@ pub fn coverage_ledger_audit(
     Ok((offline, live, problems))
 }
 
+/// Recursively collect every file under `dir` into `out` (order irrelevant).
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            collect_files(&p, out);
+        } else {
+            out.push(p);
+        }
+    }
+}
+
+/// Same as [`collect_files`] but skips the usual heavy/uninteresting roots so
+/// the whole-repo scan for stray `.feature` files stays cheap.
+fn collect_files_shallow_skip(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let p = entry.path();
+        if p.is_dir() {
+            if matches!(name.as_str(), ".git" | "target" | "node_modules" | ".venv") {
+                continue;
+            }
+            collect_files_shallow_skip(&p, out);
+        } else {
+            out.push(p);
+        }
+    }
+}
+
+/// P44 standing-constraint gate: BDD and JSON are two fully separate trees.
+///
+/// The user's standing requirement (2026-10-13) is that the `.feature` sources
+/// (BDD = single source of truth) and the workflow `.json` specs live in **two
+/// different folders**, that **all** BDD is in one of them and **all** specs in
+/// the other, and that both are **hierarchical** — nothing loose at a tree root,
+/// everything filed under a category folder. This is that constraint as a
+/// machine check, so it can never rot back into a manual "we eyeballed it"
+/// verification:
+///
+///   * no `.json` anywhere under `bdd/` — a spec belongs under `dsl/`;
+///   * no `.feature` anywhere under `dsl/` — a source belongs under `bdd/`;
+///   * no `.feature` anywhere else in the repo (outside the one `bdd/` tree);
+///   * no source loose at a tree root — `bdd/*.feature` and `dsl/*.json` are
+///     both rejected (file it under `bdd/features/`, `bdd/workflows/<category>/`
+///     or `dsl/<category>/`).
+///
+/// Support files that are neither source nor spec (browser fixtures, `README.md`,
+/// `.html`, a plugin `.rhai`) are not the cross-type leak this guards, so they
+/// are left alone. Returns the problems found (empty = the invariant holds).
+pub fn isolation_audit(repo_root: &Path) -> Vec<String> {
+    let bdd = repo_root.join("bdd");
+    let dsl = repo_root.join("dsl");
+    let mut problems = Vec::new();
+
+    let rel = |p: &Path| p.strip_prefix(repo_root).unwrap_or(p).display().to_string();
+    let ext = |p: &Path| p.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+
+    // (1) the BDD tree carries sources, never json; its sources are filed under
+    //     a category folder, never loose at the bdd/ root.
+    if bdd.is_dir() {
+        let mut files = Vec::new();
+        collect_files(&bdd, &mut files);
+        for f in &files {
+            match ext(f).as_str() {
+                "json" => problems.push(format!(
+                    "{}: json in the BDD tree — a workflow spec belongs under dsl/ (bdd/ holds .feature sources only)",
+                    rel(f)
+                )),
+                "feature" if f.parent() == Some(bdd.as_path()) => problems.push(format!(
+                    "{}: loose .feature at the bdd/ root — file it under bdd/features/ or bdd/workflows/<category>/",
+                    rel(f)
+                )),
+                _ => {}
+            }
+        }
+    }
+
+    // (2) the json tree carries specs, never a .feature; no spec loose at root.
+    if dsl.is_dir() {
+        let mut files = Vec::new();
+        collect_files(&dsl, &mut files);
+        for f in &files {
+            match ext(f).as_str() {
+                "feature" => problems.push(format!(
+                    "{}: .feature in the json tree — a BDD source belongs under bdd/ (dsl/ holds .json specs only)",
+                    rel(f)
+                )),
+                "json" if f.parent() == Some(dsl.as_path()) => problems.push(format!(
+                    "{}: loose .json at the dsl/ root — file it under dsl/<category>/",
+                    rel(f)
+                )),
+                _ => {}
+            }
+        }
+    }
+
+    // (3) every .feature in the repo lives in the single bdd/ tree.
+    let mut all = Vec::new();
+    collect_files_shallow_skip(repo_root, &mut all);
+    for f in &all {
+        if ext(f) == "feature" && !f.starts_with(&bdd) {
+            problems.push(format!(
+                "{}: .feature outside bdd/ — all BDD sources live in the single bdd/ tree",
+                rel(f)
+            ));
+        }
+    }
+
+    problems.sort();
+    problems.dedup();
+    problems
+}
+
 pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let root: PathBuf = match &opts.dsl_dir {
         Some(d) => PathBuf::from(d),
@@ -655,11 +774,26 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     for p in &ledger_problems {
         eprintln!("[FAIL] coverage ledger: {p}");
     }
-    if fails > 0 || !ledger_problems.is_empty() {
+    // P44: the bdd/json separation invariant (see `isolation_audit`). Only
+    // meaningful against the repo's own two-tree layout, so a `--dsl-dir`
+    // override — which points the smoke at some other tree — skips it.
+    let iso_problems = if opts.dsl_dir.is_none() {
+        isolation_audit(Path::new(env!("CARGO_MANIFEST_DIR")))
+    } else {
+        Vec::new()
+    };
+    if iso_problems.is_empty() && opts.dsl_dir.is_none() {
+        println!("isolation: bdd/ holds no json, dsl/ holds no feature; both trees are hierarchical");
+    }
+    for p in &iso_problems {
+        eprintln!("[FAIL] isolation: {p}");
+    }
+    if fails > 0 || !ledger_problems.is_empty() || !iso_problems.is_empty() {
         // callers (CI) want a non-zero exit
         bail!(
-            "{fails} spec run(s) failed; {} coverage-ledger problem(s)",
-            ledger_problems.len()
+            "{fails} spec run(s) failed; {} coverage-ledger problem(s); {} isolation problem(s)",
+            ledger_problems.len(),
+            iso_problems.len()
         );
     }
     Ok(fails)
