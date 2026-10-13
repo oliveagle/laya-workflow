@@ -865,6 +865,10 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 "sub_workflow",
             ),
             (
+                Regex::new(r#"^when the sub workflow completes continue at "(?P<w>[^"]+)"$"#).unwrap(),
+                "sub_workflow_continue",
+            ),
+            (
                 Regex::new(r"^the workflow runs at most (?P<n>\d+) iterations$").unwrap(),
                 "max_iterations",
             ),
@@ -2062,6 +2066,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut rubric_action: Option<Map<String, Value>> = None;
     let mut ui_proposal_action: Option<Map<String, Value>> = None;
     let mut sub_workflow: Option<String> = None;
+    let mut sub_continue: Option<String> = None;
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -2435,6 +2440,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
             "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
             "sub_workflow" => sub_workflow = Some(caps["w"].to_string()),
+            "sub_workflow_continue" => sub_continue = Some(caps["w"].to_string()),
             "primary_q" => explicit_primary = Some(caps["q"].to_string()),
             "action_q" => action_q = Some(caps["q"].to_string()),
             "call" => {
@@ -2550,10 +2556,17 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 scenario.name
             );
         }
-        return Ok(json!({
+        let mut node = json!({
             "name": name,
             "workflow": wf,
-        }));
+        });
+        if let Some(ct) = sub_continue {
+            // completion handoff: when the sub-workflow terminates, continue at
+            // the caller's node. Emitted as the reference node's own edge so the
+            // engine's ref-expansion can redirect the sub's internal STOPs here.
+            node["edge"] = json!({"condition": {}, "default": ct});
+        }
+        return Ok(node);
     }
 
     // A decision node may have zero questions (a pure pass-through/stop node

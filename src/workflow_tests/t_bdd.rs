@@ -1189,3 +1189,41 @@ pub fn test_bdd_score_e2e_decision(h: &mut Harness) {
     }
     let _ = std::fs::remove_file(&report);
 }
+
+/// Regression (P25): the `when the sub workflow completes continue at "X"` step
+/// emits the reference node's completion-handoff edge, and compiling a nested
+/// pipeline feature yields a reachable downstream node (no dead code).
+pub fn test_bdd_sub_workflow_continue(h: &mut Harness) {
+    let src = r#"
+@decision
+Feature: nested_continue
+  Background:
+    Given the workflow runs at most 30 iterations
+  Scenario: gate
+    Given a choice question "g" asks "go?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    When the answer "A" goes to "sub"
+    And any other answer goes to "STOP"
+  Scenario: sub
+    Given the sub workflow "support_ticket_router"
+    And when the sub workflow completes continue at "audit"
+  Scenario: audit
+    Given a choice question "n" asks "ok?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    When any other answer goes to "STOP"
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile");
+    let nodes = spec["nodes"].as_array().unwrap();
+    let sub = nodes.iter().find(|n| n["name"] == "sub").unwrap();
+    h.eq(
+        "bdd: sub continue edge default",
+        sub["edge"]["default"].clone(),
+        json!("audit"),
+    );
+    h.eq("bdd: sub continue edge condition", sub["edge"]["condition"].clone(), json!({}));
+}

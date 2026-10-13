@@ -276,7 +276,8 @@ pub fn test_spec_nesting(h: &mut Harness) {
              "questions": {"ok": {"type": "choice", "instructions": "proceed?",
                                   "criteria": {"A": "yes", "B": "no"}}},
              "edge": {"condition": {"A": "nested"}, "default": "STOP"}},
-            {"name": "nested", "workflow": "sub_router_test"},
+            {"name": "nested", "workflow": "sub_router_test",
+             "edge": {"condition": {}, "default": "post"}},
             {"name": "post", "primary_q": "keep",
              "questions": {"keep": {"type": "choice", "instructions": "keep?",
                                     "criteria": {"A": "yes", "B": "no"}}},
@@ -311,9 +312,17 @@ pub fn test_spec_nesting(h: &mut Harness) {
         verdict(&[("ok", choice("A", &[("A", 0.9), ("B", 0.1)]))]),
         verdict(&[("kind", choice("b", &[("a", 0.1), ("b", 0.9)]))]),
         verdict(&[("depth", score(2.0, &[0.05, 0.15, 0.8]))]),
+        verdict(&[("keep", choice("A", &[("A", 0.9), ("B", 0.1)]))]),
     ]);
     let nout = pwf.run(&nest_be, &json!({"text": "x"})).unwrap();
-    h.eq("nest: reaches sub leaf", nout.trace.steps.len(), 3);
+    // sub terminates internally (deep -> STOP) then hands off to the caller's
+    // `post` node: pre -> nested::pick -> nested::deep -> post (4 steps).
+    h.eq("nest: reaches sub leaf then post", nout.trace.steps.len(), 4);
+    h.eq(
+        "nest: last step is post",
+        nout.trace.steps.last().unwrap()["node"].as_str().unwrap().to_string(),
+        "post".to_string(),
+    );
     h.eq(
         "nest: sub label merged",
         nout.state["label"].as_str().unwrap().to_string(),

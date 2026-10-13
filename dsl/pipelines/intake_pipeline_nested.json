@@ -20,20 +20,36 @@
           "heuristic": {
             "field": "text",
             "match_rules": {
-              "B": ["digest", "newsletter", "archived", "automated", "no action needed", "unsubscribe"]
+              "B": [
+                "digest",
+                "newsletter",
+                "archived",
+                "automated",
+                "no action needed",
+                "unsubscribe"
+              ]
             },
             "p_hit": 0.9,
             "fallback": "A"
           }
         }
       },
-      "edge": { "condition": { "A": "intake" }, "default": "STOP" },
+      "edge": {
+        "condition": {
+          "A": "intake"
+        },
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "max_retries": 1
     },
     {
       "name": "intake",
-      "workflow": "support_ticket_router"
+      "workflow": "support_ticket_router",
+      "edge": {
+        "condition": {},
+        "default": "audit"
+      }
     },
     {
       "name": "audit",
@@ -45,17 +61,45 @@
           "criteria": {
             "A": "no, the automated routing is trustworthy",
             "B": "yes, a human should verify before acting"
+          },
+          "heuristic": {
+            "field": "text",
+            "match_any": [
+              "500",
+              "outage",
+              "hotfix",
+              "incident",
+              "prod",
+              "blocked",
+              "revenue"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
           }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "needs_human",
         "rules": [
-          { "when": { "option": "B", "gte": 0.5 }, "label": "AUDIT_REQUIRED" },
-          { "when": { "always": true }, "label": "AUDIT_SKIPPED" }
+          {
+            "when": {
+              "option": "B",
+              "gte": 0.5
+            },
+            "label": "AUDIT_REQUIRED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "AUDIT_SKIPPED"
+          }
         ]
       }
     }

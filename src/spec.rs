@@ -532,16 +532,33 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
 /// Core parser: `base_dir` is the directory used to resolve relative refs.
 /// Semantic graph validation beyond the structural parse. The engine would
 /// otherwise only fail (or silently misroute) at *runtime*, hiding the fault
-/// from `validate` / `bdd build` / the dsl smoke gate:
-///   * every edge target (condition + default) names an existing node or STOP
+/// from `validate` / `bdd build` / the dsl smoke gate.
+///
+/// Checks (P24: edges/action-kind/threshold-question; P25: the rest):
+///   * node names are unique across the (expanded) graph
+///   * every edge target (condition + default) names an existing node or STOP/START
+///   * every non-START node is reachable from `start` through static edges
 ///   * every action `kind` is one the runtime knows how to run
-///   * every threshold rule's `when.question` references a question on the node
-///     (or the node's own action question, which is implied)
+///   * `primary_q` names a question declared on the node
+///   * `action.question` (threshold/gate/merge_open_probs) names a declared
+///     question (or the node's own primary_q)
+///   * `gate.option` is one of the question's choice criteria
+///   * `rubric.dimensions[].question` names a declared question
+///   * `combine.choice` / `combine.signal` name declared questions
+///   * every threshold rule `when` object only uses known operator keys
+///     (unknown keys silently never match at runtime → wrong label)
 fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: &str) -> Result<()> {
     let names: std::collections::HashSet<&str> =
         nodes.iter().map(|n| n.name.as_str()).collect();
     if !names.contains(start) {
         bail!("spec start node {start:?} is not in the graph");
+    }
+    // unique node names (a duplicate makes edges ambiguous)
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for n in nodes {
+        if !seen.insert(n.name.as_str()) {
+            bail!("duplicate node name {:?} in graph", n.name);
+        }
     }
     for n in nodes {
         for dest in n.edge.condition.values() {
@@ -555,33 +572,154 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
             }
         }
     }
+    // reachability: every non-start node must be reachable through static edges.
+    // Routing is purely edge-driven (no dynamic goto), so an unreachable node is
+    // dead code — it will never run, silently hiding misrouted decisions.
+    {
+        let mut reachable: std::collections::HashSet<&str> =
+            std::collections::HashSet::from([start]);
+        loop {
+            let mut grew = false;
+            for n in nodes {
+                if !reachable.contains(n.name.as_str()) {
+                    continue;
+                }
+                for dest in n.edge.condition.values() {
+                    if dest != "STOP" && dest != "START" && reachable.insert(dest) {
+                        grew = true;
+                    }
+                }
+                if let Some(d) = &n.edge.default {
+                    if d != "STOP" && d != "START" && reachable.insert(d.as_str()) {
+                        grew = true;
+                    }
+                }
+                // a bare "START" destination loops back to the workflow start
+                if n.edge.condition.values().any(|d| d == "START")
+                    || n.edge.default.as_deref() == Some("START")
+                {
+                    if reachable.insert(start) {
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        for n in nodes {
+            if n.name != start && !reachable.contains(n.name.as_str()) {
+                bail!(
+                    "node {} is unreachable from start {start:?} (dead code — it never runs)",
+                    n.name
+                );
+            }
+        }
+    }
     const KNOWN_KINDS: &[&str] = &[
         "none", "copy_keys", "merge_open_probs", "threshold", "rubric",
         "combine", "gate", "ui_proposal", "call",
+    ];
+    const KNOWN_WHEN_KEYS: &[&str] = &[
+        "question", "always", "answer", "answer_in", "option", "gte",
+        "lt", "value_gte", "value_lt",
     ];
     for n in node_list {
         if n.get("workflow").is_some() {
             continue; // reference node; its expanded nodes are validated above
         }
         let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let questions = n.get("questions").and_then(|v| v.as_object()).cloned();
+        let has_q = |q: &str| {
+            questions.as_ref().map(|m| m.contains_key(q)).unwrap_or(false)
+        };
+        // primary_q must name a declared question
+        if let Some(pq) = n.get("primary_q").and_then(|v| v.as_str()) {
+            if !has_q(pq) {
+                bail!("node {name}: primary_q {pq:?} is not a declared question");
+            }
+        }
         if let Some(action) = n.get("action") {
             if let Some(kind) = action.get("kind").and_then(|v| v.as_str()) {
                 if !KNOWN_KINDS.contains(&kind) {
                     bail!("node {name}: unknown action kind {kind:?}");
                 }
+                let aq = action.get("question").and_then(|v| v.as_str());
+                match kind {
+                    "threshold" | "gate" | "merge_open_probs" => {
+                        // action.question must be a declared question (or primary_q)
+                        if let Some(q) = aq {
+                            if !has_q(q)
+                                && n.get("primary_q").and_then(|v| v.as_str()) != Some(q)
+                            {
+                                bail!("node {name}: action {kind:?} references unknown question {q:?}");
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 if kind == "threshold" {
-                    let aq = action.get("question").and_then(|v| v.as_str());
-                    let questions = n.get("questions").and_then(|v| v.as_object());
                     if let Some(rules) = action.get("rules").and_then(|v| v.as_array()) {
                         for r in rules {
                             let wq = r.pointer("/when/question").and_then(|v| v.as_str());
                             if let Some(q) = wq {
-                                let known = questions.map(|m| m.contains_key(q)).unwrap_or(false);
-                                if !known && aq != Some(q) {
+                                let known = has_q(q) || aq == Some(q);
+                                if !known {
                                     bail!(
                                         "node {name}: threshold rule references unknown question {q:?}"
                                     );
                                 }
+                            }
+                            if let Some(w) = r.get("when").and_then(|v| v.as_object()) {
+                                for k in w.keys() {
+                                    if !KNOWN_WHEN_KEYS.contains(&k.as_str()) {
+                                        bail!(
+                                            "node {name}: threshold rule uses unknown when operator {k:?}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if kind == "gate" {
+                    let q = aq
+                        .or_else(|| n.get("primary_q").and_then(|v| v.as_str()))
+                        .unwrap_or("?");
+                    if let Some(opt) = action.get("option").and_then(|v| v.as_str()) {
+                        let crit = questions
+                            .as_ref()
+                            .and_then(|m| m.get(q))
+                            .and_then(|qv| qv.get("criteria"))
+                            .and_then(|cv| cv.as_object());
+                        if let Some(crit) = crit {
+                            if !crit.contains_key(opt) {
+                                bail!(
+                                    "node {name}: gate option {opt:?} is not a choice of question {q:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+                if kind == "rubric" {
+                    if let Some(dims) = action.get("dimensions").and_then(|v| v.as_array()) {
+                        for dim in dims.iter().filter_map(|d| d.as_object()) {
+                            let dq = dim.get("question").and_then(|v| v.as_str());
+                            if let Some(q) = dq {
+                                if !has_q(q)
+                                    && n.get("primary_q").and_then(|v| v.as_str()) != Some(q)
+                                {
+                                    bail!("node {name}: rubric dimension references unknown question {q:?}");
+                                }
+                            }
+                        }
+                    }
+                }
+                if kind == "combine" {
+                    for f in ["choice", "signal"] {
+                        if let Some(q) = action.get(f).and_then(|v| v.as_str()) {
+                            if !has_q(q) {
+                                bail!("node {name}: combine {f:?} references unknown question {q:?}");
                             }
                         }
                     }
@@ -631,6 +769,15 @@ pub fn from_spec_with_dir(
                 .unwrap_or("sub");
             let prefix = format!("{sub_name}::");
             let sub = from_spec_with_dir(&sub_spec, Some(spec), sub_dir.as_deref())?;
+            // A reference node may declare a *completion handoff*: when the sub
+            // workflow terminates (an internal edge hits STOP), routing continues
+            // at the caller's continuation node instead. This is what lets a
+            // nested pipeline run sub-graph THEN a local downstream step.
+            let continue_to = n
+                .get("edge")
+                .and_then(|e| e.get("default"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             // `sub.start` is the sub's own start (unprefixed); the expanded nodes
             // above get `prefix`, so inbound edges must point at the prefixed name.
             let sub_start = format!("{prefix}{}", sub.start);
@@ -651,11 +798,19 @@ pub fn from_spec_with_dir(
                 for dest in nn.edge.condition.values_mut() {
                     if dest != "STOP" && sub.nodes.contains_key(dest) {
                         *dest = format!("{prefix}{dest}");
+                    } else if dest == "STOP" {
+                        if let Some(ct) = &continue_to {
+                            *dest = ct.clone();
+                        }
                     }
                 }
                 if let Some(d) = nn.edge.default.clone() {
                     if d != "STOP" && sub.nodes.contains_key(&d) {
                         nn.edge.default = Some(format!("{prefix}{d}"));
+                    } else if d == "STOP" {
+                        if let Some(ct) = &continue_to {
+                            nn.edge.default = Some(ct.clone());
+                        }
                     }
                 }
                 nodes.push(nn);

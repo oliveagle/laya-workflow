@@ -18,12 +18,14 @@ Feature: intake_pipeline_nested
 
   Scenario: intake
     Given the sub workflow "support_ticket_router"
+    And when the sub workflow completes continue at "audit"
 
   Scenario: audit
     Given a choice question "needs_human" asks "Given the routing outcome, does a human need to double-check it?"
       | answer | meaning              |
       | A      | no, the automated routing is trustworthy |
       | B      | yes, a human should verify before acting |
+    And answer "B" when the field "text" contains "500", "outage", "hotfix", "incident", "prod", "blocked", "revenue" with hit 0.9 and miss 0.1
     When any other answer goes to "STOP"
     Then label "AUDIT_REQUIRED" when the answer is "B" with at least 0.5 confidence
     And label "AUDIT_SKIPPED" otherwise

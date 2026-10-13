@@ -173,12 +173,24 @@
   },
   "intake_pipeline_nested": {
     "outage": {
-      "result.label": "QUEUE_TODAY",
+      "result.label": "AUDIT_REQUIRED",
       "trace.steps.0.node": "prefilter",
       "trace.steps.0.action": "route",
       "trace.steps.1.node": "intake::classify",
       "trace.steps.1.action": "route",
       "trace.steps.2.node": "intake::severity_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.3.node": "audit",
+      "trace.steps.3.action": "stop",
+      "trace.step_count": 4
+    },
+    "ticket": {
+      "result.label": "AUDIT_SKIPPED",
+      "trace.steps.0.node": "prefilter",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "intake::classify",
+      "trace.steps.1.action": "route",
+      "trace.steps.2.node": "audit",
       "trace.steps.2.action": "stop",
       "trace.step_count": 3
     },

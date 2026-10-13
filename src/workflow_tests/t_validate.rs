@@ -19,7 +19,6 @@ fn base_spec(start: &str, nodes: Value) -> Value {
 fn node(name: &str, questions: Value, edge: Value, action: Value) -> Value {
     json!({
         "name": name,
-        "primary_q": "q",
         "questions": questions,
         "edge": edge,
         "min_confidence": 0.0,
@@ -99,4 +98,222 @@ pub fn test_validate_control_ok(h: &mut Harness) {
     );
     let wf = spec::from_spec(&spec);
     h.check("validate: valid spec parses (no false positive)", wf.is_ok());
+}
+
+/// Regression: an unreachable (dead-code) node must be rejected. P24's
+/// edge-existence check missed this class — `audit` existed but had no inbound
+/// edge, so it never ran and silently hid the misroute.
+pub fn test_validate_dead_node(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([
+            node(
+                "a",
+                json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+                json!({"kind": "copy_keys", "keys": ["q"]})
+            ),
+            node(
+                "orphan",
+                json!({"r": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                json!({"condition": {}, "default": "STOP"}),
+                json!({"kind": "copy_keys", "keys": ["r"]})
+            )
+        ]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: unreachable dead node rejected", r.is_err());
+}
+
+/// Regression: duplicate node names make edges ambiguous.
+pub fn test_validate_duplicate_names(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([
+            node("a", json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                 json!({"condition": {}, "default": "STOP"}), json!({"kind": "copy_keys", "keys": ["q"]})),
+            node("a", json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                 json!({"condition": {}, "default": "STOP"}), json!({"kind": "copy_keys", "keys": ["q"]}))
+        ]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: duplicate node names rejected", r.is_err());
+}
+
+/// Regression: `primary_q` must name a declared question.
+pub fn test_validate_primary_q_missing(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([{
+            "name": "a",
+            "primary_q": "ghost_q",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+            "edge": {"condition": {}, "default": "STOP"},
+            "min_confidence": 0.0,
+            "max_retries": 1,
+            "action": {"kind": "copy_keys", "keys": ["q"]}
+        }]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: missing primary_q rejected", r.is_err());
+}
+
+/// Regression: action.question on a gate must name a declared question.
+pub fn test_validate_action_q_missing(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "gate", "question": "ghost_q", "option": "B", "allow_at": 0.8, "block_at": 0.8})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: gate action question missing rejected", r.is_err());
+}
+
+/// Regression: gate.option must be a choice of the question's criteria.
+pub fn test_validate_gate_option(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "gate", "question": "q", "option": "Z", "allow_at": 0.8, "block_at": 0.8})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: gate option not a choice rejected", r.is_err());
+}
+
+/// Regression: rubric dimension question must be declared.
+pub fn test_validate_rubric_dim(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "score", "instructions": "?", "criteria": ["low", "high"]}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "rubric", "dimensions": [{"question": "ghost_dim", "weight": 1.0, "levels": 3}]})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: rubric dimension question missing rejected", r.is_err());
+}
+
+/// Regression: combine.choice / combine.signal must be declared questions.
+pub fn test_validate_combine_q(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}},
+                   "s": {"type": "noul", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "combine", "choice": "c", "signal": "ghost_signal"})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: combine signal question missing rejected", r.is_err());
+}
+
+/// Regression: threshold rule `when` may only use known operators — an unknown
+/// key silently never matches at runtime.
+pub fn test_validate_when_operator(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"severity": {"type": "score", "instructions": "?", "criteria": ["low", "high"]}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "threshold", "question": "severity",
+                   "rules": [{"when": {"value_get": 1.5}, "label": "PAGE"}]})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: unknown when operator rejected", r.is_err());
+}
+
+/// Positive: sub-workflow completion handoff. A reference node with an
+/// `edge.default` continuation must redirect the sub's internal STOPs to the
+/// caller's node, so a nested pipeline runs sub-graph THEN downstream step.
+/// The composed graph must route prefilter -> intake(sub) -> audit and have no
+/// dead node.
+pub fn test_validate_sub_continue(h: &mut Harness) {
+    // in-memory ref: build the sub spec inline via a temp dir so
+    // resolve_ref_dir can find it.
+    let tmp = std::env::temp_dir().join(format!("laya_sub_continue_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let sub = tmp.join("sub.json");
+    std::fs::write(
+        &sub,
+        serde_json::to_string(&json!({
+            "name": "sub",
+            "start": "first",
+            "nodes": [
+                {"name": "first", "primary_q": "q",
+                 "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+                 "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+                 "min_confidence": 0.0, "max_retries": 1,
+                 "action": {"kind": "copy_keys", "keys": ["q"]}}
+            ]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let outer = json!({
+        "name": "outer",
+        "start": "gate",
+        "nodes": [
+            {"name": "gate", "primary_q": "g",
+             "questions": {"g": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+             "edge": {"condition": {"A": "sub", "B": "STOP"}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1,
+             "action": {"kind": "copy_keys", "keys": ["g"]}},
+            {"name": "sub", "workflow": "sub",
+             "edge": {"condition": {}, "default": "audit"}},
+            {"name": "audit", "primary_q": "n",
+             "questions": {"n": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1,
+             "action": {"kind": "copy_keys", "keys": ["n"]}}
+        ]
+    });
+    let wf = spec::from_spec_in(&outer, Some(&tmp));
+    match &wf {
+        Ok(w) => {
+            h.check("validate: sub continue parses", true);
+            // composed graph: gate -> sub::first -> audit
+            h.check("validate: composed has sub::first", w.nodes.contains_key("sub::first"));
+            h.check("validate: composed has audit", w.nodes.contains_key("audit"));
+            let audit_reachable = w.nodes
+                .get("sub::first")
+                .map(|n| {
+                    n.edge.condition.values().any(|d| d == "audit")
+                        || n.edge.default.as_deref() == Some("audit")
+                })
+                .unwrap_or(false);
+            h.check("validate: sub STOP redirected to audit", audit_reachable);
+            // run offline: gate A -> sub -> audit, no dead code
+            let b = laya_workflow::backend::HeuristicBackend;
+            let wf = w.clone();
+            let out = wf.run(&b, &json!({"text": "hello"})).unwrap();
+            let chain: Vec<String> = out
+                .trace
+                .steps
+                .iter()
+                .filter_map(|s| s.get("node").and_then(|v| v.as_str()).map(str::to_string))
+                .collect();
+            h.check(
+                "validate: sub continue runs through audit",
+                chain.last().map(|s| s == "audit").unwrap_or(false),
+            );
+        }
+        Err(e) => {
+            h.check(&format!("validate: sub continue parse error: {e}"), false);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
 }

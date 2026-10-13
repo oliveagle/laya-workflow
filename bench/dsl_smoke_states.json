@@ -146,6 +146,9 @@
     },
     "noise": {
       "text": "Automated digest: 12 newsletters were archived this week. No action needed."
+    },
+    "ticket": {
+      "text": "Hello, how much does the premium plan cost for a small team?"
     }
   },
   "triage_then_moderate": {
