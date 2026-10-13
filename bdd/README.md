@@ -370,6 +370,22 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    `mock serve` processes on 8791/8792) every registered state runs and the
    EXPECT assertions are enforced. The remaining 37 call-heavy stems that need a
    model/CLI/secret are validate-only offline *by design*.
+   Since P31 every multi-node decision stem is **trace-pinned**: a state that
+   walks more than one node must assert its exact route
+   (`trace.steps.N.node`/`.action` + `trace.step_count`) in the expect table,
+   not just the final label. A final label alone lets an authored feature route
+   through wrong intermediate nodes and still pass; the trace assertions turn
+   "runs to the right answer" into "takes the right path", and `dsl smoke`
+   (plus `bdd score --run`'s decision e2e, which shares the table) fails any
+   multi-node state whose expect omits the route. All 17 multi-node stems are
+   pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
+   integration_hub/protocol_services/refund_with_external_checks/span_selection/
+   stateful_pipeline/memory_type/persist_memory/retrieve_loop/dialogue_policy/
+   support_ticket_router/support_ticket_router_hybrid/triage_then_moderate, plus
+   web_research/intake_pipeline_nested already pinned), and the
+   `bdd-smoke-trace-path-floor` regression test (runs the engine like dsl smoke,
+   offline-skips network-bound stems, requires every multi-node state to pin its
+   route) makes the pinning structural, not a one-off.
 3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
 

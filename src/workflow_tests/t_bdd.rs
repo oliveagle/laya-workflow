@@ -1082,7 +1082,145 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
     }
 }
 
+
+/// P31 decision-trace structural gate: every registered decision state that
+/// walks more than one node must pin its route in the expect table
+/// (trace.steps.N.node/.action + trace.step_count). A final label alone lets
+/// an authored feature route through wrong intermediate nodes and still pass;
+/// this test runs the engine exactly like `dsl smoke` (network-bound specs
+/// skip offline via network_bound_offline) and fails any multi-node state whose
+/// expect omits the trace path. The static floor (17) guards the pinned set
+/// from silently shrinking; it is mode-independent because it reads the table,
+/// not the network.
+pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_offline};
+    let root = bdd::repo_root();
+    // Mirror dsl_smoke's startup so specs referencing ${env.X}/${secret.X}
+    // (e.g. support_ticket_router_hybrid's allow_paths) resolve exactly as
+    // they do in the smoke harness: scratch env vars + a fresh secrets
+    // snapshot before any spec loads.
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+    let expect: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json")).unwrap(),
+    )
+    .unwrap();
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let expect_obj = expect.as_object().unwrap();
+    let states_obj = states.as_object().unwrap();
+
+    // Static floor: stems whose expect pins at least one state's trace path.
+    // P31 pinned 15 multi-node stems + web_research + intake_pipeline_nested
+    // (pre-existing) = 17.
+    let trace_pinned_stems = expect_obj
+        .values()
+        .filter(|v| {
+            v.as_object()
+                .map(|m| {
+                    m.values().any(|x| {
+                        x.as_object()
+                            .map(|o| o.contains_key("trace.step_count"))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .count();
+    h.check("bdd: trace-pinned stems >= 17", trace_pinned_stems >= 17);
+
+    // Runtime structural: discover dsl specs, run every registered state,
+    // and require multi-node states to pin their trace path.
+    let dsl_root = root.join("dsl");
+    let mut specs = Vec::new();
+    let mut stack = vec![dsl_root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("json")
+                && !p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+            {
+                specs.push(p);
+            }
+        }
+    }
+    specs.sort();
+    let mut multi_states = 0usize;
+    for spec in &specs {
+        let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let Some(smap) = states_obj.get(&stem).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let raw_spec: Value = std::fs::read_to_string(spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
+            Ok(w) => w,
+            Err(e) => {
+                h.check(&format!("bdd: trace {stem} spec loads ({e})"), false);
+                continue;
+            }
+        };
+        for (label, st) in smap {
+            match wf.run(&HeuristicBackend, st) {
+                Ok(out) => {
+                    let steps = out
+                        .to_json()
+                        .pointer("/trace/steps")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    if steps.len() > 1 {
+                        multi_states += 1;
+                        let pinned = expect_obj
+                            .get(&stem)
+                            .and_then(|v| v.as_object())
+                            .and_then(|m| m.get(label))
+                            .and_then(Value::as_object)
+                            .map(|o| {
+                                o.contains_key("trace.steps.0.node")
+                                    && o.contains_key("trace.step_count")
+                            })
+                            .unwrap_or(false);
+                        h.check(
+                            &format!("bdd: multi-node {stem}:{label} pins trace path"),
+                            pinned,
+                        );
+                    }
+                }
+                Err(_e) => {
+                    // Offline harness: a network-bound spec whose endpoints are
+                    // unreachable skips its states (validate-only), exactly like
+                    // `dsl smoke`. The mocks-up integration run checks those
+                    // for real.
+                    if !network_bound_offline(&raw_spec) {
+                        h.check(
+                            &format!("bdd: trace {stem}:{label} runs offline"),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    h.check("bdd: multi-node trace states > 0", multi_states > 0);
+}
+
 /// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the
+
 /// "emit the dsl spec" step of the authoring loop, in-process. Asserts a known
 /// `@decision` feature transpiles to a valid decision-graph spec with
 /// dsl_version stripped (matching the dsl convention), and that write=true

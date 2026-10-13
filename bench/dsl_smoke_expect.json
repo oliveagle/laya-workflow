@@ -137,11 +137,46 @@
     "ok30": "OK"
   },
   "memory_type": {
-    "episodic": "TYPE_EPISODIC",
-    "semantic": "TYPE_SEMANTIC",
-    "procedural": "TYPE_PROCEDURAL",
-    "preference": "TYPE_PREFERENCE",
-    "other": "TYPE_OTHER"
+    "episodic": {
+      "result.label": "TYPE_EPISODIC",
+      "trace.steps.0.node": "type",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "semantic": {
+      "result.label": "TYPE_SEMANTIC",
+      "trace.steps.0.node": "type",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "procedural": {
+      "result.label": "TYPE_PROCEDURAL",
+      "trace.steps.0.node": "type",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "preference": {
+      "result.label": "TYPE_PREFERENCE",
+      "trace.steps.0.node": "type",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "other": {
+      "result.label": "TYPE_OTHER",
+      "trace.steps.0.node": "type",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "admission": {
     "store": "ALLOW",
@@ -160,8 +195,22 @@
     "contradiction": "CONTINUE_CONTRADICTION"
   },
   "retrieve_loop": {
-    "sufficient": "STOP_EVIDENCE_OK",
-    "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT"
+    "sufficient": {
+      "result.label": "STOP_EVIDENCE_OK",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "stop_check",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "insufficient": {
+      "result.label": "CONTINUE_EVIDENCE_INSUFFICIENT",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "stop_check",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "stopping_codegraph": {
     "contradiction": "CONTINUE_CONTRADICTION",
@@ -177,8 +226,22 @@
     "separate": "KEEP_SEPARATE"
   },
   "support_ticket_router_hybrid": {
-    "technical": "QUEUE_TODAY",
-    "billing": "QUEUE_TODAY"
+    "technical": {
+      "result.label": "QUEUE_TODAY",
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "severity_probe",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "billing": {
+      "result.label": "QUEUE_TODAY",
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "severity_probe",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "rag_triage": {
     "conflict_review": "conflict_review",
@@ -187,7 +250,14 @@
     "human_review": "human_review"
   },
   "support_ticket_router": {
-    "outage": "QUEUE_TODAY"
+    "outage": {
+      "result.label": "QUEUE_TODAY",
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "severity_probe",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "intake_pipeline_nested": {
     "outage": {
@@ -253,9 +323,30 @@
     "safe": "ALLOW"
   },
   "triage_then_moderate": {
-    "safety": "CONFIRM",
-    "billing": "CONFIRM",
-    "support": "CONFIRM"
+    "safety": {
+      "result.gate_action": "CONFIRM",
+      "trace.steps.0.node": "triage",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "safety_gate",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "billing": {
+      "result.gate_action": "CONFIRM",
+      "trace.steps.0.node": "triage",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "safety_gate",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "support": {
+      "result.gate_action": "CONFIRM",
+      "trace.steps.0.node": "triage",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "safety_gate",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "refund_policy.v1": {
     "large": "V1_ESCALATE"
@@ -265,15 +356,41 @@
     "plain": "V2_AUTO_APPROVE"
   },
   "refund_with_external_checks": {
-    "high_risk": "REJECTED",
-    "low_risk": "APPROVED"
+    "high_risk": {
+      "result.label": "REJECTED",
+      "trace.steps.0.node": "score_risk",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "assess",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    },
+    "low_risk": {
+      "result.label": "APPROVED",
+      "trace.steps.0.node": "score_risk",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "assess",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
   },
   "dialogue_policy": {
     "start": {
-      "result.intent": "identify"
+      "result.intent": "identify",
+      "trace.steps.0.node": "greeting",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "identifying",
+      "trace.steps.1.action": "retry",
+      "trace.steps.2.node": "identifying",
+      "trace.steps.2.action": "retry",
+      "trace.step_count": 3
     },
     "escalation": {
-      "result.intent": "noop"
+      "result.intent": "noop",
+      "trace.steps.0.node": "greeting",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "escalated",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     }
   },
   "exec_preflight_guard": {
@@ -298,7 +415,12 @@
   },
   "stateful_pipeline": {
     "ticket": {
-      "result.capability": "counters"
+      "result.capability": "counters",
+      "trace.steps.0.node": "intake",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "enqueue",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     }
   },
   "support_routing": {
@@ -331,21 +453,46 @@
   },
   "data_pipeline_local": {
     "note": {
-      "result.capability": "stamp"
+      "result.capability": "stamp",
+      "trace.steps.0.node": "stamp",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "enrich",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "incident": {
-      "result.capability": "stamp"
+      "result.capability": "stamp",
+      "trace.steps.0.node": "stamp",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "enrich",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     }
   },
   "integration_hub": {
     "rpc_route": {
-      "result.capability": "backend_rpc"
+      "result.capability": "backend_rpc",
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "via_rpc",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "llm_route": {
-      "result.capability": "summarizer"
+      "result.capability": "summarizer",
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "via_llm",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "sse_route": {
-      "result.capability": "stream"
+      "result.capability": "stream",
+      "trace.steps.0.node": "lookup",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "via_sse",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     }
   },
   "notify_macos": {
@@ -355,24 +502,60 @@
   },
   "persist_memory": {
     "go": {
-      "result.capability": "mem_db"
+      "result.capability": "mem_db",
+      "trace.steps.0.node": "reset",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "persist",
+      "trace.steps.1.action": "route",
+      "trace.steps.2.node": "link",
+      "trace.steps.2.action": "route",
+      "trace.steps.3.node": "verify",
+      "trace.steps.3.action": "route",
+      "trace.steps.4.node": "inspect",
+      "trace.steps.4.action": "stop",
+      "trace.step_count": 5
     }
   },
   "protocol_services": {
     "tcp": {
-      "result.capability": "ping_upstream"
+      "result.capability": "ping_upstream",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "do_tcp",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "bus": {
-      "result.capability": "bus_publish"
+      "result.capability": "bus_publish",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "do_bus",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "mail": {
-      "result.capability": "notify_mail"
+      "result.capability": "notify_mail",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "do_mail",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "s3": {
-      "result.capability": "objects"
+      "result.capability": "objects",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "do_s3",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     },
     "metrics": {
-      "result.capability": "metrics_endpoint"
+      "result.capability": "metrics_endpoint",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "do_metrics",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
     }
   },
   "routing_codegraph": {
@@ -407,6 +590,40 @@
       "result.score": 0.9,
       "result.round": 2,
       "result.action_answer": "accept"
+    }
+  },
+  "cua_desktop": {
+    "route": {
+      "result.capability": "cua",
+      "trace.steps.0.node": "decide",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "route",
+      "trace.steps.1.action": "stop",
+      "trace.step_count": 2
+    }
+  },
+  "feishu_unread_digest": {
+    "digest": {
+      "result.capability": "classify",
+      "trace.steps.0.node": "collect",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "classify",
+      "trace.steps.1.action": "route",
+      "trace.steps.2.node": "triage",
+      "trace.steps.2.action": "stop",
+      "trace.step_count": 3
+    }
+  },
+  "span_selection": {
+    "select": {
+      "result.capability": "spans",
+      "trace.steps.0.node": "extract",
+      "trace.steps.0.action": "route",
+      "trace.steps.1.node": "select",
+      "trace.steps.1.action": "route",
+      "trace.steps.2.node": "not_found",
+      "trace.steps.2.action": "stop",
+      "trace.step_count": 3
     }
   }
 }

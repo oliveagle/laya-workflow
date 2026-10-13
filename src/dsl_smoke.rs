@@ -131,7 +131,7 @@ pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec
 /// Make the scratch env vars every spec may reference; create the dirs.
 /// Directory vars get a scratch dir; plain secret-like vars get a dummy value.
 /// Only set when absent, so a real environment (CI, live) is never clobbered.
-pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
+pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     let base = std::env::temp_dir().join("laya_dsl_smoke_rust");
     let mut map = BTreeMap::new();
     for var in ["LAYA_STORE_DIR", "LAYA_WORK_DIR", "LAYA_GOAL_DIR"] {
@@ -267,7 +267,7 @@ fn tcp_reachable(host: &str, port: u16) -> bool {
 /// A spec with no resolvable target (e.g. a web_fetch-only spec whose URL only
 /// appears in state) returns false: we cannot prove it offline, so it keeps the
 /// current run-and-report behaviour.
-pub(crate) fn network_bound_offline(spec: &Value) -> bool {
+pub fn network_bound_offline(spec: &Value) -> bool {
     let targets = spec_network_targets(spec);
     if targets.is_empty() {
         return false;
@@ -408,6 +408,30 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                     for msg in check_expect(&out, want) {
                         fails += 1;
                         eprintln!("       [FAIL] {label}: {msg}");
+                    }
+                    // P31 structural half of the decision-trace gate: a state
+                    // that walks more than one node must pin its route
+                    // (trace.steps.N.node/.action + trace.step_count) in the
+                    // expect table. A final label alone would let an authored
+                    // feature route through wrong intermediate nodes and still
+                    // pass — this turns "runs to the right answer" into "takes
+                    // the right path". Runs in check.sh via dsl smoke, and
+                    // applies to bdd score --run's decision e2e (shared table).
+                    if steps.len() > 1 {
+                        let trace_pinned = want
+                            .as_object()
+                            .map(|m| {
+                                m.contains_key("trace.steps.0.node")
+                                    && m.contains_key("trace.step_count")
+                            })
+                            .unwrap_or(false);
+                        if !trace_pinned {
+                            fails += 1;
+                            eprintln!(
+                                "       [FAIL] {label}: walks {} nodes but expect pins no trace path (add trace.steps.N.node/.action + trace.step_count)",
+                                steps.len()
+                            );
+                        }
                     }
                 }
             }
