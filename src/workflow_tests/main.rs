@@ -109,6 +109,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-transpile-decision", t_bdd::test_bdd_transpile_decision),
         ("bdd-scaffold", t_bdd::test_bdd_scaffold),
         ("bdd-score-corpus-floor", t_bdd::test_bdd_score_corpus_floor),
+        ("bdd-score-e2e-decision", t_bdd::test_bdd_score_e2e_decision),
         ("bdd-smoke-expect-coverage", t_bdd::test_bdd_smoke_expect_coverage),
         ("bdd-table-pipe-escape", t_bdd::test_bdd_table_pipe_escape),
         ("bdd-mcp-validate-ok", t_bdd::test_bdd_mcp_validate_ok),

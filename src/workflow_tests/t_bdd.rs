@@ -1136,3 +1136,44 @@ pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
     h.check("bdd: decision score tasks >= 10", decision >= 10);
     h.check("bdd: browser score tasks >= 3", browser >= 3);
 }
+
+/// `bdd score --run` must run the @decision tasks offline through the heuristic
+/// engine on their registered states (the browser half needs Chrome and is
+/// exercised separately by check.sh / live runs). This pins the fix where a
+/// decision task used to be reported e2e=FAIL because `bdd run`'s browser
+/// compiler rejects @decision steps by design.
+pub fn test_bdd_score_e2e_decision(h: &mut Harness) {
+    use laya_workflow::bdd::ScoreOptions;
+    let ids = [
+        "decision_support_ticket",
+        "decision_content_safety",
+        "decision_agent_probe",
+        "decision_pipeline_nested",
+        "decision_loop_refine",
+        "decision_noul_field_heuristic",
+        "decision_dialogue_state_machine",
+        "decision_memory_admission",
+        "decision_gate_action",
+        "decision_risk_control",
+    ];
+    let report = std::env::temp_dir().join(format!("laya-bdd-score-e2e-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&report);
+    let rc = bdd::score(&ScoreOptions {
+        check: true,
+        run: true,
+        json: Some(report.to_string_lossy().into_owned()),
+        tasks: ids.iter().map(|s| s.to_string()).collect(),
+    });
+    h.eq("bdd: score --run decision gate passes", rc.unwrap_or(-1), 0);
+    let d: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    let tasks = d["tasks"].as_array().unwrap();
+    h.eq("bdd: score --run covers all decision tasks", tasks.len(), 10);
+    for t in tasks {
+        let id = t["id"].as_str().unwrap_or("?");
+        h.check(
+            &format!("bdd: score --run {id} e2e PASS"),
+            t.get("e2e").and_then(|v| v.as_bool()).unwrap_or(false),
+        );
+    }
+    let _ = std::fs::remove_file(&report);
+}
