@@ -20,6 +20,8 @@ jobs:
             target: aarch64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
@@ -35,17 +37,20 @@ jobs:
       - name: Build release binaries
         run: cargo build --release --locked --target ${{ matrix.target }} -p laya-workflow
 
-      - name: Package (unix)
+      - name: Package
         shell: bash
         run: |
           mkdir -p dist
-          BIN="target/${{ matrix.target }}/release/laya-workflow"
-          TESTS="target/${{ matrix.target }}/release/laya-workflow-tests"
+          # Windows targets produce .exe binaries; unix targets don't.
+          EXT=""
+          case "${{ matrix.target }}" in *windows*) EXT=".exe" ;; esac
+          BIN="target/${{ matrix.target }}/release/laya-workflow${EXT}"
+          TESTS="target/${{ matrix.target }}/release/laya-workflow-tests${EXT}"
           # Production tarball: the runtime CLI only. The test harness is
           # dev-only and must not land on every machine that grabs a release.
-          tar -czf "dist/laya-workflow-${{ matrix.target }}.tar.gz" -C "$(dirname "$BIN")" laya-workflow
+          tar -czf "dist/laya-workflow-${{ matrix.target }}.tar.gz" -C "$(dirname "$BIN")" "$(basename "$BIN")"
           # Dev-only tarball: the offline regression harness, for developers.
-          tar -czf "dist/laya-workflow-dev-${{ matrix.target }}.tar.gz" -C "$(dirname "$TESTS")" laya-workflow-tests
+          tar -czf "dist/laya-workflow-dev-${{ matrix.target }}.tar.gz" -C "$(dirname "$TESTS")" "$(basename "$TESTS")"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
