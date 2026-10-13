@@ -498,6 +498,9 @@ fn collect_files_shallow_skip(dir: &Path, out: &mut Vec<PathBuf>) {
 ///   * no `.json` anywhere under `bdd/` — a spec belongs under `dsl/`;
 ///   * no `.feature` anywhere under `dsl/` — a source belongs under `bdd/`;
 ///   * no `.feature` anywhere else in the repo (outside the one `bdd/` tree);
+///   * no `.feature` anywhere under the `dsl/` tree, and the mirror of that —
+///     no workflow `.json` spec anywhere outside the one `dsl/` tree (a spec is
+///     recognised by its transpiled shape, see [`is_workflow_spec`]);
 ///   * no source loose at a tree root — `bdd/*.feature` and `dsl/*.json` are
 ///     both rejected (file it under `bdd/features/`, `bdd/workflows/<category>/`
 ///     or `dsl/<category>/`).
@@ -505,6 +508,24 @@ fn collect_files_shallow_skip(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Support files that are neither source nor spec (browser fixtures, `README.md`,
 /// `.html`, a plugin `.rhai`) are not the cross-type leak this guards, so they
 /// are left alone. Returns the problems found (empty = the invariant holds).
+/// True when `p` is a transpiled workflow `.json` spec — the mirror of a
+/// `.feature` source: either the BDD provenance key `_bdd`, or the engine's
+/// mandatory `nodes` + `start` pair, is present. A cheap content sniff so the
+/// whole-repo json scan only ever flags real specs, never a plugin manifest,
+/// npm `package.json` or an eval-result file.
+fn is_workflow_spec(p: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(p) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let Some(obj) = v.as_object() else {
+        return false;
+    };
+    obj.contains_key("_bdd") || (obj.contains_key("nodes") && obj.contains_key("start"))
+}
+
 pub fn isolation_audit(repo_root: &Path) -> Vec<String> {
     let bdd = repo_root.join("bdd");
     let dsl = repo_root.join("dsl");
@@ -559,6 +580,18 @@ pub fn isolation_audit(repo_root: &Path) -> Vec<String> {
         if ext(f) == "feature" && !f.starts_with(&bdd) {
             problems.push(format!(
                 "{}: .feature outside bdd/ — all BDD sources live in the single bdd/ tree",
+                rel(f)
+            ));
+        }
+    }
+
+    // (4) the mirror of (3) for the json side: every workflow spec lives in the
+    //     single dsl/ tree. Non-spec json (plugin manifests, eval data) is not
+    //     the cross-type leak this guards, so `is_workflow_spec` filters it out.
+    for f in &all {
+        if ext(f) == "json" && !f.starts_with(&dsl) && is_workflow_spec(f) {
+            problems.push(format!(
+                "{}: workflow spec json outside dsl/ — all workflow specs live in the single dsl/ tree",
                 rel(f)
             ));
         }

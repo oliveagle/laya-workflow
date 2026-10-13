@@ -2167,10 +2167,10 @@ pub fn test_bdd_decision_suggest(h: &mut Harness) {
 /// P44: the bdd/json separation invariant, as a gate. `bdd/` (all `.feature`
 /// sources) and `dsl/` (all workflow `.json` specs) are two fully separate,
 /// hierarchical trees — a `.json` in `bdd/`, a `.feature` in `dsl/`, a source
-/// loose at either tree root, or a `.feature` anywhere else all break it. The
-/// live repo must pass; a synthetic tree must pass while each of the four
-/// violations is flagged, so the check cannot go green by accident on an
-/// empty or mis-shaped tree.
+/// loose at either tree root, a `.feature` anywhere else, or a workflow spec
+/// `.json` anywhere outside `dsl/` all break it. The live repo must pass; a
+/// synthetic tree must pass while each of the five violations is flagged, so
+/// the check cannot go green by accident on an empty or mis-shaped tree.
 pub fn test_bdd_json_isolation(h: &mut Harness) {
     use laya_workflow::dsl_smoke::isolation_audit;
 
@@ -2243,6 +2243,24 @@ pub fn test_bdd_json_isolation(h: &mut Harness) {
     h.check(
         "bdd: a .feature outside bdd/ is flagged",
         p.iter().any(|m| m.contains("outside bdd/")),
+    );
+
+    // Negative 5: a workflow spec json outside the one dsl/ tree (the mirror of
+    // Negative 4). A non-spec json at the same spot must NOT be flagged, or the
+    // rule would sweep in plugin manifests / eval data.
+    let spec = base.join("elsewhere/stray_spec.json");
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(&spec, "{\"start\":0,\"nodes\":[]}").unwrap();
+    std::fs::write(base.join("elsewhere/manifest.json"), "{\"name\":\"m\",\"version\":\"1\"}").unwrap();
+    let p = isolation_audit(&base);
+    h.check(
+        "bdd: a workflow spec json outside dsl/ is flagged",
+        p.iter()
+            .any(|m| m.contains("elsewhere/stray_spec.json") && m.contains("outside dsl/")),
+    );
+    h.check(
+        "bdd: a non-spec json outside dsl/ is left alone",
+        !p.iter().any(|m| m.contains("elsewhere/manifest.json")),
     );
 
     let _ = std::fs::remove_dir_all(&base);

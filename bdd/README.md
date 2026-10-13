@@ -440,10 +440,11 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
 The **bdd/json separation invariant** rides along in gate 2: `bdd/` and `dsl/` are
 two fully separate, hierarchical trees — no `.json` anywhere under `bdd/`, no
 `.feature` under `dsl/`, no source loose at either tree root (`bdd/*.feature` /
-`dsl/*.json` must be filed under a category folder), and no `.feature` outside
-the single `bdd/` tree. `dsl smoke` fails on any violation and otherwise prints
+`dsl/*.json` must be filed under a category folder), no `.feature` outside
+the single `bdd/` tree, and no workflow spec `.json` outside the single `dsl/`
+tree. `dsl smoke` fails on any violation and otherwise prints
 `isolation: bdd/ holds no json, dsl/ holds no feature; both trees are
-hierarchical`; the `bdd-json-isolation` regression test drives each of the four
+hierarchical`; the `bdd-json-isolation` regression test drives each of the five
 violations and proves it is caught.
 
 For an agent writing a decision workflow, the loop is fully callable
