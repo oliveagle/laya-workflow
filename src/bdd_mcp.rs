@@ -31,6 +31,7 @@ impl McpToolSet for BddTools {
     fn tools(&self) -> Vec<DynTool> {
         vec![
             Arc::new(NewTool),
+            Arc::new(TranspileTool),
             Arc::new(ValidateTool),
             Arc::new(CatalogTool),
         ]
@@ -334,6 +335,132 @@ impl McpTool for NewTool {
             "next": [
                 "extend the graph, then validate with bdd_validate (or `bdd build`)",
                 "emit the dsl spec with `bdd transpile <file> --out dsl/<cat>`",
+                "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
+            ]
+        }))
+    }
+}
+
+
+/// `bdd_transpile`: compile a `.feature` into its dsl spec(s) — the "emit the
+/// dsl spec" step of the authoring loop, in-process. For an `@decision` feature
+/// the result is the single decision-graph spec (dsl_version stripped, matching
+/// the checked-in dsl convention); for a browser-step feature it is one spec per
+/// Scenario. Optional write=true persists to the workspace root's dsl/<cat>/ tree
+/// with an exists-guard. Together with `bdd_new`/`bdd_validate`/`bdd_catalog`
+/// the whole loop (intent → skeleton → validate → emit spec → audit) runs over
+/// MCP without shelling out.
+struct TranspileTool;
+
+impl McpTool for TranspileTool {
+    fn name(&self) -> &str {
+        "bdd_transpile"
+    }
+    fn description(&self) -> &str {
+        "Compile a .feature into its dsl spec(s) — the 'emit the dsl spec' step of the authoring loop, in-process. For an @decision feature returns the single decision-graph spec (dsl_version stripped); for a browser-step feature one spec per Scenario. Pass feature_text or a repo-relative feature_path, plus cat and optional write=true (persists to the workspace root's dsl/<cat>/ tree with an exists-guard). Returns the spec JSON plus the validate verdict and written path."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "feature_text": {"type": "string", "description": "The .feature source text to compile. Provide this or feature_path."},
+                "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature, e.g. bdd/workflows/routing/support_ticket_router.feature. Provide this or feature_text."},
+                "cat": {"type": "string", "description": "Category subdir used for the written spec path and name (default: routing)."},
+                "write": {"type": "boolean", "description": "Write the emitted spec to the workspace root dsl/<cat>/<name>.json (default false = return JSON only)."},
+                "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let (text, src_name) = match args.get("feature_text").and_then(|v| v.as_str()) {
+            Some(t) => (t.to_string(), "<mcp>".to_string()),
+            None => {
+                let rel = args
+                    .get("feature_path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("bdd_transpile: provide feature_text or feature_path"))?;
+                let p = bdd::repo_root().join(rel);
+                let name = std::path::Path::new(rel)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "spec".to_string());
+                (
+                    std::fs::read_to_string(&p)
+                        .map_err(|e| anyhow!("bdd_transpile: cannot read {rel}: {e}"))?,
+                    name,
+                )
+            }
+        };
+        let cat = args.get("cat").and_then(|v| v.as_str()).unwrap_or("routing");
+        let cat = if cat.trim().is_empty() { "routing" } else { cat.trim() };
+        let write = args.get("write").and_then(|v| v.as_bool()).unwrap_or(false);
+        let root = args
+            .get("root")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(bdd::repo_root);
+
+        let feature = bdd::parse(&text, &src_name)?;
+        let decision = feature
+            .tags
+            .iter()
+            .any(|t| t == "decision" || t.starts_with("decision("));
+
+        let mut specs: Vec<Value> = Vec::new();
+        if decision {
+            let spec = bdd::compile_decision(&feature, &json!({}))?;
+            let mut payload = spec.clone();
+            if let Some(o) = payload.as_object_mut() {
+                o.remove("dsl_version");
+            }
+            crate::spec::from_spec_with_dir(&payload, None, None)?;
+            specs.push(payload);
+        } else {
+            for sc in &feature.scenarios {
+                let spec = bdd::compile_scenario(&feature, sc, &json!({}), "chrome-headless.sh")?;
+                let payload = bdd::public_spec(&spec);
+                crate::spec::from_spec_with_dir(&payload, None, None)?;
+                specs.push(payload);
+            }
+        }
+
+        let name = if decision {
+            specs[0]["name"].as_str().unwrap_or(&src_name).to_string()
+        } else {
+            feature.name.clone()
+        };
+        let mut written: Option<String> = None;
+        let mut exists = false;
+        if write {
+            let dir = root.join("dsl").join(cat);
+            std::fs::create_dir_all(&dir)?;
+            let dest = dir.join(format!("{name}.json"));
+            if dest.exists() {
+                exists = true;
+            } else {
+                let body = if specs.len() == 1 {
+                    format!("{}
+", serde_json::to_string_pretty(&specs[0])?)
+                } else {
+                    format!("{}
+", serde_json::to_string_pretty(&specs)?)
+                };
+                std::fs::write(&dest, &body)?;
+                written = Some(dest.to_string_lossy().into_owned());
+            }
+        }
+
+        Ok(json!({
+            "name": name,
+            "cat": cat,
+            "decision": decision,
+            "valid": true,
+            "spec_count": specs.len(),
+            "spec": if specs.len() == 1 { specs[0].clone() } else { Value::Null },
+            "specs": if specs.len() > 1 { Value::Array(specs) } else { Value::Null },
+            "exists": exists,
+            "written": written,
+            "next": [
                 "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
             ]
         }))

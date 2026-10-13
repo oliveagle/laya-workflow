@@ -1043,3 +1043,56 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
         }
     }
 }
+
+/// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the
+/// "emit the dsl spec" step of the authoring loop, in-process. Asserts a known
+/// `@decision` feature transpiles to a valid decision-graph spec with
+/// dsl_version stripped (matching the dsl convention), and that write=true
+/// persists under the requested root with an exists-guard.
+pub fn test_bdd_mcp_transpile(h: &mut Harness) {
+    let t = bdd_tool("bdd_transpile");
+    let src = r#"
+@decision
+Feature: transpile_demo
+  A minimal decision graph.
+
+  Scenario: classify
+    Given a choice question "category" asks "Which team should handle this ticket?"
+      | answer    | meaning                     |
+      | billing   | invoices, payments, refunds |
+      | technical | bugs, outages, system errors|
+    When the answer "technical" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then keep the answer to "category"
+"#;
+    let r = t.call(&json!({"feature_text": src, "cat": "routing"})).unwrap();
+    h.eq("bdd_transpile: valid", r["valid"].as_bool().unwrap(), true);
+    h.eq("bdd_transpile: decision", r["decision"].as_bool().unwrap(), true);
+    h.eq("bdd_transpile: name", r["name"].clone(), json!("transpile_demo"));
+    h.eq("bdd_transpile: spec_count", r["spec_count"].as_u64().unwrap(), 1);
+    let spec = &r["spec"];
+    h.eq("bdd_transpile: start", spec["start"].clone(), json!("classify"));
+    h.eq("bdd_transpile: node count", spec["nodes"].as_array().unwrap().len(), 1);
+    h.check("bdd_transpile: dsl_version stripped", spec.get("dsl_version").is_none());
+    // The emitted spec must validate and run through the engine's loader.
+    let _ = crate::spec::from_spec_with_dir(spec, None, None).expect("emitted spec validates");
+    // write=true persists under an explicit root (temp dir), not the repo.
+    let root = std::env::temp_dir().join(format!("laya-bdd-transpile-mcp-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let r2 = t
+        .call(&json!({"feature_text": src, "cat": "routing", "write": true, "root": root.to_string_lossy().into_owned()}))
+        .unwrap();
+    h.eq("bdd_transpile: written path set", r2["written"].is_string(), true);
+    let dest = r2["written"].as_str().unwrap().to_string();
+    h.check("bdd_transpile: file on disk", std::path::Path::new(&dest).is_file());
+    h.check("bdd_transpile: file under dsl", dest.contains("/dsl/routing/"));
+    // Second write refuses (exists=true) without overwriting.
+    let r3 = t
+        .call(&json!({"feature_text": src, "cat": "routing", "write": true, "root": root.to_string_lossy().into_owned()}))
+        .unwrap();
+    h.eq("bdd_transpile: exists flag", r3["exists"].as_bool().unwrap(), true);
+    h.eq("bdd_transpile: not overwritten", r3["written"].is_null(), true);
+    // Bad input: neither feature_text nor feature_path errors cleanly.
+    h.check("bdd_transpile: no input errors", t.call(&json!({})).is_err());
+    let _ = std::fs::remove_dir_all(&root);
+}

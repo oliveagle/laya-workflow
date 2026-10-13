@@ -360,8 +360,10 @@ For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
 that already passes `bdd build`, with the authoring vocabulary as comments) →
 extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
-emit the dsl spec with `bdd transpile <file> --out dsl/<cat>` → audit
-completeness with `bdd_catalog` → run `bdd round-trip` + `check.sh` → commit.
+emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
+--out dsl/<cat>`) → audit completeness with `bdd_catalog` → run
+`bdd round-trip` + `check.sh` → commit. The whole authoring loop — intent →
+skeleton → validate → emit spec → audit — runs over MCP without shelling out.
 The same greenfield start is available on the CLI as
 `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The starter is the
 canonical 2-node graph (choice → score → STOP, with threshold labels and a

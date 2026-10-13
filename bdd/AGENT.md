@@ -213,8 +213,11 @@ Feature: support_ticket_router
 3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展（先查词汇表，生造措辞会被拒）。
 4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
    validate 逐行错误）或 CLI `laya-workflow bdd build`。
-5. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
-6. 全量门禁：`laya-workflow bdd round-trip`（99/99 复现）+ `scripts/bdd/check.sh`。
+5. 出 spec：**MCP `bdd_transpile`**（feature → dsl spec，`@decision` 单图 / browser 逐 scenario；
+   dsl_version 剥离对齐 dsl 约定；`write=true` 落盘 dsl/<cat>/ 带 exists 防覆盖）或 CLI
+   `laya-workflow bdd transpile <file> --out dsl/<cat>`。
+6. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
+7. 全量门禁：`laya-workflow bdd round-trip`（99/99 复现）+ `scripts/bdd/check.sh`。
 6. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
 
 ### 为什么这样是 agentic workflow 的核心
