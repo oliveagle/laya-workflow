@@ -1112,6 +1112,28 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
     let s1 = bdd::compile_decision(&f1, &json!({})).expect("single compiles");
     h.eq("bdd: scaffold --single node count", s1["nodes"].as_array().unwrap().len(), 1);
     let _ = crate::spec::from_spec_with_dir(&s1, None, None).expect("single validates");
+    // P37: named patterns beyond single/two_node/nested — gate + loop — each
+    // must compile to a valid, fully-wired decision graph. Unknown names error.
+    for pat in ["gate", "loop"] {
+        let body = bdd::scaffold_body_pattern("pat_demo", "routing", "risk", "pattern demo", pat)
+            .unwrap_or_else(|e| panic!("pattern {pat} builds: {e}"));
+        let f = bdd::parse(&body, "<pat>").unwrap_or_else(|e| panic!("pattern {pat} parses: {e}"));
+        let sp = bdd::compile_decision(&f, &json!({}))
+            .unwrap_or_else(|e| panic!("pattern {pat} compiles: {e}"));
+        let _ = crate::spec::from_spec_with_dir(&sp, None, None)
+            .unwrap_or_else(|e| panic!("pattern {pat} validates: {e:#}"));
+        h.check(
+            &format!("bdd: scaffold pattern [{pat}] self-validates"),
+            sp["nodes"].as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        );
+    }
+    // gate pattern carries a gate action; loop pattern routes back to itself.
+    let gate = bdd::scaffold_body_pattern("g", "routing", "risk", "d", "gate").unwrap();
+    h.check("bdd: gate scaffold has a gate action", gate.contains("Then gate \"risk\" on option \"B\""));
+    let lp = bdd::scaffold_body_pattern("l", "loops", "v", "d", "loop").unwrap();
+    h.check("bdd: loop scaffold routes back to itself", lp.contains("And the answer \"revise\" goes to \"l\""));
+    h.check("bdd: unknown pattern is rejected", bdd::scaffold_body_pattern("x", "routing", "q", "d", "nope").is_err());
+
     // CLI stdout mode is self-verifying and returns 0.
     let rc = bdd::scaffold(&bdd::ScaffoldOptions {
         name: "intake_triage".into(),
@@ -1122,6 +1144,7 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
         primary_q: String::new(),
         single: false,
         nested: false,
+        pattern: None,
     })
     .expect("scaffold CLI runs");
     h.eq("bdd: scaffold stdout rc", rc, 0);

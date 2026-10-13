@@ -289,7 +289,8 @@ impl McpTool for NewTool {
                 "write": {"type": "boolean", "description": "Write the skeleton to the workspace root bdd/workflows/<cat>/<name>.feature (default false = return text only)."},
                 "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."},
                 "single": {"type": "boolean", "description": "Emit a 1-node start instead of the 2-node canonical graph (default false)."},
-                "nested": {"type": "boolean", "description": "Emit a nested-pipeline starter (prefilter -> sub-workflow -> audit with completion handoff) instead of the canonical 2-node graph (default false)."}
+                "nested": {"type": "boolean", "description": "Emit a nested-pipeline starter (prefilter -> sub-workflow -> audit with completion handoff) instead of the canonical 2-node graph (default false)."},
+                "pattern": {"type": "string", "description": "Starter shape: two_node | single | nested | gate | loop (overrides single/nested)."}
             },
             "required": ["name"]
         })
@@ -310,6 +311,7 @@ impl McpTool for NewTool {
         let write = args.get("write").and_then(|v| v.as_bool()).unwrap_or(false);
         let single = args.get("single").and_then(|v| v.as_bool()).unwrap_or(false);
         let nested = args.get("nested").and_then(|v| v.as_bool()).unwrap_or(false);
+        let pattern = args.get("pattern").and_then(|v| v.as_str()).map(str::trim).filter(|p| !p.is_empty());
         let root = args
             .get("root")
             .and_then(|v| v.as_str())
@@ -319,7 +321,13 @@ impl McpTool for NewTool {
         let desc = intent
             .clone()
             .unwrap_or_else(|| format!("The {name} decision workflow (scaffolded)."));
-        let body = bdd::scaffold_body(name, cat, &primary_q, &desc, if single { 1 } else { 2 }, nested);
+        let pattern = match pattern {
+            Some(p) => p.to_string(),
+            None if nested => "nested".to_string(),
+            None if single => "single".to_string(),
+            None => "two_node".to_string(),
+        };
+        let body = bdd::scaffold_body_pattern(name, cat, &primary_q, &desc, &pattern)?;
         // Self-verify exactly as `bdd build` would.
         let feature = bdd::parse(&body, "<bdd_new>")?;
         let spec = bdd::compile_decision(&feature, &json!({}))?;
@@ -343,6 +351,7 @@ impl McpTool for NewTool {
         Ok(json!({
             "name": name,
             "cat": cat,
+            "pattern": pattern,
             "valid": true,
             "nodes": nodes,
             "exists": exists,

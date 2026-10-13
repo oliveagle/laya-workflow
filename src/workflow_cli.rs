@@ -417,6 +417,10 @@ enum BddCmd {
         /// instead of the canonical 2-node graph.
         #[arg(long, default_value_t = false)]
         nested: bool,
+        /// Starter shape: two_node | single | nested | gate | loop
+        /// (overrides --single / --nested).
+        #[arg(long)]
+        pattern: Option<String>,
     },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
@@ -2406,6 +2410,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             primary_q,
             single,
             nested,
+            pattern,
         } => bdd::scaffold(&bdd::ScaffoldOptions {
             name: name.clone(),
             cat: cat.clone(),
@@ -2415,6 +2420,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             primary_q: primary_q.clone().unwrap_or_default(),
             single: *single,
             nested: *nested,
+            pattern: pattern.clone(),
         })?,
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,

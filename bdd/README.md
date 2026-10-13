@@ -408,9 +408,17 @@ The same greenfield start is available on the CLI as
 `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The starter is the
 canonical 2-node graph (choice → score → STOP, with threshold labels and a
 copy_keys node) so a real multi-node workflow starts from a representative
-shape — add nodes by cloning a Scenario and re-wiring edges, or pass `--single`
-for a 1-node start. The `.feature` is the source; the `dsl/*.json` is the
-compiled artifact and is never hand-edited.
+shape — add nodes by cloning a Scenario and re-wiring edges. For the shapes a
+decision workflow actually recurs in, `--pattern` (or the CLI aliases `--single`
+/ `--nested`) picks a named skeleton: `single` (1 node), `two_node` (the
+default), `nested` (prefilter → sub-workflow → audit pipeline), `gate` (one
+choice node whose risky option is gated — `Then gate "<q>" on option "B" with
+block 0.6 allow 0.7` — for risk/approval gates), or `loop` (a `Background: at
+most N iterations` header plus a self-looping verdict node — accept / revise →
+back to itself / escalate — for iterate-until-good workflows); an unknown
+pattern is rejected by name, and `bdd scaffold --help` lists them. The
+`.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
+hand-edited.
 
 When `bdd build` cannot match a step in an `@decision` feature, the coverage
 gate error names the step **and** suggests the closest decision-vocabulary

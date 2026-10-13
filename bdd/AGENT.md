@@ -135,6 +135,10 @@ laya-workflow bdd run --profile production --base-url <real>
   一条命令开出最小合法 `@decision` 骨架（自带 authoring 词汇注释、自验证能过 `bdd build`）。
   默认是**典型两节点图**（choice → score → STOP，带 threshold label + copy_keys 节点），
   复制 Scenario 加节点、改 edge 即可长成真实多节点 workflow；`--single` 退化为单节点起点；
+  `--nested` 开 prefilter → 子工作流 → audit 管线起点；`--pattern gate` 开单节点门禁骨架
+  （choice → `Then gate "<q>" on option "B" with block 0.6 allow 0.7`，适合风险/审批）；
+  `--pattern loop` 开迭代精修自环（Background `at most N iterations` + verdict 节点
+  `revise` 回自身 + `allow up to 3 retries`）；`--pattern` 取值见 `bdd scaffold --help`；
   `--stdout` 只打印不写文件，重复写需 `--force`
 - 源：`bdd/workflows/<cat>/<name>.feature`（层级镜像 `dsl/<cat>/`，如 routing/、agents/、capabilities/…）
 - 编译产物：`dsl/<cat>/<name>.json` —— **这是权威 spec，由 `bdd round-trip` 证明等价，不许手改**

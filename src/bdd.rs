@@ -3616,11 +3616,150 @@ pub struct ScaffoldOptions {
     pub primary_q: String,
     pub single: bool,
     pub nested: bool,
+    /// Starter shape: `single` | `two_node` | `nested` | `gate` | `loop`
+    /// (None → derived from `single`/`nested`, default `two_node`).
+    pub pattern: Option<String>,
 }
 
 /// The scaffolded `.feature` text. Kept as a pure function so tests can assert
 /// on the skeleton without touching the filesystem.
 pub fn scaffold_body(
+    name: &str,
+    cat: &str,
+    primary_q: &str,
+    desc: &str,
+    nodes: usize,
+    nested: bool,
+) -> String {
+    // Back-compat shim for the original two knobs → a named pattern.
+    let pattern = if nested {
+        "nested"
+    } else if nodes <= 1 {
+        "single"
+    } else {
+        "two_node"
+    };
+    scaffold_body_pattern(name, cat, primary_q, desc, pattern).unwrap_or_default()
+}
+
+/// The set of starter shapes `bdd scaffold --pattern` understands, with a
+/// one-line description each. Kept next to the builder so help text and builder
+/// cannot drift.
+pub const SCAFFOLD_PATTERNS: &[(&str, &str)] = &[
+    ("two_node", "choice → score → STOP (default; threshold labels + keep)"),
+    ("single", "one choice node that keeps its answer"),
+    ("nested", "prefilter → sub-workflow → audit (pipeline)"),
+    ("gate", "one choice node with a gate action (ALLOW/CONFIRM/BLOCK)"),
+    ("loop", "refine loop: a choice node that routes back to itself"),
+];
+
+/// Build a starter `.feature` for a named pattern. Errors on an unknown pattern
+/// (so the CLI/MCP can reject a typo instead of silently emitting the default).
+pub fn scaffold_body_pattern(
+    name: &str,
+    cat: &str,
+    primary_q: &str,
+    desc: &str,
+    pattern: &str,
+) -> Result<String> {
+    match pattern {
+        "single" | "two_node" | "nested" | "gate" | "loop" => {}
+        other => {
+            let names: Vec<&str> = SCAFFOLD_PATTERNS.iter().map(|(n, _)| *n).collect();
+            bail!(
+                "unknown scaffold pattern {other:?} — choose one of: {}",
+                names.join(", ")
+            );
+        }
+    }
+    if pattern == "gate" {
+        return Ok(scaffold_gate(name, cat, desc, primary_q));
+    }
+    if pattern == "loop" {
+        return Ok(scaffold_loop(name, cat, desc));
+    }
+    let nodes = if pattern == "single" { 1 } else { 2 };
+    Ok(scaffold_body_classic(
+        name,
+        cat,
+        primary_q,
+        desc,
+        nodes,
+        pattern == "nested",
+    ))
+}
+
+/// One choice node whose outcome is a calibrated gate action
+/// (`ALLOW` / `CONFIRM` / `BLOCK`), the shape of `triage_then_moderate`'s
+/// `safety_gate` / `billing_gate` nodes.
+fn scaffold_gate(name: &str, cat: &str, desc: &str, primary_q: &str) -> String {
+    let mut b = scaffold_header(name, cat, desc, "gate", "one choice node with a gate action");
+    b.push_str("@decision
+");
+    b.push_str(&format!("Feature: {name}
+"));
+    b.push_str(&format!("  {desc}\n\n"));
+    b.push_str(&format!("  Scenario: {name}\n"));
+    b.push_str(&format!("    Given a choice question \"{primary_q}\" asks \"Should this proceed?\"\n"));
+    b.push_str("      | answer | meaning                              |\n");
+    b.push_str("      | A      | no, it is safe to proceed as-is     |\n");
+    b.push_str("      | B      | yes, it is risky and needs a human  |\n");
+    b.push_str("    When any other answer goes to \"STOP\"\n");
+    b.push_str(&format!("    Then gate \"{primary_q}\" on option \"B\" with block 0.6 allow 0.7\n"));
+    b
+}
+
+/// Refine loop: a single node whose `revise` answer routes back to itself
+/// (bounded by `max_retries`), the shape of `iterative_refine_loop`.
+fn scaffold_loop(name: &str, cat: &str, desc: &str) -> String {
+    let mut b = scaffold_header(name, cat, desc, "loop", "a choice node that routes back to itself");
+    b.push_str("@decision\n");
+    b.push_str(&format!("Feature: {name}\n"));
+    b.push_str(&format!("  {desc}\n\n"));
+    b.push_str("  Background:\n");
+    bpush_str_bg(&mut b);
+    b.push_str(&format!("  Scenario: {name}\n"));
+    b.push_str("    Given a choice question \"verdict\" asks \"Accept the current draft, revise once more, or escalate to a human?\"\n");
+    b.push_str("      | answer   | meaning                          |\n");
+    b.push_str("      | accept   | good enough to ship as-is         |\n");
+    b.push_str("      | revise   | one more pass will improve it     |\n");
+    b.push_str("      | escalate | needs a human editor's judgement  |\n");
+    b.push_str("    When the answer \"accept\" goes to \"STOP\"\n");
+    b.push_str(&format!("    And the answer \"revise\" goes to \"{name}\"\n"));
+    b.push_str("    And the answer \"escalate\" goes to \"STOP\"\n");
+    b.push_str("    Then allow up to 3 retries\n");
+    b
+}
+
+fn bpush_str_bg(b: &mut String) {
+    b.push_str("    Given the workflow runs at most 8 iterations\n");
+}
+
+fn scaffold_header(name: &str, cat: &str, desc: &str, pattern: &str, blurb: &str) -> String {
+    let mut body = String::new();
+    body.push_str("# Scaffold for \"");
+    body.push_str(name);
+    body.push_str("\" (category: ");
+    body.push_str(cat);
+    body.push_str(")\n");
+    body.push_str("# Intent: ");
+    body.push_str(desc);
+    body.push_str("\n");
+    body.push_str(&format!("# Pattern: {pattern} — {blurb}\n"));
+    body.push_str("# Generated by `laya-workflow bdd scaffold`. Extend this decision graph:\n");
+    body.push_str("#   questions:    `Given a choice|score|noul question \"<q>\" asks \"...\"` + answer table\n");
+    body.push_str("#   routing:      `When the answer \"<a>\" goes to \"<node>\"` / `And any other answer goes to \"STOP\"`\n");
+    body.push_str("#   outcomes:     `Then label \"<L>\" when the answer to \"<q>\" is ...` / `And keep the answer to \"<q>\"`\n");
+    body.push_str("#   capabilities: `Given the policy | key | value |` (background) / `Then run the \"<cap>\" capability ...`\n");
+    body.push_str("#   nesting:      `And when the sub workflow completes continue at \"<node>\"` hands control back\n");
+    body.push_str("# Keep this file the single source of truth, then:\n");
+    body.push_str("#   laya-workflow bdd build <file>                     # compile + validate + 100% coverage\n");
+    body.push_str("#   laya-workflow bdd transpile <file> --out dsl/<cat> # emit the dsl spec\n");
+    body.push_str("#   laya-workflow bdd round-trip                       # prove .feature == dsl spec\n");
+    body
+}
+
+fn scaffold_body_classic(
     name: &str,
     cat: &str,
     primary_q: &str,
@@ -3745,14 +3884,21 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     } else {
         intent.to_string()
     };
-    let body = scaffold_body(
-        name,
-        &cat,
-        &primary_q,
-        &desc,
-        if o.single { 1 } else { 2 },
-        o.nested,
-    );
+    // Resolve the starter shape: an explicit --pattern wins; else the legacy
+    // --single / --nested flags; else the canonical 2-node graph.
+    let pattern = match o.pattern.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ if o.nested => "nested".to_string(),
+        _ if o.single => "single".to_string(),
+        _ => "two_node".to_string(),
+    };
+    let body = match scaffold_body_pattern(name, &cat, &primary_q, &desc, &pattern) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return Ok(1);
+        }
+    };
 
     // Self-verify: the skeleton must compile to a valid decision graph.
     let feature = match parse(&body, "<scaffold>") {
