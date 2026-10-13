@@ -529,6 +529,74 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
     from_spec_with_dir(spec, parent, None)
 }
 
+/// "did you mean ...?" hint helpers for the semantic validation errors below.
+/// P34: every *unknown-reference* error (node / question / answer / action-kind
+/// / gate-option / combine-fallback) appends the closest known identifier so an
+/// author sees the fix at the error site. The metric is best-effort guidance
+/// only — it never gates a build.
+///
+/// Character-level similarity in [0,1] between two short identifiers. in [0,1] between two short identifiers.
+/// Combines a bigram Dice coefficient with a longest-common-prefix bonus so a
+/// single typo ("biling" -> "billing") ranks well above unrelated names. Used
+/// only to build "did you mean ...?" hints in validation errors — never a gate.
+pub fn str_similarity(a: &str, b: &str) -> f64 {
+    let a = a.trim().to_lowercase();
+    let b = b.trim().to_lowercase();
+    if a == b {
+        return 1.0;
+    }
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    // Deduplicated bigram sets: repeated characters ("is_risky" has "is"
+    // twice) must not double-count toward the Dice coefficient.
+    let bigrams = |s: &str| -> std::collections::HashSet<(char, char)> {
+        let cs: Vec<char> = s.chars().collect();
+        if cs.len() < 2 {
+            return std::collections::HashSet::new();
+        }
+        cs.windows(2).map(|w| (w[0], w[1])).collect()
+    };
+    let ba = bigrams(&a);
+    let bb = bigrams(&b);
+    let inter = ba.intersection(&bb).count();
+    let dice = if ba.is_empty() && bb.is_empty() {
+        0.0
+    } else {
+        2.0 * inter as f64 / (ba.len() + bb.len()) as f64
+    };
+    let lcp = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count() as f64;
+    let denom = a.chars().count().max(b.chars().count()).max(1) as f64;
+    (dice + 0.35 * lcp / denom).min(1.0)
+}
+
+/// Best candidate for a misspelled `target` when one is close enough to be a
+/// plausible "did you mean" hint. Returns None when nothing is close — the typo
+/// is too far from every known identifier to guess safely.
+pub fn closest_match<'a>(target: &str, candidates: &[&'a str]) -> Option<&'a str> {
+    let mut best: Option<(f64, &'a str)> = None;
+    for c in candidates {
+        if c.is_empty() {
+            continue;
+        }
+        let sim = str_similarity(target, c);
+        if sim >= 0.5 && best.map(|(b, _)| sim > b).unwrap_or(true) {
+            best = Some((sim, c));
+        }
+    }
+    best.map(|(_, c)| c)
+}
+
+/// `" (did you mean \"closest\"?)"` appended to a validation error, or `""`
+/// when no close candidate exists. Keeps errors readable when there is nothing
+/// sensible to guess.
+fn suggest(target: &str, candidates: &[&str]) -> String {
+    match closest_match(target, candidates) {
+        Some(c) => format!(" (did you mean \"{c}\"?)"),
+        None => String::new(),
+    }
+}
+
 /// Core parser: `base_dir` is the directory used to resolve relative refs.
 /// Semantic graph validation beyond the structural parse. The engine would
 /// otherwise only fail (or silently misroute) at *runtime*, hiding the fault
@@ -554,8 +622,34 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
 fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: &str) -> Result<()> {
     let names: std::collections::HashSet<&str> =
         nodes.iter().map(|n| n.name.as_str()).collect();
+    let name_candidates: Vec<&str> = names.iter().copied().collect();
+    // Routing-target hints: a node name, but also any *answer value* — authors
+    // routinely route to an answer spelling they just typed (a node that does
+    // not exist yet, or a mistyped answer). Including both lets the hint point
+    // at the typo instead of silently saying "nothing close".
+    let mut answer_candidates: Vec<&str> = Vec::new();
+    for n in nodes {
+        if let Some(qs) = n.questions.as_object() {
+            for qv in qs.values() {
+                match qv.get("criteria") {
+                    Some(Value::Object(m)) => {
+                        answer_candidates.extend(m.keys().map(|k| k.as_str()))
+                    }
+                    Some(Value::Array(a)) => {
+                        answer_candidates.extend(a.iter().filter_map(|v| v.as_str()))
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    let mut dest_candidates = name_candidates.clone();
+    dest_candidates.extend(answer_candidates);
     if !names.contains(start) {
-        bail!("spec start node {start:?} is not in the graph");
+        bail!(
+            "spec start node {start:?} is not in the graph{}",
+            suggest(start, &name_candidates)
+        );
     }
     // unique node names (a duplicate makes edges ambiguous)
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -567,12 +661,20 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
     for n in nodes {
         for dest in n.edge.condition.values() {
             if dest != "STOP" && dest != "START" && !names.contains(dest.as_str()) {
-                bail!("node {}: edge condition targets unknown node {dest:?}", n.name);
+                bail!(
+                    "node {}: edge condition targets unknown node {dest:?}{}",
+                    n.name,
+                    suggest(dest, &dest_candidates)
+                );
             }
         }
         if let Some(d) = &n.edge.default {
             if d != "STOP" && d != "START" && !names.contains(d.as_str()) {
-                bail!("node {}: edge default targets unknown node {d:?}", n.name);
+                bail!(
+                    "node {}: edge default targets unknown node {d:?}{}",
+                    n.name,
+                    suggest(d, &dest_candidates)
+                );
             }
         }
     }
@@ -601,11 +703,13 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
             _ => None,
         };
         if let Some(space) = answer_space {
+            let ans_candidates: Vec<&str> = space.iter().map(|s| s.as_str()).collect();
             for k in n.edge.condition.keys() {
                 if !space.iter().any(|a| a == k) {
                     bail!(
-                        "node {}: edge condition key {k:?} is not an answer of primary question {pq:?}",
-                        n.name
+                        "node {}: edge condition key {k:?} is not an answer of primary question {pq:?}{}",
+                        n.name,
+                        suggest(k, &ans_candidates)
                     );
                 }
             }
@@ -669,19 +773,29 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
         }
         let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("?");
         let questions = n.get("questions").and_then(|v| v.as_object()).cloned();
+        let q_candidates: Vec<&str> = questions
+            .as_ref()
+            .map(|m| m.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
         let has_q = |q: &str| {
             questions.as_ref().map(|m| m.contains_key(q)).unwrap_or(false)
         };
         // primary_q must name a declared question
         if let Some(pq) = n.get("primary_q").and_then(|v| v.as_str()) {
             if !has_q(pq) {
-                bail!("node {name}: primary_q {pq:?} is not a declared question");
+                bail!(
+                    "node {name}: primary_q {pq:?} is not a declared question{}",
+                    suggest(pq, &q_candidates)
+                );
             }
         }
         if let Some(action) = n.get("action") {
             if let Some(kind) = action.get("kind").and_then(|v| v.as_str()) {
                 if !KNOWN_KINDS.contains(&kind) {
-                    bail!("node {name}: unknown action kind {kind:?}");
+                    bail!(
+                        "node {name}: unknown action kind {kind:?}{}",
+                        suggest(kind, KNOWN_KINDS)
+                    );
                 }
                 let aq = action.get("question").and_then(|v| v.as_str());
                 match kind {
@@ -691,7 +805,10 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                             if !has_q(q)
                                 && n.get("primary_q").and_then(|v| v.as_str()) != Some(q)
                             {
-                                bail!("node {name}: action {kind:?} references unknown question {q:?}");
+                                bail!(
+                                    "node {name}: action {kind:?} references unknown question {q:?}{}",
+                                    suggest(q, &q_candidates)
+                                );
                             }
                         }
                     }
@@ -705,7 +822,8 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                                 let known = has_q(q) || aq == Some(q);
                                 if !known {
                                     bail!(
-                                        "node {name}: threshold rule references unknown question {q:?}"
+                                        "node {name}: threshold rule references unknown question {q:?}{}",
+                                        suggest(q, &q_candidates)
                                     );
                                 }
                             }
@@ -713,7 +831,8 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                                 for k in w.keys() {
                                     if !KNOWN_WHEN_KEYS.contains(&k.as_str()) {
                                         bail!(
-                                            "node {name}: threshold rule uses unknown when operator {k:?}"
+                                            "node {name}: threshold rule uses unknown when operator {k:?}{}",
+                                            suggest(k.as_str(), KNOWN_WHEN_KEYS)
                                         );
                                     }
                                 }
@@ -733,8 +852,11 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                             .and_then(|cv| cv.as_object());
                         if let Some(crit) = crit {
                             if !crit.contains_key(opt) {
+                                let opt_candidates: Vec<&str> =
+                                    crit.keys().map(|k| k.as_str()).collect();
                                 bail!(
-                                    "node {name}: gate option {opt:?} is not a choice of question {q:?}"
+                                    "node {name}: gate option {opt:?} is not a choice of question {q:?}{}",
+                                    suggest(opt, &opt_candidates)
                                 );
                             }
                         }
@@ -748,7 +870,10 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                                 if !has_q(q)
                                     && n.get("primary_q").and_then(|v| v.as_str()) != Some(q)
                                 {
-                                    bail!("node {name}: rubric dimension references unknown question {q:?}");
+                                    bail!(
+                                        "node {name}: rubric dimension references unknown question {q:?}{}",
+                                        suggest(q, &q_candidates)
+                                    );
                                 }
                             }
                         }
@@ -764,7 +889,10 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                             if !has_q(k)
                                 && n.get("primary_q").and_then(|v| v.as_str()) != Some(k)
                             {
-                                bail!("node {name}: copy_keys copies {k:?}, which is not a question declared on this node — the runtime copy is a silent no-op");
+                                bail!(
+                                    "node {name}: copy_keys copies {k:?}, which is not a question declared on this node — the runtime copy is a silent no-op{}",
+                                    suggest(k, &q_candidates)
+                                );
                             }
                         }
                     }
@@ -773,7 +901,10 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                     for f in ["choice", "signal"] {
                         if let Some(q) = action.get(f).and_then(|v| v.as_str()) {
                             if !has_q(q) {
-                                bail!("node {name}: combine {f:?} references unknown question {q:?}");
+                                bail!(
+                                    "node {name}: combine {f:?} references unknown question {q:?}{}",
+                                    suggest(q, &q_candidates)
+                                );
                             }
                         }
                     }
@@ -797,7 +928,21 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                             _ => true, // from_state or absent → dynamic at runtime
                         };
                         if !ok {
-                            bail!("node {name}: combine fallback {fb:?} is not a possible answer of choice question {cq:?} (the fallback branch can never fire)");
+                            let fb_candidates: Vec<&str> = match questions
+                                .as_ref()
+                                .and_then(|m| m.get(cq))
+                                .and_then(|qv| qv.get("criteria"))
+                            {
+                                Some(Value::Object(m)) => m.keys().map(|k| k.as_str()).collect(),
+                                Some(Value::Array(a)) => {
+                                    a.iter().filter_map(|v| v.as_str()).collect()
+                                }
+                                _ => Vec::new(),
+                            };
+                            bail!(
+                                "node {name}: combine fallback {fb:?} is not a possible answer of choice question {cq:?} (the fallback branch can never fire){}",
+                                suggest(fb, &fb_candidates)
+                            );
                         }
                     }
                 }

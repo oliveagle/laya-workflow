@@ -1,6 +1,55 @@
 //! spec regression sections for `laya-workflow-tests`.
 #![allow(unused_imports)]
 use crate::*;
+/// P34: the "did you mean ...?" metric itself. `closest_match` must pick the
+/// one-typo neighbour over unrelated names and stay silent when nothing is
+/// close (no false-positive guessing on the error path).
+pub fn test_spec_closest_match(h: &mut Harness) {
+    use crate::spec::{closest_match, str_similarity};
+    // One-typo neighbours rank at the top.
+    h.eq(
+        "closest: biling -> billing",
+        closest_match("biling", &["billing", "shipping", "root"]),
+        Some("billing"),
+    );
+    h.eq(
+        "closest: intet -> intent",
+        closest_match("intet", &["intent", "done"]),
+        Some("intent"),
+    );
+    h.eq(
+        "closest: otrher -> other",
+        closest_match("otrher", &["other", "billing", "support"]),
+        Some("other"),
+    );
+    h.eq(
+        "closest: aprove -> approve",
+        closest_match("aprove", &["approve", "reject"]),
+        Some("approve"),
+    );
+    h.eq(
+        "closest: billng -> billing (answer key)",
+        closest_match("billng", &["billing", "shipping"]),
+        Some("billing"),
+    );
+    // Not close enough -> no guess (no false positives).
+    h.eq(
+        "closest: unrelated -> None",
+        closest_match("complete", &["billing", "shipping"]),
+        None,
+    );
+    h.eq(
+        "closest: far question -> None",
+        closest_match("is_risky", &["is_suspicious", "is_safe"]),
+        None,
+    );
+    // similarity is symmetric and bounded.
+    let a = str_similarity("biling", "billing");
+    let b = str_similarity("billing", "biling");
+    h.check("similarity symmetric", (a - b).abs() < 1e-9);
+    h.check("similarity <= 1", a <= 1.0 && a >= 0.0);
+}
+
 pub fn test_spec(h: &mut Harness) {
     let spec = serde_json::json!({
         "name": "ticket_router",

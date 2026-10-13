@@ -920,6 +920,141 @@ Feature: transpile_demo
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// P34: semantic-validation errors carry a "did you mean ...?" hint naming the
+/// closest known identifier, so an author sees the fix at the error site
+/// instead of a bare rejection. Each case is a feature that compiles cleanly
+/// (100% step coverage) but fails `validate_graph_semantics` on one typo — the
+/// hint must appear in the generated error text.
+pub fn test_bdd_validate_suggestion(h: &mut Harness) {
+    let cases: Vec<(&str, &str)> = vec![
+        (
+            "routing target",
+            r#"@decision
+Feature: s_routing
+  Scenario: root
+    Given a choice question "intent" asks "what?"
+      | answer | meaning |
+      | billing | invoices |
+      | shipping | parcels |
+    When the answer "billing" goes to "biling"
+    And any other answer goes to "STOP"
+    Then label "ok" otherwise
+    Then allow up to 1 retries"#,
+        ),
+        (
+            "primary question",
+            r#"@decision
+Feature: s_primaryq
+  Scenario: root
+    Given a choice question "intent" asks "what?"
+      | answer | meaning |
+      | billing | invoices |
+      | shipping | parcels |
+    When any other answer goes to "STOP"
+    Then the primary question is "intet"
+    Then label "ok" otherwise
+    Then allow up to 1 retries"#,
+        ),
+        (
+            "question ref in rule",
+            r#"@decision
+Feature: s_qref
+  Scenario: root
+    Given a choice question "intent" asks "what?"
+      | answer | meaning |
+      | billing | invoices |
+      | shipping | parcels |
+    When any other answer goes to "STOP"
+    Then label "ok" when the answer to "intet" is "billing"
+    Then label "nope" otherwise
+    Then allow up to 1 retries"#,
+        ),
+        (
+            "answer edge key",
+            r#"@decision
+Feature: s_answer
+  Scenario: root
+    Given a choice question "intent" asks "what?"
+      | answer | meaning |
+      | billing | invoices |
+      | shipping | parcels |
+    When the answer "billng" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then label "ok" otherwise
+    Then allow up to 1 retries"#,
+        ),
+        (
+            "gate option",
+            r#"@decision
+Feature: s_gateopt
+  Scenario: root
+    Given a choice question "verdict" asks "what verdict?"
+      | answer | meaning |
+      | approve | good |
+      | reject | bad |
+    When any other answer goes to "STOP"
+    Then gate "verdict" on option "aprove" with block 0.6 allow 0.7"#,
+        ),
+        (
+            "combine fallback",
+            r#"@decision
+Feature: s_combine
+  Scenario: root
+    Given a choice question "department" asks "which dept?"
+      | answer | meaning |
+      | billing | money |
+      | support | product |
+      | other | none |
+    And a score question "explicit_urgency" asks "urgency?"
+      | level |
+      | low |
+      | high |
+    When any other answer goes to "STOP"
+    Then combine "department" with signal "explicit_urgency" fallback "otrher" review "human_review" requiring 0.8 high 0.85 low 0.15"#,
+        ),
+    ];
+    for (what, src) in cases {
+        let feature = bdd::parse(src, "<sug>").expect("suggestion feature parses");
+        let spec =
+            bdd::compile_decision(&feature, &json!({})).expect("suggestion feature compiles");
+        let err = crate::spec::from_spec_with_dir(&spec, None, None)
+            .err()
+            .expect("suggestion case must fail validation")
+            .to_string();
+        h.check(
+            &format!("bdd: suggestion [{what}] carries did-you-mean hint"),
+            err.contains("did you mean"),
+        );
+        h.check(
+            &format!("bdd: suggestion [{what}] hints at a concrete value"),
+            err.contains('"'),
+        );
+    }
+    // Negative: a name that is far from every candidate must NOT get a guess —
+    // no false-positive hint on the error path.
+    let no_hint = r#"@decision
+Feature: s_far
+  Scenario: root
+    Given a choice question "intent" asks "what?"
+      | answer | meaning |
+      | billing | invoices |
+      | shipping | parcels |
+    When the answer "complete" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then label "ok" otherwise
+    Then allow up to 1 retries"#;
+    let feature = bdd::parse(no_hint, "<sug>").expect("far feature parses");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("far feature compiles");
+    let err = crate::spec::from_spec_with_dir(&spec, None, None)
+        .err()
+        .expect("far case must fail validation")
+        .to_string();
+    h.check(
+        "bdd: suggestion far-from-everything has no hint",
+        !err.contains("did you mean"),
+    );
+}
+
 /// `bdd scaffold` generates a minimal valid `@decision` skeleton (already
 /// passing `bdd build`), so an agent starts the authoring loop from a legal
 /// file instead of a blank page. Asserts on the pure `scaffold_body` output
