@@ -293,6 +293,23 @@
       "trace.steps.1.node": "severity_probe",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": 0.5
+    },
+    "sales": {
+      "result.action_answer": 0.5,
+      "result.action_question": "severity",
+      "result.capability": "cls",
+      "result.label": "QUEUE_TODAY",
+      "trace.step_count": 3,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "other",
+      "trace.steps.1.node": "needle_fallback",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "billing",
+      "trace.steps.2.node": "severity_probe",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": 0.5
     }
   },
   "rag_triage": {
@@ -833,6 +850,35 @@
       "trace.steps.2.node": "pick",
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "A"
+    }
+  },
+  "needle_demo": {
+    "invoice": {
+      "result.capability": "tool_call",
+      "trace.final_action": "stop",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "extract",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
+      "trace.steps.1.node": "embed",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "A",
+      "trace.steps.2.node": "call",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "A"
+    }
+  },
+  "needle_ticket": {
+    "ticket": {
+      "result.capability": "ent",
+      "trace.final_action": "stop",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
+      "trace.steps.1.node": "entity",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "A"
     }
   }
 }

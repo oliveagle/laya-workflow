@@ -1658,19 +1658,33 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
     // Nodes that are graph-reachable but **cannot** be visited by the offline
     // smoke harness. Every entry is asserted below to still be a real,
     // reachable node, so this allow-list cannot rot into a silent hole.
+    //
+    // It is down to one entry: the two that used to sit here were not really
+    // environment limits. `intake_pipeline_nested:intake` is an *inline
+    // sub-workflow container* — the engine expands it in place, so its steps
+    // surface as `intake::classify` / `intake::severity_probe` and the node
+    // name `intake` is never a trace step by construction (see `containers`
+    // below, which is now handled structurally instead of allow-listed).
+    // `support_ticket_router_hybrid:needle_fallback` was only unreachable
+    // because `ensure_env_dirs` did not seed `${env.NEEDLE3_CACT}`; with the
+    // placeholder in place the offline backend drives the hybrid fallback and
+    // the `sales` state walks it, so it is covered for real.
     let allowed: &[(&str, &str)] = &[
         // calls the real `cua-driver` exec; the offline heuristic never routes here
         ("cua_desktop", "exec"),
-        // inline nested-pipeline container: its steps surface as `intake::*`, never `intake`
-        ("intake_pipeline_nested", "intake"),
-        // Needle call whose `${env.NEEDLE3_CACT}` reference is unresolved offline
-        ("support_ticket_router_hybrid", "needle_fallback"),
     ];
     let mut allow_seen: BTreeMap<String, bool> =
         allowed.iter().map(|(sp, node)| (format!("{sp}:{node}"), false)).collect();
 
     // Reachable nodes from `start`, following condition/default string targets.
-    let reachable = |raw: &Value| -> BTreeSet<String> {
+    // Returns (reachable node names, container node names). A *container* is a
+    // node that carries a `workflow` key: the engine expands the referenced
+    // workflow inline, so the container's own name is never a trace step (its
+    // children surface as `<container>::<child>`). Containers are therefore
+    // expanded-but-never-visited by construction and are excluded from the
+    // must-be-visited set; their continuation still is, because we keep
+    // following their `edge`.
+    let reachable = |raw: &Value| -> (BTreeSet<String>, BTreeSet<String>) {
         let nodes = raw
             .get("nodes")
             .and_then(Value::as_array)
@@ -1678,6 +1692,11 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
             .unwrap_or_default();
         let names: BTreeSet<String> = nodes
             .iter()
+            .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let containers: BTreeSet<String> = nodes
+            .iter()
+            .filter(|n| n.get("workflow").is_some())
             .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_string))
             .collect();
         let mut seen = BTreeSet::new();
@@ -1714,7 +1733,7 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
                 }
             }
         }
-        seen
+        (seen, containers)
     };
 
     let dsl_root = root.join("dsl");
@@ -1788,8 +1807,16 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
             continue;
         }
         checked += 1;
-        for n in reachable(&raw) {
+        let (reach, containers) = reachable(&raw);
+        for n in reach {
             if visited.contains(&n) {
+                continue;
+            }
+            // Inline sub-workflow container: expanded in place, never a trace
+            // step of its own. Its children and continuation are checked above
+            // (children via the `::` steps the container's states record;
+            // continuation because we still follow its edge).
+            if containers.contains(&n) {
                 continue;
             }
             let key = format!("{stem}:{n}");
@@ -1816,6 +1843,76 @@ pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
     h.check(
         &format!("bdd: branch coverage checked {checked} specs (floor 40)"),
         checked >= 40,
+    );
+}
+
+/// P43: the coverage ledger gate. Every dsl spec is either offline-registered
+/// (behaviour-verified by `dsl smoke` on its sample states) or declared
+/// live-only in `bench/dsl_coverage_ledger.json` with the gate that covers it
+/// and why the offline smoke cannot. Nothing is silently unverified, and no
+/// declaration may rot: a spec that becomes offline-registered, or is deleted,
+/// leaves a stale entry that fails here (see the two negative cases below).
+pub fn test_bdd_dsl_coverage_ledger(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::{coverage_ledger_audit, discover_specs};
+    use std::collections::BTreeMap;
+    let root = bdd::repo_root();
+    let dsl_root = root.join("dsl");
+    let specs = discover_specs(&dsl_root).expect("discover dsl specs");
+    let raw: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states: BTreeMap<String, Value> = raw
+        .as_object()
+        .unwrap()
+        .clone()
+        .into_iter()
+        .collect();
+
+    let (offline, live, problems) =
+        coverage_ledger_audit(&specs, &dsl_root, &states).expect("coverage ledger audit");
+    h.check(
+        "bdd: coverage ledger is complete and rot-free",
+        problems.is_empty(),
+    );
+    for p in &problems {
+        h.check(&format!("bdd: coverage ledger problem — {p}"), false);
+    }
+    h.check(
+        &format!(
+            "bdd: coverage ledger accounts for every dsl spec ({offline} offline-verified + {live} live-declared = {} of {})",
+            offline + live,
+            specs.len()
+        ),
+        offline + live == specs.len() && offline > 0 && live > 0,
+    );
+
+    // Negative 1: a spec that is neither registered nor declared must fail —
+    // this is the "silently unverified workflow" the ledger exists to stop.
+    let mut undeclared = specs.clone();
+    undeclared.push(dsl_root.join("__absent_probe__.json"));
+    let (_, _, probs) = coverage_ledger_audit(&undeclared, &dsl_root, &states).expect("audit");
+    h.check(
+        "bdd: an undeclared, unregistered spec is flagged (no silent hole)",
+        probs.iter().any(|p| p.contains("__absent_probe__")),
+    );
+
+    // Negative 2: a declaration for a spec that no longer exists is stale.
+    let mut deleted: Vec<std::path::PathBuf> = specs
+        .iter()
+        .filter(|p| {
+            !p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n == "arxiv.json")
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    deleted.sort();
+    let (_, _, probs) = coverage_ledger_audit(&deleted, &dsl_root, &states).expect("audit");
+    h.check(
+        "bdd: a declaration whose spec vanished is flagged stale",
+        probs.iter().any(|p| p.contains("browser/arxiv") && p.contains("stale")),
     );
 }
 

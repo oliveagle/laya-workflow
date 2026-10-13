@@ -1,0 +1,145 @@
+{
+  "//": "P43 coverage ledger. Every dsl/<cat>/<name>.json workflow must be accounted for: either it carries offline smoke states in bench/dsl_smoke_states.json (behaviour-verified by `laya-workflow dsl smoke`), or it is listed under `live_only` with the gate that verifies it (`covered_by`) and why the offline smoke cannot. `laya-workflow dsl smoke` fails on a spec that is neither (a workflow that would otherwise be silently unverified), and fails on a stale entry (one whose spec is now offline-registered or no longer exists), so this ledger cannot rot.",
+  "live_only": {
+    "browser/alphaxiv_paper": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/arxiv": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/bdd_assert_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/bdd_release_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/bdd_retry_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/bdd_wait_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/bdd_wait_until_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/bing": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/browser_base_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/browser_orchestrate_probe": {
+      "covered_by": "bdd run",
+      "reason": "chrome_cdp probe against a local fixture; run by `laya-workflow bdd run` (CDP). `scripts/bdd/check.sh` still `validate`s it offline"
+    },
+    "browser/browser_singleton": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/crates": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/docsrs": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/github": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/goofish_item": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/goofish_sqlite": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/google_research": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/google_search_top10": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/hackernews": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/jev_deep_dive": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/mdn": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/pypi": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/taobao_ddr5_sweep": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/taobao_item": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/taobao_jev_tour": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/v2ex": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "browser/wikipedia": {
+      "covered_by": "bdd live",
+      "reason": "chrome_cdp against a live site; run by `laya-workflow bdd live` on a machine with a browser (see bench/bdd/live/REPORT.md)"
+    },
+    "capabilities/computer_use": {
+      "covered_by": "manual/live",
+      "reason": "needs a real cua-driver desktop session (a `surface` snapshot); the offline backend has no driver"
+    },
+    "capabilities/credentialed_integrations": {
+      "covered_by": "manual/live",
+      "reason": "needs a real credential resolved at run time (`Bearer ${unresolved:secret...}`)"
+    },
+    "capabilities/db_analytics": {
+      "covered_by": "integration",
+      "reason": "spawns the local `duckdb` binary for embedded analytics; not installed in the offline harness"
+    },
+    "capabilities/db_server_analytics": {
+      "covered_by": "integration",
+      "reason": "needs the `laya-workflow db serve --port 18767 --daemon` HTAP daemon up (docs/db.md)"
+    },
+    "capabilities/dingtalk_chat_history": {
+      "covered_by": "manual/live",
+      "reason": "spawns a chat-history CLI against a live tenant"
+    },
+    "capabilities/feishu_chat_history": {
+      "covered_by": "manual/live",
+      "reason": "spawns `lark-cli` against a live tenant"
+    },
+    "capabilities/goal_runner": {
+      "covered_by": "manual/live",
+      "reason": "spawns a real goal runner (`cxgo`/`cmdgo`) and blocks on it (`policy.allow_exec`); not an offline-heuristic spec"
+    },
+    "capabilities/web_research_tinyfish": {
+      "covered_by": "manual/live",
+      "reason": "TinyFish web research against external hosts (gated by policy.allow_hosts)"
+    }
+  }
+}

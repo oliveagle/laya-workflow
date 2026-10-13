@@ -4,7 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub struct DslSmokeOptions {
@@ -35,7 +35,7 @@ fn load_table(name: &str) -> Result<BTreeMap<String, Value>> {
     }
 }
 
-fn discover_specs(root: &Path) -> Result<Vec<PathBuf>> {
+pub fn discover_specs(root: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -175,6 +175,13 @@ pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     }
     // Plain scratch values for the secret/webhook/search env refs the specs
     // use; the local mocks accept any value, so these are just placeholders.
+    // `NEEDLE3_CACT` is the on-device Needle 3 activation blob that every
+    // `kind: needle` capability interpolates (`cact`). Without it the offline
+    // heuristic backend refuses the capability as an unresolved reference
+    // (`${unresolved:env.NEEDLE3_CACT}`) before it can run, so the whole
+    // needle-using spec was unreachable offline; a placeholder lets the
+    // offline backend drive those graphs (needle_demo / needle_ticket /
+    // support_ticket_router_hybrid's hybrid fallback).
     for (var, val) in [
         ("LAYA_SMTP_USER", "smoke@example.com"),
         ("LAYA_SMTP_PASS", "smoke-pass"),
@@ -182,6 +189,7 @@ pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
         ("LAYA_WEB_SEARCH_URL", "http://127.0.0.1:8792/search"),
         ("NAME", "laya-smoke"),
         ("NEEDLE", "laya-smoke-needle"),
+        ("NEEDLE3_CACT", "laya-smoke-cact"),
     ] {
         if std::env::var(var).is_err() {
             map.insert(var.to_string(), val.to_string());
@@ -353,6 +361,93 @@ fn is_private_host(host: &str) -> bool {
         (Some(100), Some(o1)) if (64..=127).contains(&o1) => true, // CGNAT 100.64/10
         _ => false,
     }
+}
+
+/// P43 coverage ledger. `dsl smoke` behaviour-verifies only the specs that
+/// carry sample states; a spec with no states used to be silently "validate
+/// only" — a workflow nothing would ever flag as unverified. This makes the
+/// accounting total: every discovered spec must be either offline-registered
+/// (its stem is a key in `bench/dsl_smoke_states.json`) or declared live-only
+/// in `bench/dsl_coverage_ledger.json` with the gate that covers it
+/// (`covered_by`) and why the offline smoke cannot. A stale declaration — its
+/// spec became offline-registered, or no longer exists — is an error too, so
+/// the ledger cannot rot into a silent hole.
+///
+/// Returns `(offline_verified, live_declared, problems)`.
+pub fn coverage_ledger_audit(
+    specs: &[PathBuf],
+    root: &Path,
+    states: &BTreeMap<String, Value>,
+) -> Result<(usize, usize, Vec<String>)> {
+    let ledger = load_table("dsl_coverage_ledger.json")?;
+    let live_only = ledger
+        .get("live_only")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow::anyhow!("bench/dsl_coverage_ledger.json needs a `live_only` object"))?;
+    let rel_of = |p: &Path| -> String {
+        let r = p.strip_prefix(root).unwrap_or(p).display().to_string();
+        r.strip_suffix(".json").unwrap_or(&r).to_string()
+    };
+    let mut problems = Vec::new();
+    let mut offline = 0usize;
+    let mut live = 0usize;
+    // rel -> stem, so a stale declaration can tell "now offline-registered"
+    // apart from "spec deleted".
+    let stems: BTreeMap<String, String> = specs
+        .iter()
+        .map(|s| {
+            (
+                rel_of(s),
+                s.file_stem().and_then(|x| x.to_str()).unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    for spec in specs {
+        let rel = rel_of(spec);
+        let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if states.contains_key(stem) {
+            offline += 1;
+            continue;
+        }
+        match live_only.get(&rel) {
+            Some(entry) => {
+                live += 1;
+                if entry
+                    .get("covered_by")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                {
+                    problems.push(format!("{rel}: ledger entry names no `covered_by` gate"));
+                }
+                if entry
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                {
+                    problems.push(format!("{rel}: ledger entry has no `reason`"));
+                }
+            }
+            None => problems.push(format!(
+                "{rel}: no offline smoke states in bench/dsl_smoke_states.json and no entry in bench/dsl_coverage_ledger.json — register a sample state, or declare the gate that verifies it and why offline smoke cannot"
+            )),
+        }
+    }
+    for rel in live_only.keys() {
+        match stems.get(rel) {
+            None => problems.push(format!(
+                "{rel}: stale ledger entry — no such spec under dsl/; remove it"
+            )),
+            Some(stem) if states.contains_key(stem) => problems.push(format!(
+                "{rel}: stale ledger entry — it is now offline-registered in bench/dsl_smoke_states.json; remove it"
+            )),
+            _ => {}
+        }
+    }
+    Ok((offline, live, problems))
 }
 
 pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
@@ -549,9 +644,23 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     if skipped > 0 {
         println!("({skipped} state(s) skipped offline because a network endpoint was unreachable; they run in the integration job / with the local mocks up)");
     }
-    if fails > 0 {
+    // P43: the coverage ledger — every discovered spec accounted for, no
+    // stale declaration. Printed so `check.sh` / CI show the split.
+    let (ledger_offline, ledger_live, ledger_problems) =
+        coverage_ledger_audit(&specs, &root, &states)?;
+    println!(
+        "coverage ledger: {ledger_offline} offline-verified + {ledger_live} live-declared = {} specs",
+        ledger_offline + ledger_live
+    );
+    for p in &ledger_problems {
+        eprintln!("[FAIL] coverage ledger: {p}");
+    }
+    if fails > 0 || !ledger_problems.is_empty() {
         // callers (CI) want a non-zero exit
-        bail!("{fails} spec run(s) failed");
+        bail!(
+            "{fails} spec run(s) failed; {} coverage-ledger problem(s)",
+            ledger_problems.len()
+        );
     }
     Ok(fails)
 }

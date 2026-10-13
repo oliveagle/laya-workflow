@@ -193,3 +193,8 @@ if ! "$BIN" dsl smoke > "$out/smoke.log" 2> "$out/smoke.err"; then
 fi
 smoke_line="$(grep -oE "[0-9]+/[0-9]+ specs OK" "$out/smoke.log" | tail -1)"
 echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage and round-trip to their dsl spec; behavioural smoke: $smoke_line"
+# Every dsl spec is accounted for: either it carries offline smoke states, or it
+# is declared live-only in bench/dsl_coverage_ledger.json. `dsl smoke` fails on
+# an unaccounted spec or a stale declaration, so this line cannot overstate the
+# coverage it prints.
+grep -oE "coverage ledger: .*specs" "$out/smoke.log" | tail -1 || true

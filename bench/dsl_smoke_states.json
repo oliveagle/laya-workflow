@@ -941,6 +941,9 @@
     },
     "billing": {
       "text": "Customer was billed twice for the same invoice and wants a refund"
+    },
+    "sales": {
+      "text": "How much does the premium plan cost for a small team?"
     }
   },
   "routing_codegraph": {
@@ -1036,6 +1039,16 @@
     "pick": {
       "text": "please reach me at billing@example.com for the invoice",
       "selected_id": "candidate_0"
+    }
+  },
+  "needle_demo": {
+    "invoice": {
+      "text": "Invoice 42 from Acme, total 199.99 USD due 2026-11-01"
+    }
+  },
+  "needle_ticket": {
+    "ticket": {
+      "text": "My order 88 arrived broken"
     }
   }
 }
