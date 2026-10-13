@@ -2238,5 +2238,117 @@
       "ev_half_open_duration": "too_short",
       "ev_close_error_rate": "too_high"
     }
+  },
+  "query_complexity_limiter": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_query_type": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "blocked",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_joins": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "too_many",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_subqueries": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "too_many",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "row_estimate": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "over",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_table": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "blocked",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "dangerous_text": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "dangerous",
+      "ev_approval": "not_required"
+    },
+    "escalate": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "ok",
+      "ev_subqueries": "ok",
+      "ev_rows": "ok",
+      "ev_table": "ok",
+      "ev_text": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_type_before_joins": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "blocked",
+      "ev_joins": "too_many",
+      "ev_subqueries": "too_many",
+      "ev_rows": "over",
+      "ev_table": "blocked",
+      "ev_text": "dangerous",
+      "ev_approval": "required"
+    },
+    "precedence_joins_before_rows": {
+      "ev_proposal": "accepted",
+      "ev_query_type": "ok",
+      "ev_joins": "too_many",
+      "ev_subqueries": "too_many",
+      "ev_rows": "over",
+      "ev_table": "blocked",
+      "ev_text": "dangerous",
+      "ev_approval": "required"
+    }
   }
 }

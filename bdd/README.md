@@ -360,7 +360,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   79 of 114 specs carry behavioural states today (76 labelled expectation sets; +25 pinned in the decision workflows: webhook_signature_verifier/endpoint_health_checker/file_upload_scanner/circuit_breaker_guard/cache_policy_enforcer/log_redaction_guard/dns_record_validator/session_token_validator/api_quota_guard/sla_checker/ loan_dialogue/ self_healing_gate/ alert_noise_reduction/ approval_workflow/ order_tracker/ support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
+   80 of 115 specs carry behavioural states today (77 labelled expectation sets; +26 pinned in the decision workflows: query_complexity_limiter/webhook_signature_verifier/endpoint_health_checker/file_upload_scanner/circuit_breaker_guard/cache_policy_enforcer/log_redaction_guard/dns_record_validator/session_token_validator/api_quota_guard/sla_checker/ loan_dialogue/ self_healing_gate/ alert_noise_reduction/ approval_workflow/ order_tracker/ support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
    Network-bound stems follow an **offline detection** rule: when a spec's
    declared `endpoint`/`url` targets (web_search, web_fetch, agent, rpc, http,
    webhook, ...) are all unreachable the local mocks are down and the states are
@@ -424,7 +424,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
    offline smoke cannot (`reason`). `dsl smoke` fails on a spec that is neither
    (a workflow nothing would ever flag), and on a stale entry (its spec became
    registered, or vanished), so coverage cannot silently shrink. Today:
-   79 offline-verified + 35 live-declared = 114.
+   80 offline-verified + 35 live-declared = 115.
 4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
    Since P45 `validate` also refuses four shapes that used to compile but

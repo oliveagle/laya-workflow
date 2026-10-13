@@ -1,0 +1,187 @@
+{
+  "name": "query_complexity_limiter",
+  "_bdd": {
+    "feature": "query_complexity_limiter",
+    "feature_path": "bdd/workflows/ole_eval/query_complexity_limiter.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed database queries as a single triage node. The model\nproposes one typed query (request_id, query_type, tables, joins, subqueries,\nestimated_rows, query_text); this workflow owns schema validation, the blocked\nquery-type set, the join/subquery/row-estimate caps, blocked tables, dangerous\nquery text and the approval escalation. Port of\ncode/qwen_vm/app_scenarios/query_complexity_limiter.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, request_id grammar, query_type enum,\nnon-negative integer counters, dangerous-token rejection) fold into the\n`proposal` choice.\n- The local policy table (max_joins, max_subqueries, max_estimated_rows,\nblocked_tables, blocked_query_types, require_approval) is a fixed fixture;\neach deterministic check folds into one verdict choice.\nEmitted labels: reject_proposal, reject_blocked_query_type,\nreject_too_many_joins, reject_too_many_subqueries, reject_row_estimate,\nreject_blocked_table, reject_dangerous_text, escalate_approval, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "approval",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, query_type, tables, joins, subqueries, estimated_rows, query_text} object (request_id grammar, query_type SELECT/INSERT/UPDATE/DELETE, non-negative integer counters, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid query",
+            "malformed": "parse error, missing field, bad request_id, bad query_type or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "query_type": {
+          "type": "choice",
+          "instructions": "Is query_type outside the policy blocked_query_types set?",
+          "criteria": {
+            "ok": "query_type is allowed",
+            "blocked": "query_type is blocked"
+          },
+          "heuristic": {
+            "answer_field": "ev_query_type"
+          }
+        },
+        "joins": {
+          "type": "choice",
+          "instructions": "Is the join count within the policy max_joins cap?",
+          "criteria": {
+            "ok": "joins <= max_joins",
+            "too_many": "joins > max_joins"
+          },
+          "heuristic": {
+            "answer_field": "ev_joins"
+          }
+        },
+        "subqueries": {
+          "type": "choice",
+          "instructions": "Is the subquery count within the policy max_subqueries cap?",
+          "criteria": {
+            "ok": "subqueries <= max_subqueries",
+            "too_many": "subqueries > max_subqueries"
+          },
+          "heuristic": {
+            "answer_field": "ev_subqueries"
+          }
+        },
+        "rows": {
+          "type": "choice",
+          "instructions": "Is estimated_rows within the policy max_estimated_rows cap?",
+          "criteria": {
+            "ok": "estimated_rows <= max_estimated_rows",
+            "over": "estimated_rows > max_estimated_rows"
+          },
+          "heuristic": {
+            "answer_field": "ev_rows"
+          }
+        },
+        "table": {
+          "type": "choice",
+          "instructions": "Is every referenced table outside the policy blocked_tables set?",
+          "criteria": {
+            "ok": "no table is blocked",
+            "blocked": "at least one table is blocked"
+          },
+          "heuristic": {
+            "answer_field": "ev_table"
+          }
+        },
+        "text": {
+          "type": "choice",
+          "instructions": "Is query_text free of dangerous tokens?",
+          "criteria": {
+            "ok": "query_text serializes clean",
+            "dangerous": "query_text contains dangerous tokens"
+          },
+          "heuristic": {
+            "answer_field": "ev_text"
+          }
+        },
+        "approval": {
+          "type": "choice",
+          "instructions": "Does the local policy require human approval for this query?",
+          "criteria": {
+            "not_required": "no approval flag set, proceed",
+            "required": "policy require_approval is true"
+          },
+          "heuristic": {
+            "answer_field": "ev_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "approval",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "query_type",
+              "answer": "blocked"
+            },
+            "label": "reject_blocked_query_type"
+          },
+          {
+            "when": {
+              "question": "joins",
+              "answer": "too_many"
+            },
+            "label": "reject_too_many_joins"
+          },
+          {
+            "when": {
+              "question": "subqueries",
+              "answer": "too_many"
+            },
+            "label": "reject_too_many_subqueries"
+          },
+          {
+            "when": {
+              "question": "rows",
+              "answer": "over"
+            },
+            "label": "reject_row_estimate"
+          },
+          {
+            "when": {
+              "question": "table",
+              "answer": "blocked"
+            },
+            "label": "reject_blocked_table"
+          },
+          {
+            "when": {
+              "question": "text",
+              "answer": "dangerous"
+            },
+            "label": "reject_dangerous_text"
+          },
+          {
+            "when": {
+              "question": "approval",
+              "answer": "required"
+            },
+            "label": "escalate_approval"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

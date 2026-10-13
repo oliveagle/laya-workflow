@@ -1473,5 +1473,18 @@
     "close_error_rate_high": "reject_close_error_rate",
     "approve_clean": "approve",
     "precedence_transition_before_threshold": "reject_illegal_transition"
+  },
+  "query_complexity_limiter": {
+    "proposal_malformed": "reject_proposal",
+    "blocked_query_type": "reject_blocked_query_type",
+    "too_many_joins": "reject_too_many_joins",
+    "too_many_subqueries": "reject_too_many_subqueries",
+    "row_estimate": "reject_row_estimate",
+    "blocked_table": "reject_blocked_table",
+    "dangerous_text": "reject_dangerous_text",
+    "escalate": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_type_before_joins": "reject_blocked_query_type",
+    "precedence_joins_before_rows": "reject_too_many_joins"
   }
 }
