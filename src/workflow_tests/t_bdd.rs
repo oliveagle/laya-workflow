@@ -1219,6 +1219,51 @@ pub fn test_bdd_score_e2e_decision(h: &mut Harness) {
 /// Regression (P25): the `when the sub workflow completes continue at "X"` step
 /// emits the reference node's completion-handoff edge, and compiling a nested
 /// pipeline feature yields a reachable downstream node (no dead code).
+
+/// P30: `bdd score --run`'s decision e2e asserts the authored feature's
+/// decision outputs against the pinned expect (same `check_expect` semantics
+/// as `dsl smoke`) — an authored feature that routes to the wrong node but does
+/// not error must FAIL e2e, not pass. Pins the shared helper's PASS and FAIL
+/// paths so a refactor cannot silently drop the assertion.
+pub fn test_bdd_decision_e2e_output_assert(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::dsl_smoke::check_expect;
+    let src = r#"
+@decision
+Feature: route_outputs
+  Background:
+    Given the workflow runs at most 10 iterations
+  Scenario: classify
+    Given a choice question "route" asks "Which path?"
+      | answer | meaning |
+      | A      | first   |
+      | B      | second  |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then keep the answer to "route"
+"#;
+    let feature = bdd::parse(src, "<test>").expect("parse");
+    let spec = bdd::compile_decision(&feature, &json!({})).expect("compile");
+    let wf = laya_workflow::spec::from_spec_with_dir(&spec, None, None).expect("load");
+    let out = wf.run(&HeuristicBackend, &json!({"hint": "second"})).expect("run");
+    // The heuristic picks the first choice criterion ("A") → stops with route=A.
+    h.eq(
+        "bdd: decision e2e passes on a correct decision",
+        check_expect(&out, &json!({"result.route": "A"})).len(),
+        0,
+    );
+    let msgs = check_expect(&out, &json!({"result.route": "B"}));
+    h.eq(
+        "bdd: decision e2e reports a wrong decision",
+        msgs.len(),
+        1,
+    );
+    h.check(
+        "bdd: decision e2e failure names path and got value",
+        msgs[0].contains("result.route") && msgs[0].contains('A'),
+    );
+}
+
 pub fn test_bdd_sub_workflow_continue(h: &mut Harness) {
     let src = r#"
 @decision

@@ -83,6 +83,51 @@ fn resolve_path<'v>(root: &'v Value, path: &str) -> Option<&'v Value> {
     Some(cur)
 }
 
+/// Assert a completed run against an EXPECT value. A string value pins the
+/// `result.label` (or `gate_action`); an object value pins decision outputs by
+/// dotted path (e.g. `{"result.route": "billing"}`), where a number is compared
+/// with 1e-9 relative tolerance. Returns a list of failure messages; empty
+/// means the run satisfies the expectation. Shared by `dsl smoke` and
+/// `bdd score --run`'s decision e2e, so the authoring gate enforces the same
+/// decision-output semantics as the behavioural smoke.
+pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec<String> {
+    let res = out.to_json();
+    let mut problems = Vec::new();
+    match want {
+        Value::String(want_str) => {
+            let result = res.get("result").cloned().unwrap_or(Value::Null);
+            let got = result
+                .get("label")
+                .and_then(Value::as_str)
+                .or_else(|| result.get("gate_action").and_then(Value::as_str))
+                .unwrap_or("");
+            if got != want_str {
+                problems.push(format!("expected label {want_str:?}, got {got:?}"));
+            }
+        }
+        Value::Object(asserts) => {
+            for (path, want_v) in asserts {
+                let got = resolve_path(&res, path).unwrap_or(&Value::Null);
+                let ok = match want_v {
+                    Value::String(want_str) => got.as_str() == Some(want_str),
+                    Value::Number(want_num) => match (got.as_f64(), want_num.as_f64()) {
+                        (Some(g), Some(w)) => (g - w).abs() <= 1e-9 * w.abs().max(1.0),
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                if !ok {
+                    problems.push(format!("expected {path}={want_v}, got {got}"));
+                }
+            }
+        }
+        other => problems.push(format!(
+            "unsupported expect value {other:?} (use a string label or an object of dotted result paths)"
+        )),
+    }
+    problems
+}
+
 /// Make the scratch env vars every spec may reference; create the dirs.
 /// Directory vars get a scratch dir; plain secret-like vars get a dummy value.
 /// Only set when absent, so a real environment (CI, live) is never clobbered.
@@ -360,48 +405,9 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             // path (e.g. {"result.route": "billing"}).
             if let Some(expect_map) = expect.get(&stem).and_then(Value::as_object) {
                 if let Some(want) = expect_map.get(label) {
-                    match want {
-                        Value::String(want_str) => {
-                            let result = res.get("result").cloned().unwrap_or(Value::Null);
-                            let got = result
-                                .get("label")
-                                .and_then(Value::as_str)
-                                .or_else(|| result.get("gate_action").and_then(Value::as_str))
-                                .unwrap_or("");
-                            if got != want_str {
-                                fails += 1;
-                                eprintln!(
-                                    "       [FAIL] {label}: expected label {want_str:?}, got {got:?}"
-                                );
-                            }
-                        }
-                        Value::Object(asserts) => {
-                            for (path, want_v) in asserts {
-                                let got = resolve_path(&res, path).unwrap_or(&Value::Null);
-                                let ok = match want_v {
-                                    Value::String(want_str) => got.as_str() == Some(want_str),
-                                    Value::Number(want_num) => match (got.as_f64(), want_num.as_f64()) {
-                                        (Some(g), Some(w)) => {
-                                            (g - w).abs() <= 1e-9 * w.abs().max(1.0)
-                                        }
-                                        _ => false,
-                                    },
-                                    _ => false,
-                                };
-                                if !ok {
-                                    fails += 1;
-                                    eprintln!(
-                                        "       [FAIL] {label}: expected {path}={want_v}, got {got}"
-                                    );
-                                }
-                            }
-                        }
-                        other => {
-                            fails += 1;
-                            eprintln!(
-                                "       [FAIL] {label}: unsupported expect value {other:?} (use a string label or an object of dotted result paths)"
-                            );
-                        }
+                    for msg in check_expect(&out, want) {
+                        fails += 1;
+                        eprintln!("       [FAIL] {label}: {msg}");
                     }
                 }
             }

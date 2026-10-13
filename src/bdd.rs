@@ -6011,6 +6011,10 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
             let p = repo_root().join("bench").join("dsl_smoke_states.json");
             serde_json::from_str(&std::fs::read_to_string(p).unwrap_or_default()).unwrap_or(Value::Null)
         };
+        let expect: Value = {
+            let p = repo_root().join("bench").join("dsl_smoke_expect.json");
+            serde_json::from_str(&std::fs::read_to_string(p).unwrap_or_default()).unwrap_or(Value::Null)
+        };
         let backend = crate::backend::HeuristicBackend;
 
         // ── browser half ──
@@ -6069,6 +6073,28 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
                                     match wf.run(&backend, st) {
                                         Ok(out) => {
                                             secs += out.trace.total_latency_ms / 1000.0;
+                                            // P30: assert the authored feature's
+                                            // decision outputs against the same
+                                            // pinned expect as dsl smoke — an
+                                            // authored feature that routes to the
+                                            // wrong node but does not error now
+                                            // fails e2e instead of passing.
+                                            if let Some(emap) = expect
+                                                .get(&stem)
+                                                .and_then(|v| v.as_object())
+                                            {
+                                                if let Some(want) = emap.get(label) {
+                                                    for msg in crate::dsl_smoke::check_expect(
+                                                        &out, want,
+                                                    ) {
+                                                        fails += 1;
+                                                        problems.push(format!(
+                                                            "{}: state {label:?} decided wrong: {msg}",
+                                                            t.id
+                                                        ));
+                                                    }
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             // Offline detection: a state that

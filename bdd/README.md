@@ -272,11 +272,14 @@ removal should break an `@outputs` contract. It measures, per task and in total:
 
 `--check` turns the hard ones into a gate (all 100%, wired into
 `scripts/bdd/check.sh`, so CI sees it with no Chrome). `--run` adds the
-end-to-end half on a machine with Chrome: it runs every reference workflow and
-counts the scenarios that pass and the wall-clock they took, so the benchmark
-covers execution and not only compilation. Authoring *time* needs an author;
-execution time does not, so that is the time number the benchmark reports
-honestly.
+end-to-end half: browser tasks run every reference workflow against real
+Chrome and count passes + wall-clock, while `@decision` tasks run the compiled
+feature through the offline heuristic engine on the registered states and —
+since P30 — assert the **decision outputs** against the same pinned expects as
+`dsl smoke` (string labels/gate_actions or dotted decision-output paths). An
+authored feature that routes to the wrong node but does not error now fails e2e
+instead of passing, so the benchmark covers execution *and* decision
+correctness, not only compilation.
 
 ## Decision workflows (`@decision`) — the agentic decision graph
 
