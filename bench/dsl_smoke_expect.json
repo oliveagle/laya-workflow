@@ -1135,5 +1135,15 @@
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "manager_again"
     }
+  },
+  "alert_noise_reduction": {
+    "page_cpu_peak": "page",
+    "page_db_release": "page",
+    "ticket_payment_release": "ticket",
+    "clear_memory_below": "clear",
+    "duplicate_cpu": "duplicate",
+    "cooldown_cpu": "cooldown",
+    "low_severity_db_offpeak": "low_severity",
+    "reject_context": "reject_context"
   }
 }

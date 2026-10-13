@@ -1132,5 +1132,79 @@
       "ev_await_mfs": "manager_approve",
       "ev_await_mfs_m": "manager_again"
     }
+  },
+  "alert_noise_reduction": {
+    "page_cpu_peak": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "first_seen",
+      "ev_trend": "rising",
+      "ev_release_correlation": "none",
+      "ev_business_period": "business_peak",
+      "ev_severity": "high"
+    },
+    "page_db_release": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "first_seen",
+      "ev_trend": "rising",
+      "ev_release_correlation": "correlated",
+      "ev_business_period": "business_peak",
+      "ev_severity": "critical"
+    },
+    "ticket_payment_release": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "first_seen",
+      "ev_trend": "stable",
+      "ev_release_correlation": "correlated",
+      "ev_business_period": "normal",
+      "ev_severity": "warning"
+    },
+    "clear_memory_below": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "below",
+      "ev_stream": "first_seen",
+      "ev_trend": "stable",
+      "ev_release_correlation": "none",
+      "ev_business_period": "normal",
+      "ev_severity": "info"
+    },
+    "duplicate_cpu": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "duplicate",
+      "ev_trend": "rising",
+      "ev_release_correlation": "none",
+      "ev_business_period": "business_peak",
+      "ev_severity": "high"
+    },
+    "cooldown_cpu": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "cooldown",
+      "ev_trend": "rising",
+      "ev_release_correlation": "none",
+      "ev_business_period": "business_peak",
+      "ev_severity": "high"
+    },
+    "low_severity_db_offpeak": {
+      "ev_context_schema": "accepted",
+      "ev_breach": "breached",
+      "ev_stream": "first_seen",
+      "ev_trend": "falling",
+      "ev_release_correlation": "not_correlated",
+      "ev_business_period": "off_peak",
+      "ev_severity": "info"
+    },
+    "reject_context": {
+      "ev_context_schema": "rejected",
+      "ev_breach": "breached",
+      "ev_stream": "first_seen",
+      "ev_trend": "rising",
+      "ev_release_correlation": "none",
+      "ev_business_period": "normal",
+      "ev_severity": "high"
+    }
   }
 }
