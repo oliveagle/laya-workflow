@@ -105,7 +105,7 @@ laya-workflow bdd run --profile production --base-url <real>
 
 ## 六、目录速查
 
-> **隔离原则**：BDD 源与 JSON spec 完全隔离在两个根目录——所有 `.feature` 源在 `bdd/workflows/<类别>/`（层级镜像 `dsl/`），所有 JSON spec 在 `dsl/<类别>/`。`bdd/` 根目录内不再出现 workflow JSON，`dsl/` 内不再出现 `.feature`。BDD 是源、JSON 是编译产物（单向生成）。
+> **隔离原则**：BDD 源与 JSON 完全隔离在两个根目录——所有 `.feature` 源在 `bdd/workflows/<类别>/`（层级镜像 `dsl/`），所有 JSON 工件在 `dsl/<类别>/`。浏览器 feature 的侧车配置 `<name>.config.json` 也归入 json 树（`dsl/browser/`），因此 `bdd/` 内不再出现任何 `.json`，`dsl/` 内不再出现 `.feature`。BDD 是源、JSON 是编译产物（单向生成）。
 
 - `bdd/features/*.feature` — 正式场景（CI 门禁的 glob）
 - `bdd/features/setup/` — `include:` 拉入的步骤列表（无 Feature 头）

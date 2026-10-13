@@ -212,6 +212,15 @@ impl McpTool for CatalogTool {
                     for f in sd.flatten() {
                         let fp = f.path();
                         if fp.extension().map(|x| x == "json").unwrap_or(false) {
+                            // `<name>.config.json` sidecars are config, not specs:
+                            // exclude so the catalog counts/audits real workflows.
+                            if fp
+                                .file_name()
+                                .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                                .unwrap_or(false)
+                            {
+                                continue;
+                            }
                             let name = fp
                                 .file_stem()
                                 .map(|s| s.to_string_lossy().into_owned())

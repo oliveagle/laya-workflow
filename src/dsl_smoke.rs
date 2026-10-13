@@ -45,6 +45,14 @@ fn discover_specs(root: &Path) -> Result<Vec<PathBuf>> {
             if p.is_dir() {
                 stack.push(p);
             } else if p.extension().and_then(|e| e.to_str()) == Some("json") {
+                // `<name>.config.json` sidecars (feature policy/chrome overrides)
+                // are config, not workflow specs - never validate or smoke them.
+                if p.file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 out.push(p);
             }
         }

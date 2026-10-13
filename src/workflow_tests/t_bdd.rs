@@ -1017,7 +1017,7 @@ pub fn test_bdd_mcp_new(h: &mut Harness) {
 
 /// The behavioural-smoke data: every expected label must correspond to a
 /// registered sample state, and the number of labelled expectation sets must
-/// not silently regress below the pinned floor (35). This guards the
+/// not silently regress below the pinned floor (37). This guards the
 /// correctness coverage that `bdd dsl smoke` enforces per-run.
 pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
     let root = bdd::repo_root();
@@ -1031,7 +1031,7 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
     .unwrap();
     let expect_obj = expect.as_object().unwrap();
     let states_obj = states.as_object().unwrap();
-    h.check("bdd: smoke expect stems >= 35", expect_obj.len() >= 35);
+    h.check("bdd: smoke expect stems >= 37", expect_obj.len() >= 37);
     // Every expect stem must have registered states, and every expected label
     // must be one of that stem's state keys (no dangling expectations).
     for (stem, emap) in expect_obj {

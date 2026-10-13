@@ -524,9 +524,13 @@ never collides with a browser somebody else is using. (A hard-coded port is a
 lie — this machine already had an unrelated `chrome-headless-shell` on 9223,
 and the capability correctly refused to adopt an instance it had not launched.)
 A sidecar
-`<feature>.config.json` next to a feature adds `initial_state` (the default for
-an outline column), `policy` overrides, and `chrome` overrides — for example
-`{"chrome": {"human": true}}` to exercise the humanised input path.
+`<feature>.config.json` — kept in the **json tree** at
+`dsl/<cat>/<name>.config.json`, mirroring the feature's
+`bdd/workflows/<cat>/<name>.feature`, so `bdd/` stays a pure BDD-source tree —
+adds `initial_state` (the default for an outline column), `policy` overrides,
+and `chrome` overrides — for example `{"chrome": {"human": true}}` to exercise
+the humanised input path. A config left next to the feature is still honoured
+as a fallback.
 
 ## Two settings that are not defaults, on purpose
 

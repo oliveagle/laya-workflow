@@ -1731,15 +1731,34 @@ fn default_chrome(chrome_wrapper: &str) -> Value {
 
 /// Optional `<feature>.config.json` sidecar (policy / chrome overrides and
 /// Scenario Outline `initial_state` defaults).
+///
+/// Sidecars live in the json tree, mirrored from the feature source:
+/// `bdd/workflows/<cat>/<name>.feature` -> `dsl/<cat>/<name>.config.json`. This
+/// keeps `bdd/` a pure BDD-source tree (zero `.json` files) and `dsl/` the
+/// single home of every JSON artifact. A config left next to the feature is
+/// still honoured as a fallback, so a scratch feature can stay self-contained.
 pub fn load_config(feature_path: &Path) -> Result<Value> {
-    let stem = feature_path.with_extension("");
-    let side = stem.with_extension("config.json");
+    let side = config_sidecar_path(feature_path);
     if !side.is_file() {
         return Ok(json!({}));
     }
     let raw = std::fs::read_to_string(&side)
         .with_context(|| format!("reading {}", side.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("parsing {}", side.display()))
+}
+
+/// Where a feature's `<name>.config.json` sidecar lives: the json-tree mirror
+/// first (`dsl/<cat>/<name>.config.json`), falling back to the old sibling
+/// location (`<feature>.config.json`) so a scratch feature can carry its own.
+fn config_sidecar_path(feature_path: &Path) -> PathBuf {
+    let root = repo_root();
+    if let Ok(rel) = feature_path.strip_prefix(root.join("bdd").join("workflows")) {
+        let mirror = root.join("dsl").join(rel).with_extension("config.json");
+        if mirror.is_file() {
+            return mirror;
+        }
+    }
+    feature_path.with_extension("config.json")
 }
 
 fn merge(dst: &mut Value, src: &Value) {
@@ -6319,6 +6338,15 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
                     for f in sd.flatten() {
                         let fp = f.path();
                         if fp.extension().map(|x| x == "json").unwrap_or(false) {
+                            // `<name>.config.json` sidecars are config, not specs:
+                            // they have no BDD source and must not count as orphans.
+                            if fp
+                                .file_name()
+                                .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                                .unwrap_or(false)
+                            {
+                                continue;
+                            }
                             let name = fp
                                 .file_stem()
                                 .map(|s| s.to_string_lossy().into_owned())

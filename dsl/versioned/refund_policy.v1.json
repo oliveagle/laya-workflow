@@ -12,16 +12,45 @@
         "amount_band": {
           "type": "score",
           "instructions": "Rough size of the refund request?",
-          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+          "criteria": [
+            "tokens / cents",
+            "single invoice",
+            "large or recurring"
+          ],
+          "heuristic": {
+            "field": "text",
+            "match_any": [
+              "large"
+            ],
+            "match_mid_any": [
+              "recurring"
+            ],
+            "score_hit": 2.0,
+            "score_mid": 1.5,
+            "score_miss": 0.5
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "action": {
         "kind": "threshold",
         "question": "amount_band",
         "rules": [
-          { "when": { "value_gte": 1.5 }, "label": "V1_ESCALATE" },
-          { "when": { "always": true }, "label": "V1_AUTO_APPROVE" }
+          {
+            "when": {
+              "value_gte": 1.5
+            },
+            "label": "V1_ESCALATE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "V1_AUTO_APPROVE"
+          }
         ]
       }
     }

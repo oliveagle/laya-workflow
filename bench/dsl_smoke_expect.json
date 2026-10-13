@@ -212,5 +212,12 @@
     "safety": "CONFIRM",
     "billing": "CONFIRM",
     "support": "CONFIRM"
+  },
+  "refund_policy.v1": {
+    "large": "V1_ESCALATE"
+  },
+  "refund_policy.v2": {
+    "suspicious": "V2_MANUAL_REVIEW",
+    "plain": "V2_AUTO_APPROVE"
   }
 }

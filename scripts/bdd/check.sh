@@ -131,6 +131,8 @@ n="$(find "$out/spec" -maxdepth 1 -name '*.json' | wc -l)"
 probes=0
 probe_bad=()
 for spec in "$ROOT"/dsl/browser/*probe*.json; do
+  # `.config.json` sidecars moved into the json tree are config, not specs.
+  [[ "$spec" == *.config.json ]] && continue
   probes=$((probes + 1))
   if ! "$BIN" validate --spec "$spec" >/dev/null 2>&1; then
     probe_bad+=("$(basename "$spec")")
