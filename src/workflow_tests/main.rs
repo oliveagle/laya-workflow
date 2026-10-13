@@ -92,6 +92,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("optimizer", t_apps::test_optimizer),
         ("spec", t_spec::test_spec),
         ("spec-closest-match", t_spec::test_spec_closest_match),
+        ("spec-native-action-nodes", t_spec::test_spec_native_action_nodes),
         ("spec-nesting", t_spec::test_spec_nesting),
         ("spec-folders", t_spec::test_spec_folders),
         ("spec-version", t_spec::test_spec_version),

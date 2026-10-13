@@ -1905,6 +1905,25 @@ pub fn to_spec(wf: &ResilientWorkflow, name: &str) -> Value {
     })
 }
 
+/// Node names in a spec that carry a **native** (non-serializable) action.
+/// `"kind": "rust"` marks a node whose behaviour lived in a Rust closure when it
+/// was exported; such a spec is a *reference* graph, because `from_spec` rejects
+/// it — `validate` / `run` cannot load it. Every built-in app (`agent_gate`,
+/// `email_triage`, `content_moderation`, `draft_scorer`) routes in a Rust
+/// closure, so this is non-empty for all of them. Exposed so `export` can say so
+/// out loud instead of emitting a spec that silently fails to reload.
+pub fn native_action_nodes(spec: &Value) -> Vec<String> {
+    spec.get("nodes")
+        .and_then(Value::as_array)
+        .map(|ns| {
+            ns.iter()
+                .filter(|n| n.pointer("/action/kind").and_then(Value::as_str) == Some("rust"))
+                .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Convenience: load a spec file from disk.
 ///
 /// Relative `workflow` references inside the file are resolved against the

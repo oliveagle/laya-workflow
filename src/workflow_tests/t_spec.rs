@@ -50,6 +50,53 @@ pub fn test_spec_closest_match(h: &mut Harness) {
     h.check("similarity <= 1", a <= 1.0 && a >= 0.0);
 }
 
+/// P36: every built-in app routes inside a native Rust closure, which `to_spec`
+/// marks `"action": {"kind": "rust"}`. `from_spec` rejects that kind, so the
+/// exported spec is a reference graph that `validate` / `run` refuse. This is a
+/// deliberate boundary (a closure is not serializable), but the CLI used to
+/// claim otherwise — `native_action_nodes` powers the honest stderr note now.
+pub fn test_spec_native_action_nodes(h: &mut Harness) {
+    use crate::spec::{from_spec_with_dir, native_action_nodes, to_spec};
+    // A rust-action node is reported by name; a built-in kind is not.
+    let rust = json!({"name": "ap", "start": "gate",
+                      "nodes": [{"name": "gate", "action": {"kind": "rust"}}]});
+    h.eq(
+        "native_action_nodes: rust node named",
+        native_action_nodes(&rust),
+        vec!["gate".to_string()],
+    );
+    let builtin = json!({"nodes": [{"name": "n", "action": {"kind": "threshold"}},
+                                   {"name": "m"}]});
+    h.check(
+        "native_action_nodes: built-in / absent kinds are not native",
+        native_action_nodes(&builtin).is_empty(),
+    );
+    h.check(
+        "native_action_nodes: empty spec is empty (no panic)",
+        native_action_nodes(&json!({})).is_empty(),
+    );
+    // All four built-in apps carry a native action, and their export is
+    // therefore non-portable — exactly what the CLI note warns about.
+    let apps: [(&str, ResilientWorkflow); 4] = [
+        ("agent_gate", apps::agent_gate::workflow()),
+        ("email_triage", apps::email_triage::workflow()),
+        ("content_moderation", apps::content_moderation::workflow()),
+        ("draft_scorer", apps::draft_scorer::workflow()),
+    ];
+    for (name, wf) in apps {
+        let exported = to_spec(&wf, name);
+        let native = native_action_nodes(&exported);
+        h.check(
+            &format!("native_action_nodes: {name} has a native action"),
+            !native.is_empty(),
+        );
+        h.check(
+            &format!("native_action_nodes: {name} export is non-portable (from_spec rejects)"),
+            from_spec_with_dir(&exported, None, None).is_err(),
+        );
+    }
+}
+
 pub fn test_spec(h: &mut Harness) {
     let spec = serde_json::json!({
         "name": "ticket_router",

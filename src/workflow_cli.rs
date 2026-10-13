@@ -1006,10 +1006,22 @@ fn main() -> Result<()> {
         } => run_improve(dir, *rounds, *score_only),
         Cmd::Export { app } => {
             let wf = app_workflow(app)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&laya_workflow::spec::to_spec(&wf, app))?
-            );
+            let spec = laya_workflow::spec::to_spec(&wf, app);
+            // Every built-in app routes in a Rust closure, so the exported
+            // graph carries `"kind": "rust"` nodes that `from_spec` rejects.
+            // Say so on stderr (stdout stays parseable JSON) instead of
+            // emitting a spec that silently fails to reload.
+            let native = laya_workflow::spec::native_action_nodes(&spec);
+            if !native.is_empty() {
+                eprintln!(
+                    "note: {app} routes in a native Rust action (nodes: {}); `kind: \"rust\"` is \
+                     not portable, so this reference spec is rejected by `validate` / `run`. \
+                     To own the decision logic, author an equivalent @decision workflow \
+                     (`laya-workflow bdd scaffold --name <wf> --cat <cat> --intent \"...\"`).",
+                    native.join(", ")
+                );
+            }
+            println!("{}", serde_json::to_string_pretty(&spec)?);
             Ok(())
         }
         Cmd::Validate { spec } => {
@@ -1966,7 +1978,7 @@ fn skill_index() -> Vec<(&'static str, &'static str, &'static str)> {
         ("improve",  "Accuracy self-improvement: measure decisions, learn from misses under a hold-out gate, persist the accepted policy.", "improve"),
         ("evaluate", "Evaluate a workflow against a labeled JSONL dataset (dev/holdout + slice + confusion + review queue).", "evaluate"),
         ("computer-use", "Bounded UI decision cycle (awesome-jev): fingerprint before inference, stale-guarded single fill, independent oracle.", "computer-use"),
-        ("export",    "Export a built-in app workflow as a generic JSON spec (so it can be edited and re-loaded).", "export"),
+        ("export",    "Export a built-in app workflow as a generic JSON spec (a reference graph — apps with native Rust actions warn on stderr and are not portable to validate/run).", "export"),
         ("state",     "List every per-node record in a NodeStore (track what ran, what it returned, the full state snapshot).", "state"),
         ("resume",   "Continue a partially-completed run from `dir/`, optionally from `--from <iter>` with the materialised state.", "resume"),
         ("replay",   "Re-execute a single iteration in place from its `state_before` (atomic overwrite of one record).", "replay"),
