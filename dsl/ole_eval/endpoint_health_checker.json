@@ -1,0 +1,169 @@
+{
+  "name": "endpoint_health_checker",
+  "_bdd": {
+    "feature": "endpoint_health_checker",
+    "feature_path": "bdd/workflows/ole_eval/endpoint_health_checker.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed endpoint health-check config as a single triage node.\nThe model proposes one typed health-check config (request_id + a non-empty\nendpoints list of {url, method, timeout_seconds, expected_status,\ninterval_seconds}); this workflow owns schema validation, the endpoint-count cap,\nthe HTTPS requirement, the timeout ceiling, the interval floor, blocked domains\nand the approval escalation. Port of\ncode/qwen_vm/app_scenarios/endpoint_health_checker.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, request_id grammar, valid method enum,\npositive timeout, expected_status 100-599, non-negative interval,\ndangerous-token rejection) fold into the `proposal` choice.\n- The local policy table (max_endpoints, max_timeout_seconds, min_interval_seconds,\nblocked_domains, require_https, require_approval) is a fixed fixture; each\ndeterministic check folds into one verdict choice.\nEmitted labels: reject_proposal, reject_too_many_endpoints, reject_insecure_url,\nreject_timeout, reject_interval_below_min, reject_blocked_domain,\nescalate_approval, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "approval",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, endpoints:[{url, method, timeout_seconds, expected_status, interval_seconds}]} object (request_id grammar, valid method, positive timeout, expected_status 100-599, non-negative interval, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid health-check config",
+            "malformed": "parse error, missing field, bad request_id, bad method/status or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "endpoint_count": {
+          "type": "choice",
+          "instructions": "Is the number of endpoints within the policy max_endpoints cap?",
+          "criteria": {
+            "ok": "endpoint_count <= max_endpoints",
+            "too_many": "endpoint_count > max_endpoints"
+          },
+          "heuristic": {
+            "answer_field": "ev_endpoint_count"
+          }
+        },
+        "scheme": {
+          "type": "choice",
+          "instructions": "Does every endpoint url use HTTPS (when the policy requires HTTPS)?",
+          "criteria": {
+            "ok": "every url starts with https://",
+            "insecure": "at least one url is not HTTPS"
+          },
+          "heuristic": {
+            "answer_field": "ev_scheme"
+          }
+        },
+        "timeout": {
+          "type": "choice",
+          "instructions": "Is every endpoint timeout_seconds within the policy max_timeout_seconds?",
+          "criteria": {
+            "ok": "every timeout <= max_timeout_seconds",
+            "over": "at least one timeout > max_timeout_seconds"
+          },
+          "heuristic": {
+            "answer_field": "ev_timeout"
+          }
+        },
+        "interval": {
+          "type": "choice",
+          "instructions": "Is every endpoint interval_seconds at or above the policy min_interval_seconds?",
+          "criteria": {
+            "ok": "every interval >= min_interval_seconds",
+            "below_min": "at least one interval < min_interval_seconds"
+          },
+          "heuristic": {
+            "answer_field": "ev_interval"
+          }
+        },
+        "domain": {
+          "type": "choice",
+          "instructions": "Is every endpoint url outside the policy blocked_domains set?",
+          "criteria": {
+            "ok": "no url hits a blocked domain",
+            "blocked": "at least one url hits a blocked domain"
+          },
+          "heuristic": {
+            "answer_field": "ev_domain"
+          }
+        },
+        "approval": {
+          "type": "choice",
+          "instructions": "Does the local policy require human approval for this health-check config?",
+          "criteria": {
+            "not_required": "no approval flag set, proceed",
+            "required": "policy require_approval is true"
+          },
+          "heuristic": {
+            "answer_field": "ev_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "approval",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "endpoint_count",
+              "answer": "too_many"
+            },
+            "label": "reject_too_many_endpoints"
+          },
+          {
+            "when": {
+              "question": "scheme",
+              "answer": "insecure"
+            },
+            "label": "reject_insecure_url"
+          },
+          {
+            "when": {
+              "question": "timeout",
+              "answer": "over"
+            },
+            "label": "reject_timeout"
+          },
+          {
+            "when": {
+              "question": "interval",
+              "answer": "below_min"
+            },
+            "label": "reject_interval_below_min"
+          },
+          {
+            "when": {
+              "question": "domain",
+              "answer": "blocked"
+            },
+            "label": "reject_blocked_domain"
+          },
+          {
+            "when": {
+              "question": "approval",
+              "answer": "required"
+            },
+            "label": "escalate_approval"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

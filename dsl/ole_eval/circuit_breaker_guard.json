@@ -1,0 +1,151 @@
+{
+  "name": "circuit_breaker_guard",
+  "_bdd": {
+    "feature": "circuit_breaker_guard",
+    "feature_path": "bdd/workflows/ole_eval/circuit_breaker_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed circuit-breaker state transitions as a single triage node.\nThe model proposes one typed transition (request_id, service_id, current_state,\nproposed_state, error_rate, latency_p99_ms, open_duration_seconds); this workflow\nowns the state-machine legality, the open/close error-rate and the half-open\nprobe-duration rules. Port of code/qwen_vm/app_scenarios/circuit_breaker_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, dangerous-token rejection) fold into the\n`proposal` choice.\n- The fixed transition table {closed->open, open->half_open, half_open->closed,\nhalf_open->open, any no-op} is a local fixture; the legality verdict folds into\nthe `transition` choice.\n- The Python guard accumulates every error and joins the reasons; the ordered\nladder here reports the first failing check (which decides reject vs approve\nidentically), documented as a folding boundary.\nEmitted labels: reject_proposal, reject_invalid_state, reject_illegal_transition,\nreject_open_threshold, reject_half_open_duration, reject_close_error_rate, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "close_error_rate",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, service_id, current_state, proposed_state, error_rate, latency_p99_ms, open_duration_seconds} object (no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid transition proposal",
+            "malformed": "parse error, missing field or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "state": {
+          "type": "choice",
+          "instructions": "Are both current_state and proposed_state in {closed, open, half_open}?",
+          "criteria": {
+            "valid": "both states are known",
+            "invalid": "current_state or proposed_state is unknown"
+          },
+          "heuristic": {
+            "answer_field": "ev_state"
+          }
+        },
+        "transition": {
+          "type": "choice",
+          "instructions": "Is current_state -> proposed_state an allowed transition (a no-op is always allowed)?",
+          "criteria": {
+            "legal": "the transition is allowed",
+            "illegal": "the transition is not in the allowed set"
+          },
+          "heuristic": {
+            "answer_field": "ev_transition"
+          }
+        },
+        "open_threshold": {
+          "type": "choice",
+          "instructions": "If proposed_state is open, is error_rate at or above the policy threshold (or force_open)?",
+          "criteria": {
+            "ok": "not opening, or error_rate >= threshold",
+            "below": "opening while error_rate < threshold and not forced"
+          },
+          "heuristic": {
+            "answer_field": "ev_open_threshold"
+          }
+        },
+        "half_open_duration": {
+          "type": "choice",
+          "instructions": "If proposed_state is half_open with min_open_duration > 0, is open_duration_seconds at or above the minimum?",
+          "criteria": {
+            "ok": "not half-opening, or below the min rule is satisfied",
+            "too_short": "half-opening before the minimum open duration elapsed"
+          },
+          "heuristic": {
+            "answer_field": "ev_half_open_duration"
+          }
+        },
+        "close_error_rate": {
+          "type": "choice",
+          "instructions": "If proposed_state is closed, is error_rate at or below the policy close_error_rate_max?",
+          "criteria": {
+            "ok": "not closing, or error_rate <= close_error_rate_max",
+            "too_high": "closing while error_rate > close_error_rate_max"
+          },
+          "heuristic": {
+            "answer_field": "ev_close_error_rate"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "close_error_rate",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "state",
+              "answer": "invalid"
+            },
+            "label": "reject_invalid_state"
+          },
+          {
+            "when": {
+              "question": "transition",
+              "answer": "illegal"
+            },
+            "label": "reject_illegal_transition"
+          },
+          {
+            "when": {
+              "question": "open_threshold",
+              "answer": "below"
+            },
+            "label": "reject_open_threshold"
+          },
+          {
+            "when": {
+              "question": "half_open_duration",
+              "answer": "too_short"
+            },
+            "label": "reject_half_open_duration"
+          },
+          {
+            "when": {
+              "question": "close_error_rate",
+              "answer": "too_high"
+            },
+            "label": "reject_close_error_rate"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

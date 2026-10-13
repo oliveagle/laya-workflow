@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 17 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 21 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -27,6 +27,10 @@
 | `log_redaction_guard.json` | `log_redaction_guard/` | 日志脱敏规则闸门单节点判定：模型只提 typed redaction change（request_id + rules[{field_pattern,action,replacement}]），schema 校验（action ∈ mask/hash/truncate/drop / 可编译 regex / 危险 token）、rules 数上限、blocked actions、policy-required patterns 缺失、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_too_many_rules` / `reject_blocked_action` / `reject_missing_required` / `escalate_approval` / `approve` |
 | `dns_record_validator.json` | `dns_record_validator/` | DNS 记录变更闸门单节点判定：模型只提 typed DNS change（request_id + action add/modify/delete + records[{type,name,value,ttl?}]），schema 校验（type 枚举 / 非空 name·value / 非负 ttl / 危险 token）、records 数上限、blocked types、blocked domains、ttl < min_ttl、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_too_many_records` / `reject_blocked_type` / `reject_blocked_domain` / `reject_ttl_below_min` / `escalate_approval` / `approve` |
 | `session_token_validator.json` | `session_token_validator/` | 会话令牌闸门单节点判定：模型只提 typed token change（request_id + action + token_type + scopes + expiry_seconds + metadata），**revoke 无条件放行**置于有序阶梯首位，其后 expiry_seconds 上限、scopes 数上限、blocked scopes、危险 metadata、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `approve_revoke` / `reject_expiry` / `reject_scope_count` / `reject_blocked_scope` / `reject_metadata` / `escalate_approval` / `approve` |
+| `webhook_signature_verifier.json` | `webhook_signature_verifier/` | webhook 签名校验配置闸门单节点判定：模型只提 typed webhook config（request_id/endpoint_url/hash_algorithm/encoding/header_name/secret_source/tolerance_seconds），schema 校验 + require_https + blocked algo + tolerance 上限 + approval 由本地有序 rules 裁决 → `reject_proposal`/`reject_insecure_url`/`reject_blocked_algo`/`reject_tolerance`/`escalate_approval`/`approve` |
+| `endpoint_health_checker.json` | `endpoint_health_checker/` | 健康检查配置闸门单节点判定：模型只提 typed health-check config（request_id + endpoints[{url,method,timeout_seconds,expected_status,interval_seconds}]），schema 校验 + endpoints 数上限 + HTTPS + timeout 上限 + interval 下限 + blocked domains + approval 由本地有序 rules 裁决 → `reject_proposal`/`reject_too_many_endpoints`/`reject_insecure_url`/`reject_timeout`/`reject_interval_below_min`/`reject_blocked_domain`/`escalate_approval`/`approve` |
+| `file_upload_scanner.json` | `file_upload_scanner/` | 文件上传闸门单节点判定：模型只提 typed upload（request_id + files[{filename,mime_type,size_bytes}] + destination + overwrite_policy），schema 校验 + files 数上限 + total·per-file size 上限 + blocked extensions + overwrite 升级 + approval 由本地有序 rules 裁决 → `reject_proposal`/`reject_too_many_files`/`reject_total_size`/`reject_file_size`/`reject_blocked_extension`/`escalate_overwrite`/`escalate_approval`/`approve` |
+| `circuit_breaker_guard.json` | `circuit_breaker_guard/` | 熔断器状态迁移闸门单节点判定：模型只提 typed transition（request_id/service_id/current_state/proposed_state/error_rate/latency_p99_ms/open_duration_seconds），状态合法性 + 固定迁移表 + open 阈值 + half-open 时长 + close 错误率由本地有序 rules 裁决（Python 累积全部错误的语义以「首个失败检查」表达）→ `reject_proposal`/`reject_invalid_state`/`reject_illegal_transition`/`reject_open_threshold`/`reject_half_open_duration`/`reject_close_error_rate`/`approve` |
 
 ## 映射方式
 
@@ -58,14 +62,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 17 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 21 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 17 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 21 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
@@ -89,10 +93,10 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 ## 边界说明
 
 - DSL `Edge` 目前只按 `answer → node` 路由（无分支式数值条件），所以这些
-  单节点"判定 → 出结论"的策略（13 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
+  单节点"判定 → 出结论"的策略（17 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
   可把 `REVIEW` 语义拆成单独节点。
 - DSL action kinds 仅 `none` / `copy_keys` / `merge_open_probs` / `threshold`
-  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 13 个单节点 spec
+  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 17 个单节点 spec
   走纯 LLM 判定（阈值与优先级仍由 `threshold` action 的有序 rules 编码，
   数值由模型给出）。
 

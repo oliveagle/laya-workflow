@@ -1948,5 +1948,295 @@
       "ev_metadata": "unsafe",
       "ev_approval": "required"
     }
+  },
+  "webhook_signature_verifier": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_scheme": "https",
+      "ev_algo": "ok",
+      "ev_tolerance": "ok",
+      "ev_approval": "not_required"
+    },
+    "insecure_url": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "plain",
+      "ev_algo": "ok",
+      "ev_tolerance": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_algo": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "https",
+      "ev_algo": "blocked",
+      "ev_tolerance": "ok",
+      "ev_approval": "not_required"
+    },
+    "tolerance_over": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "https",
+      "ev_algo": "ok",
+      "ev_tolerance": "over",
+      "ev_approval": "not_required"
+    },
+    "escalate": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "https",
+      "ev_algo": "ok",
+      "ev_tolerance": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "https",
+      "ev_algo": "ok",
+      "ev_tolerance": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_scheme": "plain",
+      "ev_algo": "blocked",
+      "ev_tolerance": "over",
+      "ev_approval": "required"
+    },
+    "precedence_scheme_before_algo": {
+      "ev_proposal": "accepted",
+      "ev_scheme": "plain",
+      "ev_algo": "blocked",
+      "ev_tolerance": "over",
+      "ev_approval": "required"
+    }
+  },
+  "endpoint_health_checker": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "too_many",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "insecure": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "insecure",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "timeout_over": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "over",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "interval_low": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "below_min",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_domain": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "blocked",
+      "ev_approval": "not_required"
+    },
+    "escalate": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "ok",
+      "ev_scheme": "ok",
+      "ev_timeout": "ok",
+      "ev_interval": "ok",
+      "ev_domain": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_count_before_scheme": {
+      "ev_proposal": "accepted",
+      "ev_endpoint_count": "too_many",
+      "ev_scheme": "insecure",
+      "ev_timeout": "over",
+      "ev_interval": "below_min",
+      "ev_domain": "blocked",
+      "ev_approval": "required"
+    }
+  },
+  "file_upload_scanner": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "too_many": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "too_many",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "total_size": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "over",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "file_size": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "over",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "blocked_ext": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "blocked",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "overwrite_escalate": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "overwrite",
+      "ev_approval": "not_required"
+    },
+    "approval_escalate": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "ok",
+      "ev_total_size": "ok",
+      "ev_file_size": "ok",
+      "ev_extension": "ok",
+      "ev_overwrite": "safe",
+      "ev_approval": "not_required"
+    },
+    "precedence_count_before_total": {
+      "ev_proposal": "accepted",
+      "ev_file_count": "too_many",
+      "ev_total_size": "over",
+      "ev_file_size": "over",
+      "ev_extension": "blocked",
+      "ev_overwrite": "overwrite",
+      "ev_approval": "required"
+    }
+  },
+  "circuit_breaker_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_state": "valid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "ok"
+    },
+    "invalid_state": {
+      "ev_proposal": "accepted",
+      "ev_state": "invalid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "ok"
+    },
+    "illegal_transition": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "illegal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "ok"
+    },
+    "open_below_threshold": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "below",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "ok"
+    },
+    "half_open_too_short": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "too_short",
+      "ev_close_error_rate": "ok"
+    },
+    "close_error_rate_high": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "too_high"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "legal",
+      "ev_open_threshold": "ok",
+      "ev_half_open_duration": "ok",
+      "ev_close_error_rate": "ok"
+    },
+    "precedence_transition_before_threshold": {
+      "ev_proposal": "accepted",
+      "ev_state": "valid",
+      "ev_transition": "illegal",
+      "ev_open_threshold": "below",
+      "ev_half_open_duration": "too_short",
+      "ev_close_error_rate": "too_high"
+    }
   }
 }
