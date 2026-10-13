@@ -1,0 +1,97 @@
+{
+  "name": "model_drift_detector",
+  "_bdd": {
+    "feature": "model_drift_detector",
+    "feature_path": "bdd/workflows/ole_eval/model_drift_detector.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed model drift assessments as a single triage node. The\nmodel proposes one typed assessment (request_id, model_id, metrics,\nbaseline_metrics {accuracy, latency_p99_ms, throughput_rps}, drift_threshold);\nthis workflow owns the accuracy-drop rejection and the latency/throughput\nescalation. Port of code/qwen_vm/app_scenarios/model_drift_detector.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required keys, non-empty model_id, numeric metric\ntriples, drift_threshold in (0.0, 1.0], dangerous-token rejection) fold into\nthe `proposal` choice.\n- The drift policy (max_accuracy_drop, max_latency_increase_pct,\nmax_throughput_drop_pct) is a fixed fixture. The accuracy drop, the latency\nincrease percentage and the throughput drop percentage are folded into two\nverdict choices.\nEmitted labels: reject_proposal, reject_accuracy_drop, escalate_performance,\napprove.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "accuracy",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, model_id, metrics, baseline_metrics, drift_threshold} object (numeric metric triples, threshold in (0.0, 1.0], no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid drift assessment",
+            "malformed": "parse error, missing key, bad model_id, bad metric or bad threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "accuracy": {
+          "type": "choice",
+          "instructions": "Is the accuracy drop (baseline minus current) within the policy max_accuracy_drop?",
+          "criteria": {
+            "ok": "accuracy drop <= max_accuracy_drop",
+            "over": "accuracy drop > max_accuracy_drop"
+          },
+          "heuristic": {
+            "answer_field": "ev_accuracy"
+          }
+        },
+        "performance": {
+          "type": "choice",
+          "instructions": "Are the latency increase percentage and throughput drop percentage both within their policy bounds?",
+          "criteria": {
+            "ok": "latency increase and throughput drop both within policy",
+            "over": "latency increase or throughput drop exceeds its policy bound"
+          },
+          "heuristic": {
+            "answer_field": "ev_performance"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "accuracy",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "accuracy",
+              "answer": "over"
+            },
+            "label": "reject_accuracy_drop"
+          },
+          {
+            "when": {
+              "question": "performance",
+              "answer": "over"
+            },
+            "label": "escalate_performance"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

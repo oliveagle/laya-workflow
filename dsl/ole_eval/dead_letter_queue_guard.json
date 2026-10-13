@@ -1,0 +1,134 @@
+{
+  "name": "dead_letter_queue_guard",
+  "_bdd": {
+    "feature": "dead_letter_queue_guard",
+    "feature_path": "bdd/workflows/ole_eval/dead_letter_queue_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed dead-letter-queue actions as a single triage node. The\nmodel proposes one typed action (request_id, messages [{message_id,\nqueue_name, error_type, payload_size_bytes}], action retry/discard/forward/\narchive, retry_count); this workflow owns the retry cap, the payload cap, the\nblocked-queue set and the large-forward escalation. Port of\ncode/qwen_vm/app_scenarios/dead_letter_queue_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, non-negative retry_count, non-empty\nmessages with positive payload_size_bytes, action enum, dangerous-token\nrejection) fold into the `proposal` choice.\n- The DLQ policy (max_retry_count, max_payload_size_bytes, blocked_queues,\nrequire_approval_above_bytes) is a fixed fixture; each ordered check folds\ninto one verdict choice.\nEmitted labels: reject_proposal, reject_retry, reject_payload,\nreject_queue, escalate_forward, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "retry",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, messages [{message_id, queue_name, error_type, payload_size_bytes}], action, retry_count} object (valid action enum, non-empty messages, positive payload sizes, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid DLQ action",
+            "malformed": "parse error, missing field, bad action, bad retry_count or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "retry": {
+          "type": "choice",
+          "instructions": "Is retry_count within the policy max_retry_count?",
+          "criteria": {
+            "ok": "retry_count <= max_retry_count",
+            "over": "retry_count > max_retry_count"
+          },
+          "heuristic": {
+            "answer_field": "ev_retry"
+          }
+        },
+        "payload": {
+          "type": "choice",
+          "instructions": "Is every message payload within the policy max_payload_size_bytes?",
+          "criteria": {
+            "ok": "every payload <= max_payload_size_bytes",
+            "over": "some payload > max_payload_size_bytes"
+          },
+          "heuristic": {
+            "answer_field": "ev_payload"
+          }
+        },
+        "queue": {
+          "type": "choice",
+          "instructions": "Is every message queue_name outside the policy blocked_queues set?",
+          "criteria": {
+            "ok": "no queue is blocked",
+            "blocked": "some queue is blocklisted"
+          },
+          "heuristic": {
+            "answer_field": "ev_queue"
+          }
+        },
+        "forward_approval": {
+          "type": "choice",
+          "instructions": "For a forward action, is every message payload at or below require_approval_above_bytes? (not_applicable when action is not forward)",
+          "criteria": {
+            "not_applicable": "action is not forward",
+            "ok": "forward with all payloads at or below the threshold",
+            "requires_approval": "forward with a payload above the threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_forward_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "retry",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "retry",
+              "answer": "over"
+            },
+            "label": "reject_retry"
+          },
+          {
+            "when": {
+              "question": "payload",
+              "answer": "over"
+            },
+            "label": "reject_payload"
+          },
+          {
+            "when": {
+              "question": "queue",
+              "answer": "blocked"
+            },
+            "label": "reject_queue"
+          },
+          {
+            "when": {
+              "question": "forward_approval",
+              "answer": "requires_approval"
+            },
+            "label": "escalate_forward"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

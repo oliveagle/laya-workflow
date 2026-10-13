@@ -1559,5 +1559,44 @@
     "reason_missing": "reject_reason",
     "approve_clean": "approve",
     "precedence_key_count_before_namespace": "reject_key_count"
+  },
+  "model_drift_detector": {
+    "proposal_malformed": "reject_proposal",
+    "accuracy_drop": "reject_accuracy_drop",
+    "performance_escalate": "escalate_performance",
+    "approve_clean": "approve",
+    "precedence_accuracy_before_performance": "reject_accuracy_drop"
+  },
+  "dead_letter_queue_guard": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_retries": "reject_retry",
+    "oversized_payload": "reject_payload",
+    "blocked_queue": "reject_queue",
+    "forward_requires_approval": "escalate_forward",
+    "approve_clean": "approve",
+    "precedence_retry_before_payload": "reject_retry"
+  },
+  "compliance_audit_evidence_guard": {
+    "proposal_malformed": "reject_proposal",
+    "wip_escalate": "escalate_wip",
+    "uncovered_category": "reject_uncovered",
+    "none_collected": "reject_none_collected",
+    "missing_pct_over": "reject_missing_pct",
+    "approve_clean": "approve",
+    "precedence_wip_before_uncovered": "escalate_wip"
+  },
+  "workflow_dag_validator": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_nodes": "reject_node_count",
+    "too_many_edges": "reject_edge_count",
+    "cycle": "reject_cycle",
+    "no_start": "reject_no_start",
+    "multiple_starts": "reject_multiple_starts",
+    "no_end": "reject_no_end",
+    "blocked_node_type": "reject_blocked_type",
+    "dangerous_token": "reject_dangerous",
+    "approval_required": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_node_count_before_dangerous": "reject_node_count"
   }
 }

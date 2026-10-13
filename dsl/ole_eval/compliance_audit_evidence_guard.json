@@ -1,0 +1,133 @@
+{
+  "name": "compliance_audit_evidence_guard",
+  "_bdd": {
+    "feature": "compliance_audit_evidence_guard",
+    "feature_path": "bdd/workflows/ole_eval/compliance_audit_evidence_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed compliance audit evidence checklist as a single triage\nnode. The model proposes one typed checklist (request_id, audit_id,\nevidence_items [{evidence_id, description, status, category}],\ncompliance_framework); this workflow owns the required-category coverage, the\ncollected-evidence floor, the missing-percentage ceiling and the\nmissing+pending follow-up escalation. Port of\ncode/qwen_vm/app_scenarios/compliance_audit_evidence_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (request_id / audit_id grammars, non-empty\nevidence_items, status enum, non-empty category, non-empty framework,\ndangerous-token rejection, fenced-code stripping) fold into the `proposal`\nchoice.\n- The audit policy (required_categories, max_missing_pct) is a fixed fixture.\nThe missing/pending counts, the collected count, the required-category\ncoverage and the missing percentage are folded into verdict choices. The\nmissing+pending work-in-progress escalation is checked before the reject\nchecks, as in the Python source.\nEmitted labels: reject_proposal, escalate_wip, reject_uncovered,\nreject_none_collected, reject_missing_pct, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "progress",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, audit_id, evidence_items [{evidence_id, description, status, category}], compliance_framework} object (audit_id grammar, non-empty items, valid status enum, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid audit checklist",
+            "malformed": "parse error, missing key, bad request_id/audit_id, bad status or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "progress": {
+          "type": "choice",
+          "instructions": "Are there simultaneously missing and pending evidence items (work in progress)?",
+          "criteria": {
+            "clean": "not both missing and pending",
+            "wip": "at least one missing and at least one pending"
+          },
+          "heuristic": {
+            "answer_field": "ev_progress"
+          }
+        },
+        "coverage": {
+          "type": "choice",
+          "instructions": "Does the checklist cover every policy required category?",
+          "criteria": {
+            "ok": "every required category is present",
+            "uncovered": "some required category has no item"
+          },
+          "heuristic": {
+            "answer_field": "ev_coverage"
+          }
+        },
+        "collected": {
+          "type": "choice",
+          "instructions": "Is at least one evidence item collected or marked not_applicable?",
+          "criteria": {
+            "ok": "at least one collected / not_applicable",
+            "none": "nothing collected"
+          },
+          "heuristic": {
+            "answer_field": "ev_collected"
+          }
+        },
+        "missing_pct": {
+          "type": "choice",
+          "instructions": "Is the fraction of missing evidence items within the policy max_missing_pct?",
+          "criteria": {
+            "ok": "missing fraction <= max_missing_pct",
+            "over": "missing fraction > max_missing_pct"
+          },
+          "heuristic": {
+            "answer_field": "ev_missing_pct"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "progress",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "progress",
+              "answer": "wip"
+            },
+            "label": "escalate_wip"
+          },
+          {
+            "when": {
+              "question": "coverage",
+              "answer": "uncovered"
+            },
+            "label": "reject_uncovered"
+          },
+          {
+            "when": {
+              "question": "collected",
+              "answer": "none"
+            },
+            "label": "reject_none_collected"
+          },
+          {
+            "when": {
+              "question": "missing_pct",
+              "answer": "over"
+            },
+            "label": "reject_missing_pct"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

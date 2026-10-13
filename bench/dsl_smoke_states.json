@@ -2763,5 +2763,268 @@
       "ev_ttl": "not_set",
       "ev_reason": "not_required"
     }
+  },
+  "model_drift_detector": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_accuracy": "ok",
+      "ev_performance": "ok"
+    },
+    "accuracy_drop": {
+      "ev_proposal": "accepted",
+      "ev_accuracy": "over",
+      "ev_performance": "ok"
+    },
+    "performance_escalate": {
+      "ev_proposal": "accepted",
+      "ev_accuracy": "ok",
+      "ev_performance": "over"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_accuracy": "ok",
+      "ev_performance": "ok"
+    },
+    "precedence_accuracy_before_performance": {
+      "ev_proposal": "accepted",
+      "ev_accuracy": "over",
+      "ev_performance": "over"
+    }
+  },
+  "dead_letter_queue_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_retry": "ok",
+      "ev_payload": "ok",
+      "ev_queue": "ok",
+      "ev_forward_approval": "not_applicable"
+    },
+    "too_many_retries": {
+      "ev_proposal": "accepted",
+      "ev_retry": "over",
+      "ev_payload": "ok",
+      "ev_queue": "ok",
+      "ev_forward_approval": "not_applicable"
+    },
+    "oversized_payload": {
+      "ev_proposal": "accepted",
+      "ev_retry": "ok",
+      "ev_payload": "over",
+      "ev_queue": "ok",
+      "ev_forward_approval": "not_applicable"
+    },
+    "blocked_queue": {
+      "ev_proposal": "accepted",
+      "ev_retry": "ok",
+      "ev_payload": "ok",
+      "ev_queue": "blocked",
+      "ev_forward_approval": "not_applicable"
+    },
+    "forward_requires_approval": {
+      "ev_proposal": "accepted",
+      "ev_retry": "ok",
+      "ev_payload": "ok",
+      "ev_queue": "ok",
+      "ev_forward_approval": "requires_approval"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_retry": "ok",
+      "ev_payload": "ok",
+      "ev_queue": "ok",
+      "ev_forward_approval": "not_applicable"
+    },
+    "precedence_retry_before_payload": {
+      "ev_proposal": "accepted",
+      "ev_retry": "over",
+      "ev_payload": "over",
+      "ev_queue": "ok",
+      "ev_forward_approval": "not_applicable"
+    }
+  },
+  "compliance_audit_evidence_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_progress": "clean",
+      "ev_coverage": "ok",
+      "ev_collected": "ok",
+      "ev_missing_pct": "ok"
+    },
+    "wip_escalate": {
+      "ev_proposal": "accepted",
+      "ev_progress": "wip",
+      "ev_coverage": "ok",
+      "ev_collected": "ok",
+      "ev_missing_pct": "ok"
+    },
+    "uncovered_category": {
+      "ev_proposal": "accepted",
+      "ev_progress": "clean",
+      "ev_coverage": "uncovered",
+      "ev_collected": "ok",
+      "ev_missing_pct": "ok"
+    },
+    "none_collected": {
+      "ev_proposal": "accepted",
+      "ev_progress": "clean",
+      "ev_coverage": "ok",
+      "ev_collected": "none",
+      "ev_missing_pct": "ok"
+    },
+    "missing_pct_over": {
+      "ev_proposal": "accepted",
+      "ev_progress": "clean",
+      "ev_coverage": "ok",
+      "ev_collected": "ok",
+      "ev_missing_pct": "over"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_progress": "clean",
+      "ev_coverage": "ok",
+      "ev_collected": "ok",
+      "ev_missing_pct": "ok"
+    },
+    "precedence_wip_before_uncovered": {
+      "ev_proposal": "accepted",
+      "ev_progress": "wip",
+      "ev_coverage": "uncovered",
+      "ev_collected": "ok",
+      "ev_missing_pct": "ok"
+    }
+  },
+  "workflow_dag_validator": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_nodes": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "over",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_edges": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "over",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "cycle": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "cycle",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "no_start": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "none",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "multiple_starts": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "multiple",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "no_end": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "none",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_node_type": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "blocked",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "dangerous_token": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "found",
+      "ev_approval": "not_required"
+    },
+    "approval_required": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "ok",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_node_count_before_dangerous": {
+      "ev_proposal": "accepted",
+      "ev_node_count": "over",
+      "ev_edge_count": "ok",
+      "ev_acyclic": "ok",
+      "ev_start_nodes": "one",
+      "ev_end_nodes": "ok",
+      "ev_blocked_type": "ok",
+      "ev_dangerous": "found",
+      "ev_approval": "not_required"
+    }
   }
 }
