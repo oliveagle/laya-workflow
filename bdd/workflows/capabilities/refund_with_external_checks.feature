@@ -33,6 +33,9 @@ Feature: refund_with_external_checks
       | approve | low risk and small/medium amount — approve automatically |
       | review | needs a human reviewer         |
       | reject | high risk — decline the refund |
+    And answer by rules on the field "text" with hit 0.9 and fallback "approve"
+      | label | needles |
+      | reject | "fraud", "scripted", "bulk", "urgent" |
     When any other answer goes to "STOP"
     Then label "REJECTED" when the answer is "reject"
     And label "NEEDS_REVIEW" when the answer is "review"

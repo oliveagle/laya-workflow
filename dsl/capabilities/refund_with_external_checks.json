@@ -8,7 +8,10 @@
   "convergence_eps": 0.0001,
   "policy": {
     "allow_exec": true,
-    "allow_hosts": ["127.0.0.1", "localhost"],
+    "allow_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
     "max_timeout_ms": 5000,
     "max_output": 65536,
     "retries": 1
@@ -18,8 +21,12 @@
       "kind": "http",
       "method": "POST",
       "url": "http://127.0.0.1:8791/score",
-      "headers": { "content-type": "application/json" },
-      "body": { "text": "${state.text}" },
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": {
+        "text": "${state.text}"
+      },
       "timeout_ms": 2000
     },
     "case_agent": {
@@ -31,7 +38,10 @@
     },
     "local_echo": {
       "kind": "exec",
-      "argv": ["/bin/echo", "risk-label=${projected_label}"],
+      "argv": [
+        "/bin/echo",
+        "risk-label=${projected_label}"
+      ],
       "timeout_ms": 5000,
       "max_output": 4096
     }
@@ -44,15 +54,27 @@
         "amount_band": {
           "type": "score",
           "instructions": "Rough size of the refund request?",
-          "criteria": ["tokens / cents", "single invoice", "large or recurring"]
+          "criteria": [
+            "tokens / cents",
+            "single invoice",
+            "large or recurring"
+          ]
         }
       },
-      "edge": { "condition": {}, "default": "assess" },
+      "edge": {
+        "condition": {},
+        "default": "assess"
+      },
       "action": {
         "kind": "call",
         "capability": "risk_scorer",
-        "with": { "text": "${state.text}" },
-        "project": { "projected_label": "/label", "projected_risk": "/risk" }
+        "with": {
+          "text": "${state.text}"
+        },
+        "project": {
+          "projected_label": "/label",
+          "projected_risk": "/risk"
+        }
       }
     },
     {
@@ -66,17 +88,48 @@
             "approve": "low risk and small/medium amount — approve automatically",
             "review": "needs a human reviewer",
             "reject": "high risk — decline the refund"
+          },
+          "heuristic": {
+            "field": "text",
+            "match_rules": {
+              "reject": [
+                "fraud",
+                "scripted",
+                "bulk",
+                "urgent"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "approve"
           }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "action": {
         "kind": "threshold",
         "question": "decision",
         "rules": [
-          { "when": { "answer": "reject" }, "label": "REJECTED" },
-          { "when": { "answer": "review" }, "label": "NEEDS_REVIEW" },
-          { "when": { "always": true }, "label": "APPROVED" }
+          {
+            "when": {
+              "answer": "reject"
+            },
+            "label": "REJECTED"
+          },
+          {
+            "when": {
+              "answer": "review"
+            },
+            "label": "NEEDS_REVIEW"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "APPROVED"
+          }
         ]
       }
     }
