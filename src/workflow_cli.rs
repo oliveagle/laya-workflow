@@ -413,6 +413,10 @@ enum BddCmd {
         /// Emit a 1-node start instead of the 2-node canonical graph.
         #[arg(long, default_value_t = false)]
         single: bool,
+        /// Emit a nested-pipeline starter (prefilter -> sub-workflow -> audit)
+        /// instead of the canonical 2-node graph.
+        #[arg(long, default_value_t = false)]
+        nested: bool,
     },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
@@ -2389,6 +2393,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             force,
             primary_q,
             single,
+            nested,
         } => bdd::scaffold(&bdd::ScaffoldOptions {
             name: name.clone(),
             cat: cat.clone(),
@@ -2397,6 +2402,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             force: *force,
             primary_q: primary_q.clone().unwrap_or_default(),
             single: *single,
+            nested: *nested,
         })?,
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,

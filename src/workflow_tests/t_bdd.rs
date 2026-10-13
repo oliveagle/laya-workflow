@@ -931,6 +931,7 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
         "option",
         "Route an intake request to the owning team or escalate",
         2,
+        false,
     );
     h.check("bdd: scaffold has @decision tag", body.contains("@decision\n"));
     h.check("bdd: scaffold has Feature name", body.contains("Feature: intake_triage\n"));
@@ -947,7 +948,7 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
     h.eq("bdd: scaffold start", spec["start"].clone(), json!("intake_triage"));
     let _ = crate::spec::from_spec_with_dir(&spec, None, None).expect("scaffold validates");
     // --single emits a 1-node start that is still valid.
-    let single = bdd::scaffold_body("intake_triage", "routing", "option", "one node", 1);
+    let single = bdd::scaffold_body("intake_triage", "routing", "option", "one node", 1, false);
     let f1 = bdd::parse(&single, "<scaffold>").expect("single parses");
     let s1 = bdd::compile_decision(&f1, &json!({})).expect("single compiles");
     h.eq("bdd: scaffold --single node count", s1["nodes"].as_array().unwrap().len(), 1);
@@ -961,9 +962,24 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
         force: false,
         primary_q: String::new(),
         single: false,
+        nested: false,
     })
     .expect("scaffold CLI runs");
     h.eq("bdd: scaffold stdout rc", rc, 0);
+
+    // --nested emits a 3-scenario nested-pipeline starter: prefilter -> sub
+    // workflow (with completion handoff) -> audit. Must compile, validate
+    // (sub ref resolves, all nodes reachable through the continuation) and be
+    // 100% covered.
+    let nested = bdd::scaffold_body("pipeline_flow", "pipelines", "is_noise", "nested pipeline", 2, true);
+    h.check("bdd: nested scaffold has continuation", nested.contains("when the sub workflow completes continue at"));
+    h.check("bdd: nested scaffold has audit labels", nested.contains("label \"AUDIT_REQUIRED\""));
+    let f2 = bdd::parse(&nested, "<scaffold>").expect("nested parses");
+    let s2 = bdd::compile_decision(&f2, &json!({})).expect("nested compiles");
+    h.eq("bdd: nested scaffold node count", s2["nodes"].as_array().unwrap().len(), 3);
+    // sub ref must resolve to the existing support_ticket_router + validate
+    // (reachability through the continuation holds).
+    let _ = crate::spec::from_spec_with_dir(&s2, None, None).expect("nested validates");
 }
 
 /// `bdd_new` MCP tool: from an intent, generate a minimal valid `@decision`
@@ -1012,6 +1028,16 @@ pub fn test_bdd_mcp_new(h: &mut Harness) {
     h.eq("bdd_new: not overwritten", r3["written"].is_null(), true);
     // Bad input: empty name errors instead of panicking.
     h.check("bdd_new: empty name errors", t.call(&json!({"name": ""})).is_err());
+    // nested=true emits the nested-pipeline starter (3 nodes, valid).
+    let rn = t
+        .call(&json!({"name": "pipeline_flow", "cat": "pipelines", "nested": true}))
+        .unwrap();
+    h.eq("bdd_new: nested valid", rn["valid"].as_bool().unwrap(), true);
+    h.eq("bdd_new: nested node count", rn["nodes"].as_u64().unwrap(), 3);
+    h.check(
+        "bdd_new: nested has continuation",
+        rn["feature_text"].as_str().unwrap_or("").contains("completes continue at"),
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 

@@ -329,10 +329,16 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   `| answer | meaning |` table; `a score question "Q" asks "..."` with a
   `| level |` table; `a noul question "Q" asks "..."` with optional
   `| truthy | ... |` / `| falsy | ... |` rows; `the sub workflow "NAME"` for a
-  node that only references another workflow. Declared heuristics attach after
-  their question: `answer "X" when the field "F" contains ... with hit N`,
-  `answer by rules on the field "F" ...`, `score "X" when the field "F" contains
-  "H" scoring H and "M" scoring M miss L`, `the answer is always "X"`, ….
+  node that only references another workflow. A sub-workflow node can also hand
+  control back to the caller when it terminates — add
+  `And when the sub workflow completes continue at "DOWNSTREAM"` and the
+  sub's internal STOP edges are redirected to `DOWNSTREAM`, so a nested
+  pipeline runs the sub-graph *then* a local downstream step
+  (see `bdd/workflows/pipelines/intake_pipeline_nested.feature`). Declared
+  heuristics attach after their question: `answer "X" when the field "F"
+  contains ... with hit N`, `answer by rules on the field "F" ...`, `score "X"
+  when the field "F" contains "H" scoring H and "M" scoring M miss L`,
+  `the answer is always "X"`, ….
 * **When (edges)** — `the answer "X" goes to "NODE"`, `any other answer goes to "NODE"`.
 * **Then (actions)** — ordered threshold labels (`label "L" when "Q" is at least
   N` / `below N` / `otherwise`), state (`keep the answer to "Q"` / `keep the state

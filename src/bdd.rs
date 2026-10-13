@@ -3423,11 +3423,19 @@ pub struct ScaffoldOptions {
     pub force: bool,
     pub primary_q: String,
     pub single: bool,
+    pub nested: bool,
 }
 
 /// The scaffolded `.feature` text. Kept as a pure function so tests can assert
 /// on the skeleton without touching the filesystem.
-pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str, nodes: usize) -> String {
+pub fn scaffold_body(
+    name: &str,
+    cat: &str,
+    primary_q: &str,
+    desc: &str,
+    nodes: usize,
+    nested: bool,
+) -> String {
     let mut body = String::new();
     body.push_str("# Scaffold for \"");
     body.push_str(name);
@@ -3442,15 +3450,56 @@ pub fn scaffold_body(name: &str, cat: &str, primary_q: &str, desc: &str, nodes: 
     body.push_str("#   routing:      `When the answer \"<a>\" goes to \"<node>\"` / `And any other answer goes to \"STOP\"`\n");
     body.push_str("#   outcomes:     `Then label \"<L>\" when the answer to \"<q>\" is ...` / `And keep the answer to \"<q>\"`\n");
     body.push_str("#   capabilities: `Given the policy | key | value |` (background) / `Then run the \"<cap>\" capability ...`\n");
-    body.push_str("# Starter: 2-node canonical graph (choice -> score -> STOP). Clone a\n");
-    body.push_str("# Scenario and re-wire its edges to grow the graph; use --single for a\n");
-    body.push_str("# 1-node start. Keep this file the single source of truth, then:\n");
+    body.push_str("#   nesting:      `And when the sub workflow completes continue at \"<node>\"` hands control back\n");
+    if nested {
+        body.push_str("# Starter: nested-pipeline graph (prefilter -> sub-workflow -> audit). The sub\n");
+        body.push_str("# hands control back to the caller with the continuation step; swap in any\n");
+        body.push_str("# sub-workflow by name. Use --single for a 1-node start. Keep this file the\n");
+        body.push_str("# single source of truth, then:\n");
+    } else {
+        body.push_str("# Starter: 2-node canonical graph (choice -> score -> STOP). Clone a\n");
+        body.push_str("# Scenario and re-wire its edges to grow the graph; use --single for a\n");
+        body.push_str("# 1-node start. Keep this file the single source of truth, then:\n");
+    }
     body.push_str("#   laya-workflow bdd build <file>                     # compile + validate + 100% coverage\n");
     body.push_str("#   laya-workflow bdd transpile <file> --out dsl/<cat> # emit the dsl spec\n");
     body.push_str("#   laya-workflow bdd round-trip                       # prove .feature == dsl spec\n");
     body.push_str("@decision\n");
     body.push_str(&format!("Feature: {name}\n"));
     body.push_str(&format!("  {desc}\n\n"));
+    if nested {
+        // Nested-pipeline starter: prefilter (noise drop) -> sub-workflow ->
+        // downstream audit. The sub-workflow hands control back to the caller
+        // with the continuation step, so the pipeline runs sub-graph THEN a
+        // local downstream step. Referencing an existing workflow keeps the
+        // skeleton valid with no further setup; swap in any sub-workflow.
+        body.push_str("  Scenario: prefilter\n");
+        body.push_str("    Given a choice question \"is_noise\" asks \"Is this a real request that needs routing?\"\n");
+        body.push_str("      | answer | meaning                                      |\n");
+        body.push_str("      | A      | no, it is a real request that needs routing  |\n");
+        body.push_str("      | B      | yes, it is automated noise or a duplicate    |\n");
+        body.push_str("    And answer by rules on the field \"text\" with hit 0.9 and fallback \"A\"\n");
+        body.push_str("      | label | needles |\n");
+        body.push_str("      | B | \"digest\", \"newsletter\", \"archived\", \"automated\", \"unsubscribe\" |\n");
+        body.push_str("    When the answer \"A\" goes to \"intake\"\n");
+        body.push_str("    And any other answer goes to \"STOP\"\n");
+        body.push_str("    Then allow up to 1 retries\n");
+        body.push_str("\n");
+        body.push_str("  Scenario: intake\n");
+        body.push_str("    Given the sub workflow \"support_ticket_router\"\n");
+        body.push_str("    And when the sub workflow completes continue at \"audit\"\n");
+        body.push_str("\n");
+        body.push_str("  Scenario: audit\n");
+        body.push_str("    Given a choice question \"needs_human\" asks \"Does a human need to double-check the routing outcome?\"\n");
+        body.push_str("      | answer | meaning                                  |\n");
+        body.push_str("      | A      | no, the automated routing is trustworthy  |\n");
+        body.push_str("      | B      | yes, a human should verify before acting   |\n");
+        body.push_str("    When any other answer goes to \"STOP\"\n");
+        body.push_str("    Then label \"AUDIT_REQUIRED\" when the answer to \"needs_human\" is \"B\"\n");
+        body.push_str("    And label \"AUDIT_SKIPPED\" otherwise\n");
+        body.push_str("\n");
+        return body;
+    }
     body.push_str(&format!("  Scenario: {name}\n"));
     body.push_str(&format!("    Given a choice question \"{primary_q}\" asks \"Choose an option\"\n"));
     body.push_str("      | answer   | meaning       |\n");
@@ -3504,7 +3553,14 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     } else {
         intent.to_string()
     };
-    let body = scaffold_body(name, &cat, &primary_q, &desc, if o.single { 1 } else { 2 });
+    let body = scaffold_body(
+        name,
+        &cat,
+        &primary_q,
+        &desc,
+        if o.single { 1 } else { 2 },
+        o.nested,
+    );
 
     // Self-verify: the skeleton must compile to a valid decision graph.
     let feature = match parse(&body, "<scaffold>") {

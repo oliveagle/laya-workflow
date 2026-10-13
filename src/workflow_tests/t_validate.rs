@@ -317,3 +317,31 @@ pub fn test_validate_sub_continue(h: &mut Harness) {
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Regression: an edge condition key that is not a criterion of the primary
+/// question can never fire at runtime (silently dead routing).
+pub fn test_validate_edge_key(h: &mut Harness) {
+    let spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {"A": "STOP", "X": "STOP"}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["q"]})
+        )]),
+    );
+    let r = spec::from_spec(&spec);
+    h.check("validate: edge key not an answer rejected", r.is_err());
+    // control: all keys are answers → parses
+    let ok_spec = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["q"]})
+        )]),
+    );
+    let r = spec::from_spec(&ok_spec);
+    h.check("validate: valid edge keys parse (no false positive)", r.is_ok());
+}

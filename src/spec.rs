@@ -572,6 +572,41 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
             }
         }
     }
+    // edge condition *keys* must be possible answers of the node's primary
+    // question. Routing matches the primary answer against these keys
+    // (`Edge::resolve`), so a key that is not a criterion can never fire —
+    // silently dead routing. Skipped for `from_state` criteria, whose answer
+    // space is populated dynamically at runtime.
+    for n in nodes {
+        let pq = n
+            .primary_q
+            .clone()
+            .or_else(|| n.questions.as_object().and_then(|m| m.keys().next().cloned()));
+        let Some(pq) = pq else { continue };
+        let Some(qdef) = n.questions.get(&pq) else { continue };
+        if qdef.get("criteria").and_then(|c| c.get("from_state")).is_some() {
+            continue;
+        }
+        let answer_space: Option<Vec<String>> = match qdef.get("criteria") {
+            Some(Value::Object(m)) if !m.contains_key("from_state") => {
+                Some(m.keys().cloned().collect())
+            }
+            Some(Value::Array(a)) => {
+                Some(a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            }
+            _ => None,
+        };
+        if let Some(space) = answer_space {
+            for k in n.edge.condition.keys() {
+                if !space.iter().any(|a| a == k) {
+                    bail!(
+                        "node {}: edge condition key {k:?} is not an answer of primary question {pq:?}",
+                        n.name
+                    );
+                }
+            }
+        }
+    }
     // reachability: every non-start node must be reachable through static edges.
     // Routing is purely edge-driven (no dynamic goto), so an unreachable node is
     // dead code — it will never run, silently hiding misrouted decisions.
