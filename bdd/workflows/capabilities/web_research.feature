@@ -22,6 +22,7 @@ Feature: web_research
       | search | find pages for a query and then read the top hit |
       | read   | fetch one known URL and turn it into readable text |
       | markdown | fetch one known URL and keep its heading/link structure |
+    And the answer comes from the field "mode"
     When the answer "search" goes to "do_search"
     And the answer "read" goes to "do_read"
     And the answer "markdown" goes to "do_markdown"

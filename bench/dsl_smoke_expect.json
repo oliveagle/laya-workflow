@@ -57,6 +57,34 @@
       "trace.steps.2.node": "read_top",
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "yes"
+    },
+    "read": {
+      "result.mode": "read",
+      "result.status": 200,
+      "result.chars": 144,
+      "result.truncated": false,
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "read",
+      "trace.steps.1.node": "do_read",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "yes"
+    },
+    "markdown": {
+      "result.mode": "markdown",
+      "result.status": 200,
+      "result.format": "markdown",
+      "result.chars": 170,
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "markdown",
+      "trace.steps.1.node": "do_markdown",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "yes"
     }
   },
   "workflow_guardian": {

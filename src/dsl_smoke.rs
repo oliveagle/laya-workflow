@@ -140,6 +140,12 @@ pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec
                         (Some(g), Some(w)) => (g - w).abs() <= 1e-9 * w.abs().max(1.0),
                         _ => false,
                     },
+                    // Booleans are a first-class decision output (a projected
+                    // `truncated` / `blocked` / `seen` field). Before this the
+                    // `_ => false` arm made every boolean expect *always* fail,
+                    // so an author could not pin one — the gate silently had no
+                    // vocabulary for a whole JSON type.
+                    Value::Bool(want_b) => got.as_bool() == Some(*want_b),
                     _ => false,
                 };
                 if !ok {

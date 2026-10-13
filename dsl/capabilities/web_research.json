@@ -53,7 +53,8 @@
             "search": "find pages for a query and then read the top hit",
             "read": "fetch one known URL and turn it into readable text",
             "markdown": "fetch one known URL and keep its heading/link structure"
-          }
+          },
+          "heuristic": { "answer_field": "mode" }
         }
       },
       "edge": {

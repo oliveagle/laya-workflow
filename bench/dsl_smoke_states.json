@@ -381,6 +381,14 @@
     "search": {
       "query": "laya",
       "mode": "search"
+    },
+    "read": {
+      "mode": "read",
+      "url": "http://127.0.0.1:8792/page?name=guide"
+    },
+    "markdown": {
+      "mode": "markdown",
+      "url": "http://127.0.0.1:8792/page?name=guide"
     }
   },
   "workflow_guardian": {

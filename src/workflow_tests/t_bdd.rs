@@ -1600,6 +1600,222 @@ pub fn test_bdd_smoke_offline_external_skip(h: &mut Harness) {
     // mocks-down integration run; not repeated here.
 }
 
+/// P42: structural branch-coverage gate — generalises P40's manual "状态覆盖广度"
+/// audit into a structural invariant. For every spec that carries registered
+/// smoke states, the union of nodes visited across those states (**real engine
+/// run**) must cover every node **reachable from `start` in the graph** —
+/// except a small, justified allow-list of nodes the offline harness cannot
+/// reach. A newly added reachable node with no state that walks to it becomes a
+/// hard failure, exactly like P38 made trace pinning structural.
+///
+/// Also proves P42's vocabulary fix: `check_expect` now understands a boolean
+/// decision output (a projected `truncated`/`blocked`/`seen` field). The old
+/// `_ => false` arm rejected *every* boolean for *every* value, so no author
+/// could pin one — the gate silently had no vocabulary for a whole JSON type.
+pub fn test_bdd_smoke_branch_coverage(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::dsl_smoke::{check_expect, ensure_env_dirs, network_bound_external};
+    use std::collections::{BTreeMap, BTreeSet};
+    let root = bdd::repo_root();
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    // P42 vocabulary fix, proven both ways on a hand-built outcome.
+    let mk = |state: Value| laya_workflow::workflow::WorkflowOutcome {
+        state,
+        trace: Default::default(),
+        history: Vec::new(),
+        node_visits: Default::default(),
+        iterations: 1,
+    };
+    h.check(
+        "p42: check_expect pins a true boolean",
+        check_expect(
+            &mk(serde_json::json!({ "truncated": true })),
+            &serde_json::json!({ "result.truncated": true }),
+        )
+        .is_empty(),
+    );
+    h.check(
+        "p42: check_expect rejects a mismatched boolean",
+        !check_expect(
+            &mk(serde_json::json!({ "truncated": true })),
+            &serde_json::json!({ "result.truncated": false }),
+        )
+        .is_empty(),
+    );
+
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+
+    // Nodes that are graph-reachable but **cannot** be visited by the offline
+    // smoke harness. Every entry is asserted below to still be a real,
+    // reachable node, so this allow-list cannot rot into a silent hole.
+    let allowed: &[(&str, &str)] = &[
+        // calls the real `cua-driver` exec; the offline heuristic never routes here
+        ("cua_desktop", "exec"),
+        // inline nested-pipeline container: its steps surface as `intake::*`, never `intake`
+        ("intake_pipeline_nested", "intake"),
+        // Needle call whose `${env.NEEDLE3_CACT}` reference is unresolved offline
+        ("support_ticket_router_hybrid", "needle_fallback"),
+    ];
+    let mut allow_seen: BTreeMap<String, bool> =
+        allowed.iter().map(|(sp, node)| (format!("{sp}:{node}"), false)).collect();
+
+    // Reachable nodes from `start`, following condition/default string targets.
+    let reachable = |raw: &Value| -> BTreeSet<String> {
+        let nodes = raw
+            .get("nodes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let names: BTreeSet<String> = nodes
+            .iter()
+            .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        let mut seen = BTreeSet::new();
+        let mut stack: Vec<String> = raw
+            .get("start")
+            .and_then(Value::as_str)
+            .map(|s| vec![s.to_string()])
+            .unwrap_or_default();
+        while let Some(n) = stack.pop() {
+            if !names.contains(&n) || !seen.insert(n.clone()) {
+                continue;
+            }
+            let Some(node) = nodes
+                .iter()
+                .find(|x| x.get("name").and_then(Value::as_str) == Some(n.as_str()))
+            else {
+                continue;
+            };
+            let edge = node.get("edge").cloned().unwrap_or(Value::Null);
+            let mut targets: Vec<String> = Vec::new();
+            if let Some(cond) = edge.get("condition").and_then(Value::as_object) {
+                for v in cond.values() {
+                    if let Some(s) = v.as_str() {
+                        targets.push(s.to_string());
+                    }
+                }
+            }
+            if let Some(d) = edge.get("default").and_then(Value::as_str) {
+                targets.push(d.to_string());
+            }
+            for t in targets {
+                if names.contains(&t) && !seen.contains(&t) {
+                    stack.push(t);
+                }
+            }
+        }
+        seen
+    };
+
+    let dsl_root = root.join("dsl");
+    let mut specs = Vec::new();
+    let mut walk = vec![dsl_root.clone()];
+    while let Some(dir) = walk.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                walk.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("json")
+                && !p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+            {
+                specs.push(p);
+            }
+        }
+    }
+    specs.sort();
+
+    let mut checked = 0usize;
+    for spec in &specs {
+        let stem = spec
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(smap) = states_obj.get(&stem).and_then(Value::as_object) else {
+            continue;
+        };
+        let raw: Value = std::fs::read_to_string(spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        // Offline harness: never reach an external host (mirrors the P33 rule).
+        if network_bound_external(&raw) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
+            Ok(w) => w,
+            Err(e) => {
+                h.check(&format!("bdd: branch coverage {stem} spec loads ({e})"), false);
+                continue;
+            }
+        };
+        let mut visited: BTreeSet<String> = BTreeSet::new();
+        let mut ok = 0usize;
+        let mut errored = 0usize;
+        for (_label, st) in smap {
+            match wf.run(&HeuristicBackend, st) {
+                Ok(out) => {
+                    ok += 1;
+                    if let Some(steps) =
+                        out.to_json().pointer("/trace/steps").and_then(Value::as_array)
+                    {
+                        for s in steps {
+                            if let Some(n) = s.get("node").and_then(Value::as_str) {
+                                visited.insert(n.to_string());
+                            }
+                        }
+                    }
+                }
+                Err(_) => errored += 1,
+            }
+        }
+        // Not fully verifiable offline (local mock down, or a state the offline
+        // heuristic cannot drive): the mocks-up integration run covers it.
+        if ok == 0 || errored > 0 {
+            continue;
+        }
+        checked += 1;
+        for n in reachable(&raw) {
+            if visited.contains(&n) {
+                continue;
+            }
+            let key = format!("{stem}:{n}");
+            if let Some(hit) = allow_seen.get_mut(&key) {
+                *hit = true;
+                continue;
+            }
+            h.check(
+                &format!(
+                    "bdd: branch coverage — {stem} can reach node {n} but no registered state visits it"
+                ),
+                false,
+            );
+        }
+    }
+    // Every allow-listed node must still be real and reachable, else the entry
+    // is stale and hides a hole.
+    for (key, hit) in &allow_seen {
+        h.check(
+            &format!("bdd: allow-listed {key} is still a reachable node"),
+            *hit,
+        );
+    }
+    h.check("bdd: branch coverage checked >= 40 specs", checked >= 40);
+}
+
 /// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the
 
 /// "emit the dsl spec" step of the authoring loop, in-process. Asserts a known
