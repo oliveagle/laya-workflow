@@ -1,0 +1,24 @@
+{
+  "id": "decision_loop_refine",
+  "intent": "Run an iterative refine loop: review the current draft by asking whether to accept it, revise once more, or escalate to a human editor, and score its quality; route accept and escalate to STOP but route revise back into the review node, then merge the open probabilities before stopping.",
+  "feature": "bdd/workflows/loops/iterative_refine_loop.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 8 iterations" },
+    { "kind": "given", "text": "a choice question \"verdict\" asks \"Should we accept the draft, revise it once more, or escalate to a human editor?\"" },
+    { "kind": "given", "text": "a score question \"quality\" asks \"How good is the current draft?\"" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "when", "text": "the answer \"accept\" goes to \"STOP\"" },
+    { "kind": "when", "text": "the answer \"revise\" goes to \"review\"" },
+    { "kind": "when", "text": "the answer \"escalate\" goes to \"STOP\"" },
+    { "kind": "then", "text": "merge open probabilities on \"verdict\"" },
+    { "kind": "then", "text": "allow up to 3 retries" }
+  ],
+  "unknown_steps": [
+    { "kind": "when", "text": "the answer \"revise\" loops back to \"review\"" },
+    { "kind": "when", "text": "the answer \"revise\" returns to the node \"review\"" },
+    { "kind": "then", "text": "merge the open probabilities of \"verdict\"" },
+    { "kind": "then", "text": "combine open probabilities on \"verdict\"" },
+    { "kind": "given", "text": "the workflow can run for at most 8 iterations" },
+    { "kind": "then", "text": "allow at most 3 retries" }
+  ]
+}

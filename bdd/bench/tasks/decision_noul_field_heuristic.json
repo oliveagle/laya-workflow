@@ -1,0 +1,77 @@
+{
+  "id": "decision_noul_field_heuristic",
+  "intent": "Decide whether codegraph evidence is sufficient to stop: ask noul questions about evidence sufficiency, whether another round is useful, whether required evidence is missing, and whether there is a contradiction; drive the answers from evidence fields with hit/miss heuristics, then label continue/stop decisions by threshold.",
+  "feature": "bdd/workflows/codegraph/stopping_codegraph.feature",
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "the workflow runs at most 3 iterations"
+    },
+    {
+      "kind": "given",
+      "text": "a noul question \"evidence_sufficient\" asks \"Does the current evidence cover every part of the query so a code-locating answer can be returned without guessing?\""
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"evidence_status\" contains \"sufficient\" with hit 0.95"
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"evidence_status\" contains \"sufficient\" with hit 0.8 and miss 0.1"
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"missing_evidence\" contains \"missing\", \"true\" with hit 0.9 and miss 0.05"
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"contradiction\" contains \"contradiction\", \"true\" with hit 0.95"
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"STOP\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"CONTINUE_CONTRADICTION\" when \"contradiction\" is at least 0.4"
+    },
+    {
+      "kind": "then",
+      "text": "label \"CONTINUE_MISSING\" when \"missing_evidence\" is at least 0.4"
+    },
+    {
+      "kind": "then",
+      "text": "label \"CONTINUE_EVIDENCE_INSUFFICIENT\" when \"evidence_sufficient\" is below 0.85"
+    },
+    {
+      "kind": "then",
+      "text": "label \"STOP_EVIDENCE_OK\" otherwise"
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "given",
+      "text": "a yes/no question \"evidence_sufficient\" asks \"Is the evidence enough?\""
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"evidence_status\" has \"sufficient\""
+    },
+    {
+      "kind": "then",
+      "text": "label \"CONTINUE_CONTRADICTION\" if \"contradiction\" is at least 0.4"
+    },
+    {
+      "kind": "then",
+      "text": "label \"CONTINUE_EVIDENCE_INSUFFICIENT\" when evidence_sufficient is below 0.85"
+    },
+    {
+      "kind": "given",
+      "text": "the workflow runs at most three iterations"
+    },
+    {
+      "kind": "when",
+      "text": "all other answers go to \"STOP\""
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "decision_pipeline_nested",
+  "intent": "Ingest an incoming request through a nested pipeline: prefilter it to drop noise, then hand the real requests to the support ticket router as a sub workflow, then audit whether a human needs to double-check the routing outcome before acting.",
+  "feature": "bdd/workflows/pipelines/intake_pipeline_nested.feature",
+  "known_steps": [
+    { "kind": "given", "text": "the workflow runs at most 30 iterations" },
+    { "kind": "given", "text": "the sub workflow \"support_ticket_router\"" },
+    { "kind": "given", "text": "a choice question \"is_noise\" asks \"Is this message noise that should be dropped before routing?\"" },
+    { "kind": "when", "text": "the answer \"A\" goes to \"intake\"" },
+    { "kind": "when", "text": "any other answer goes to \"STOP\"" },
+    { "kind": "then", "text": "allow up to 1 retries" },
+    { "kind": "given", "text": "a choice question \"needs_human\" asks \"Given the routing outcome, does a human need to double-check it?\"" },
+    { "kind": "then", "text": "label \"AUDIT_REQUIRED\" when the answer is \"B\" with at least 0.5 confidence" },
+    { "kind": "then", "text": "label \"AUDIT_SKIPPED\" otherwise" }
+  ],
+  "unknown_steps": [
+    { "kind": "given", "text": "call the sub workflow \"support_ticket_router\"" },
+    { "kind": "given", "text": "a nested pipeline with the sub workflow \"support_ticket_router\"" },
+    { "kind": "when", "text": "the answer \"A\" routes to the node \"intake\"" },
+    { "kind": "then", "text": "set the label \"AUDIT_REQUIRED\" when the answer is \"B\"" },
+    { "kind": "then", "text": "label \"AUDIT_REQUIRED\" if the answer is \"B\"" },
+    { "kind": "when", "text": "for any other answer go to \"STOP\"" }
+  ]
+}

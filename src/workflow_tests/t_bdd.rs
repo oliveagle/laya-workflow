@@ -1096,3 +1096,43 @@ Feature: transpile_demo
     h.check("bdd_transpile: no input errors", t.call(&json!({})).is_err());
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// The authoring-score corpus must keep proving the distinct decision-graph
+/// shapes, not just the first three. A task is "decision" when its reference
+/// feature carries `@decision`; the floor is deliberately above the original
+/// three so deleting a shape (sub-workflow, loop+merge, noul+field heuristic)
+/// turns this red instead of silently shrinking the proof surface.
+pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
+    let root = bdd::repo_root();
+    let tasks_dir = root.join("bdd").join("bench").join("tasks");
+    let mut files: Vec<_> = std::fs::read_dir(&tasks_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
+        .collect();
+    files.sort();
+    h.check("bdd: score corpus tasks >= 9", files.len() >= 9);
+    let mut decision = 0usize;
+    let mut browser = 0usize;
+    for f in &files {
+        let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(f).unwrap()).unwrap();
+        let id = meta.get("id").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+        let feat_rel = meta.get("feature").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+        h.check(&format!("bdd: task {id} has intent"), meta.get("intent").and_then(serde_json::Value::as_str).map(|s| !s.is_empty()).unwrap_or(false));
+        let known = meta.get("known_steps").and_then(serde_json::Value::as_array).map(|a| a.len()).unwrap_or(0);
+        let unknown = meta.get("unknown_steps").and_then(serde_json::Value::as_array).map(|a| a.len()).unwrap_or(0);
+        h.check(&format!("bdd: task {id} has known steps"), known >= 6);
+        h.check(&format!("bdd: task {id} has unknown steps"), unknown >= 4);
+        let feat = root.join(&feat_rel);
+        h.check(&format!("bdd: task {id} feature exists"), feat.is_file());
+        let text = std::fs::read_to_string(&feat).unwrap();
+        if text.lines().any(|l| l.starts_with("@decision")) {
+            decision += 1;
+        } else {
+            browser += 1;
+        }
+    }
+    h.check("bdd: decision score tasks >= 6", decision >= 6);
+    h.check("bdd: browser score tasks >= 3", browser >= 3);
+}
