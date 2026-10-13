@@ -1,0 +1,97 @@
+{
+  "name": "data_retention_expiry_guard",
+  "_bdd": {
+    "feature": "data_retention_expiry_guard",
+    "feature_path": "bdd/workflows/ole_eval/data_retention_expiry_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed data-retention plans as a single triage node. The model\nproposes one typed plan (request_id, data_records [{record_id, category,\ncreated_at, retention_days}], retention_policy {max_retention_days,\nrequires_approval_categories}); this workflow owns the max-retention check and\nthe approval-category escalation. It never deletes or exports data. Port of\ncode/qwen_vm/app_scenarios/data_retention_expiry_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required keys, request_id grammar, non-empty record\nlist, per-record shape, retention-policy shape, dangerous-token scan) fold\ninto the `proposal` choice.\n- The per-record arithmetic (expiry = created_at + retention_days, compared to\nthe caller's current_date) is a fixed harness computation: it hands the DSL\none answer per check. Expired records are reported but never block.\nEmitted labels: reject_proposal, reject_over_retention, escalate_approval,\napprove.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, data_records[{record_id, category, created_at, retention_days}], retention_policy{max_retention_days, requires_approval_categories}} object with a valid request id and a non-empty record list?",
+          "criteria": {
+            "accepted": "exactly one structurally valid retention plan",
+            "malformed": "parse error, missing key, bad request id or unsanitised text"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "retention": {
+          "type": "choice",
+          "instructions": "Is every record's retention_days within the policy max_retention_days?",
+          "criteria": {
+            "within": "all records within the max",
+            "over": "at least one record exceeds the max"
+          },
+          "heuristic": {
+            "answer_field": "ev_retention"
+          }
+        },
+        "approval": {
+          "type": "choice",
+          "instructions": "Does any not-yet-expired record belong to a requires-approval category?",
+          "criteria": {
+            "ok": "no non-expired approval-category record",
+            "required": "a non-expired approval-category record"
+          },
+          "heuristic": {
+            "answer_field": "ev_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "retention",
+              "answer": "over"
+            },
+            "label": "reject_over_retention"
+          },
+          {
+            "when": {
+              "question": "approval",
+              "answer": "required"
+            },
+            "label": "escalate_approval"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

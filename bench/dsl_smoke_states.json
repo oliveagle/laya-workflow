@@ -4616,5 +4616,415 @@
       "ev_optional_tests": "suggested",
       "ev_risk": "downgraded"
     }
+  },
+  "data_retention_expiry_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_retention": "within",
+      "ev_approval": "ok"
+    },
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_retention": "within",
+      "ev_approval": "ok"
+    },
+    "over_retention": {
+      "ev_proposal": "accepted",
+      "ev_retention": "over",
+      "ev_approval": "ok"
+    },
+    "approval_required": {
+      "ev_proposal": "accepted",
+      "ev_retention": "within",
+      "ev_approval": "required"
+    },
+    "precedence_proposal_before_over": {
+      "ev_proposal": "malformed",
+      "ev_retention": "over",
+      "ev_approval": "required"
+    },
+    "precedence_over_before_approval": {
+      "ev_proposal": "accepted",
+      "ev_retention": "over",
+      "ev_approval": "required"
+    }
+  },
+  "subscription_churn_retention_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "ok",
+      "ev_discount": "ok",
+      "ev_duration": "ok",
+      "ev_tier": "ok"
+    },
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_escalation": "ok",
+      "ev_discount": "ok",
+      "ev_duration": "ok",
+      "ev_tier": "ok"
+    },
+    "escalate_low_risk_high_discount": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "low_risk_high_discount",
+      "ev_discount": "ok",
+      "ev_duration": "ok",
+      "ev_tier": "ok"
+    },
+    "discount_over": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "ok",
+      "ev_discount": "over",
+      "ev_duration": "ok",
+      "ev_tier": "ok"
+    },
+    "duration_over": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "ok",
+      "ev_discount": "ok",
+      "ev_duration": "over",
+      "ev_tier": "ok"
+    },
+    "tier_upgrade": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "ok",
+      "ev_discount": "ok",
+      "ev_duration": "ok",
+      "ev_tier": "upgrade"
+    },
+    "precedence_escalate_before_violations": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "low_risk_high_discount",
+      "ev_discount": "over",
+      "ev_duration": "over",
+      "ev_tier": "upgrade"
+    },
+    "precedence_proposal_before_escalate": {
+      "ev_proposal": "malformed",
+      "ev_escalation": "low_risk_high_discount",
+      "ev_discount": "ok",
+      "ev_duration": "ok",
+      "ev_tier": "ok"
+    },
+    "precedence_discount_before_duration": {
+      "ev_proposal": "accepted",
+      "ev_escalation": "ok",
+      "ev_discount": "over",
+      "ev_duration": "over",
+      "ev_tier": "upgrade"
+    }
+  },
+  "pricing_discount_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "duplicate_request": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "duplicate",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "segment_not_eligible": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "not_eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "approval_infeasible": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "infeasible",
+      "ev_adjustment": "ok"
+    },
+    "adjust_promotion_fallback": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "promotion_fallback"
+    },
+    "adjust_volume_fallback": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "volume_fallback"
+    },
+    "adjust_coupon_disallowed": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "coupon_disallowed"
+    },
+    "adjust_promotion_window": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "promotion_window"
+    },
+    "adjust_stacking_coupon": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "stacking_coupon"
+    },
+    "adjust_stacking_list": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "stacking_list"
+    },
+    "adjust_margin_floor": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "margin_floor"
+    },
+    "adjust_approval_cap": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "approval_cap"
+    },
+    "precedence_proposal_before_duplicate": {
+      "ev_proposal": "malformed",
+      "ev_duplicate": "duplicate",
+      "ev_segment": "eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "precedence_duplicate_before_segment": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "duplicate",
+      "ev_segment": "not_eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "ok"
+    },
+    "precedence_reject_before_modify": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "not_eligible",
+      "ev_feasibility": "ok",
+      "ev_adjustment": "margin_floor"
+    },
+    "precedence_feasibility_before_adjustment": {
+      "ev_proposal": "accepted",
+      "ev_duplicate": "fresh",
+      "ev_segment": "eligible",
+      "ev_feasibility": "infeasible",
+      "ev_adjustment": "approval_cap"
+    }
+  },
+  "inventory_replenishment_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "unknown_sku": {
+      "ev_proposal": "accepted",
+      "ev_sku": "unknown",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "duplicate_proposal": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "duplicate",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "no_reorder_needed": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "no_reorder_needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "approve_no_order_needed": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "no_order_needed",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "constraints_infeasible": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "infeasible",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "no_positive_quantity": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "none",
+      "ev_adjustment": "ok"
+    },
+    "modify_intent_raised": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "intent_raised"
+    },
+    "modify_service_fallback": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "service_fallback"
+    },
+    "modify_rounded_to_pack": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "rounded_to_pack"
+    },
+    "modify_min_order_qty": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "min_order_qty"
+    },
+    "modify_capped_by_constraint": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "capped_by_constraint"
+    },
+    "precedence_proposal_before_sku": {
+      "ev_proposal": "malformed",
+      "ev_sku": "unknown",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "precedence_unknown_sku_before_duplicate": {
+      "ev_proposal": "accepted",
+      "ev_sku": "unknown",
+      "ev_duplicate": "duplicate",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "precedence_need_before_no_order": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "no_reorder_needed",
+      "ev_no_order": "no_order_needed",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "ok"
+    },
+    "precedence_infeasible_before_quantity": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "infeasible",
+      "ev_quantity": "none",
+      "ev_adjustment": "ok"
+    },
+    "precedence_reject_before_modify": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "infeasible",
+      "ev_quantity": "ok",
+      "ev_adjustment": "capped_by_constraint"
+    },
+    "precedence_modify_before_approve": {
+      "ev_proposal": "accepted",
+      "ev_sku": "known",
+      "ev_duplicate": "fresh",
+      "ev_need": "needed",
+      "ev_no_order": "ok",
+      "ev_feasibility": "ok",
+      "ev_quantity": "ok",
+      "ev_adjustment": "service_fallback"
+    }
   }
 }

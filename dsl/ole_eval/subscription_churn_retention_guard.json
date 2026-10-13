@@ -1,0 +1,133 @@
+{
+  "name": "subscription_churn_retention_guard",
+  "_bdd": {
+    "feature": "subscription_churn_retention_guard",
+    "feature_path": "bdd/workflows/ole_eval/subscription_churn_retention_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed subscription retention offers as a single triage node.\nThe model proposes one typed offer (request_id, customer_id,\nchurn_risk_score, retention_offer {discount_pct, duration_months, tier}); this\nworkflow owns the tier-limit, duration-limit, tier-downgrade and low-risk /\nhigh-discount checks against the customer's authoritative tier. It never\ncharges, refunds or issues anything. Port of\ncode/qwen_vm/app_scenarios/subscription_churn_retention_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required keys, request/customer id grammars,\nchurn_risk_score in [0,1], discount_pct in (0,100], integer\nduration_months >= 1, tier enum, duplicate-key and dangerous-token scan)\nfold into the `proposal` choice.\n- The customer's authoritative tier and its max_discount_pct / max_duration\nare a fixed fixture; the harness resolves them and hands the DSL `ok`/`over`.\n- The parse gate already rejects discount_pct <= 0, so the engine's\n`discount_pct must be positive` violation is provably unreachable and folds\ninto `proposal` rather than becoming a label.\nEmitted labels: reject_proposal, escalate_low_risk_high_discount,\nreject_discount, reject_duration, reject_tier_upgrade, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, customer_id, churn_risk_score, retention_offer{discount_pct, duration_months, tier}} object with valid ids, a risk in [0,1], a discount in (0,100] and a valid tier?",
+          "criteria": {
+            "accepted": "exactly one structurally valid retention offer",
+            "malformed": "parse error, missing key, bad id, out-of-range value or bad tier"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "escalation": {
+          "type": "choice",
+          "instructions": "Is a low churn risk (< 0.3) paired with a high discount (> 20%)?",
+          "criteria": {
+            "ok": "not the low-risk / high-discount pairing",
+            "low_risk_high_discount": "risk < 0.3 and discount > 20%"
+          },
+          "heuristic": {
+            "answer_field": "ev_escalation"
+          }
+        },
+        "discount": {
+          "type": "choice",
+          "instructions": "Is the offered discount within the customer's tier maximum?",
+          "criteria": {
+            "ok": "discount <= tier max",
+            "over": "discount > tier max"
+          },
+          "heuristic": {
+            "answer_field": "ev_discount"
+          }
+        },
+        "duration": {
+          "type": "choice",
+          "instructions": "Is the offered duration within the customer's tier maximum?",
+          "criteria": {
+            "ok": "duration <= tier max",
+            "over": "duration > tier max"
+          },
+          "heuristic": {
+            "answer_field": "ev_duration"
+          }
+        },
+        "tier": {
+          "type": "choice",
+          "instructions": "Does the offered tier stay at or below the customer's tier?",
+          "criteria": {
+            "ok": "offer tier <= customer tier",
+            "upgrade": "offer tier is above the customer tier"
+          },
+          "heuristic": {
+            "answer_field": "ev_tier"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "escalation",
+              "answer": "low_risk_high_discount"
+            },
+            "label": "escalate_low_risk_high_discount"
+          },
+          {
+            "when": {
+              "question": "discount",
+              "answer": "over"
+            },
+            "label": "reject_discount"
+          },
+          {
+            "when": {
+              "question": "duration",
+              "answer": "over"
+            },
+            "label": "reject_duration"
+          },
+          {
+            "when": {
+              "question": "tier",
+              "answer": "upgrade"
+            },
+            "label": "reject_tier_upgrade"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

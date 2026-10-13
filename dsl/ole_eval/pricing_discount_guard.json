@@ -1,0 +1,189 @@
+{
+  "name": "pricing_discount_guard",
+  "_bdd": {
+    "feature": "pricing_discount_guard",
+    "feature_path": "bdd/workflows/ole_eval/pricing_discount_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed pricing/discount requests as a single triage node. The\nmodel proposes only a typed intent (sku, segment, discount_intent); this\nworkflow owns the catalog lookup, segment eligibility, the promotion window,\nvolume qualification, coupon permission and stacking rules, the margin floor\nand the approval threshold, computing the exact price itself. It never charges\nor issues anything. Port of code/qwen_vm/app_scenarios/pricing_discount_guard.\nThird three-valued port with its own verbs: the engine returns APPROVE /\nMODIFY / REJECT — exact price approved, local engine modified the discount, or\nthe request is refused.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (raw size cap, exact typed shape, sku/segment/intent\nenums, request-id grammar, duplicate-key scan, no authority or side-effect\nkeys) fold into the `proposal` choice.\n- The catalog (list price, cost price, margin floor, volume threshold /\npercent, approval threshold, currency), the coupon table and the promotion\nwindows are a fixed fixture; the harness resolves them and hands the DSL one\nanswer per check.\n- The engine's adjustment list (its MODIFY reasons) becomes one `adjustment`\nquestion with one answer per reason, so each keeps its own label without\neight separate questions; when several apply the engine still returns MODIFY\nand the ladder emits the first in the engine's own append order.\nEmitted labels: reject_proposal, reject_duplicate, reject_segment,\nreject_approval_infeasible, modify_promotion_fallback, modify_volume_fallback,\nmodify_coupon_disallowed, modify_promotion_window, modify_stacking_coupon,\nmodify_stacking_list, modify_margin_floor, modify_approval_cap, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {sku, segment, discount_intent} object with valid enums, a valid request id and no authority or side-effect keys?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed pricing intent",
+            "malformed": "parse error, missing/extra field, bad enum, bad request id or forbidden key"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "duplicate": {
+          "type": "choice",
+          "instructions": "Is the request_id unseen by this guard?",
+          "criteria": {
+            "fresh": "request_id is new",
+            "duplicate": "request_id already evaluated"
+          },
+          "heuristic": {
+            "answer_field": "ev_duplicate"
+          }
+        },
+        "segment": {
+          "type": "choice",
+          "instructions": "Is the proposal segment eligible for this SKU?",
+          "criteria": {
+            "eligible": "segment is allowed",
+            "not_eligible": "segment is not allowed"
+          },
+          "heuristic": {
+            "answer_field": "ev_segment"
+          }
+        },
+        "feasibility": {
+          "type": "choice",
+          "instructions": "When an approval-threshold cap applies, can the capped price still respect the margin floor?",
+          "criteria": {
+            "ok": "no cap needed, or the capped price clears the floor",
+            "infeasible": "the capped price would break the margin floor"
+          },
+          "heuristic": {
+            "answer_field": "ev_feasibility"
+          }
+        },
+        "adjustment": {
+          "type": "choice",
+          "instructions": "Did local policy leave the exact price unchanged, or which single adjustment did it apply?",
+          "criteria": {
+            "ok": "no adjustment, exact requested price approved",
+            "promotion_fallback": "promotion window/segment missed, fell back to list",
+            "volume_fallback": "volume threshold not reached, fell back to list",
+            "coupon_disallowed": "coupon not allowed for this SKU, fell back to list",
+            "promotion_window": "promotion+coupon stack missed, promotion window fallback",
+            "stacking_coupon": "stacking disallowed, fell back to the coupon",
+            "stacking_list": "stacking disallowed and no coupon, fell back to list",
+            "margin_floor": "computed price raised to the margin floor",
+            "approval_cap": "price capped at the approval threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_adjustment"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "duplicate",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate"
+          },
+          {
+            "when": {
+              "question": "segment",
+              "answer": "not_eligible"
+            },
+            "label": "reject_segment"
+          },
+          {
+            "when": {
+              "question": "feasibility",
+              "answer": "infeasible"
+            },
+            "label": "reject_approval_infeasible"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "promotion_fallback"
+            },
+            "label": "modify_promotion_fallback"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "volume_fallback"
+            },
+            "label": "modify_volume_fallback"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "coupon_disallowed"
+            },
+            "label": "modify_coupon_disallowed"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "promotion_window"
+            },
+            "label": "modify_promotion_window"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "stacking_coupon"
+            },
+            "label": "modify_stacking_coupon"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "stacking_list"
+            },
+            "label": "modify_stacking_list"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "margin_floor"
+            },
+            "label": "modify_margin_floor"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "approval_cap"
+            },
+            "label": "modify_approval_cap"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

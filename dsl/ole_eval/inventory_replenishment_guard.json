@@ -1,0 +1,219 @@
+{
+  "name": "inventory_replenishment_guard",
+  "_bdd": {
+    "feature": "inventory_replenishment_guard",
+    "feature_path": "bdd/workflows/ole_eval/inventory_replenishment_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed inventory replenishment as a single triage node. The\nmodel proposes only a typed intent (sku, demand_scenario, service_level,\nintent); this workflow owns the demand forecast, the reorder point, the\npack-size / minimum-order and budget constraints and the exact order\nquantity. It never places an order. Port of\ncode/qwen_vm/app_scenarios/inventory_replenishment_guard.\nSibling of pricing_discount_guard: the engine also returns APPROVE / MODIFY /\nREJECT — exact reorder approved, local model modified the reorder, or the\nrequest is refused.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (raw shape, sku / demand_scenario / service_level /\nintent enums, duplicate-key and non-finite-number scan) fold into the\n`proposal` choice.\n- The item catalog (costs, pack sizes, minimum order quantity, lead times,\ndemand samples, reorder points per scenario/level) and the budget are a fixed\nfixture; the harness runs the deterministic forecast + candidate selection\nand hands the DSL one answer per check.\n- The engine's adjustment list (its MODIFY reasons) becomes one `adjustment`\nquestion with one answer per reason; the dynamic `capped_by_<breach>`\nadjustment folds into a single `capped_by_constraint` answer, since the\ndecision is MODIFY whichever breach it was.\nEmitted labels: reject_proposal, reject_unknown_sku, reject_duplicate,\nreject_no_reorder_needed, approve_no_order_needed, reject_infeasible,\nreject_no_quantity, modify_intent_raised, modify_service_fallback,\nmodify_rounded_to_pack, modify_min_order_qty, modify_capped_by_constraint,\napprove.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {sku, demand_scenario, service_level, intent} object with valid enums and no duplicate keys or non-finite numbers?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed replenishment intent",
+            "malformed": "parse error, missing/extra field, bad enum or duplicate key"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "sku": {
+          "type": "choice",
+          "instructions": "Is the sku present in the fixed catalog?",
+          "criteria": {
+            "known": "sku resolved",
+            "unknown": "no such sku"
+          },
+          "heuristic": {
+            "answer_field": "ev_sku"
+          }
+        },
+        "duplicate": {
+          "type": "choice",
+          "instructions": "Is this (sku, demand_scenario, service_level, intent) proposal unseen?",
+          "criteria": {
+            "fresh": "identical proposal is new",
+            "duplicate": "identical proposal already seen"
+          },
+          "heuristic": {
+            "answer_field": "ev_duplicate"
+          }
+        },
+        "need": {
+          "type": "choice",
+          "instructions": "For a reorder intent, is the inventory position below the reorder point?",
+          "criteria": {
+            "needed": "reorder is warranted",
+            "no_reorder_needed": "position is already at/above the reorder point"
+          },
+          "heuristic": {
+            "answer_field": "ev_need"
+          }
+        },
+        "no_order": {
+          "type": "choice",
+          "instructions": "For a hold/review intent, is the inventory position at/above the reorder point (so no order is placed)?",
+          "criteria": {
+            "ok": "not a no-order case",
+            "no_order_needed": "hold/review with position at/above the point"
+          },
+          "heuristic": {
+            "answer_field": "ev_no_order"
+          }
+        },
+        "feasibility": {
+          "type": "choice",
+          "instructions": "Does budget / pack / lead-time policy admit a positive order after capping?",
+          "criteria": {
+            "ok": "the capped candidate is feasible",
+            "infeasible": "constraints make the order infeasible"
+          },
+          "heuristic": {
+            "answer_field": "ev_feasibility"
+          }
+        },
+        "quantity": {
+          "type": "choice",
+          "instructions": "Is the chosen order quantity strictly positive?",
+          "criteria": {
+            "ok": "quantity > 0",
+            "none": "quantity <= 0"
+          },
+          "heuristic": {
+            "answer_field": "ev_quantity"
+          }
+        },
+        "adjustment": {
+          "type": "choice",
+          "instructions": "Did local policy leave the exact reorder unchanged, or which single adjustment did it apply?",
+          "criteria": {
+            "ok": "no adjustment, exact reorder approved",
+            "intent_raised": "intent raised to reorder",
+            "service_fallback": "service level lowered for feasibility",
+            "rounded_to_pack": "quantity rounded up to the pack size",
+            "min_order_qty": "minimum order quantity enforced",
+            "capped_by_constraint": "quantity capped by a hard constraint (budget/pack/lead)"
+          },
+          "heuristic": {
+            "answer_field": "ev_adjustment"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "sku",
+              "answer": "unknown"
+            },
+            "label": "reject_unknown_sku"
+          },
+          {
+            "when": {
+              "question": "duplicate",
+              "answer": "duplicate"
+            },
+            "label": "reject_duplicate"
+          },
+          {
+            "when": {
+              "question": "need",
+              "answer": "no_reorder_needed"
+            },
+            "label": "reject_no_reorder_needed"
+          },
+          {
+            "when": {
+              "question": "no_order",
+              "answer": "no_order_needed"
+            },
+            "label": "approve_no_order_needed"
+          },
+          {
+            "when": {
+              "question": "feasibility",
+              "answer": "infeasible"
+            },
+            "label": "reject_infeasible"
+          },
+          {
+            "when": {
+              "question": "quantity",
+              "answer": "none"
+            },
+            "label": "reject_no_quantity"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "intent_raised"
+            },
+            "label": "modify_intent_raised"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "service_fallback"
+            },
+            "label": "modify_service_fallback"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "rounded_to_pack"
+            },
+            "label": "modify_rounded_to_pack"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "min_order_qty"
+            },
+            "label": "modify_min_order_qty"
+          },
+          {
+            "when": {
+              "question": "adjustment",
+              "answer": "capped_by_constraint"
+            },
+            "label": "modify_capped_by_constraint"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

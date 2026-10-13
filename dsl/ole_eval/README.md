@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 38 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 42 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -49,6 +49,10 @@
 | `shipping_route_guard.json` | `shipping_route_guard/` | 运输路线闸门单节点判定：模型只提 typed route preference（request_id / shipment_id / preference_intent / preferred_mode），物流图求解（容量 / 温度 / 危险品 / 单据 / 模式约束）折叠成 choice、成本 vs 上限，由本地有序 rules 裁决 → `reject_proposal` / `reject_no_route` / `reject_over_cost` / `approve` |
 | `credential_issuance_guard.json` | `credential_issuance_guard/` | 凭据签发闸门单节点判定：模型只提 typed request（request_id / subject_id / credential_kind / operation / requested_audience / device_binding_requested），subject/policy 解析 + proofing·assurance·MFA·device·risk·revocation·rotation 检查，引擎三值 **ISSUE / MODIFY / REJECT** → `reject_*`（proposal / duplicate / unknown_subject / unknown_kind / subject_type / audience / ial / proofing / mfa / phishing / trusted_device / device_binding / risk / subject_inactive / credential_inactive / rotation_early）/ `modify_*`（rotation_required / device_binding_required / risk_lifetime / risk_scope / step_up）/ `issue` |
 | `refactor_plan_guard.json` | `refactor_plan_guard/` | 重构计划闸门单节点判定：模型只提 typed plan（request_id / intent{operation,target_module,objective} / steps[{step_id,action,source_module,target_module,test_ids,requires}] / rollback / proposed_risk），operation scope + step DAG + per-action payload·scope + 原子性 checkpoint + rollback + 行为等价测试 + risk 对齐，由本地有序 rules 裁决 → `reject_*`（proposal / duplicate / unknown_operation / intent_target / intent_objective / duplicate_step_id / dependency_cycle / unknown_dependency / missing_action / checkpoint_payload / create_payload / module_scope / move_payload / move_scope / update_payload / dependency_boundary / update_source / update_target / test_payload / step_order / checkpoint_count / rollback_strategy / rollback_checkpoint / checkpoint_order / behavior_equivalence）/ `modify_*`（optional_tests / risk_upgraded / risk_downgraded）/ `approve` |
+| `data_retention_expiry_guard.json` | `data_retention_expiry_guard/` | 单节点 `threshold` 图 + 有序判定阶梯 | 6/6 | 模型只提 typed plan（request_id/data_records[{record_id,category,created_at,retention_days}]/retention_policy{max_retention_days,requires_approval_categories}）；retention_days 超 max → REJECT、未过期且需审批类目 → ESCALATE（优先于 REJECT）、过期仅报告不阻断 → `reject_proposal`/`reject_over_retention`/`escalate_approval`/`approve` |
+| `subscription_churn_retention_guard.json` | `subscription_churn_retention_guard/` | 单节点 `threshold` 图 + 有序判定阶梯 | 9/9 | 模型只提 typed offer（request_id/customer_id/churn_risk_score/retention_offer{discount_pct,duration_months,tier}）；低风险<0.3 且折扣>20% → ESCALATE **优先于** 违规 REJECT；折扣·时长超客户档位上限 / 档位越级 → REJECT → `reject_proposal`/`escalate_low_risk_high_discount`/`reject_discount`/`reject_duration`/`reject_tier_upgrade`/`approve` |
+| `pricing_discount_guard.json` | `pricing_discount_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 17/17 | 模型只提 typed intent（sku/segment/discount_intent）；catalog 查找 / segment 准入 / 促销窗口 / 量级 / 优惠券 / 叠加 / 毛利底线 / 审批阈值由本地引擎算精确价 → 重复·segment 不合格·审批封顶破毛利底线 = REJECT，8 类 adjustment = MODIFY（一个 `adjustment` 问题承载），否则 APPROVE |
+| `inventory_replenishment_guard.json` | `inventory_replenishment_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 19/19 | 模型只提 typed intent（sku/demand_scenario/service_level/intent）；需求预测 / 再订点 / pack·最小起订量 / 预算约束由本地引擎算精确补货量 → 未知 sku·重复·reorder 未达再订点·不可行·非正量 = REJECT，hold/review 已在点之上 = APPROVE（不下单），5 类 adjustment = MODIFY（动态 capped_by 折成单 label）|
 ## 映射方式
 
 原始 Python 里的**确定性表格查找**（taxonomy 基础严重度、audience 最小年龄、
@@ -79,14 +83,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 38 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 42 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 38 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 42 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
