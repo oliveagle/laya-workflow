@@ -1,0 +1,151 @@
+{
+  "name": "dns_record_validator",
+  "_bdd": {
+    "feature": "dns_record_validator",
+    "feature_path": "bdd/workflows/ole_eval/dns_record_validator.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed DNS record changes as a single triage node. The model\nproposes one typed DNS change (request_id + action add/modify/delete + a\nnon-empty records list of {type, name, value, ttl?}); this workflow owns schema\nvalidation, the record-count cap, blocked record types, blocked domains, the\nttl minimum and the approval escalation. Port of\ncode/qwen_vm/app_scenarios/dns_record_validator.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, request_id grammar, valid record type\nenum, non-empty name/value, non-negative ttl, dangerous-token rejection) fold\ninto the `proposal` choice.\n- The local policy table (max_records, blocked_types, blocked_domains, min_ttl,\nrequire_approval) is a fixed fixture; each deterministic check against it\nfolds into one verdict choice.\nEmitted labels: reject_proposal, reject_too_many_records, reject_blocked_type,\nreject_blocked_domain, reject_ttl_below_min, escalate_approval, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "approval",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, action:add|modify|delete, records:[{type, name, value, ttl?}]} object (request_id grammar, valid type enum, non-empty name/value, non-negative integer ttl, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid DNS change",
+            "malformed": "parse error, missing field, bad request_id, invalid type, bad ttl or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "record_count": {
+          "type": "choice",
+          "instructions": "Is the number of records within the policy max_records cap?",
+          "criteria": {
+            "ok": "record_count <= max_records",
+            "too_many": "record_count > max_records"
+          },
+          "heuristic": {
+            "answer_field": "ev_record_count"
+          }
+        },
+        "record_type": {
+          "type": "choice",
+          "instructions": "Is every record type outside the policy blocked_types set?",
+          "criteria": {
+            "ok": "no record uses a blocked type",
+            "blocked": "at least one record uses a blocked type"
+          },
+          "heuristic": {
+            "answer_field": "ev_record_type"
+          }
+        },
+        "domain": {
+          "type": "choice",
+          "instructions": "Is every record name outside the policy blocked_domains set?",
+          "criteria": {
+            "ok": "no record hits a blocked domain",
+            "blocked": "at least one record hits a blocked domain"
+          },
+          "heuristic": {
+            "answer_field": "ev_domain"
+          }
+        },
+        "ttl": {
+          "type": "choice",
+          "instructions": "Is every record ttl at or above the policy min_ttl?",
+          "criteria": {
+            "ok": "every ttl >= min_ttl",
+            "below_min": "at least one ttl < min_ttl"
+          },
+          "heuristic": {
+            "answer_field": "ev_ttl"
+          }
+        },
+        "approval": {
+          "type": "choice",
+          "instructions": "Does the local policy require human approval for this DNS change?",
+          "criteria": {
+            "not_required": "no approval flag set, proceed",
+            "required": "policy require_approval is true"
+          },
+          "heuristic": {
+            "answer_field": "ev_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "approval",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "record_count",
+              "answer": "too_many"
+            },
+            "label": "reject_too_many_records"
+          },
+          {
+            "when": {
+              "question": "record_type",
+              "answer": "blocked"
+            },
+            "label": "reject_blocked_type"
+          },
+          {
+            "when": {
+              "question": "domain",
+              "answer": "blocked"
+            },
+            "label": "reject_blocked_domain"
+          },
+          {
+            "when": {
+              "question": "ttl",
+              "answer": "below_min"
+            },
+            "label": "reject_ttl_below_min"
+          },
+          {
+            "when": {
+              "question": "approval",
+              "answer": "required"
+            },
+            "label": "escalate_approval"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

@@ -1388,5 +1388,48 @@
     "precedence_proposal_first": "reject_proposal",
     "precedence_replay_before_scope": "reject_replay",
     "precedence_quota_before_budget": "reject_monthly"
+  },
+  "cache_policy_enforcer": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_routes": "reject_too_many_routes",
+    "blocked_pattern": "reject_blocked_pattern",
+    "max_age_over": "reject_max_age",
+    "escalate_approval": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_proposal_first": "reject_proposal",
+    "precedence_count_before_pattern": "reject_too_many_routes"
+  },
+  "log_redaction_guard": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_rules": "reject_too_many_rules",
+    "blocked_action": "reject_blocked_action",
+    "missing_required": "reject_missing_required",
+    "escalate_approval": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_proposal_first": "reject_proposal",
+    "precedence_count_before_action": "reject_too_many_rules"
+  },
+  "dns_record_validator": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_records": "reject_too_many_records",
+    "blocked_type": "reject_blocked_type",
+    "blocked_domain": "reject_blocked_domain",
+    "ttl_below_min": "reject_ttl_below_min",
+    "escalate_approval": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_proposal_first": "reject_proposal",
+    "precedence_count_before_type": "reject_too_many_records"
+  },
+  "session_token_validator": {
+    "proposal_malformed": "reject_proposal",
+    "approve_revoke": "approve_revoke",
+    "reject_expiry": "reject_expiry",
+    "reject_scope_count": "reject_scope_count",
+    "reject_blocked_scope": "reject_blocked_scope",
+    "reject_metadata": "reject_metadata",
+    "escalate_approval": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_proposal_first": "reject_proposal",
+    "precedence_revoke_before_expiry": "approve_revoke"
   }
 }

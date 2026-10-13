@@ -1666,5 +1666,287 @@
       "ev_quota": "monthly",
       "ev_budget": "over"
     }
+  },
+  "cache_policy_enforcer": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_route_count": "ok",
+      "ev_pattern": "ok",
+      "ev_max_age": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_routes": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "too_many",
+      "ev_pattern": "ok",
+      "ev_max_age": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_pattern": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "ok",
+      "ev_pattern": "blocked",
+      "ev_max_age": "ok",
+      "ev_approval": "not_required"
+    },
+    "max_age_over": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "ok",
+      "ev_pattern": "ok",
+      "ev_max_age": "over",
+      "ev_approval": "not_required"
+    },
+    "escalate_approval": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "ok",
+      "ev_pattern": "ok",
+      "ev_max_age": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "ok",
+      "ev_pattern": "ok",
+      "ev_max_age": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_route_count": "too_many",
+      "ev_pattern": "blocked",
+      "ev_max_age": "over",
+      "ev_approval": "required"
+    },
+    "precedence_count_before_pattern": {
+      "ev_proposal": "accepted",
+      "ev_route_count": "too_many",
+      "ev_pattern": "blocked",
+      "ev_max_age": "over",
+      "ev_approval": "required"
+    }
+  },
+  "log_redaction_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_rule_count": "ok",
+      "ev_action": "ok",
+      "ev_required": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_rules": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "too_many",
+      "ev_action": "ok",
+      "ev_required": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_action": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "ok",
+      "ev_action": "blocked",
+      "ev_required": "ok",
+      "ev_approval": "not_required"
+    },
+    "missing_required": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "ok",
+      "ev_action": "ok",
+      "ev_required": "missing",
+      "ev_approval": "not_required"
+    },
+    "escalate_approval": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "ok",
+      "ev_action": "ok",
+      "ev_required": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "ok",
+      "ev_action": "ok",
+      "ev_required": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_rule_count": "too_many",
+      "ev_action": "blocked",
+      "ev_required": "missing",
+      "ev_approval": "required"
+    },
+    "precedence_count_before_action": {
+      "ev_proposal": "accepted",
+      "ev_rule_count": "too_many",
+      "ev_action": "blocked",
+      "ev_required": "missing",
+      "ev_approval": "required"
+    }
+  },
+  "dns_record_validator": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_record_count": "ok",
+      "ev_record_type": "ok",
+      "ev_domain": "ok",
+      "ev_ttl": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_records": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "too_many",
+      "ev_record_type": "ok",
+      "ev_domain": "ok",
+      "ev_ttl": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_type": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "ok",
+      "ev_record_type": "blocked",
+      "ev_domain": "ok",
+      "ev_ttl": "ok",
+      "ev_approval": "not_required"
+    },
+    "blocked_domain": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "ok",
+      "ev_record_type": "ok",
+      "ev_domain": "blocked",
+      "ev_ttl": "ok",
+      "ev_approval": "not_required"
+    },
+    "ttl_below_min": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "ok",
+      "ev_record_type": "ok",
+      "ev_domain": "ok",
+      "ev_ttl": "below_min",
+      "ev_approval": "not_required"
+    },
+    "escalate_approval": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "ok",
+      "ev_record_type": "ok",
+      "ev_domain": "ok",
+      "ev_ttl": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "ok",
+      "ev_record_type": "ok",
+      "ev_domain": "ok",
+      "ev_ttl": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_record_count": "too_many",
+      "ev_record_type": "blocked",
+      "ev_domain": "blocked",
+      "ev_ttl": "below_min",
+      "ev_approval": "required"
+    },
+    "precedence_count_before_type": {
+      "ev_proposal": "accepted",
+      "ev_record_count": "too_many",
+      "ev_record_type": "blocked",
+      "ev_domain": "blocked",
+      "ev_ttl": "below_min",
+      "ev_approval": "required"
+    }
+  },
+  "session_token_validator": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "approve_revoke": {
+      "ev_proposal": "accepted",
+      "ev_action": "revoke",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "reject_expiry": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "over",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "reject_scope_count": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "too_many",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "reject_blocked_scope": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "blocked",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "reject_metadata": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "unsafe",
+      "ev_approval": "not_required"
+    },
+    "escalate_approval": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_action": "create",
+      "ev_expiry": "ok",
+      "ev_scope_count": "ok",
+      "ev_scope": "ok",
+      "ev_metadata": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_action": "revoke",
+      "ev_expiry": "over",
+      "ev_scope_count": "too_many",
+      "ev_scope": "blocked",
+      "ev_metadata": "unsafe",
+      "ev_approval": "required"
+    },
+    "precedence_revoke_before_expiry": {
+      "ev_proposal": "accepted",
+      "ev_action": "revoke",
+      "ev_expiry": "over",
+      "ev_scope_count": "too_many",
+      "ev_scope": "blocked",
+      "ev_metadata": "unsafe",
+      "ev_approval": "required"
+    }
   }
 }

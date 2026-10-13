@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 13 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 17 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -23,6 +23,10 @@
 | `loan_dialogue.json` | `loan_dialogue/` | 贷款申请 slot-filling 对话 DFA（5 节点）+ 承保：**awaiting_income → awaiting_debt → awaiting_amount → awaiting_term → complete**；模型只提 typed facts（annual_income/monthly_debt/loan_amount/term_months），每轮须恰好填期望槽位（skip-step/多字段/越界/非法值/完成后重复均本地拒绝）；Decimal 摊销与 DTI>43.00 / payment-to-income>28.00 阈值折算进终态 `outcome` → `APPROVE`/`REJECT`（+ `reject_duplicate`/`reject_value`/`reject_skip`）|
 | `sla_checker.json` | `sla_checker/` | 确定性 UTC SLA 评估单节点判定：模型只提 typed facts（`proposal` 解析态 / `rule` schema 态 / `event` schema 态 / `sla` 总体态 / `severity` 超限比档），schema 校验（rule_id / `P1..P99` / `response<=resolution` / 窗口不重叠 / 六键事件 / 仅 UTC `Z` 时间戳 / 时间戳先后）、冲突、重复（rule registry / event ledger）、SLO 状态与严重度全部由本地有序 rules 裁决 → `reject_proposal` / `reject_rule` / `reject_rule_conflict` / `reject_duplicate_rule` / `reject_event` / `reject_duplicate_event` / `breach_critical` / `breach_high` / `breach_medium` / `breach_low` / `met` / `pending`；UTC 业务窗口分钟累计由本地算出（仅以 `sla`/`severity` 呈现），JSON 解析细节折进 `proposal` choice |
 | `api_quota_guard.json` | `api_quota_guard/` | API 配额闸门单节点判定：模型只提 typed request intent（`principal` / `endpoint` / `requested_units` / `context_intent`），schema 校验（枚举字段 / units∈[1,1000] / 无重复 JSON key / 禁 authority·side-effect 字段）、request-id 重放台账、时钟单调性、scope 准入、per-endpoint 单请求上限、并发上限、令牌桶、日/月单位配额与花费预算全部由本地有序 rules 裁决 → `reject_proposal` / `reject_replay` / `reject_clock_regression` / `reject_scope` / `reject_units_above_max` / `throttle_concurrency` / `throttle_bucket` / `throttle_daily` / `reject_daily_no_retry` / `reject_monthly` / `reject_spend` / `allow`；令牌桶 refill 算术与 `retry_after_ms` 由本地算出（仅以 `bucket` = ok/insufficient 呈现），JSON 解析细节折进 `proposal` choice |
+| `cache_policy_enforcer.json` | `cache_policy_enforcer/` | HTTP 缓存策略闸门单节点判定：模型只提 typed cache-policy change（request_id + routes[{path_pattern,cache_control,max_age}]），schema 校验（request_id 语法 / 非空 routes / 逐项字段类型 / 危险 token / max_age 非负整数）、routes 数上限、blocked path patterns、max_age 上限、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_too_many_routes` / `reject_blocked_pattern` / `reject_max_age` / `escalate_approval` / `approve`；本地 policy 表（max_routes/max_age_limit/blocked_patterns/require_approval）为固定 fixture |
+| `log_redaction_guard.json` | `log_redaction_guard/` | 日志脱敏规则闸门单节点判定：模型只提 typed redaction change（request_id + rules[{field_pattern,action,replacement}]），schema 校验（action ∈ mask/hash/truncate/drop / 可编译 regex / 危险 token）、rules 数上限、blocked actions、policy-required patterns 缺失、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_too_many_rules` / `reject_blocked_action` / `reject_missing_required` / `escalate_approval` / `approve` |
+| `dns_record_validator.json` | `dns_record_validator/` | DNS 记录变更闸门单节点判定：模型只提 typed DNS change（request_id + action add/modify/delete + records[{type,name,value,ttl?}]），schema 校验（type 枚举 / 非空 name·value / 非负 ttl / 危险 token）、records 数上限、blocked types、blocked domains、ttl < min_ttl、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `reject_too_many_records` / `reject_blocked_type` / `reject_blocked_domain` / `reject_ttl_below_min` / `escalate_approval` / `approve` |
+| `session_token_validator.json` | `session_token_validator/` | 会话令牌闸门单节点判定：模型只提 typed token change（request_id + action + token_type + scopes + expiry_seconds + metadata），**revoke 无条件放行**置于有序阶梯首位，其后 expiry_seconds 上限、scopes 数上限、blocked scopes、危险 metadata、require_approval 由本地有序 rules 裁决 → `reject_proposal` / `approve_revoke` / `reject_expiry` / `reject_scope_count` / `reject_blocked_scope` / `reject_metadata` / `escalate_approval` / `approve` |
 
 ## 映射方式
 
@@ -54,14 +58,14 @@ rules 按数组顺序匹配，第一条命中的 label 生效 —— 顺序即�
 
 ## 离线覆盖
 
-`laya-workflow dsl smoke` 的 `STATES` 已为 13 个 spec 注册样本状态，每个决策 label
+`laya-workflow dsl smoke` 的 `STATES` 已为 17 个 spec 注册样本状态，每个决策 label
 至少一例（BLOCK / REVIEW / ALLOW、DENY / CHALLENGE、CLEAR、REJECT /
 ESCALATE / APPROVE、block / challenge / monitor / allow）。这些样本走
 `HeuristicBackend`（`src/backend.rs` 中每个 question id 有对应 handler），
 在不启模型、不连服务的条件下验证「有序 rules → 最终 label」整条链路。
 
 ```bash
-laya-workflow dsl smoke   # 13 个 ole_eval spec 全部样本输出预期 label
+laya-workflow dsl smoke   # 17 个 ole_eval spec 全部样本输出预期 label
 ```
 
 ## 运行
@@ -85,10 +89,10 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 ## 边界说明
 
 - DSL `Edge` 目前只按 `answer → node` 路由（无分支式数值条件），所以这些
-  单节点"判定 → 出结论"的策略（9 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
+  单节点"判定 → 出结论"的策略（13 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
   可把 `REVIEW` 语义拆成单独节点。
 - DSL action kinds 仅 `none` / `copy_keys` / `merge_open_probs` / `threshold`
-  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 9 个单节点 spec
+  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 13 个单节点 spec
   走纯 LLM 判定（阈值与优先级仍由 `threshold` action 的有序 rules 编码，
   数值由模型给出）。
 
