@@ -254,7 +254,7 @@ worked example: it drives the no-API fixture `bdd/fixtures/app.html` end to end
 The workflow vocabulary is only worth having if an agent can *author* a workflow
 from an intent quickly and correctly. That is a claim about a loop, so it has
 numbers, and `laya-workflow bdd score` recomputes them from the same gates the
-loop hits. The corpus is `bdd/bench/tasks/*.json` (13 tasks: 10 decision-graph `@decision` authoring tasks — `decision_support_ticket`, `decision_content_safety`, `decision_agent_probe`, `decision_pipeline_nested`, `decision_loop_refine`, `decision_noul_field_heuristic`, `decision_dialogue_state_machine`, `decision_memory_admission`, `decision_gate_action`, `decision_risk_control` — plus 3 browser-step tasks); each task carries an `intent`,
+loop hits. The corpus is `bench/bdd/tasks/*.json` (13 tasks: 10 decision-graph `@decision` authoring tasks — `decision_support_ticket`, `decision_content_safety`, `decision_agent_probe`, `decision_pipeline_nested`, `decision_loop_refine`, `decision_noul_field_heuristic`, `decision_dialogue_state_machine`, `decision_memory_admission`, `decision_gate_action`, `decision_risk_control` — plus 3 browser-step tasks); each task carries an `intent`,
 a reference `feature`, the outputs it promises, the phrasings an author would
 *want* to write, the phrasings that are not in the vocabulary, and the step whose
 removal should break an `@outputs` contract. It measures, per task and in total:
@@ -379,7 +379,7 @@ corpus is `bdd/workflows/browser/*.feature` — **29 workflows against 29 real, 
 websites**, each ≥20 steps, run with no fixture server and no probes
 (`laya-workflow bdd live`). It is **29 passed, 0 failed / 842 steps** on one
 headless Chrome. The full write-up — per-site table, the BDD-vs-JSON comparison
-and the friction the first run exposed — is `bdd/bench/live/REPORT.md（源已移至 `bdd/workflows/browser/`）`.
+and the friction the first run exposed — is `bench/bdd/live/REPORT.md（源已移至 `bdd/workflows/browser/`）`.
 
 ```bash
 laya-workflow bdd compare                # offline: volume + the authoring gate
@@ -786,7 +786,7 @@ included `bdd.navigate: with.url is required`, the shared
 `an earlier step must open a page first` guard, and the three `needs
 with.expected` variants.
 
-`bdd/args_probes.json` pins them, and `laya-workflow bdd args-probe-check` runs it:
+`bench/bdd/args_probes.json` pins them, and `laya-workflow bdd args-probe-check` runs it:
 
 ```
 $ laya-workflow bdd args-probe-check

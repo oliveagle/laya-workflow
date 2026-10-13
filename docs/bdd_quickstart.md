@@ -321,7 +321,7 @@ laya-workflow bdd score --run       # 再加真实 Chrome e2e（需要 CHROME_BI
 词汇表只在夹具上跑通说明不了什么。实战语料是 `bdd/workflows/browser/*.feature`——
 **29 个工作流打 29 个真实外部网站**，每个 ≥20 步，无夹具服务器、无 probe
 （`laya-workflow bdd live`）。一台 headless Chrome 串行跑：**29 passed, 0 failed / 842 steps**。
-完整报告（每站表格、BDD vs JSON 对比、首次跑暴露的坑）见 `bdd/bench/live/REPORT.md`（源文件已移至 `bdd/workflows/browser/`）。
+完整报告（每站表格、BDD vs JSON 对比、首次跑暴露的坑）见 `bench/bdd/live/REPORT.md`（源文件已移至 `bdd/workflows/browser/`）。
 
 ```bash
 laya-workflow bdd compare                # 离线：体积 + 造册门禁

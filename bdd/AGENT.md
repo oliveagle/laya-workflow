@@ -105,7 +105,7 @@ laya-workflow bdd run --profile production --base-url <real>
 
 ## 六、目录速查
 
-> **隔离原则**：BDD 源与 JSON 完全隔离在两个根目录——所有 `.feature` 源在 `bdd/workflows/<类别>/`（层级镜像 `dsl/`），所有 JSON 工件在 `dsl/<类别>/`。浏览器 feature 的侧车配置 `<name>.config.json` 也归入 json 树（`dsl/browser/`），因此 `bdd/` 内不再出现任何 `.json`，`dsl/` 内不再出现 `.feature`。BDD 是源、JSON 是编译产物（单向生成）。
+> **隔离原则**：BDD 源与 JSON 完全隔离在两个根目录——所有 `.feature` 源在 `bdd/workflows/<类别>/`（层级镜像 `dsl/`），所有 JSON 工件在 `dsl/` + `bench/`。浏览器 feature 的侧车配置 `<name>.config.json` 归入 json 树（`dsl/browser/`），authoring 造册/args 门禁等工具数据归入 `bench/bdd/`。因此 **`bdd/` 内 0 个 `.json`**（含 bench/args_probes），`dsl/` 内 0 个 `.feature`。BDD 是源、JSON 是编译产物（单向生成）。
 
 - `bdd/features/*.feature` — 正式场景（CI 门禁的 glob）
 - `bdd/features/setup/` — `include:` 拉入的步骤列表（无 Feature 头）
@@ -117,8 +117,8 @@ laya-workflow bdd run --profile production --base-url <real>
 - `laya-workflow bdd build` — 统一 accuracy gate + 多产物（本指南的核心命令）
 - `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）
 - `laya-workflow bdd build --assist` — needle 建议模块（只建议，不编译）
-- `bdd/bench/live/` — 实战语料已移至 `bdd/workflows/browser/`；此目录现仅存实战结果报告
-- `bdd/bench/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
+- `bench/bdd/` — bdd 工具链 JSON 数据（authoring 造册 `tasks/*.json`、实战结果 `live/`、`args_probes.json`）；`bdd/` 内无任何 `.json`
+- `bench/bdd/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
 - `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
 - `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
 

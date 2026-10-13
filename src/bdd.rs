@@ -4374,7 +4374,7 @@ pub fn check_args_probes() -> Result<i32> {
 fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     let root = repo_root();
     let plugin_path = root.join("plugins").join("bdd").join("main.rhai");
-    let table_path = root.join("bdd").join("args_probes.json");
+    let table_path = root.join("bench").join("bdd").join("args_probes.json");
     let table: Value = serde_json::from_str(
         &std::fs::read_to_string(&table_path)
             .with_context(|| format!("cannot read {}", table_path.display()))?,
@@ -4453,7 +4453,7 @@ fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     for stmt in &stmts {
         if !claimed.contains(stmt) {
             problems.push(format!(
-                "the plugin throws {stmt:?} and nothing in bdd/args_probes.json claims it - \
+                "the plugin throws {stmt:?} and nothing in bench/bdd/args_probes.json claims it - \
                  add a row, or an elsewhere entry saying why it is not pinned here. An \
                  unpinned error message is one nobody reads twice."
             ));
@@ -4535,7 +4535,7 @@ fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     Ok((0, Some(line)))
 }
 
-/// Build the spec the args gate runs for one row of bdd/args_probes.json.
+/// Build the spec the args gate runs for one row of bench/bdd/args_probes.json.
 fn build_args_spec(table: &Value, row: &Value) -> Value {
     let d = table.get("spec_defaults").cloned().unwrap_or_else(|| json!({}));
     let name = row.get("name").and_then(Value::as_str).unwrap_or("");
@@ -5588,7 +5588,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
 // *author* a workflow from an intent quickly and correctly. That is a claim
 // about a loop, so it needs numbers, and the numbers have to come from the same
 // gates the loop actually hits. This subcommand scores a corpus of authoring
-// tasks (`bdd/bench/tasks/*.json`) against exactly three things an author cares
+// tasks (`bench/bdd/tasks/*.json`) against exactly three things an author cares
 // about, all measured, none asserted:
 //
 //   * expressiveness — does the reference workflow compile, at 100% coverage?
@@ -5625,7 +5625,7 @@ pub struct ScoreOptions {
     pub run: bool,
     /// Write the metrics as JSON here.
     pub json: Option<String>,
-    /// Score only these task ids (default: every task under bdd/bench/tasks).
+    /// Score only these task ids (default: every task under bench/bdd/tasks).
     pub tasks: Vec<String>,
 }
 
@@ -5657,7 +5657,7 @@ struct TaskScore {
 
 pub fn score(o: &ScoreOptions) -> Result<i32> {
     let root = repo_root();
-    let tasks_dir = root.join("bdd").join("bench").join("tasks");
+    let tasks_dir = root.join("bench").join("bdd").join("tasks");
     if !tasks_dir.is_dir() {
         bail!("no authoring corpus at {} - nothing to score", tasks_dir.display());
     }

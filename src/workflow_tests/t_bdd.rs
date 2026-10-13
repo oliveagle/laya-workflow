@@ -1104,7 +1104,7 @@ Feature: transpile_demo
 /// turns this red instead of silently shrinking the proof surface.
 pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
     let root = bdd::repo_root();
-    let tasks_dir = root.join("bdd").join("bench").join("tasks");
+    let tasks_dir = root.join("bench").join("bdd").join("tasks");
     let mut files: Vec<_> = std::fs::read_dir(&tasks_dir)
         .unwrap()
         .flatten()
