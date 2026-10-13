@@ -221,10 +221,21 @@
   },
   "dialogue_policy": {
     "start": {
-      "text": "hi hello greet"
+      "i_greet": "greet",
+      "i_identify": "identify"
     },
     "escalation": {
-      "text": "escalate handoff human reason cannot verify"
+      "i_greet": "escalate"
+    },
+    "flow": {
+      "i_greet": "greet",
+      "i_identify": "authenticate",
+      "i_auth": "start_collection",
+      "i_coll": "request_confirm",
+      "i_confirm": "confirm"
+    },
+    "abort": {
+      "i_greet": "abort"
     }
   },
   "intrusion_signal_guard": {
@@ -1013,6 +1024,10 @@
     "select": {
       "text": "@billing contact",
       "snapshot": "value_key amount"
+    },
+    "pick": {
+      "text": "please reach me at billing@example.com for the invoice",
+      "selected_id": "candidate_0"
     }
   }
 }

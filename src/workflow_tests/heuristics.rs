@@ -479,6 +479,62 @@ pub fn test_accuracy(h: &mut Harness) {
     }
 }
 
+/// P41: spec-declared offline determinism — a question that declares
+/// `heuristic.answer_field` is answered from that state field *even when the
+/// question name also has a bespoke handler* (e.g. the shared dialogue-policy
+/// "intent"), and a dynamic-criteria (`criteria.from_state`) question accepts
+/// a state-supplied id that is not a literal criteria key. Together these let
+/// dialogue_policy and span_selection walk their whole graph offline.
+pub fn test_answer_field_authority(h: &mut Harness) {
+    {
+        use laya_workflow::backend::HeuristicBackend;
+        use laya_workflow::workflow::Decide;
+        let be = HeuristicBackend;
+
+        // A question that also has a *named* handler ("intent") still honours
+        // its declared `heuristic.answer_field`: the offline verdict comes from
+        // the state field, so a spec can drive a shared question name
+        // deterministically — this is what lets dialogue_policy walk its whole
+        // DFA offline.
+        let q_intent = json!({"intent": {"type": "choice", "instructions": "intent",
+            "criteria": {"greet": "g", "escalate": "e", "abort": "a"},
+            "heuristic": {"answer_field": "i_greet"}}});
+        let v_named = be.decide(&json!({"i_greet": "abort"}), &q_intent).unwrap();
+        h.eq(
+            "p41: answer_field wins over the named intent handler",
+            v_named.answer_value("intent").unwrap().as_str().unwrap_or(""),
+            "abort",
+        );
+
+        // Dynamic criteria (`criteria.from_state`): the real options are
+        // materialised at decide time, so a state-supplied id that is not a
+        // literal criteria key is a valid pick (span_selection offline pick).
+        let q_dyn = json!({"bc": {"type": "choice", "instructions": "pick",
+            "criteria": {"from_state": "candidates", "id_key": "id", "value_key": "value", "none": "nothing"},
+            "heuristic": {"answer_field": "selected_id"}}});
+        let v_dyn = be.decide(&json!({"selected_id": "candidate_0"}), &q_dyn).unwrap();
+        h.eq(
+            "p41: dynamic-criteria answer_field accepts a state-supplied id",
+            v_dyn.answer_value("bc").unwrap().as_str().unwrap_or(""),
+            "candidate_0",
+        );
+        let v_dyn_none = be.decide(&json!({}), &q_dyn).unwrap();
+        h.eq(
+            "p41: dynamic-criteria missing id fails closed to none",
+            v_dyn_none.answer_value("bc").unwrap().as_str().unwrap_or(""),
+            "none",
+        );
+
+        // The smoke gate treats a multi-node state with no expect entry as a
+        // hard failure — `missing_trace_pins(Null, n)` is non-empty — so smoke
+        // and the P38 regression test can never silently disagree.
+        h.check(
+            "p41: a multi-node state with no expect entry is rejected",
+            !laya_workflow::dsl_smoke::missing_trace_pins(&Value::Null, 2).is_empty(),
+        );
+    }
+}
+
 // keep `Decide` referenced for the trait-object import path
 #[allow(dead_code)]
 fn _assert_trait_object() {

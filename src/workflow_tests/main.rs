@@ -172,6 +172,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("heuristic-fixes", heuristics::test_heuristic_fixes),
         ("persist", persist::test_persistence),
         ("accuracy", heuristics::test_accuracy),
+        ("heuristic-answer-field", heuristics::test_answer_field_authority),
         ("update-version", update::test_update),
         ("update-install", update::test_extract_and_install),
     ]

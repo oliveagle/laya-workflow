@@ -10,6 +10,7 @@ Feature: dialogue_policy
       | greet  | open the conversation          |
       | escalate | hand off to a human            |
       | abort  | cancel the session             |
+    And the answer comes from the field "i_greet"
     When the answer "greet" goes to "identifying"
     And the answer "escalate" goes to "escalated"
     And the answer "abort" goes to "aborted"
@@ -25,6 +26,7 @@ Feature: dialogue_policy
       | authenticate | supply auth_method + mfa_code  |
       | escalate | hand off                       |
       | abort  | cancel                         |
+    And the answer comes from the field "i_identify"
     When the answer "identify" goes to "identifying"
     And the answer "authenticate" goes to "authenticated"
     And the answer "escalate" goes to "escalated"
@@ -38,6 +40,7 @@ Feature: dialogue_policy
       | start_collection | declare the operation          |
       | escalate | hand off                       |
       | abort  | cancel                         |
+    And the answer comes from the field "i_auth"
     When the answer "start_collection" goes to "collecting"
     And the answer "escalate" goes to "escalated"
     And the answer "abort" goes to "aborted"
@@ -51,6 +54,7 @@ Feature: dialogue_policy
       | request_confirm | all slots are present, ask to confirm |
       | escalate | hand off                       |
       | abort  | cancel                         |
+    And the answer comes from the field "i_coll"
     When the answer "provide_slot" goes to "collecting"
     And the answer "request_confirm" goes to "confirm"
     And the answer "escalate" goes to "escalated"
@@ -64,6 +68,7 @@ Feature: dialogue_policy
       | confirm | execute the transfer once      |
       | escalate | hand off                       |
       | abort  | cancel                         |
+    And the answer comes from the field "i_confirm"
     When the answer "confirm" goes to "done"
     And the answer "escalate" goes to "escalated"
     And the answer "abort" goes to "aborted"

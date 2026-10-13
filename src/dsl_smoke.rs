@@ -500,33 +500,40 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             // compare against EXPECT: a string value pins the label (or
             // gate_action); an object value pins decision outputs by dotted
             // path (e.g. {"result.route": "billing"}).
-            if let Some(expect_map) = expect.get(&stem).and_then(Value::as_object) {
-                if let Some(want) = expect_map.get(label) {
-                    for msg in check_expect(&out, want) {
-                        fails += 1;
-                        eprintln!("       [FAIL] {label}: {msg}");
-                    }
-                    // P31/P38 structural half of the decision-trace gate: a
-                    // state that walks more than one node must pin its entire
-                    // route — node + action + answer at every step, plus
-                    // trace.step_count (see `missing_trace_pins`). A final label
-                    // alone, or a first-hop-only pin, would let an authored
-                    // feature route through wrong intermediate nodes / actions /
-                    // answers and still pass — this turns "runs to the right
-                    // answer" into "takes the right path on the right evidence".
-                    // Runs in check.sh via dsl smoke, and applies to
-                    // bdd score --run's decision e2e (shared table).
-                    if steps.len() > 1 {
-                        let missing = missing_trace_pins(want, steps.len());
-                        if !missing.is_empty() {
-                            fails += 1;
-                            eprintln!(
-                                "       [FAIL] {label}: walks {} nodes but expect pins an incomplete trace path — missing {} (pin node/action/answer for every step + trace.step_count)",
-                                steps.len(),
-                                missing.join(", ")
-                            );
-                        }
-                    }
+            let want = expect
+                .get(&stem)
+                .and_then(Value::as_object)
+                .and_then(|m| m.get(label))
+                .cloned();
+            if let Some(want) = &want {
+                for msg in check_expect(&out, want) {
+                    fails += 1;
+                    eprintln!("       [FAIL] {label}: {msg}");
+                }
+            }
+            // P31/P38 structural half of the decision-trace gate: a state that
+            // walks more than one node must pin its entire route — node +
+            // action + answer at every step, plus trace.step_count (see
+            // `missing_trace_pins`). A final label alone, or a first-hop-only
+            // pin, would let an authored feature route through wrong
+            // intermediate nodes / actions / answers and still pass — this
+            // turns "runs to the right answer" into "takes the right path on
+            // the right evidence". Runs in check.sh via dsl smoke, and applies
+            // to bdd score --run's decision e2e (shared table). A multi-node
+            // state with **no** expect entry at all is a hard failure here too
+            // — `missing_trace_pins(Null, n)` returns every key — so the smoke
+            // gate and the P38 regression test can never silently disagree
+            // (a state whose expect entry is missing used to be skipped).
+            if steps.len() > 1 {
+                let want_v = want.unwrap_or(Value::Null);
+                let missing = missing_trace_pins(&want_v, steps.len());
+                if !missing.is_empty() {
+                    fails += 1;
+                    eprintln!(
+                        "       [FAIL] {label}: walks {} nodes but expect pins an incomplete trace path — missing {} (pin node/action/answer for every step + trace.step_count)",
+                        steps.len(),
+                        missing.join(", ")
+                    );
                 }
             }
         }

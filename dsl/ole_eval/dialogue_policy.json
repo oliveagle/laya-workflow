@@ -15,7 +15,8 @@
             "greet": "open the conversation",
             "escalate": "hand off to a human",
             "abort": "cancel the session"
-          }
+          },
+          "heuristic": { "answer_field": "i_greet" }
         }
       },
       "edge": {
@@ -37,7 +38,8 @@
             "authenticate": "supply auth_method + mfa_code",
             "escalate": "hand off",
             "abort": "cancel"
-          }
+          },
+          "heuristic": { "answer_field": "i_identify" }
         }
       },
       "edge": {
@@ -62,7 +64,8 @@
             "start_collection": "declare the operation",
             "escalate": "hand off",
             "abort": "cancel"
-          }
+          },
+          "heuristic": { "answer_field": "i_auth" }
         }
       },
       "edge": {
@@ -87,7 +90,8 @@
             "request_confirm": "all slots are present, ask to confirm",
             "escalate": "hand off",
             "abort": "cancel"
-          }
+          },
+          "heuristic": { "answer_field": "i_coll" }
         }
       },
       "edge": {
@@ -112,7 +116,8 @@
             "confirm": "execute the transfer once",
             "escalate": "hand off",
             "abort": "cancel"
-          }
+          },
+          "heuristic": { "answer_field": "i_confirm" }
         }
       },
       "edge": {

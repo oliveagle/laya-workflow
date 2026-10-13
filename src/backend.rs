@@ -239,6 +239,53 @@ impl Decide for HeuristicBackend {
                 .and_then(|v| v.as_str())
                 .unwrap_or("choice");
             let (answer, probabilities, confidence) = match qid.as_str() {
+                // Spec-declared offline determinism — evaluated FIRST, before any
+                // named handler: a question whose definition carries
+                // `heuristic.answer_field` is answered straight from that state
+                // field, so a spec can drive a *shared* question name (e.g. the
+                // dialogue-policy "intent") deterministically without any Rust
+                // change. The state carries a previously-computed answer id (e.g.
+                // a `selected_id` / `intent` field populated by a prior action or
+                // a state_fn). Fail closed: an unknown id or a missing field stays
+                // "none" with low confidence rather than silently picking the first
+                // candidate.
+                _ if qdef.get("heuristic").and_then(|h| h.get("answer_field")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let field = h.get("answer_field").and_then(|v| v.as_str()).unwrap_or("");
+                    let chosen = state.get(field).and_then(|v| v.as_str()).unwrap_or("none");
+                    let keys: Vec<String> = qdef
+                        .get("criteria")
+                        .and_then(|c| c.as_object())
+                        .map(|o| o.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let known = keys.iter().any(|k| k == chosen);
+                    // Dynamic-criteria questions (`criteria.from_state`) list their
+                    // real options at decide time from a state list (e.g. candidate
+                    // ids), so the literal criteria keys are only placeholders. Trust
+                    // any non-`none` id the state supplies — that is the offline analog
+                    // of "the model picked one of the materialised candidates".
+                    let dynamic = qdef
+                        .get("criteria")
+                        .and_then(|c| c.as_object())
+                        .map(|o| o.contains_key("from_state"))
+                        .unwrap_or(false);
+                    if known || (dynamic && chosen != "none") {
+                        let mut m = Map::new();
+                        for k in &keys {
+                            m.insert(k.clone(), serde_json::json!(if k == chosen { 0.92 } else { 0.02 }));
+                        }
+                        m.insert(chosen.to_string(), serde_json::json!(0.92));
+                        (serde_json::json!(chosen), m, 0.92)
+                    } else {
+                        // Not a valid option — fall back to `none` at low
+                        // confidence so the threshold's review branch fires.
+                        let mut m = Map::new();
+                        for k in &keys {
+                            m.insert(k.clone(), serde_json::json!(if k == "none" { 0.55 } else { 0.2 }));
+                        }
+                        (serde_json::json!("none"), m, 0.55)
+                    }
+                }
                 "is_destructive" => {
                     let p = if contains_any(
                         &text,
@@ -701,40 +748,6 @@ impl Decide for HeuristicBackend {
                 // evaluates them uniformly. Longest-first substring match on the
                 // serialised state, case-insensitive (same helper as the named
                 // handlers above).
-                // span-selection / pre-parsed value extraction: the state
-                // carries a previously-computed answer id (e.g. from a
-                // `selected_id` field populated by a state_fn or a prior
-                // action). The heuristic backend trusts that field, giving a
-                // deterministic offline verdict so the routing graph can be
-                // exercised end-to-end without a live model. Fail closed: an
-                // unknown id or a missing field stays "none" with low
-                // confidence rather than silently picking the first candidate.
-                _ if qdef.get("heuristic").and_then(|h| h.get("answer_field")).is_some() => {
-                    let h = qdef.get("heuristic").unwrap();
-                    let field = h.get("answer_field").and_then(|v| v.as_str()).unwrap_or("");
-                    let chosen = state.get(field).and_then(|v| v.as_str()).unwrap_or("none");
-                    let keys: Vec<String> = qdef
-                        .get("criteria")
-                        .and_then(|c| c.as_object())
-                        .map(|o| o.keys().cloned().collect())
-                        .unwrap_or_default();
-                    let known = keys.iter().any(|k| k == chosen);
-                    if known {
-                        let mut m = Map::new();
-                        for k in &keys {
-                            m.insert(k.clone(), serde_json::json!(if k == chosen { 0.92 } else { 0.02 }));
-                        }
-                        (serde_json::json!(chosen), m, 0.92)
-                    } else {
-                        // Not a valid option — fall back to `none` at low
-                        // confidence so the threshold's review branch fires.
-                        let mut m = Map::new();
-                        for k in &keys {
-                            m.insert(k.clone(), serde_json::json!(if k == "none" { 0.55 } else { 0.2 }));
-                        }
-                        (serde_json::json!("none"), m, 0.55)
-                    }
-                }
                 // multi-class routing: `heuristic.match_rules` maps each
                 // choice option to a list of trigger tokens; the first option
                 // whose tokens appear in the field/text wins (option at p_hit,

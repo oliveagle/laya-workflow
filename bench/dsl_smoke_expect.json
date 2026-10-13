@@ -440,6 +440,38 @@
       "trace.steps.1.node": "escalated",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "noop"
+    },
+    "flow": {
+      "result.intent": "noop",
+      "trace.step_count": 6,
+      "trace.steps.0.node": "greeting",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "greet",
+      "trace.steps.1.node": "identifying",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "authenticate",
+      "trace.steps.2.node": "authenticated",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "start_collection",
+      "trace.steps.3.node": "collecting",
+      "trace.steps.3.action": "route",
+      "trace.steps.3.answer": "request_confirm",
+      "trace.steps.4.node": "confirm",
+      "trace.steps.4.action": "route",
+      "trace.steps.4.answer": "confirm",
+      "trace.steps.5.node": "done",
+      "trace.steps.5.action": "stop",
+      "trace.steps.5.answer": "noop"
+    },
+    "abort": {
+      "result.intent": "noop",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "greeting",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "abort",
+      "trace.steps.1.node": "aborted",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "noop"
     }
   },
   "exec_preflight_guard": {
@@ -756,6 +788,21 @@
       "trace.steps.1.action": "route",
       "trace.steps.1.answer": "none",
       "trace.steps.2.node": "not_found",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "A"
+    },
+    "pick": {
+      "result.capability": "pick_candidate",
+      "result.billing_contact": "candidate_0",
+      "result.selected.value": "billing@example.com",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "extract",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "B",
+      "trace.steps.1.node": "select",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "candidate_0",
+      "trace.steps.2.node": "pick",
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "A"
     }
