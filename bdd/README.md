@@ -426,6 +426,15 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
    64 offline-verified + 35 live-declared = 99.
 4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
+   Since P45 `validate` also refuses four shapes that used to compile but
+   silently mis-route (or never run) at runtime: an out-of-range
+   `min_confidence` (> 1 makes every route fail, so the node always escalates),
+   a non-positive `max_iterations` (0 runs the workflow zero times), and a
+   threshold ladder that is not total — no terminal catch-all (emits the literal
+   `"unmatched"`), a repeated `when` (first match wins), a catch-all that is not
+   last, or a rule with no `label`. The `validate-repo-specs-strict` regression
+   test asserts every checked-in `dsl/**/*.json` still parses under the stricter
+   rules, so the new checks cannot false-positive on the corpus.
 
 The **bdd/json separation invariant** rides along in gate 2: `bdd/` and `dsl/` are
 two fully separate, hierarchical trees — no `.json` anywhere under `bdd/`, no

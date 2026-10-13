@@ -4,7 +4,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub struct DslSmokeOptions {

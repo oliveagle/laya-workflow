@@ -496,3 +496,206 @@ pub fn test_validate_call_chain_capability(h: &mut Harness) {
     });
     h.check("validate: declared call capabilities parse (no false positive)", spec::from_spec(&ok).is_ok());
 }
+
+/// Regression (P45): `min_confidence` outside [0, 1] is meaningless. A value
+/// > 1 makes *every* route fail (the node always ESCALATEs) and < 0 is a typo;
+/// both silently misroute at runtime instead of failing up front.
+pub fn test_validate_min_conf_range(h: &mut Harness) {
+    let mk = |mc: Value| {
+        let mut spec = base_spec(
+            "a",
+            json!([node(
+                "a",
+                json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+                json!({"kind": "copy_keys", "keys": ["q"]})
+            )]),
+        );
+        spec["nodes"][0]["min_confidence"] = mc;
+        spec
+    };
+    let over = spec::from_spec(&mk(json!(2.5)));
+    h.check("validate: min_confidence > 1 rejected", over.is_err());
+    if let Err(e) = &over {
+        h.check(
+            "validate: min_confidence error names the field",
+            e.to_string().contains("min_confidence"),
+        );
+    }
+    h.check(
+        "validate: min_confidence < 0 rejected",
+        spec::from_spec(&mk(json!(-0.1))).is_err(),
+    );
+    h.check(
+        "validate: min_confidence in range parses (no false positive)",
+        spec::from_spec(&mk(json!(0.5))).is_ok(),
+    );
+}
+
+/// Regression (P45): `max_iterations` must be a positive integer — 0 (or a
+/// negative / non-integer value) runs the graph zero times or silently falls
+/// back to the default 50, so a spec that says it bounds the loop does not.
+pub fn test_validate_max_iterations(h: &mut Harness) {
+    let mk = |mi: Value| {
+        let mut spec = base_spec(
+            "a",
+            json!([node(
+                "a",
+                json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+                json!({"kind": "copy_keys", "keys": ["q"]})
+            )]),
+        );
+        spec["max_iterations"] = mi;
+        spec
+    };
+    let zero = spec::from_spec(&mk(json!(0)));
+    h.check("validate: max_iterations 0 rejected", zero.is_err());
+    if let Err(e) = &zero {
+        h.check(
+            "validate: max_iterations error names the field",
+            e.to_string().contains("max_iterations"),
+        );
+    }
+    h.check(
+        "validate: negative max_iterations rejected",
+        spec::from_spec(&mk(json!(-1))).is_err(),
+    );
+    h.check(
+        "validate: non-integer max_iterations rejected",
+        spec::from_spec(&mk(json!(2.5))).is_err(),
+    );
+    h.check(
+        "validate: positive max_iterations parses (no false positive)",
+        spec::from_spec(&mk(json!(7))).is_ok(),
+    );
+}
+
+/// A node with a score question and a threshold ladder built from `rules`.
+fn thr_node(rules: Value) -> Value {
+    base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"severity": {"type": "score", "instructions": "?", "criteria": ["minor", "degraded"]}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "threshold", "question": "severity", "rules": rules})
+        )]),
+    )
+}
+
+/// Regression (P45): a threshold ladder that does not end in an unconditional
+/// catch-all emits the literal label "unmatched" at runtime for scores no rule
+/// matches — a silent misroute rather than a decision.
+pub fn test_validate_threshold_not_exhaustive(h: &mut Harness) {
+    let r = spec::from_spec(&thr_node(json!([
+        {"when": {"value_gte": 1.5}, "label": "PAGE"},
+        {"when": {"value_lt": 1.5}, "label": "QUEUE"}
+    ])));
+    h.check("validate: non-exhaustive threshold ladder rejected", r.is_err());
+    if let Err(e) = &r {
+        h.check(
+            "validate: non-exhaustive error mentions unmatched",
+            e.to_string().contains("unmatched"),
+        );
+    }
+    // control: a ladder ending in a catch-all parses — no false positive.
+    h.check(
+        "validate: exhaustive threshold ladder parses (no false positive)",
+        spec::from_spec(&thr_node(json!([
+            {"when": {"value_gte": 1.5}, "label": "PAGE"},
+            {"when": {"always": true}, "label": "QUEUE"}
+        ])))
+        .is_ok(),
+    );
+}
+
+/// Regression (P45): a repeated `when` can never fire (first match wins), a
+/// catch-all that is not last makes the rules after it dead code, and a rule
+/// with no `label` emits the literal "unknown".
+pub fn test_validate_threshold_dead_rules(h: &mut Harness) {
+    let dup = spec::from_spec(&thr_node(json!([
+        {"when": {"value_gte": 1.5}, "label": "PAGE"},
+        {"when": {"value_gte": 1.5}, "label": "PAGE_AGAIN"},
+        {"when": {"always": true}, "label": "QUEUE"}
+    ])));
+    h.check("validate: duplicate threshold when rejected", dup.is_err());
+    if let Err(e) = &dup {
+        h.check(
+            "validate: duplicate when error says repeats",
+            e.to_string().contains("repeats"),
+        );
+    }
+    h.check(
+        "validate: catch-all before last rule rejected",
+        spec::from_spec(&thr_node(json!([
+            {"when": {"value_gte": 1.5}, "label": "PAGE"},
+            {"when": {"always": true}, "label": "QUEUE"},
+            {"when": {"value_lt": 1.5}, "label": "DEAD"}
+        ])))
+        .is_err(),
+    );
+    h.check(
+        "validate: threshold rule without label rejected",
+        spec::from_spec(&thr_node(json!([{"when": {"always": true}}]))).is_err(),
+    );
+}
+
+/// P45 invariant: every workflow spec checked into `dsl/` still parses under
+/// the stricter graph rules — the machine-checked form of the "zero false
+/// positives across all checked-in specs" claim.
+pub fn test_validate_repo_specs_strict(h: &mut Harness) {
+    // Same scratch env + fresh secret snapshot the CLI/dsl-smoke take, so specs
+    // that interpolate `${env.HOME}` / `${env.LAYA_STORE_DIR}` (policy
+    // allow_paths) parse instead of bailing on an unresolved reference.
+    if let Ok(env) = laya_workflow::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("dsl");
+    let specs = match laya_workflow::dsl_smoke::discover_specs(&root) {
+        Ok(s) => s,
+        Err(e) => {
+            h.check(&format!("validate: discover dsl specs failed: {e}"), false);
+            return;
+        }
+    };
+    h.check("validate: repo dsl specs discovered", specs.len() >= 90);
+    let mut ok = 0usize;
+    let mut first_err: Option<String> = None;
+    for p in &specs {
+        let raw = match std::fs::read_to_string(p) {
+            Ok(s) => s,
+            Err(e) => {
+                first_err = Some(format!("{}: {e}", p.display()));
+                break;
+            }
+        };
+        let v: Value = match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                first_err = Some(format!("{}: {e}", p.display()));
+                break;
+            }
+        };
+        match spec::from_spec_in(&v, p.parent()) {
+            Ok(_) => ok += 1,
+            Err(e) => {
+                first_err = Some(format!("{}: {e}", p.display()));
+                break;
+            }
+        }
+    }
+    match first_err {
+        Some(msg) => h.check(
+            &format!("validate: repo spec rejected by stricter rules: {msg}"),
+            false,
+        ),
+        None => h.check(
+            &format!("validate: all {ok} repo dsl specs satisfy the stricter rules"),
+            ok == specs.len(),
+        ),
+    }
+}

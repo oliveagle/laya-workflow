@@ -597,6 +597,19 @@ fn suggest(target: &str, candidates: &[&str]) -> String {
     }
 }
 
+/// A threshold rule `when` that matches everything — `{"always": true}`.
+/// (`apply_rules_multi` / `rule_matches_multi` return true on `always`
+/// before looking at any other operator.)
+fn thr_when_is_catch_all(w: &Value) -> bool {
+    w.get("always").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// True when a threshold rule matches unconditionally: no `when` at all,
+/// or a `when` carrying `always: true`.
+fn thr_rule_is_catch_all(r: &Value) -> bool {
+    r.get("when").map(thr_when_is_catch_all).unwrap_or(true)
+}
+
 /// Core parser: `base_dir` is the directory used to resolve relative refs.
 /// Semantic graph validation beyond the structural parse. The engine would
 /// otherwise only fail (or silently misroute) at *runtime*, hiding the fault
@@ -624,6 +637,17 @@ fn suggest(target: &str, candidates: &[&str]) -> String {
 ///     map (an undeclared name passes `validate` today but hard-fails at
 ///     runtime: `capability "X" is not declared in this spec`; same bug class as
 ///     a dangling edge or a dead `copy_keys` key)
+///   * (P45) `min_confidence` (on the node or its `edge`), when present, is
+///     within [0, 1] — > 1 makes every route fail (the node always escalates)
+///     and < 0 is a typo; both silently misroute at runtime
+///   * (P45) `max_iterations`, when present, is a positive integer — 0 (or a
+///     negative value) runs the workflow zero times and a non-integer silently
+///     falls back to the default 50, so a spec that claims to bound the loop
+///     does not
+///   * (P45) a threshold ladder is total: every rule carries a `label`, the last
+///     rule is an unconditional catch-all (else some score emits the literal
+///     "unmatched"), no rule follows a catch-all (dead code), and no `when`
+///     repeats (first match wins, so the repeat can never fire)
 fn validate_graph_semantics(
     nodes: &[WorkflowNode],
     node_list: &[Value],
@@ -799,6 +823,21 @@ fn validate_graph_semantics(
                 );
             }
         }
+        // edge `min_confidence` gates every route (an answer below it resolves
+        // to no edge → the node ESCALATEs). A value outside [0, 1] is
+        // meaningless: > 1 makes every route fail (the node always escalates),
+        // < 0 is a typo, and both silently mis-route instead of failing.
+        let mc = n
+            .get("min_confidence")
+            .or_else(|| n.get("edge").and_then(|e| e.get("min_confidence")))
+            .and_then(|v| v.as_f64());
+        if let Some(mc) = mc {
+            if !(0.0..=1.0).contains(&mc) {
+                bail!(
+                    "node {name}: min_confidence {mc} is outside [0, 1] — routes below it escalate, and > 1 makes every route fail"
+                );
+            }
+        }
         if let Some(action) = n.get("action") {
             if let Some(kind) = action.get("kind").and_then(|v| v.as_str()) {
                 if !KNOWN_KINDS.contains(&kind) {
@@ -846,6 +885,55 @@ fn validate_graph_semantics(
                                         );
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                if kind == "threshold" {
+                    // The score ladder must be total: `apply_rules_multi` emits the
+                    // first rule whose `when` matches, else an unconditional
+                    // catch-all, else the literal label "unmatched". A ladder that
+                    // does not end in a catch-all, carries a rule with no `label`,
+                    // keeps a dead rule after a catch-all, or repeats a `when`,
+                    // quietly decides wrong at runtime — the same bug class as a
+                    // dangling edge or a dead `copy_keys` key. Every checked-in
+                    // spec already satisfies this.
+                    match action.get("rules").and_then(|v| v.as_array()) {
+                        None => bail!(
+                            "node {name}: threshold action has no `rules` array — a score question with no rules can never emit a label"
+                        ),
+                        Some(rules) if rules.is_empty() => bail!(
+                            "node {name}: threshold action has an empty `rules` array"
+                        ),
+                        Some(rules) => {
+                            let mut seen: Vec<&Value> = Vec::new();
+                            for (i, r) in rules.iter().enumerate() {
+                                if r.get("label").and_then(|v| v.as_str()).is_none() {
+                                    bail!(
+                                        "node {name}: threshold rule #{i} has no `label` (it emits the literal \"unknown\" at runtime)"
+                                    );
+                                }
+                                if thr_rule_is_catch_all(r) && i + 1 != rules.len() {
+                                    bail!(
+                                        "node {name}: threshold rule #{i} is a catch-all but is not last — the {} rule(s) after it are dead code",
+                                        rules.len() - i - 1
+                                    );
+                                }
+                                if let Some(w) = r.get("when") {
+                                    if !thr_when_is_catch_all(w) {
+                                        if seen.iter().any(|s| *s == w) {
+                                            bail!(
+                                                "node {name}: threshold rule #{i} repeats an earlier rule's `when` — first match wins, so it can never fire"
+                                            );
+                                        }
+                                        seen.push(w);
+                                    }
+                                }
+                            }
+                            if !rules.last().map(thr_rule_is_catch_all).unwrap_or(true) {
+                                bail!(
+                                    "node {name}: threshold rules are not exhaustive — the last rule is conditioned, so some scores match no rule and emit the literal \"unmatched\" label; end the ladder with an unconditional rule (no `when`, or `when: {{\"always\": true}}`)"
+                                );
                             }
                         }
                     }
@@ -1168,6 +1256,16 @@ fn from_spec_with_dir_cycle(
         .and_then(|v| v.as_object())
         .map(|m| m.keys().cloned().collect())
         .unwrap_or_default();
+    // `max_iterations: 0` (or negative) runs the graph zero times — a spec that
+    // can never execute — and a non-integer silently falls back to the default
+    // 50. Reject the present-but-invalid case instead.
+    if let Some(v) = spec.get("max_iterations") {
+        if v.as_u64().map(|n| n >= 1) != Some(true) {
+            bail!(
+                "spec max_iterations must be a positive integer (got {v}) — 0 runs the workflow zero times"
+            );
+        }
+    }
     validate_graph_semantics(&nodes, node_list, &start, &declared_caps)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
