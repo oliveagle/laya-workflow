@@ -134,13 +134,7 @@
         "default": "STOP"
       },
       "min_confidence": 0.0,
-      "max_retries": 1,
-      "action": {
-        "kind": "copy_keys",
-        "keys": [
-          "billing_contact"
-        ]
-      }
+      "max_retries": 1
     }
   ]
 }

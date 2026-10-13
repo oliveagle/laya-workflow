@@ -345,3 +345,93 @@ pub fn test_validate_edge_key(h: &mut Harness) {
     let r = spec::from_spec(&ok_spec);
     h.check("validate: valid edge keys parse (no false positive)", r.is_ok());
 }
+
+/// Regression: `copy_keys.keys` must name questions declared on the node.
+/// An unknown key silently no-ops at runtime (the verdict never contains it).
+pub fn test_validate_copy_keys(h: &mut Harness) {
+    // one key not declared anywhere on the node -> reject
+    let bad = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["q", "ghost"]})
+        )]),
+    );
+    let r = spec::from_spec(&bad);
+    h.check("validate: copy_keys unknown question rejected", r.is_err());
+    // control: all keys declared -> parses (no false positive)
+    let ok = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["q"]})
+        )]),
+    );
+    h.check("validate: copy_keys declared keys parse (no false positive)", spec::from_spec(&ok).is_ok());
+}
+
+/// Regression: `combine.fallback` must be a possible answer of the choice
+/// question. An unknown fallback can never fire -> silently dead branch.
+pub fn test_validate_combine_fallback(h: &mut Harness) {
+    let mk = |fallback: &str| {
+        base_spec(
+            "a",
+            json!([{
+                "name": "a",
+                "primary_q": "department",
+                "questions": {
+                    "department": {"type": "choice", "instructions": "?", "criteria": {"billing": "b", "technical": "t", "other": "o"}},
+                    "urgency": {"type": "noul", "instructions": "?", "criteria": {"truthy": "yes", "falsy": "no"}}
+                },
+                "edge": {"condition": {}, "default": "STOP"},
+                "min_confidence": 0.0, "max_retries": 1,
+                "action": {"kind": "combine", "choice": "department", "signal": "urgency",
+                           "fallback": fallback, "review_label": "human_review"}
+            }]),
+        )
+    };
+    let r = spec::from_spec(&mk("other"));
+    h.check("validate: combine fallback in criteria parses", r.is_ok());
+    let r2 = spec::from_spec(&mk("bogus"));
+    h.check("validate: combine fallback outside criteria rejected", r2.is_err());
+}
+
+/// Regression: nested `workflow` references must not form a cycle (A -> B -> A).
+/// A cycle would recurse forever (stack overflow); it must be rejected up front.
+/// A diamond (two branches referencing the same leaf) stays valid.
+pub fn test_validate_ref_cycle(h: &mut Harness) {
+    let leaf = json!({"name": "p27_leaf", "start": "s",
+        "nodes": [{"name": "s", "primary_q": "q",
+                   "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "yes"}}},
+                   "edge": {"condition": {}, "default": "STOP"}}]});
+    spec::register("p27_cycle_a", json!({"name": "p27_cycle_a", "start": "s",
+        "nodes": [{"name": "s", "workflow": "p27_cycle_b"}]}));
+    spec::register("p27_cycle_b", json!({"name": "p27_cycle_b", "start": "s",
+        "nodes": [{"name": "s", "workflow": "p27_cycle_a"}]}));
+    let outer = json!({"name": "p27_outer", "start": "go",
+        "nodes": [{"name": "go", "workflow": "p27_cycle_a"}]});
+    let r = spec::from_spec(&outer);
+    h.check("validate: transitive ref cycle rejected", r.is_err());
+    if let Err(e) = &r {
+        h.check("validate: cycle error names the chain", e.to_string().contains("cycle"));
+    }
+    // diamond: two branches reference the same leaf -> no false positive
+    spec::register("p27_leaf", leaf.clone());
+    spec::register("p27_dia_b", json!({"name": "p27_dia_b", "start": "s",
+        "nodes": [{"name": "s", "workflow": "p27_leaf"}]}));
+    spec::register("p27_dia_c", json!({"name": "p27_dia_c", "start": "s",
+        "nodes": [{"name": "s", "workflow": "p27_leaf"}]}));
+    let outer2 = json!({"name": "p27_outer2", "start": "pre",
+        "nodes": [
+            {"name": "pre", "primary_q": "q",
+             "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "go", "B": "ho"}}},
+             "edge": {"condition": {"A": "go", "B": "ho"}, "default": "STOP"}},
+            {"name": "go", "workflow": "p27_dia_b"},
+            {"name": "ho", "workflow": "p27_dia_c"},
+        ]});
+    h.check("validate: diamond (shared leaf) parses", spec::from_spec(&outer2).is_ok());
+}

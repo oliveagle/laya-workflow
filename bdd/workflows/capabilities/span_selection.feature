@@ -51,5 +51,4 @@ Feature: span_selection
       | answer | meaning |
       | A | yes |
     When any other answer goes to "STOP"
-    Then keep the answer to "billing_contact"
     Then allow up to 1 retries

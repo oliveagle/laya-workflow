@@ -547,6 +547,10 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
 ///   * `combine.choice` / `combine.signal` name declared questions
 ///   * every threshold rule `when` object only uses known operator keys
 ///     (unknown keys silently never match at runtime → wrong label)
+///   * `copy_keys.keys` name questions declared on the node (an unknown key
+///     makes the copy a silent no-op at runtime)
+///   * `combine.fallback` is a possible answer of the `combine.choice` question
+///     (an unknown fallback can never fire → silently dead branch)
 fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: &str) -> Result<()> {
     let names: std::collections::HashSet<&str> =
         nodes.iter().map(|n| n.name.as_str()).collect();
@@ -750,12 +754,50 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
                         }
                     }
                 }
+                if kind == "copy_keys" {
+                    // `copy_keys` copies `action.keys` from the verdict answers of
+                    // THIS node. Each key must be a question declared on the node —
+                    // otherwise the copy silently no-ops at runtime (the key never
+                    // appears in `v.answers`).
+                    if let Some(keys) = action.get("keys").and_then(|v| v.as_array()) {
+                        for k in keys.iter().filter_map(|v| v.as_str()) {
+                            if !has_q(k)
+                                && n.get("primary_q").and_then(|v| v.as_str()) != Some(k)
+                            {
+                                bail!("node {name}: copy_keys copies {k:?}, which is not a question declared on this node — the runtime copy is a silent no-op");
+                            }
+                        }
+                    }
+                }
                 if kind == "combine" {
                     for f in ["choice", "signal"] {
                         if let Some(q) = action.get(f).and_then(|v| v.as_str()) {
                             if !has_q(q) {
                                 bail!("node {name}: combine {f:?} references unknown question {q:?}");
                             }
+                        }
+                    }
+                    // `fallback` is a value of the choice question; when the choice
+                    // answer equals it, routing goes to `review_label`. A fallback
+                    // that is not a possible choice answer can never fire — silently
+                    // dead branch.
+                    if let (Some(cq), Some(fb)) = (
+                        action.get("choice").and_then(|v| v.as_str()),
+                        action.get("fallback").and_then(|v| v.as_str()),
+                    ) {
+                        let ok = match questions
+                            .as_ref()
+                            .and_then(|m| m.get(cq))
+                            .and_then(|qv| qv.get("criteria"))
+                        {
+                            Some(Value::Object(m)) if !m.contains_key("from_state") => {
+                                m.contains_key(fb)
+                            }
+                            Some(Value::Array(a)) => a.iter().any(|v| v.as_str() == Some(fb)),
+                            _ => true, // from_state or absent → dynamic at runtime
+                        };
+                        if !ok {
+                            bail!("node {name}: combine fallback {fb:?} is not a possible answer of choice question {cq:?} (the fallback branch can never fire)");
                         }
                     }
                 }
@@ -767,8 +809,23 @@ fn validate_graph_semantics(nodes: &[WorkflowNode], node_list: &[Value], start: 
 
 pub fn from_spec_with_dir(
     spec: &Value,
+    parent: Option<&Value>,
+    base_dir: Option<&std::path::Path>,
+) -> Result<ResilientWorkflow> {
+    // Cycle guard: nested `{"workflow": …}` references must not expand into
+    // themselves (directly or transitively) — that would recurse forever.
+    // Identity is the referenced spec's own name (or its ref string), so a
+    // diamond (two branches referencing the same leaf) is fine while a cycle
+    // (A → B → A) is rejected up front instead of overflowing the stack.
+    let mut ref_stack: Vec<String> = Vec::new();
+    from_spec_with_dir_cycle(spec, parent, base_dir, &mut ref_stack)
+}
+
+fn from_spec_with_dir_cycle(
+    spec: &Value,
     _parent: Option<&Value>,
     base_dir: Option<&std::path::Path>,
+    ref_stack: &mut Vec<String>,
 ) -> Result<ResilientWorkflow> {
     // Version gate: rejects forward-incompatible specs, accepts legacy ones.
     check_version(spec)?;
@@ -797,13 +854,39 @@ pub fn from_spec_with_dir(
         // needs no special runner support.
         if let Some(wref) = n.get("workflow") {
             let (sub_spec, sub_dir) = resolve_ref_dir(wref, base_dir)?;
+            // Cycle guard: a workflow must not reference itself transitively.
+            // Identity is the referenced spec's own name (or the ref string),
+            // so a diamond (two branches → same leaf) is fine while a cycle
+            // (A → B → A) is rejected up front instead of overflowing the stack.
+            let ident = sub_spec
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .or_else(|| match wref {
+                    Value::String(s) => Some(s.clone()),
+                    _ => None,
+                });
+            if let Some(id) = &ident {
+                if ref_stack.iter().any(|s| s == id) {
+                    let mut chain = ref_stack.clone();
+                    chain.push(id.clone());
+                    bail!(
+                        "workflow reference cycle detected: {} (a workflow must not reference itself, directly or transitively)",
+                        chain.join(" -> ")
+                    );
+                }
+                ref_stack.push(id.clone());
+            }
             let sub_name = n
                 .get("name")
                 .and_then(|v| v.as_str())
                 .or_else(|| sub_spec.get("name").and_then(|v| v.as_str()))
                 .unwrap_or("sub");
             let prefix = format!("{sub_name}::");
-            let sub = from_spec_with_dir(&sub_spec, Some(spec), sub_dir.as_deref())?;
+            let sub = from_spec_with_dir_cycle(&sub_spec, Some(spec), sub_dir.as_deref(), ref_stack)?;
+            if ident.is_some() {
+                ref_stack.pop();
+            }
             // A reference node may declare a *completion handoff*: when the sub
             // workflow terminates (an internal edge hits STOP), routing continues
             // at the caller's continuation node instead. This is what lets a
