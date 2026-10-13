@@ -1,0 +1,193 @@
+{
+  "name": "subscription_entitlement_guard",
+  "_bdd": {
+    "feature": "subscription_entitlement_guard",
+    "feature_path": "bdd/workflows/ole_eval/subscription_entitlement_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed subscription entitlement changes as a single triage\nnode. The model proposes only a typed intent (request_id, subscription_id,\nrequested_effective_date, target_plan, target_seats, add_on_intents); this\nworkflow owns the subscription ledger, the plan and add-on catalogs, the term\nand billing-cycle windows, the add-on plan dependencies, the seat policy, the\ncommitment, the proration and credit preview and the control-total check,\ncomputing the exact effective date and preview itself. It never bills a\ncustomer. Port of code/qwen_vm/app_scenarios/subscription_entitlement_guard.\nThe engine's own verbs: APPROVE / MODIFY / REJECT (and REJECTED for a\nmalformed envelope) — the entitlement change is accepted, locally corrected,\nor refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (balanced-JSON extraction from a fenced reply, duplicate-key\nscan, the exact {request_id, subscription_id, requested_effective_date,\ntarget_plan, target_seats, add_on_intents[]} shape, the identifier and date\ngrammars, the add-on action whitelist, the seat bound and the dangerous-token\nscan over every string) folds into the `proposal` choice.\n- The subscription ledger, the plan catalog (rank, seat range, price, add-on\ndependencies) and the add-on catalog are a fixed fixture; the harness\nresolves them and hands the DSL one answer per check.\n- The term / billing-cycle windows, the plan dependencies, the seat policy and\nthe proration + credit preview are folded into the `reject_reason` and\n`revision` choices; the engine may append several reasons, so each choice\ncarries the engine's own first-appended reason and the ladder emits it,\nmirroring the engine's own REJECT-before-MODIFY precedence.\nEmitted labels: rejected_proposal, reject_duplicate_request,\nreject_unknown_subscription, reject_effective_date_outside_term,\nreject_effective_date_outside_billing_cycle, reject_unknown_target_plan,\nreject_unknown_add_on, reject_add_on_dependency_unsatisfied,\nreject_seat_count_out_of_range, reject_plan_seat_limit_exceeded,\nreject_billing_preview_control_total, modify_downgrade_deferred,\nmodify_seat_reduction_clamped, modify_missing_add_on_disable_ignored,\nmodify_incompatible_add_on_removed, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, subscription_id, requested_effective_date, target_plan, target_seats, add_on_intents[]} object with valid identifiers, a valid date and no dangerous tokens?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed entitlement intent",
+            "malformed": "parse error, bad shape, bad identifier, bad date or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Once the envelope is resolved, which single reason does the deterministic entitlement guard report first?",
+          "criteria": {
+            "none": "no rejection reason: the change is at least locally correct",
+            "duplicate_request": "request_id already evaluated: short-circuit",
+            "unknown_subscription": "subscription_id is not in the subscription ledger",
+            "outside_term": "the effective date is outside the subscription term",
+            "outside_billing_cycle": "the effective date is outside the billing-cycle window",
+            "unknown_target_plan": "target_plan is not in the plan catalog",
+            "unknown_add_on": "an add-on intent names an add-on outside the catalog",
+            "add_on_dependency_unsatisfied": "an enabled add-on's plan dependency does not hold",
+            "seat_count_out_of_range": "target_seats is outside the absolute 1..1000 bound",
+            "plan_seat_limit_exceeded": "target_seats is outside the target plan's own seat range",
+            "billing_preview_control_total_invalid": "the computed preview breaks the control total"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "revision": {
+          "type": "choice",
+          "instructions": "When the entitlement change is otherwise accepted, which single local revision does the engine record first?",
+          "criteria": {
+            "none": "the change needs no local correction",
+            "downgrade_deferred": "a downgrade is deferred to the term end",
+            "seat_reduction_clamped": "the seat reduction is clamped to the commitment",
+            "missing_add_on_disable_ignored": "a disable names an add-on the subscription does not hold",
+            "incompatible_add_on_removed": "a plan-incompatible add-on is removed from the target set"
+          },
+          "heuristic": {
+            "answer_field": "ev_revision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "rejected_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "duplicate_request"
+            },
+            "label": "reject_duplicate_request"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_subscription"
+            },
+            "label": "reject_unknown_subscription"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "outside_term"
+            },
+            "label": "reject_effective_date_outside_term"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "outside_billing_cycle"
+            },
+            "label": "reject_effective_date_outside_billing_cycle"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_target_plan"
+            },
+            "label": "reject_unknown_target_plan"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unknown_add_on"
+            },
+            "label": "reject_unknown_add_on"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "add_on_dependency_unsatisfied"
+            },
+            "label": "reject_add_on_dependency_unsatisfied"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "seat_count_out_of_range"
+            },
+            "label": "reject_seat_count_out_of_range"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "plan_seat_limit_exceeded"
+            },
+            "label": "reject_plan_seat_limit_exceeded"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "billing_preview_control_total_invalid"
+            },
+            "label": "reject_billing_preview_control_total"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "downgrade_deferred"
+            },
+            "label": "modify_downgrade_deferred"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "seat_reduction_clamped"
+            },
+            "label": "modify_seat_reduction_clamped"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "missing_add_on_disable_ignored"
+            },
+            "label": "modify_missing_add_on_disable_ignored"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "incompatible_add_on_removed"
+            },
+            "label": "modify_incompatible_add_on_removed"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

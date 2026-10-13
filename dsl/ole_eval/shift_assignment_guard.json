@@ -1,0 +1,161 @@
+{
+  "name": "shift_assignment_guard",
+  "_bdd": {
+    "feature": "shift_assignment_guard",
+    "feature_path": "bdd/workflows/ole_eval/shift_assignment_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed shift-assignment adjustments as a single triage node.\nThe model proposes only a typed envelope (request_id, plan_id, preferences,\nadjustments); this workflow owns worker skills, availability, hours, rest,\nconsecutive-shift limits, role coverage, fairness, the bounded search and the\nfinal schedule decision. It never changes a real schedule, notifies a worker\nor contacts an HR system. Port of\ncode/qwen_vm/app_scenarios/shift_assignment_guard.\nFourth three-valued port shape with the engine's own verbs: the engine returns\nFEASIBLE / REVISE / INFEASIBLE (and REJECTED for a malformed envelope) —\nthe schedule is accepted, locally revised, found infeasible, or refused.\nFolding boundaries (documented, not computed in the DSL):\n- Proposal parsing (balanced-JSON extraction from a fenced reply, duplicate-key\nscan, the exact {request_id, plan_id, preferences[], adjustments[]} shape,\nthe identifier grammar, the preference/adjustment key sets, the weight range\n1..5, unique worker/shift pairs, the assign/avoid action whitelist and the\ndangerous-token scan over every string) folds into the `proposal` choice.\n- The plan table (shifts per plan), the worker table (skills, max minutes,\nper-plan unavailability) and the solver bounds (candidate cap, combination\ncap, global minutes, consecutive-shift limit, minimum rest) are a fixed\nfixture; the harness resolves them and hands the DSL one answer per check.\n- The request ledger, the plan lookup, the bounded search and the fairness /\nconstraint solve are folded into the `infeasible` and `revision` choices;\nthe engine may append several reasons, so each choice carries the engine's\nown first-appended reason and the ladder emits it, mirroring the engine's\nown INFEASIBLE-before-REVISE precedence.\nEmitted labels: rejected_proposal, infeasible_duplicate_request,\ninfeasible_unknown_plan, infeasible_search_limit,\ninfeasible_no_assignment, revise_unknown_worker, revise_unknown_shift,\nrevise_unqualified, revise_unavailable, revise_fairness_adjusted,\nrevise_avoid_overridden, feasible.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, plan_id, preferences[], adjustments[]} object with valid identifiers, a whitelisted action and no dangerous tokens?",
+          "criteria": {
+            "accepted": "exactly one structurally valid typed assignment envelope",
+            "malformed": "parse error, bad shape, bad identifier, bad action, duplicate pair or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "infeasible": {
+          "type": "choice",
+          "instructions": "Once the envelope and plan are resolved, which single infeasibility reason does the bounded solver report first?",
+          "criteria": {
+            "none": "the search produced at least one feasible assignment",
+            "duplicate_request": "request_id already evaluated: short-circuit",
+            "unknown_plan": "plan_id is not in the plan table",
+            "search_limit": "the combination cap was exceeded before a solve",
+            "no_assignment": "no role-covering assignment satisfies the constraints"
+          },
+          "heuristic": {
+            "answer_field": "ev_infeasible"
+          }
+        },
+        "revision": {
+          "type": "choice",
+          "instructions": "When the schedule is feasible, which single revision does the engine record first for the proposal's own preferences and adjustments?",
+          "criteria": {
+            "none": "every preference and adjustment is honoured",
+            "unknown_worker": "an adjustment names a worker outside the table",
+            "unknown_shift": "an adjustment names a shift outside the plan",
+            "unqualified": "an `assign` names a worker without the shift's skill",
+            "unavailable": "an `assign` names a worker unavailable for the shift by plan",
+            "fairness_adjusted": "a valid `assign` was honoured but the schedule was optimised instead",
+            "avoid_overridden": "an `avoid` was overridden to cover the shift"
+          },
+          "heuristic": {
+            "answer_field": "ev_revision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "rejected_proposal"
+          },
+          {
+            "when": {
+              "question": "infeasible",
+              "answer": "duplicate_request"
+            },
+            "label": "infeasible_duplicate_request"
+          },
+          {
+            "when": {
+              "question": "infeasible",
+              "answer": "unknown_plan"
+            },
+            "label": "infeasible_unknown_plan"
+          },
+          {
+            "when": {
+              "question": "infeasible",
+              "answer": "search_limit"
+            },
+            "label": "infeasible_search_limit"
+          },
+          {
+            "when": {
+              "question": "infeasible",
+              "answer": "no_assignment"
+            },
+            "label": "infeasible_no_assignment"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "unknown_worker"
+            },
+            "label": "revise_unknown_worker"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "unknown_shift"
+            },
+            "label": "revise_unknown_shift"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "unqualified"
+            },
+            "label": "revise_unqualified"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "unavailable"
+            },
+            "label": "revise_unavailable"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "fairness_adjusted"
+            },
+            "label": "revise_fairness_adjusted"
+          },
+          {
+            "when": {
+              "question": "revision",
+              "answer": "avoid_overridden"
+            },
+            "label": "revise_avoid_overridden"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "feasible"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

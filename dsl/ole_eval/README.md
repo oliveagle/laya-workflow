@@ -1,6 +1,6 @@
 # dsl/ole_eval/ — ole-eval 场景的 DSL 移植
 
-这 43 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
+这 46 个 spec 把 **ole-eval**（`code/qwen_vm/app_scenarios/*`）里的策略式工作流
 从 Python 移植成 laya-workflow DSL（声明式 JSON），无需改 Rust 即可增减规则。
 
 > 原始 Python 实现保留在 ole-eval 仓库（`code/qwen_vm/app_scenarios/`），本目录
@@ -54,6 +54,9 @@
 | `pricing_discount_guard.json` | `pricing_discount_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 17/17 | 模型只提 typed intent（sku/segment/discount_intent）；catalog 查找 / segment 准入 / 促销窗口 / 量级 / 优惠券 / 叠加 / 毛利底线 / 审批阈值由本地引擎算精确价 → 重复·segment 不合格·审批封顶破毛利底线 = REJECT，8 类 adjustment = MODIFY（一个 `adjustment` 问题承载），否则 APPROVE |
 | `inventory_replenishment_guard.json` | `inventory_replenishment_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 19/19 | 模型只提 typed intent（sku/demand_scenario/service_level/intent）；需求预测 / 再订点 / pack·最小起订量 / 预算约束由本地引擎算精确补货量 → 未知 sku·重复·reorder 未达再订点·不可行·非正量 = REJECT，hold/review 已在点之上 = APPROVE（不下单），5 类 adjustment = MODIFY（动态 capped_by 折成单 label）|
 | `privacy_retention_guard.json` | `privacy_retention_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 32/32 | 模型只提 typed proposal（data_class/retention_intent/deletion_intent）；记录台账·记录类·jurisdiction·data-class/jurisdiction policy 表·retention 时钟·lawful basis·legal hold·pseudonymization 资格·删除/保全优先级由本地引擎裁决，精确算 scheduled action 与时间戳 → `reject_*`(5) / `modify_*`(7) / `approve_*`(5)，gate 后优先级链折成单个 `outcome` 问题承载 13 个分支 |
+| `shift_assignment_guard.json` | `shift_assignment_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 FEASIBLE/REVISE/INFEASIBLE**）| 23/23 | 模型只提 typed 信封（request_id/plan_id/preferences/adjustments）；worker 技能·可用性·工时·休息·连续班次·role 覆盖·fairness·有界搜索由本地求解器裁决 → INFEASIBLE 首因(4) / REVISE 首因(6) / feasible |
+| `settlement_allocation_guard.json` | `settlement_allocation_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 23/23 | 模型只提 typed intent（request_id/settlement_case/preferences/priority_rationale）；case 台账·canonical order·tax/credit/waterfall·rounding·ledger+cash-control·allocation caps 本地精确算 → reject 首因(8) / modify 首因(2) / approve |
+| `subscription_entitlement_guard.json` | `subscription_entitlement_guard/` | 单节点 `threshold` 图 + 有序判定阶梯（**三值 APPROVE/MODIFY/REJECT**）| 27/27 | 模型只提 typed intent（request_id/subscription_id/requested_effective_date/target_plan/target_seats/add_on_intents）；subscription 台账·plan/add-on 目录·term/billing 窗口·依赖·seat policy·commitment·proration+credit preview·control-total 本地裁决 → reject 首因(10) / modify 首因(4) / approve |
 ## 映射方式
 
 原始 Python 里的**确定性表格查找**（taxonomy 基础严重度、audience 最小年龄、
@@ -115,10 +118,10 @@ laya-workflow --base-url http://127.0.0.1:8400 run \
 ## 边界说明
 
 - DSL `Edge` 目前只按 `answer → node` 路由（无分支式数值条件），所以这些
-  单节点"判定 → 出结论"的策略（39 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
+  单节点"判定 → 出结论"的策略（42 个）和多节点 DFA 状态机（`dialogue_policy` / `order_tracker` / `approval_workflow` / `loan_dialogue`）都已有落地案例；`dialogue_policy` 展示了 `edge.condition` 的 answer→next_node 路由如何映射 Python 的意图状态机；若未来要树状多级审核流，
   可把 `REVIEW` 语义拆成单独节点。
 - DSL action kinds 仅 `none` / `copy_keys` / `merge_open_probs` / `threshold`
-  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 39 个单节点 spec
+  / `gate`；确定性数值校验可加 `validate` / `math` cap，但当前 42 个单节点 spec
   走纯 LLM 判定（阈值与优先级仍由 `threshold` action 的有序 rules 编码，
   数值由模型给出）。
 

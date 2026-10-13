@@ -5175,5 +5175,256 @@
       "ev_jurisdiction": "configured",
       "ev_outcome": "modify_minimum_retention_not_reached"
     }
+  },
+  "shift_assignment_guard": {
+    "feasible_clean": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "none"
+    },
+    "rejected_proposal": {
+      "ev_proposal": "malformed",
+      "ev_infeasible": "none",
+      "ev_revision": "none"
+    },
+    "duplicate_request": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "duplicate_request",
+      "ev_revision": "none"
+    },
+    "unknown_plan": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "unknown_plan",
+      "ev_revision": "none"
+    },
+    "search_limit": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "search_limit",
+      "ev_revision": "none"
+    },
+    "no_assignment": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "no_assignment",
+      "ev_revision": "none"
+    },
+    "revise_unknown_worker": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "unknown_worker"
+    },
+    "revise_unknown_shift": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "unknown_shift"
+    },
+    "revise_unqualified": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "unqualified"
+    },
+    "revise_unavailable": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "unavailable"
+    },
+    "revise_fairness_adjusted": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "fairness_adjusted"
+    },
+    "revise_avoid_overridden": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "avoid_overridden"
+    },
+    "precedence_rejected_before_infeasible": {
+      "ev_proposal": "malformed",
+      "ev_infeasible": "duplicate_request",
+      "ev_revision": "unqualified"
+    },
+    "precedence_infeasible_before_revise": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "unknown_plan",
+      "ev_revision": "fairness_adjusted"
+    },
+    "precedence_revise_before_feasible": {
+      "ev_proposal": "accepted",
+      "ev_infeasible": "none",
+      "ev_revision": "avoid_overridden"
+    }
+  },
+  "settlement_allocation_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "rejected_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "duplicate_request": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_request",
+      "ev_revision": "none"
+    },
+    "unknown_settlement_case": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_settlement_case",
+      "ev_revision": "none"
+    },
+    "unknown_invoice_preference": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_invoice_preference",
+      "ev_revision": "none"
+    },
+    "rank_out_of_range": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "rank_out_of_range",
+      "ev_revision": "none"
+    },
+    "incomplete_preferences": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "incomplete_preferences",
+      "ev_revision": "none"
+    },
+    "ledger_not_balanced": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "ledger_not_balanced",
+      "ev_revision": "none"
+    },
+    "cash_control_total_invalid": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "cash_control_total_invalid",
+      "ev_revision": "none"
+    },
+    "allocation_exceeds_cap": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "allocation_exceeds_cap",
+      "ev_revision": "none"
+    },
+    "modify_priority_rationale": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "priority_rationale_modified"
+    },
+    "modify_allocation_order": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "allocation_order_modified"
+    },
+    "precedence_rejected_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "duplicate_request",
+      "ev_revision": "priority_rationale_modified"
+    },
+    "precedence_reject_before_modify": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_settlement_case",
+      "ev_revision": "allocation_order_modified"
+    },
+    "precedence_modify_before_approve": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "allocation_order_modified"
+    }
+  },
+  "subscription_entitlement_guard": {
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "rejected_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_revision": "none"
+    },
+    "duplicate_request": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "duplicate_request",
+      "ev_revision": "none"
+    },
+    "unknown_subscription": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_subscription",
+      "ev_revision": "none"
+    },
+    "effective_date_outside_term": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "outside_term",
+      "ev_revision": "none"
+    },
+    "effective_date_outside_billing_cycle": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "outside_billing_cycle",
+      "ev_revision": "none"
+    },
+    "unknown_target_plan": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_target_plan",
+      "ev_revision": "none"
+    },
+    "unknown_add_on": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_add_on",
+      "ev_revision": "none"
+    },
+    "add_on_dependency_unsatisfied": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "add_on_dependency_unsatisfied",
+      "ev_revision": "none"
+    },
+    "seat_count_out_of_range": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "seat_count_out_of_range",
+      "ev_revision": "none"
+    },
+    "plan_seat_limit_exceeded": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "plan_seat_limit_exceeded",
+      "ev_revision": "none"
+    },
+    "billing_preview_control_total": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "billing_preview_control_total_invalid",
+      "ev_revision": "none"
+    },
+    "modify_downgrade_deferred": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "downgrade_deferred"
+    },
+    "modify_seat_reduction_clamped": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "seat_reduction_clamped"
+    },
+    "modify_missing_add_on_disable_ignored": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "missing_add_on_disable_ignored"
+    },
+    "modify_incompatible_add_on_removed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "incompatible_add_on_removed"
+    },
+    "precedence_rejected_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "duplicate_request",
+      "ev_revision": "downgrade_deferred"
+    },
+    "precedence_reject_before_modify": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unknown_target_plan",
+      "ev_revision": "downgrade_deferred"
+    },
+    "precedence_modify_before_approve": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_revision": "missing_add_on_disable_ignored"
+    }
   }
 }
