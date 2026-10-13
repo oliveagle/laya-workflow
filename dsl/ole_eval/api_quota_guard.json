@@ -1,0 +1,221 @@
+{
+  "name": "api_quota_guard",
+  "_bdd": {
+    "feature": "api_quota_guard",
+    "feature_path": "bdd/workflows/ole_eval/api_quota_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Deterministic API scope, quota, rate, concurrency and budget guard as a single\ntriage node. The model proposes one typed request intent (principal, endpoint,\nrequested_units, context_intent); this workflow owns schema validation, the\nrequest-id replay ledger, clock monotonicity, scope admission, the per-endpoint\nrequest maximum, concurrency, the token bucket, the daily/monthly unit quotas\nand the spend budget. Port of code/qwen_vm/app_scenarios/api_quota_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (size bound, duplicate-key rejection, the exact\n{proposal:{...}} shape, unknown or forbidden authority/side-effect fields)\nfold into the single `proposal` choice.\n- Token-bucket refill arithmetic (elapsed_ms * refill_units_per_second / 1000,\ncapped at the bucket capacity) and the retry_after_ms it implies are\ndeterministic Decimal clock arithmetic and do not belong in the DSL; the\nbucket is judged here only as `bucket` = ok | insufficient.\n- The daily-window reset hint (daily_reset_after_ms > 0 -> throttle with a\nretry, otherwise reject outright) folds into the two `quota` answers\ndaily_retry / daily_no_retry.\n- Per-principal and per-endpoint fixtures (scopes, limits, budgets, costs,\nbucket capacities, refill rates) are fixed local policy tables, not model\ninput.\nEmitted labels: reject_proposal, reject_replay, reject_clock_regression,\nreject_scope, reject_units_above_max, throttle_concurrency, throttle_bucket,\nthrottle_daily, reject_daily_no_retry, reject_monthly, reject_spend, allow.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "budget",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one object {proposal:{principal, endpoint, requested_units, context_intent}} with enum-valued principal/endpoint/context_intent, an integer requested_units in [1,1000], no duplicate JSON keys and no model-supplied authority or side-effect field?",
+          "criteria": {
+            "accepted": "exactly one schema-valid typed request intent",
+            "malformed": "parse error, size/dup-key violation, unknown enum or forbidden field"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "replay": {
+          "type": "choice",
+          "instructions": "Is this request_id fresh, or was it already evaluated locally (the replay ledger)?",
+          "criteria": {
+            "fresh": "request_id not seen before",
+            "replayed": "request_id already in the ledger"
+          },
+          "heuristic": {
+            "answer_field": "ev_replay"
+          }
+        },
+        "clock": {
+          "type": "choice",
+          "instructions": "Does the authoritative timestamp not precede the last bucket refill?",
+          "criteria": {
+            "ok": "timestamp_ms >= last bucket refill",
+            "regressed": "timestamp_ms < last bucket refill (clock skew)"
+          },
+          "heuristic": {
+            "answer_field": "ev_clock"
+          }
+        },
+        "scope": {
+          "type": "choice",
+          "instructions": "Does the principal hold the endpoint's required scope?",
+          "criteria": {
+            "ok": "required_scope is in the principal's scopes",
+            "mismatch": "the principal lacks the endpoint's scope"
+          },
+          "heuristic": {
+            "answer_field": "ev_scope"
+          }
+        },
+        "units": {
+          "type": "choice",
+          "instructions": "Is requested_units within the endpoint's per-request maximum?",
+          "criteria": {
+            "ok": "requested_units <= max_units_per_request",
+            "above_max": "requested_units > max_units_per_request"
+          },
+          "heuristic": {
+            "answer_field": "ev_units"
+          }
+        },
+        "concurrency": {
+          "type": "choice",
+          "instructions": "Is current concurrency below the endpoint's max concurrent requests?",
+          "criteria": {
+            "ok": "current_concurrency < max_concurrent_requests",
+            "at_limit": "current_concurrency >= max_concurrent_requests"
+          },
+          "heuristic": {
+            "answer_field": "ev_concurrency"
+          }
+        },
+        "bucket": {
+          "type": "choice",
+          "instructions": "After local refill arithmetic, are there enough tokens for requested_units?",
+          "criteria": {
+            "ok": "available tokens >= requested_units",
+            "insufficient": "available tokens < requested_units"
+          },
+          "heuristic": {
+            "answer_field": "ev_bucket"
+          }
+        },
+        "quota": {
+          "type": "choice",
+          "instructions": "Projected daily/monthly unit totals vs the principal's limits (a daily-window reset hint decides throttle-with-retry vs outright reject).",
+          "criteria": {
+            "ok": "projected daily and monthly totals stay within limits",
+            "daily_retry": "projected daily exceeds the limit, a reset hint is present",
+            "daily_no_retry": "projected daily exceeds the limit, no reset hint",
+            "monthly": "projected monthly exceeds the limit"
+          },
+          "heuristic": {
+            "answer_field": "ev_quota"
+          }
+        },
+        "budget": {
+          "type": "choice",
+          "instructions": "Is the projected spend (totals.spend + cost_per_unit * requested_units) within the principal's spend budget?",
+          "criteria": {
+            "ok": "projected spend <= spend_budget",
+            "over": "projected spend > spend_budget"
+          },
+          "heuristic": {
+            "answer_field": "ev_budget"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "budget",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "replayed"
+            },
+            "label": "reject_replay"
+          },
+          {
+            "when": {
+              "question": "clock",
+              "answer": "regressed"
+            },
+            "label": "reject_clock_regression"
+          },
+          {
+            "when": {
+              "question": "scope",
+              "answer": "mismatch"
+            },
+            "label": "reject_scope"
+          },
+          {
+            "when": {
+              "question": "units",
+              "answer": "above_max"
+            },
+            "label": "reject_units_above_max"
+          },
+          {
+            "when": {
+              "question": "concurrency",
+              "answer": "at_limit"
+            },
+            "label": "throttle_concurrency"
+          },
+          {
+            "when": {
+              "question": "bucket",
+              "answer": "insufficient"
+            },
+            "label": "throttle_bucket"
+          },
+          {
+            "when": {
+              "question": "quota",
+              "answer": "daily_retry"
+            },
+            "label": "throttle_daily"
+          },
+          {
+            "when": {
+              "question": "quota",
+              "answer": "daily_no_retry"
+            },
+            "label": "reject_daily_no_retry"
+          },
+          {
+            "when": {
+              "question": "quota",
+              "answer": "monthly"
+            },
+            "label": "reject_monthly"
+          },
+          {
+            "when": {
+              "question": "budget",
+              "answer": "over"
+            },
+            "label": "reject_spend"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "allow"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

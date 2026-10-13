@@ -1499,5 +1499,172 @@
       "ev_sla": "breach",
       "ev_severity": "low"
     }
+  },
+  "api_quota_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "replay_duplicate": {
+      "ev_proposal": "accepted",
+      "ev_replay": "replayed",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "clock_regressed": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "regressed",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "scope_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "mismatch",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "units_above_max": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "above_max",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "concurrency_at_limit": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "at_limit",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "bucket_insufficient": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "insufficient",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "daily_quota_retry": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "daily_retry",
+      "ev_budget": "ok"
+    },
+    "daily_quota_no_retry": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "daily_no_retry",
+      "ev_budget": "ok"
+    },
+    "monthly_quota": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "monthly",
+      "ev_budget": "ok"
+    },
+    "spend_budget_over": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "over"
+    },
+    "allow_within_limits": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "ok",
+      "ev_budget": "ok"
+    },
+    "precedence_proposal_first": {
+      "ev_proposal": "malformed",
+      "ev_replay": "replayed",
+      "ev_clock": "regressed",
+      "ev_scope": "mismatch",
+      "ev_units": "above_max",
+      "ev_concurrency": "at_limit",
+      "ev_bucket": "insufficient",
+      "ev_quota": "monthly",
+      "ev_budget": "over"
+    },
+    "precedence_replay_before_scope": {
+      "ev_proposal": "accepted",
+      "ev_replay": "replayed",
+      "ev_clock": "ok",
+      "ev_scope": "mismatch",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "monthly",
+      "ev_budget": "over"
+    },
+    "precedence_quota_before_budget": {
+      "ev_proposal": "accepted",
+      "ev_replay": "fresh",
+      "ev_clock": "ok",
+      "ev_scope": "ok",
+      "ev_units": "ok",
+      "ev_concurrency": "ok",
+      "ev_bucket": "ok",
+      "ev_quota": "monthly",
+      "ev_budget": "over"
+    }
   }
 }

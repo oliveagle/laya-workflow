@@ -1371,5 +1371,22 @@
     "breach_high": "breach_high",
     "breach_medium": "breach_medium",
     "breach_low": "breach_low"
+  },
+  "api_quota_guard": {
+    "proposal_malformed": "reject_proposal",
+    "replay_duplicate": "reject_replay",
+    "clock_regressed": "reject_clock_regression",
+    "scope_mismatch": "reject_scope",
+    "units_above_max": "reject_units_above_max",
+    "concurrency_at_limit": "throttle_concurrency",
+    "bucket_insufficient": "throttle_bucket",
+    "daily_quota_retry": "throttle_daily",
+    "daily_quota_no_retry": "reject_daily_no_retry",
+    "monthly_quota": "reject_monthly",
+    "spend_budget_over": "reject_spend",
+    "allow_within_limits": "allow",
+    "precedence_proposal_first": "reject_proposal",
+    "precedence_replay_before_scope": "reject_replay",
+    "precedence_quota_before_budget": "reject_monthly"
   }
 }
