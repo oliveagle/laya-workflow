@@ -351,7 +351,7 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   tables), and composed actions (`gate ...`, `merge open probabilities on "Q"`,
   `combine ...`, `rubric ...`, `prepare a UI proposal ...`).
 
-Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline):
+Four gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline):
 
 1. **`bdd round-trip`** — every `@decision` feature reproduces its dsl spec field
    by field, and no dsl spec exists without a BDD source (bidirectional, zero
@@ -359,7 +359,7 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   62 of 99 specs carry behavioural states today (59 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
+   64 of 99 specs carry behavioural states today (61 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
    Network-bound stems follow an **offline detection** rule: when a spec's
    declared `endpoint`/`url` targets (web_search, web_fetch, agent, rpc, http,
    webhook, ...) are all unreachable the local mocks are down and the states are
@@ -375,8 +375,9 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    timeout cap in offline smoke so dynamic URLs fail fast instead of hanging.
    With the mocks up (integration CI / `bench/mock_services.sh start` + the two
    `mock serve` processes on 8791/8792) every registered state runs and the
-   EXPECT assertions are enforced. The remaining 37 call-heavy stems that need a
-   model/CLI/secret are validate-only offline *by design*.
+   EXPECT assertions are enforced. The remaining 35 call-heavy stems that need a
+   model/CLI/secret/browser are accounted for by the coverage ledger below
+   (`bench/dsl_coverage_ledger.json`), not left silently unverified.
    Since P31 every multi-node decision stem is **trace-pinned**: a state that
    walks more than one node must assert its **entire** route in the expect
    table, not just the final label. A final label alone lets an authored feature
@@ -393,12 +394,18 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    `bdd-smoke-branch-coverage` regression test runs every registered state and
    requires the union of visited nodes to cover **every node reachable from
    `start`** in the graph — a newly added reachable node with no state that
-   walks to it fails the gate, rather than waiting for a human audit. Only
-   three nodes are allow-listed as offline-unreachable (`cua_desktop.exec`
-   needs the real driver, `intake_pipeline_nested.intake` is an inlined
-   sub-pipeline container, `support_ticket_router_hybrid.needle_fallback`'s
-   Needle env ref is unresolved offline), and each entry is asserted to still
-   be a reachable node so the list cannot rot into a silent hole. All
+   walks to it fails the gate, rather than waiting for a human audit. Only one
+   node is still allow-listed as offline-unreachable (`cua_desktop.exec` needs
+   the real driver), and it is asserted to still be a reachable node so the
+   list cannot rot into a silent hole. P43 shrank that list from three: an
+   inlined sub-workflow container is now recognised structurally — the engine
+   expands it in place, so its own name is never a trace step (its steps appear
+   as `intake::<child>`) and it is excluded from the must-be-visited set while
+   its `edge` is still followed — and
+   `support_ticket_router_hybrid.needle_fallback` is covered for real now that
+   `ensure_env_dirs` seeds `${env.NEEDLE3_CACT}`, the activation blob every
+   `kind: needle` capability interpolates (`needle_demo` / `needle_ticket` also
+   gained offline states this way). All
    17 multi-node stems are
    pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
    integration_hub/protocol_services/refund_with_external_checks/span_selection/
@@ -408,7 +415,15 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    `bdd-smoke-trace-path-floor` regression test (runs the engine like dsl smoke,
    offline-skips network-bound stems, requires every multi-node state to pin its
    route) makes the pinning structural, not a one-off.
-3. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
+3. **the `dsl smoke` coverage ledger** — gate 2 only covers specs that carry
+   sample states. `bench/dsl_coverage_ledger.json` makes the accounting total:
+   every spec under `dsl/` is either offline-registered (behaviour-verified) or
+   declared `live_only` with the gate that covers it (`covered_by`) and why the
+   offline smoke cannot (`reason`). `dsl smoke` fails on a spec that is neither
+   (a workflow nothing would ever flag), and on a stale entry (its spec became
+   registered, or vanished), so coverage cannot silently shrink. Today:
+   64 offline-verified + 35 live-declared = 99.
+4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
 
 For an agent writing a decision workflow, the loop is fully callable
