@@ -359,7 +359,7 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   62 of 99 specs carry behavioural states today (59 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` chain over the local web mock).
+   62 of 99 specs carry behavioural states today (59 labelled expectation sets; +10 pinned in the decision workflows: support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
    Network-bound stems follow an **offline detection** rule: when a spec's
    declared `endpoint`/`url` targets (web_search, web_fetch, agent, rpc, http,
    webhook, ...) are all unreachable the local mocks are down and the states are
@@ -389,7 +389,16 @@ Three gates hold the decision corpus (all in `scripts/bdd/check.sh`, all offline
    table) fails any multi-node state whose expect pins an incomplete path. Since P41 a multi-node state with *no* expect entry at all is a hard
    failure too — it used to be silently skipped by `if let Some(want)` — so the
    smoke gate and the `bdd-smoke-trace-path-floor` regression test can never
-   silently disagree. All
+   silently disagree. Since P42 that breadth is structural: the
+   `bdd-smoke-branch-coverage` regression test runs every registered state and
+   requires the union of visited nodes to cover **every node reachable from
+   `start`** in the graph — a newly added reachable node with no state that
+   walks to it fails the gate, rather than waiting for a human audit. Only
+   three nodes are allow-listed as offline-unreachable (`cua_desktop.exec`
+   needs the real driver, `intake_pipeline_nested.intake` is an inlined
+   sub-pipeline container, `support_ticket_router_hybrid.needle_fallback`'s
+   Needle env ref is unresolved offline), and each entry is asserted to still
+   be a reachable node so the list cannot rot into a silent hole. All
    17 multi-node stems are
    pinned (15 added in P31: cua_desktop/data_pipeline_local/feishu_unread_digest/
    integration_hub/protocol_services/refund_with_external_checks/span_selection/
