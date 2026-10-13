@@ -68,6 +68,16 @@ fn summarize(payload: &str) -> Option<Value> {
     serde_json::from_str(&body[start..]).ok()
 }
 
+
+/// Resolve a dotted path ("result.route", "trace.final_action") against a value.
+fn resolve_path<'v>(root: &'v Value, path: &str) -> Option<&'v Value> {
+    let mut cur = root;
+    for part in path.split('.') {
+        cur = cur.get(part)?;
+    }
+    Some(cur)
+}
+
 /// Make the scratch env vars every spec may reference; create the dirs.
 pub(crate) fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     let base = std::env::temp_dir().join("laya_dsl_smoke_rust");
@@ -187,20 +197,46 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             if !opts.quiet {
                 println!("       {label:10} final={final_action}  {chain}");
             }
-            // compare the label (or gate_action) against EXPECT
+            // compare against EXPECT: a string value pins the label (or
+            // gate_action); an object value pins decision outputs by dotted
+            // path (e.g. {"result.route": "billing"}).
             if let Some(expect_map) = expect.get(&stem).and_then(Value::as_object) {
-                if let Some(want) = expect_map.get(label).and_then(Value::as_str) {
-                    let result = res.get("result").cloned().unwrap_or(Value::Null);
-                    let got = result
-                        .get("label")
-                        .and_then(Value::as_str)
-                        .or_else(|| result.get("gate_action").and_then(Value::as_str))
-                        .unwrap_or("");
-                    if got != want {
-                        fails += 1;
-                        eprintln!(
-                            "       [FAIL] {label}: expected label {want:?}, got {got:?}"
-                        );
+                if let Some(want) = expect_map.get(label) {
+                    match want {
+                        Value::String(want_str) => {
+                            let result = res.get("result").cloned().unwrap_or(Value::Null);
+                            let got = result
+                                .get("label")
+                                .and_then(Value::as_str)
+                                .or_else(|| result.get("gate_action").and_then(Value::as_str))
+                                .unwrap_or("");
+                            if got != want_str {
+                                fails += 1;
+                                eprintln!(
+                                    "       [FAIL] {label}: expected label {want_str:?}, got {got:?}"
+                                );
+                            }
+                        }
+                        Value::Object(asserts) => {
+                            for (path, want_v) in asserts {
+                                let want_str = want_v.as_str().unwrap_or("");
+                                let got = resolve_path(&res, path)
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("");
+                                if got != want_str {
+                                    fails += 1;
+                                    eprintln!(
+                                        "       [FAIL] {label}: expected {path}={want_str:?}, got {got:?}"
+                                    );
+                                }
+                            }
+                        }
+                        other => {
+                            fails += 1;
+                            eprintln!(
+                                "       [FAIL] {label}: unsupported expect value {other:?} (use a string label or an object of dotted result paths)"
+                            );
+                        }
                     }
                 }
             }

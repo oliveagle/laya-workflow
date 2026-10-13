@@ -223,5 +223,61 @@
   "refund_with_external_checks": {
     "high_risk": "REJECTED",
     "low_risk": "APPROVED"
+  },
+  "dialogue_policy": {
+    "start": {
+      "result.intent": "identify"
+    },
+    "escalation": {
+      "result.intent": "noop"
+    }
+  },
+  "exec_preflight_guard": {
+    "tmp": {
+      "result.capability": "disk_check"
+    }
+  },
+  "quality_rubric": {
+    "score": {
+      "result.status": "scored"
+    }
+  },
+  "script_plugin": {
+    "digest": {
+      "result.capability": "digest"
+    }
+  },
+  "single_file_plugin": {
+    "greet": {
+      "result.capability": "greet"
+    }
+  },
+  "stateful_pipeline": {
+    "ticket": {
+      "result.capability": "counters"
+    }
+  },
+  "support_routing": {
+    "billing_urgent": {
+      "result.route": "billing",
+      "result.urgency": "high"
+    },
+    "account_urgent": {
+      "result.route": "account",
+      "result.urgency": "high"
+    },
+    "technical_calm": {
+      "result.route": "technical",
+      "result.urgency": "ordinary"
+    },
+    "ambiguous_signal": {
+      "result.route": "human_review",
+      "result.urgency": "ordinary"
+    }
+  },
+  "ticket_structuring": {
+    "ticket": {
+      "result.capability": "fingerprint"
+    }
   }
 }

@@ -1031,7 +1031,19 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
     .unwrap();
     let expect_obj = expect.as_object().unwrap();
     let states_obj = states.as_object().unwrap();
-    h.check("bdd: smoke expect stems >= 38", expect_obj.len() >= 38);
+    h.check("bdd: smoke expect stems >= 46", expect_obj.len() >= 46);
+    // Stems that pin decision outputs by dotted path (object-valued expects)
+    // must not silently regress either; the per-run smoke gate enforces the
+    // actual values.
+    let field_assert_stems = expect_obj
+        .values()
+        .filter(|v| {
+            v.as_object()
+                .map(|m| m.values().any(|x| x.is_object()))
+                .unwrap_or(false)
+        })
+        .count();
+    h.check("bdd: smoke expect field-assert stems >= 8", field_assert_stems >= 8);
     // Every expect stem must have registered states, and every expected label
     // must be one of that stem's state keys (no dangling expectations).
     for (stem, emap) in expect_obj {
