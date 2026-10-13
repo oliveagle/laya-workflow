@@ -429,8 +429,8 @@ template (`did you mean the decision when step: the answer "<a>" goes to "<node>
 so a typo (or a `Then` step accidentally written under `Given`/`And`) is fixable
 without digging — no `--assist` needed. A step that *compiles* but whose
 decision graph is semantically wrong (a routing target, `primary_q`, question
-reference, edge condition key, gate option or combine fallback that names
-something the graph does not contain) gets the same treatment one layer down:
+reference, edge condition key, gate option, combine fallback, or a `call`
+capability / `chain[].capability` that names something the graph does not contain) gets the same treatment one layer down:
 the `validate` error now carries the offending `.feature` **line number** and a
 `(did you mean "<closest>"?)` hint drawn from the graph's real identifiers — so
 the author sees *which line* and *what value* at the error site
