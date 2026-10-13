@@ -2533,5 +2533,235 @@
       "ev_early": "not_rotate",
       "ev_extension": "not_extend"
     }
+  },
+  "credential_rotation_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_overdue": "none",
+      "ev_critical_approval": "not_applicable",
+      "ev_blocked_service": "none"
+    },
+    "overdue_escalate": {
+      "ev_proposal": "accepted",
+      "ev_overdue": "some",
+      "ev_critical_approval": "not_applicable",
+      "ev_blocked_service": "none"
+    },
+    "critical_approval_missing": {
+      "ev_proposal": "accepted",
+      "ev_overdue": "none",
+      "ev_critical_approval": "missing",
+      "ev_blocked_service": "none"
+    },
+    "blocked_service": {
+      "ev_proposal": "accepted",
+      "ev_overdue": "none",
+      "ev_critical_approval": "not_applicable",
+      "ev_blocked_service": "blocked"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_overdue": "none",
+      "ev_critical_approval": "not_applicable",
+      "ev_blocked_service": "none"
+    },
+    "precedence_overdue_before_blocked": {
+      "ev_proposal": "accepted",
+      "ev_overdue": "some",
+      "ev_critical_approval": "not_applicable",
+      "ev_blocked_service": "blocked"
+    }
+  },
+  "config_schema_migration_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_changes": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "over",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "too_many_removals": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "over",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "critical_field_removal": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "removal",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "removal_none_default": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "none_default",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "dangerous_token": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "found",
+      "ev_approval": "not_required"
+    },
+    "approval_required": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "required"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "ok",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "ok",
+      "ev_approval": "not_required"
+    },
+    "precedence_change_count_before_dangerous": {
+      "ev_proposal": "accepted",
+      "ev_change_count": "over",
+      "ev_removal_count": "ok",
+      "ev_critical_field": "ok",
+      "ev_removal_default": "ok",
+      "ev_dangerous": "found",
+      "ev_approval": "not_required"
+    }
+  },
+  "feature_flag_rollout_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_env": "allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "ok"
+    },
+    "env_not_allowed": {
+      "ev_proposal": "accepted",
+      "ev_env": "not_allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "ok"
+    },
+    "staging_missing": {
+      "ev_proposal": "accepted",
+      "ev_env": "allowed",
+      "ev_staging": "missing",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "ok"
+    },
+    "high_risk_no_canary": {
+      "ev_proposal": "accepted",
+      "ev_env": "allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "no_canary",
+      "ev_step_pct": "ok"
+    },
+    "step_pct_over_high": {
+      "ev_proposal": "accepted",
+      "ev_env": "allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "over_high"
+    },
+    "step_pct_over_non_high": {
+      "ev_proposal": "accepted",
+      "ev_env": "allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "over_non_high"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_env": "allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "ok"
+    },
+    "precedence_env_before_step": {
+      "ev_proposal": "accepted",
+      "ev_env": "not_allowed",
+      "ev_staging": "not_applicable",
+      "ev_canary": "not_applicable",
+      "ev_step_pct": "over_high"
+    }
+  },
+  "cache_invalidation_guard": {
+    "proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_key_count": "ok",
+      "ev_namespace": "ok",
+      "ev_ttl": "not_set",
+      "ev_reason": "not_required"
+    },
+    "too_many_keys": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "over",
+      "ev_namespace": "ok",
+      "ev_ttl": "not_set",
+      "ev_reason": "not_required"
+    },
+    "protected_namespace": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "ok",
+      "ev_namespace": "protected",
+      "ev_ttl": "not_set",
+      "ev_reason": "not_required"
+    },
+    "ttl_below": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "ok",
+      "ev_namespace": "ok",
+      "ev_ttl": "below",
+      "ev_reason": "not_required"
+    },
+    "reason_missing": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "ok",
+      "ev_namespace": "ok",
+      "ev_ttl": "not_set",
+      "ev_reason": "missing"
+    },
+    "approve_clean": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "ok",
+      "ev_namespace": "ok",
+      "ev_ttl": "not_set",
+      "ev_reason": "not_required"
+    },
+    "precedence_key_count_before_namespace": {
+      "ev_proposal": "accepted",
+      "ev_key_count": "over",
+      "ev_namespace": "protected",
+      "ev_ttl": "not_set",
+      "ev_reason": "not_required"
+    }
   }
 }

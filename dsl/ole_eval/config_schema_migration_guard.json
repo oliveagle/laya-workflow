@@ -1,0 +1,169 @@
+{
+  "name": "config_schema_migration_guard",
+  "_bdd": {
+    "feature": "config_schema_migration_guard",
+    "feature_path": "bdd/workflows/ole_eval/config_schema_migration_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed configuration schema migrations as a single triage\nnode. The model proposes one typed migration (request_id, schema_name,\nfrom_version, to_version, changes [{action add/remove/rename/modify,\nfield_path, default_value, new_name}], rollback_plan {steps}); this workflow\nowns the change/removal caps, the critical-field rule, the removal-default\nrule and the dangerous-token scan. Port of\ncode/qwen_vm/app_scenarios/config_schema_migration_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, non-empty strings, change action\nenum, remove/rename companion fields, non-empty rollback steps,\ndangerous-token rejection) fold into the `proposal` choice.\n- The migration policy (max_changes, critical_fields, require_approval) is a\nfixed fixture; each ordered check folds into one verdict choice.\nEmitted labels: reject_proposal, reject_change_count, reject_removal_count,\nreject_critical_field, reject_removal_default, reject_dangerous,\nescalate_approval, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "approval",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, schema_name, from_version, to_version, changes [{action, field_path, default_value, new_name}], rollback_plan {steps}} object with valid action enums, companion fields and a non-empty rollback steps list?",
+          "criteria": {
+            "accepted": "exactly one schema-valid migration",
+            "malformed": "parse error, missing field, bad action or empty rollback steps"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "change_count": {
+          "type": "choice",
+          "instructions": "Is the number of changes within the policy max_changes cap?",
+          "criteria": {
+            "ok": "change count <= max_changes",
+            "over": "change count > max_changes"
+          },
+          "heuristic": {
+            "answer_field": "ev_change_count"
+          }
+        },
+        "removal_count": {
+          "type": "choice",
+          "instructions": "Are there at most 5 field removals?",
+          "criteria": {
+            "ok": "removals <= 5",
+            "over": "removals > 5"
+          },
+          "heuristic": {
+            "answer_field": "ev_removal_count"
+          }
+        },
+        "critical_field": {
+          "type": "choice",
+          "instructions": "Does the proposal avoid removing any policy critical_field?",
+          "criteria": {
+            "ok": "no critical field is removed",
+            "removal": "a critical field is being removed"
+          },
+          "heuristic": {
+            "answer_field": "ev_critical_field"
+          }
+        },
+        "removal_default": {
+          "type": "choice",
+          "instructions": "Does every removal carry a non-None default_value?",
+          "criteria": {
+            "ok": "every removal has a default_value",
+            "none_default": "a removal has a None default_value"
+          },
+          "heuristic": {
+            "answer_field": "ev_removal_default"
+          }
+        },
+        "dangerous": {
+          "type": "choice",
+          "instructions": "Is any string field free of dangerous tokens?",
+          "criteria": {
+            "ok": "no dangerous tokens anywhere",
+            "found": "some string field has a dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_dangerous"
+          }
+        },
+        "approval": {
+          "type": "choice",
+          "instructions": "Does the migration policy require manual approval?",
+          "criteria": {
+            "not_required": "no approval flag set",
+            "required": "policy require_approval true"
+          },
+          "heuristic": {
+            "answer_field": "ev_approval"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "approval",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "change_count",
+              "answer": "over"
+            },
+            "label": "reject_change_count"
+          },
+          {
+            "when": {
+              "question": "removal_count",
+              "answer": "over"
+            },
+            "label": "reject_removal_count"
+          },
+          {
+            "when": {
+              "question": "critical_field",
+              "answer": "removal"
+            },
+            "label": "reject_critical_field"
+          },
+          {
+            "when": {
+              "question": "removal_default",
+              "answer": "none_default"
+            },
+            "label": "reject_removal_default"
+          },
+          {
+            "when": {
+              "question": "dangerous",
+              "answer": "found"
+            },
+            "label": "reject_dangerous"
+          },
+          {
+            "when": {
+              "question": "approval",
+              "answer": "required"
+            },
+            "label": "escalate_approval"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

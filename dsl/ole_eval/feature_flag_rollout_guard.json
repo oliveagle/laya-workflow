@@ -1,0 +1,143 @@
+{
+  "name": "feature_flag_rollout_guard",
+  "_bdd": {
+    "feature": "feature_flag_rollout_guard",
+    "feature_path": "bdd/workflows/ole_eval/feature_flag_rollout_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed feature-flag rollouts as a single triage node. The\nmodel proposes one typed rollout (request_id, flag_name, rollout_plan\n{target_pct, strategy canary/blue_green/gradual, target_env staging/prod},\nrisk_level low/medium/high, staging_evidence); this workflow owns the env\nallowlist, the staging-evidence rule, the high-risk canary rule and the\nsingle-step percentage cap. Port of\ncode/qwen_vm/app_scenarios/feature_flag_rollout_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, non-empty flag_name, strategy/env/\nrisk enums, numeric target_pct in 0-100, dangerous-token rejection) fold\ninto the `proposal` choice.\n- The rollout policy (max_pct_per_step, requires_canary_for_high_risk,\nstaging_required_for_prod, allowed_envs) is a fixed fixture. The step-cap\nverdict folds in risk_level, since a high-risk overrun is REJECT while a\nlower-risk overrun is ESCALATE.\nEmitted labels: reject_proposal, reject_env, reject_staging,\nreject_canary, reject_step_pct, escalate_step_pct, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "step_pct",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, flag_name, rollout_plan {target_pct, strategy, target_env}, risk_level} object with valid strategy/env/risk enums and target_pct within 0-100?",
+          "criteria": {
+            "accepted": "exactly one schema-valid rollout",
+            "malformed": "parse error, missing field, bad enum, bad target_pct or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "env": {
+          "type": "choice",
+          "instructions": "Is target_env within the policy allowed_envs set?",
+          "criteria": {
+            "allowed": "env is allowed",
+            "not_allowed": "env is not in allowed_envs"
+          },
+          "heuristic": {
+            "answer_field": "ev_env"
+          }
+        },
+        "staging": {
+          "type": "choice",
+          "instructions": "When policy requires staging for prod, is staging evidence present? (not_applicable for non-prod or when staging is not required)",
+          "criteria": {
+            "not_applicable": "non-prod target or staging not required",
+            "satisfied": "prod target with staging evidence present",
+            "missing": "prod target without staging evidence"
+          },
+          "heuristic": {
+            "answer_field": "ev_staging"
+          }
+        },
+        "canary": {
+          "type": "choice",
+          "instructions": "When policy requires canary for high risk, does the strategy use canary? (not_applicable for non-high risk or when canary is not required)",
+          "criteria": {
+            "not_applicable": "risk is not high or canary not required",
+            "canary": "high risk with the canary strategy",
+            "no_canary": "high risk without canary"
+          },
+          "heuristic": {
+            "answer_field": "ev_canary"
+          }
+        },
+        "step_pct": {
+          "type": "choice",
+          "instructions": "Is target_pct within the policy max_pct_per_step? (an overrun is reported as over_high when risk_level is high, otherwise over_non_high)",
+          "criteria": {
+            "ok": "target_pct within the step cap",
+            "over_high": "overrun with risk_level high",
+            "over_non_high": "overrun with risk_level not high"
+          },
+          "heuristic": {
+            "answer_field": "ev_step_pct"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "step_pct",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "env",
+              "answer": "not_allowed"
+            },
+            "label": "reject_env"
+          },
+          {
+            "when": {
+              "question": "staging",
+              "answer": "missing"
+            },
+            "label": "reject_staging"
+          },
+          {
+            "when": {
+              "question": "canary",
+              "answer": "no_canary"
+            },
+            "label": "reject_canary"
+          },
+          {
+            "when": {
+              "question": "step_pct",
+              "answer": "over_high"
+            },
+            "label": "reject_step_pct"
+          },
+          {
+            "when": {
+              "question": "step_pct",
+              "answer": "over_non_high"
+            },
+            "label": "escalate_step_pct"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

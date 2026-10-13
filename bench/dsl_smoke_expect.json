@@ -1521,5 +1521,43 @@
     "extension_too_long": "reject_extension",
     "revoke_approve": "approve",
     "precedence_key_id_before_age": "reject_key_id"
+  },
+  "credential_rotation_guard": {
+    "proposal_malformed": "reject_proposal",
+    "overdue_escalate": "escalate_overdue",
+    "critical_approval_missing": "reject_critical_approval",
+    "blocked_service": "reject_blocked_service",
+    "approve_clean": "approve",
+    "precedence_overdue_before_blocked": "escalate_overdue"
+  },
+  "config_schema_migration_guard": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_changes": "reject_change_count",
+    "too_many_removals": "reject_removal_count",
+    "critical_field_removal": "reject_critical_field",
+    "removal_none_default": "reject_removal_default",
+    "dangerous_token": "reject_dangerous",
+    "approval_required": "escalate_approval",
+    "approve_clean": "approve",
+    "precedence_change_count_before_dangerous": "reject_change_count"
+  },
+  "feature_flag_rollout_guard": {
+    "proposal_malformed": "reject_proposal",
+    "env_not_allowed": "reject_env",
+    "staging_missing": "reject_staging",
+    "high_risk_no_canary": "reject_canary",
+    "step_pct_over_high": "reject_step_pct",
+    "step_pct_over_non_high": "escalate_step_pct",
+    "approve_clean": "approve",
+    "precedence_env_before_step": "reject_env"
+  },
+  "cache_invalidation_guard": {
+    "proposal_malformed": "reject_proposal",
+    "too_many_keys": "reject_key_count",
+    "protected_namespace": "escalate_namespace",
+    "ttl_below": "reject_ttl",
+    "reason_missing": "reject_reason",
+    "approve_clean": "approve",
+    "precedence_key_count_before_namespace": "reject_key_count"
   }
 }

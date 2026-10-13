@@ -1,0 +1,135 @@
+{
+  "name": "cache_invalidation_guard",
+  "_bdd": {
+    "feature": "cache_invalidation_guard",
+    "feature_path": "bdd/workflows/ole_eval/cache_invalidation_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed cache invalidations as a single triage node. The model\nproposes one typed invalidation (request_id, cache_keys [{key, namespace,\ncurrent_ttl}], invalidation_reason, ttl_override); this workflow owns the\nkey-count cap, the protected-namespace escalation, the TTL floor and the\nreason requirement. Port of code/qwen_vm/app_scenarios/cache_invalidation_guard.\nFolding boundaries (documented, not computed in the DSL):\n- JSON parsing details (required fields, non-empty key/namespace, int\ncurrent_ttl >= 0, optional int ttl_override >= 0, dangerous-token\nrejection) fold into the `proposal` choice.\n- The cache policy (max_keys_per_request, protected_namespaces,\nmin_ttl_seconds, require_reason) is a fixed fixture; each ordered check\nfolds into one verdict choice.\nEmitted labels: reject_proposal, reject_key_count, escalate_namespace,\nreject_ttl, reject_reason, approve.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "reason",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one {request_id, cache_keys [{key, namespace, current_ttl}], invalidation_reason} object (non-empty keys, int ttl fields, no dangerous tokens)?",
+          "criteria": {
+            "accepted": "exactly one schema-valid invalidation",
+            "malformed": "parse error, missing field, bad key/namespace or dangerous token"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "key_count": {
+          "type": "choice",
+          "instructions": "Is the number of cache_keys within the policy max_keys_per_request cap?",
+          "criteria": {
+            "ok": "key count <= max_keys_per_request",
+            "over": "key count > max_keys_per_request"
+          },
+          "heuristic": {
+            "answer_field": "ev_key_count"
+          }
+        },
+        "namespace": {
+          "type": "choice",
+          "instructions": "Is every cache_key namespace outside the policy protected_namespaces set?",
+          "criteria": {
+            "ok": "no key touches a protected namespace",
+            "protected": "a key touches a protected namespace"
+          },
+          "heuristic": {
+            "answer_field": "ev_namespace"
+          }
+        },
+        "ttl": {
+          "type": "choice",
+          "instructions": "Is ttl_override absent or at least the policy min_ttl_seconds?",
+          "criteria": {
+            "not_set": "ttl_override is absent",
+            "ok": "ttl_override >= min_ttl_seconds",
+            "below": "ttl_override < min_ttl_seconds"
+          },
+          "heuristic": {
+            "answer_field": "ev_ttl"
+          }
+        },
+        "reason": {
+          "type": "choice",
+          "instructions": "When policy require_reason is set, is invalidation_reason non-empty? (not_required when the policy does not require it)",
+          "criteria": {
+            "not_required": "policy does not require a reason",
+            "present": "reason is present",
+            "missing": "reason required but empty"
+          },
+          "heuristic": {
+            "answer_field": "ev_reason"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "reason",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "key_count",
+              "answer": "over"
+            },
+            "label": "reject_key_count"
+          },
+          {
+            "when": {
+              "question": "namespace",
+              "answer": "protected"
+            },
+            "label": "escalate_namespace"
+          },
+          {
+            "when": {
+              "question": "ttl",
+              "answer": "below"
+            },
+            "label": "reject_ttl"
+          },
+          {
+            "when": {
+              "question": "reason",
+              "answer": "missing"
+            },
+            "label": "reject_reason"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "approve"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}
