@@ -178,6 +178,7 @@ Feature: support_ticket_router
 - `a score question "Q" asks "..."` + `| level |` 表
 - `a noul question "Q" asks "..."` + 可选 `| truthy | ... |` / `| falsy | ... |` 表
 - `the sub workflow "NAME"` —— 节点只引子工作流（不能混节点内容）
+- `And when the sub workflow completes continue at "NODE"` —— 子工作流完成后的**交接点**：子内部 STOP 边被重定向到调用方节点（P25；参考 `bdd/workflows/pipelines/intake_pipeline_nested.feature`）
 - 启发式（跟在问题后、配置**最近一个**问题）：
   - `answer "X" when the field "F" contains <needles> with hit N [and miss M]`（field_any）
   - `answer "X" when the text contains <needles> with hit N [and miss M]`（any）
@@ -205,6 +206,19 @@ Feature: support_ticket_router
 
 > 单元格里要写字面 `|`（如 shell 管道）时转义成 `\|`；JSON 值里的 `\r\n` 等按 JSON 转义。
 
+### 正确性 & 行为门禁（决策路径怎么被证明对）
+
+写出来的 `.feature` 不仅要能编译，还要被证明**真的按你写的意图决策**。这些门禁全部离线、进 `scripts/bdd/check.sh`：
+
+- **语义图校验（P24-P27）**：`from_spec` 阶段跑 `validate_graph_semantics` —— edge 目标 / action kind / threshold question 引用 / 节点名唯一 / 死节点可达性 / primary_q 存在 / copy_keys 键 ∈ 本节点 question / combine fallback ∈ criteria / workflow 引用环（A→B→A 拒绝并命名链条，菱形不误报）/ edge 条件键 ∈ 主问题 criteria。任何一条违反在 build 阶段就拒绝，而不是运行时静默错（真实抓过 3 处死代码/死路由）。
+- **行为 smoke（P7 起）**：`dsl smoke` 用离线 HeuristicBackend 跑每个 dsl spec 注册的样本状态（`bench/dsl_smoke_states.json`），按 `bench/dsl_smoke_expect.json` 断言决策输出。99/99 specs OK。
+- **决策输出断言（P21-P30）**：expect 表三种形态 —— ① string 钉最终 label/gate_action；② object 按 dotted-path 钉决策输出（`result.route`/`result.score`/数值 1e-9 容差）；③ P30 起 `bdd score --run` 的决策 e2e 编译 **authored feature** 跑同样状态、用同一个 `check_expect` 断言（修「跑通但决策错」的空洞 e2e，10/10 authoring task 全钉）。
+- **决策 trace 全钉（P31）**：一个 state 走 >1 个节点时，它的 expect **必须**钉 `trace.steps.N.node`/`.action` + `trace.step_count`——最终 label 对但中间走错节点的 feature 会被拦（`walks N nodes but expect pins no trace path`）。17/17 multi-node stem 已钉死（dialogue_policy 状态机 retry 自环、persist_memory 5 节点链、triage_then_moderate gate_action 等）。回归测试 `bdd-smoke-trace-path-floor` 让这条要求是结构性的。
+- **offline-detection（P29）**：网络型 stem（web_search/web_fetch/agent/rpc/http/webhook…）在本地 mocks 全不可达时 state 判 skip（validate-only），不误报回归；mocks up 时（`bench/mock_services.sh start` + 8791/8792 `mock serve`）全量强断言。
+- **did-you-mean（P28）**：决策步骤拼错/放错关键词时，`bdd build` 覆盖门禁逐条给 `did you mean the decision <kind> step: <tmpl>?` 建议，作者直接看到该改成什么。
+
+expect 表现况：59 个 stem（28 个 object 形态 dotted-path 断言、17 个钉死 trace 路径）；`laya-workflow-tests` 1799/0（mocks up）/ 1722/0（mocks down）。
+
 ### 作者循环（agent 怎么写一个决策 workflow）
 
 1. 想清楚决策图：几个节点？每个节点问什么问题、答什么路由、产出什么 label/动作。
@@ -212,7 +226,8 @@ Feature: support_ticket_router
    自验证能过 `bdd build`；`write=true` 落盘、`root` 指定工作区）或 CLI `laya-workflow bdd scaffold`。
 3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展（先查词汇表，生造措辞会被拒）。
 4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
-   validate 逐行错误）或 CLI `laya-workflow bdd build`。
+   validate 逐行错误）或 CLI `laya-workflow bdd build`。拼错/放错关键词的决策步骤会收到
+   `did you mean ...?` 建议（P28），照建议改即可。
 5. 出 spec：**MCP `bdd_transpile`**（feature → dsl spec，`@decision` 单图 / browser 逐 scenario；
    dsl_version 剥离对齐 dsl 约定；`write=true` 落盘 dsl/<cat>/ 带 exists 防覆盖）或 CLI
    `laya-workflow bdd transpile <file> --out dsl/<cat>`。
@@ -223,6 +238,8 @@ Feature: support_ticket_router
 ### 为什么这样是 agentic workflow 的核心
 
 - **确定性**：`@decision` 词汇表是确定性编译器（正则 → 决策图），0ms、无歧义；validate 双保险。
+- **正确性可证**：语义图校验 + 决策输出断言 + **决策 trace 全钉** + offline-detection，让"决策对没对"是
+  可测、可复现、可回归的（P24-P31），不只是"能编译"。
 - **单一事实来源**：`.feature` 是源，`dsl/*.json` 是编译产物；round-trip 证明等价，杜绝双份漂移。
 - **可直接运行**：`laya-workflow run --spec dsl/<cat>/<name>.json` 用 HeuristicBackend / 真实 LLM 跑决策图。
 - **完整性可审计**：`bdd_catalog` 让"所有已知 workflow 都 BDD 化"这件事可测（孤儿即报）。
