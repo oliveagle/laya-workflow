@@ -235,14 +235,21 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                         }
                         Value::Object(asserts) => {
                             for (path, want_v) in asserts {
-                                let want_str = want_v.as_str().unwrap_or("");
-                                let got = resolve_path(&res, path)
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("");
-                                if got != want_str {
+                                let got = resolve_path(&res, path).unwrap_or(&Value::Null);
+                                let ok = match want_v {
+                                    Value::String(want_str) => got.as_str() == Some(want_str),
+                                    Value::Number(want_num) => match (got.as_f64(), want_num.as_f64()) {
+                                        (Some(g), Some(w)) => {
+                                            (g - w).abs() <= 1e-9 * w.abs().max(1.0)
+                                        }
+                                        _ => false,
+                                    },
+                                    _ => false,
+                                };
+                                if !ok {
                                     fails += 1;
                                     eprintln!(
-                                        "       [FAIL] {label}: expected {path}={want_str:?}, got {got:?}"
+                                        "       [FAIL] {label}: expected {path}={want_v}, got {got}"
                                     );
                                 }
                             }

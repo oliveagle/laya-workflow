@@ -330,5 +330,39 @@
     "metrics": {
       "result.capability": "metrics_endpoint"
     }
+  },
+  "routing_codegraph": {
+    "semantic_high": {
+      "result.semantic": 0.85,
+      "result.temporal": 0.85,
+      "result.causal": 0.85,
+      "result.entity": 0.85,
+      "result.multi_hop_need": 0.85,
+      "result.recency_importance": 0.85
+    }
+  },
+  "traversal_codegraph": {
+    "cand0_high": {
+      "result.cand_0_relevance": 0.85,
+      "result.cand_0_relation_usefulness": 0.85,
+      "result.cand_0_new_information": 0.85,
+      "result.cand_0_supports_current_evidence": 0.85,
+      "result.cand_1_relevance": 0.1,
+      "result.cand_1_relation_usefulness": 0.1,
+      "result.cand_1_new_information": 0.1,
+      "result.cand_1_supports_current_evidence": 0.1
+    }
+  },
+  "iterative_refine_loop": {
+    "rough": {
+      "result.score": 0.2,
+      "result.round": 1,
+      "result.action_answer": "accept"
+    },
+    "polished": {
+      "result.score": 0.9,
+      "result.round": 2,
+      "result.action_answer": "accept"
+    }
   }
 }
