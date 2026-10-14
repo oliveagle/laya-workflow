@@ -213,7 +213,9 @@ enum Cmd {
     },
     /// Create the state root and install everything this tool bundles: every
     /// plugin, the laya-mem specs, and the SQLite store's parent directory.
-    /// Idempotent — re-running it after a `git pull` refreshes what changed.
+    /// Idempotent — re-running it is safe and keeps what is already there.
+    /// Pass `--force` to overwrite existing plugins and specs with the
+    /// shipped versions (the refresh after a `git pull`).
     Install {
         /// Overwrite existing installs instead of keeping them.
         #[arg(long, default_value_t = false)]
@@ -1832,6 +1834,16 @@ fn run_install(force: bool, dirs_only: bool) -> Result<()> {
         let Some(src) = e.path.as_ref() else {
             continue; // no on-disk copy
         };
+        // Never "install" a plugin from the install root onto itself. Discovery
+        // walks the user layer too, so run outside a checkout every discovered
+        // source *is* the destination; `install_from_dir` would `remove_dir_all`
+        // the destination and then copy from the directory it just deleted,
+        // leaving the plugin empty — and with `--force`, wiping the whole tree.
+        // Such an entry is not a source: leave it out of `seen` so the bundled-
+        // builtin loop below owns the name and can refresh it from the binary.
+        if src.starts_with(plugins.as_path()) {
+            continue;
+        }
         // Discovery reports `group/name`; a plugin is one directory, so install
         // under the bare name (`websites/hackernews` → `plugins/hackernews`).
         let name = plg::install_name_for(&e.name).to_string();

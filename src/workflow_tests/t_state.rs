@@ -158,6 +158,30 @@ pub fn test_install(h: &mut Harness) {
         std::fs::read_to_string(&edited).unwrap().contains("\"nodes\""),
     );
 
+    // Regression (P117): `install --force` outside a checkout must REFRESH the
+    // bundled plugins, never wipe them. Discovery walks the user layer, so each
+    // plugin's source used to be its own destination; reinstalling it
+    // `remove_dir_all`'d the directory and then copied from the copy just
+    // deleted, leaving every plugin empty (an installed binary then fell back to
+    // the compiled-in copy, but any plugin installed from a git repo was lost).
+    let bdd_entry = root.join("plugins").join("bdd").join("main.rhai");
+    h.check(
+        "install --force: refreshes a bundled plugin from the binary rather than wiping it",
+        bdd_entry.is_file()
+            && std::fs::read_to_string(&bdd_entry)
+                .map(|t| t.contains("fn "))
+                .unwrap_or(false),
+    );
+    let (ok, out3) = run_in(&root, &cwd, &["plugin", "list"]);
+    h.eq("install --force: plugin list still exits 0", ok, true);
+    let user_listed = out3.lines().filter(|l| l.contains(" user ")).count();
+    check_msg(
+        h,
+        "install --force: plugins still resolve from the user layer",
+        user_listed >= 14,
+        &user_listed.to_string(),
+    );
+
     // A fresh root with nothing but --dirs-only must create layout and install
     // no plugins, so the two halves of `install` are separately usable.
     let bare = fresh("dirsonly");
