@@ -399,7 +399,9 @@
   },
   "agent_command_gate": {
     "dangerous": "BLOCK",
-    "safe": "ALLOW"
+    "safe": "ALLOW",
+    "exfil": "BLOCK",
+    "sensitive_read": "CONFIRM"
   },
   "triage_then_moderate": {
     "safety": {

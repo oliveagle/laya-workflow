@@ -47,9 +47,9 @@ Specs in this directory:
 
 | file | demonstrates |
 |------|--------------|
-| `agent_command_gate.json` | single node, `gate` (ALLOW/CONFIRM/BLOCK), state projection |
+| `agent_command_gate.json` | single-node ordered `threshold` ladder (BLOCK/CONFIRM/ALLOW) over is_destructive/is_exfiltration/intent_match/risk — the BDD port of the built-in `agent_gate` app |
 | `support_ticket_router.json` | multi-node routing, `min_confidence`, ordered `threshold` |
-| `content_policy_gate.json` | 6-way choice, cross-question probability rules |
+| `content_policy_gate.json` | 6-way choice, cross-question probability rules, WARN on severity/category — the BDD port of the built-in `content_moderation` app |
 | `triage_then_moderate.json` | 3-hop chain with conditional jumps |
 | `iterative_refine_loop.json` | self-loop + retry budget + convergence |
 | `intake_pipeline_nested.json` | nested reference to `support_ticket_router` |

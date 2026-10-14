@@ -156,6 +156,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-mcp-import", t_bdd::test_bdd_mcp_import),
         ("bdd-mcp-decide", t_bdd::test_bdd_mcp_decide),
         ("bdd-mcp-list", t_bdd::test_bdd_mcp_list),
+        ("bdd-app-port-parity", t_bdd::test_bdd_app_port_parity),
         ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),
         ("bdd-decision-e2e-output-assert", t_bdd::test_bdd_decision_e2e_output_assert),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),

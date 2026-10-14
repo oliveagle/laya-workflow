@@ -344,7 +344,9 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   `the answer is always "X"`, ….
 * **When (edges)** — `the answer "X" goes to "NODE"`, `any other answer goes to "NODE"`.
 * **Then (actions)** — ordered threshold labels (`label "L" when "Q" is at least
-  N` / `below N` / `otherwise`), state (`keep the answer to "Q"` / `keep the state
+  N` / `below N` / `otherwise`, and per-option confidence
+  `label "L" when the answer to "Q" is "B" with at least N confidence` or
+  `... with at most N confidence`), state (`keep the answer to "Q"` / `keep the state
   key "K"`), node settings (`the primary question is "Q"`, `the action reads the
   question "Q"`, `require confidence at least N`, `allow up to N retries`),
   capability calls (`call the capability "NAME"` with `| with.<k> |` / `| chain.<as>.capability |`

@@ -1,6 +1,12 @@
 @decision
 Feature: agent_command_gate
-  Port of agent_command_gate: converted from dsl/guards/agent_command_gate.json (BDD round-trip).
+  Fail-closed tool-call gate: BLOCK / CONFIRM / ALLOW. Behaviour-equivalent to the
+  built-in `agent_gate` app's route() over the model signals is_destructive /
+  is_exfiltration / intent_match / risk, with one documented fold: the app also
+  hard-blocks a command whose *verb* is a known exfiltration tool AND whose
+  exfiltration probability is high; the port has no pre-model verb input, so it
+  folds that guard into the exfiltration probability (a high exfiltration
+  probability alone blocks — fail-closed, never fail-open).
 
   Background:
     Given the workflow runs at most 10 iterations
@@ -24,8 +30,16 @@ Feature: agent_command_gate
       | moderate change |
       | irreversible destructive |
     When any other answer goes to "STOP"
-    Then gate "is_destructive" on option "B" with block 0.7 allow 0.7
-    Then allow up to 2 retries
-    Then keep the state key "command"
-    Then keep the state key "intent"
-    Then keep the state key "cwd"
+    Then the action reads the question "risk"
+    And label "BLOCK" when the answer to "is_destructive" is "B" with at least 0.8 confidence
+    And label "BLOCK" when "risk" is at least 2
+    And label "BLOCK" when the answer to "intent_match" is "A" with at most 0.5 confidence
+    And label "BLOCK" when the answer to "is_exfiltration" is "B" with at least 0.6 confidence
+    And label "CONFIRM" when the answer to "is_destructive" is "B" with at least 0.4 confidence
+    And label "CONFIRM" when the answer to "is_exfiltration" is "B" with at least 0.4 confidence
+    And label "CONFIRM" when the answer to "intent_match" is "A" with at most 0.7 confidence
+    And label "ALLOW" otherwise
+    And allow up to 2 retries
+    And keep the state key "command"
+    And keep the state key "intent"
+    And keep the state key "cwd"

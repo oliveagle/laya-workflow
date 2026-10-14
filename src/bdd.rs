@@ -1000,6 +1000,13 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when the answer to "(?P<q>[^"]+)" is "(?P<a>.+)" with at most (?P<c>\d+(?:\.\d+)?) confidence$"#,
+                )
+                .unwrap(),
+                "label_opt_lt",
+            ),
+            (
+                Regex::new(
                     r#"^label "(?P<label>[^"]+)" when the answer is "(?P<a>.+)" with at least (?P<c>\d+(?:\.\d+)?) confidence$"#,
                 )
                 .unwrap(),
@@ -1160,6 +1167,7 @@ fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("when", "the answer \"<a>\" goes to \"<node>\""),
         ("when", "any other answer goes to \"<node>\""),
         ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\""),
+        ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\" with at most <c> confidence"),
         ("then", "label \"<label>\" when the answer to \"<q>\" is one of <list>"),
         ("then", "label \"<label>\" when the answer is \"<a>\""),
         ("then", "label \"<label>\" when \"<q>\" is at least <n>"),
@@ -2584,6 +2592,13 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 let c: f64 = caps["c"].to_string().parse()?;
                 rules.push(json!({
                     "when": {"question": caps["q"].to_string(), "option": caps["a"].to_string(), "gte": c},
+                    "label": caps["label"].to_string()
+                }));
+            }
+            "label_opt_lt" => {
+                let c: f64 = caps["c"].to_string().parse()?;
+                rules.push(json!({
+                    "when": {"question": caps["q"].to_string(), "option": caps["a"].to_string(), "lt": c},
                     "label": caps["label"].to_string()
                 }));
             }
@@ -7042,13 +7057,29 @@ fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
     }
     if let Some(opt) = when.get("option").and_then(Value::as_str) {
         imp_tok("option", opt)?;
-        let c = imp_num(imp_f64("gte", when.get("gte"))?)?;
+        // `option` + `gte` (the "at least N confidence" step) is the common
+        // shape; `option` + `lt` (the "at most N confidence" step) is the
+        // mirror. Exactly one must be present, and the mirror needs an
+        // explicit question to round-trip (there is no implicit spelling).
+        let (c, cmp) = match (when.get("gte"), when.get("lt")) {
+            (Some(g), None) => (imp_num(imp_f64("gte", Some(g))?)?, "at least"),
+            (None, Some(l)) => (imp_num(imp_f64("lt", Some(l))?)?, "at most"),
+            _ => bail!(
+                "cannot import: an `option` rule needs exactly one of `gte`/`lt` (have gte={:?} lt={:?})",
+                when.get("gte"), when.get("lt")
+            ),
+        };
         let body = match q {
             Some(qq) => {
                 imp_tok("option question", qq)?;
-                format!("label \"{label}\" when the answer to \"{qq}\" is \"{opt}\" with at least {c} confidence")
+                format!("label \"{label}\" when the answer to \"{qq}\" is \"{opt}\" with {cmp} {c} confidence")
             }
-            None => format!("label \"{label}\" when the answer is \"{opt}\" with at least {c} confidence"),
+            None if cmp == "at least" => {
+                format!("label \"{label}\" when the answer is \"{opt}\" with at least {c} confidence")
+            }
+            None => bail!(
+                "cannot import: an `option` + `lt` rule needs an explicit `question`"
+            ),
         };
         st.push("then", body, vec![]);
         return Ok(());

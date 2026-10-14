@@ -2968,3 +2968,177 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
             .is_err(),
     );
 }
+
+/// P82: the built-in Rust apps and their BDD ports must decide the same label.
+///
+/// `src/apps.rs` carries built-in apps whose `route()` is native Rust; two of
+/// them already have a BDD port in `dsl/guards/` (`agent_gate` →
+/// `agent_command_gate`, `content_moderation` → `content_policy_gate`). A port
+/// is only worth having if it decides what the app decides, so this drives the
+/// port's compiled threshold action and the app's `route()` on the same offline
+/// verdict and asserts they agree over a grid of model outputs.
+///
+/// Where exact equality is impossible it pins the *documented* fold instead of
+/// hiding it: `agent_gate` also hard-blocks on the command *verb* (a pre-model
+/// guard the decision vocabulary has no input slot for), so the port folds the
+/// exfil-verb check into the exfiltration probability. The fold is asserted to
+/// be fail-closed — the port never blocks less than the app, never allows what
+/// the app blocks, and every extra block sits in the folded `exfil >= 0.6` band.
+pub fn test_bdd_app_port_parity(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::workflow::{Decision, Verdict};
+    let root = bdd::repo_root();
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+    let label_of = |spec: &Value, v: &Verdict| -> String {
+        let node = &spec["nodes"][0];
+        spec::run_action(
+            &node["action"].clone(),
+            &json!({}),
+            v,
+            node["primary_q"].as_str(),
+        )
+        .unwrap()["label"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let bchoice = |b: f64| -> Map<String, Value> {
+        let mut m = Map::new();
+        m.insert("A".into(), json!(1.0 - b));
+        m.insert("B".into(), json!(b));
+        m
+    };
+    let dec = |answer: Value, probs: Map<String, Value>| Decision {
+        answer,
+        probabilities: probs,
+        confidence: 0.9,
+    };
+
+    // ── content_moderation ↔ content_policy_gate: exact parity ──
+    let cm = load("dsl/guards/content_policy_gate.json");
+    let cats = ["safe", "hateful", "threatening", "leaky_pii", "spam", "off_topic"];
+    let (mut cm_cases, mut cm_bad) = (0usize, 0usize);
+    for &p_threat in &[0.0, 0.65, 0.75] {
+        for &p_hate in &[0.0, 0.65, 0.75] {
+            for &p_pii in &[0.0, 0.55, 0.65] {
+                for &p_spam in &[0.0, 0.65, 0.75] {
+                    for &sev in &[0.5, 1.5, 2.0] {
+                        for cat in cats {
+                            let mut answers = std::collections::HashMap::new();
+                            answers.insert("is_threat".into(), dec(json!("B"), bchoice(p_threat)));
+                            answers.insert("is_hate".into(), dec(json!("B"), bchoice(p_hate)));
+                            answers.insert("is_pii".into(), dec(json!("B"), bchoice(p_pii)));
+                            answers.insert("is_spam".into(), dec(json!("B"), bchoice(p_spam)));
+                            answers.insert("severity".into(), dec(json!(sev), Map::new()));
+                            answers.insert("category".into(), dec(json!(cat), Map::new()));
+                            let v = Verdict { answers, input_tokens: 0, latency_ms: 0.0 };
+                            let app = apps::content_moderation::route(&v)["action"]
+                                .as_str()
+                                .unwrap()
+                                .to_string();
+                            let port = label_of(&cm, &v);
+                            cm_cases += 1;
+                            if app != port {
+                                cm_bad += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    h.check(
+        &format!("bdd: content_policy_gate port == app on the grid ({cm_cases} verdicts)"),
+        cm_bad == 0,
+    );
+
+    // ── agent_gate ↔ agent_command_gate: model-signal parity + the documented
+    //    exfil-verb fold, and fail-closedness ──
+    let ag = load("dsl/guards/agent_command_gate.json");
+    let (mut ag_cases, mut ag_under, mut ag_open, mut ag_fold_off) = (0usize, 0usize, 0usize, 0usize);
+    for &p_destr in &[0.0, 0.3, 0.45, 0.65, 0.85] {
+        for &p_exfil in &[0.0, 0.3, 0.45, 0.65, 0.9] {
+            for &p_intent_a in &[0.0, 0.4, 0.6, 0.9] {
+                for &risk in &[0.0, 1.0, 2.0] {
+                    let mut answers = std::collections::HashMap::new();
+                    answers.insert("is_destructive".into(), dec(json!("B"), bchoice(p_destr)));
+                    answers.insert("is_exfiltration".into(), dec(json!("B"), bchoice(p_exfil)));
+                    answers.insert(
+                        "intent_match".into(),
+                        dec(json!("A"), bchoice(1.0 - p_intent_a)),
+                    );
+                    answers.insert("risk".into(), dec(json!(risk), Map::new()));
+                    let v = Verdict { answers, input_tokens: 0, latency_ms: 0.0 };
+                    // a verb that is neither a destructive verb nor an exfil
+                    // tool, so the app's pre-model guards never fire.
+                    let app = apps::agent_gate::route("echo hi", &v)["action"]
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let port = label_of(&ag, &v);
+                    ag_cases += 1;
+                    if app == "BLOCK" && port != "BLOCK" {
+                        ag_under += 1;
+                    }
+                    if port == "ALLOW" && app != "ALLOW" {
+                        ag_open += 1;
+                    }
+                    if port == "BLOCK" && app != "BLOCK" && p_exfil < 0.6 {
+                        ag_fold_off += 1;
+                    }
+                }
+            }
+        }
+    }
+    h.check(
+        &format!("bdd: agent_command_gate never under-blocks the app ({ag_cases} verdicts)"),
+        ag_under == 0,
+    );
+    h.check(
+        "bdd: agent_command_gate never fails open (ALLOW only where the app allows)",
+        ag_open == 0,
+    );
+    h.check(
+        "bdd: agent_command_gate's extra blocks are exactly the folded exfil>=0.6 band",
+        ag_fold_off == 0,
+    );
+
+    // The apps' own reference cases, driven by the *offline heuristic* the
+    // gates use, so the parity holds end to end and not only on hand-built
+    // verdicts.
+    let hb = HeuristicBackend;
+    let aq = apps::agent_gate::questions();
+    let mut ref_bad = 0usize;
+    for (cmd, intent, _want) in apps::agent_gate::cases() {
+        let state = json!({"command": cmd, "intent": intent, "cwd": "."});
+        let v = hb.decide(&state, &aq).unwrap();
+        let app = apps::agent_gate::route(cmd, &v)["action"].as_str().unwrap().to_string();
+        if app != label_of(&ag, &v) {
+            ref_bad += 1;
+        }
+    }
+    h.check(
+        "bdd: agent_command_gate matches the app on its 8 reference cases",
+        ref_bad == 0,
+    );
+
+    let cq = apps::content_moderation::questions();
+    let mut cref_bad = 0usize;
+    for (text, _want) in apps::content_moderation::cases() {
+        let state = json!({"source": "bench", "text": text});
+        let v = hb.decide(&state, &cq).unwrap();
+        let app = apps::content_moderation::route(&v)["action"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if app != label_of(&cm, &v) {
+            cref_bad += 1;
+        }
+    }
+    h.check(
+        "bdd: content_policy_gate matches the app on its 6 reference cases",
+        cref_bad == 0,
+    );
+}

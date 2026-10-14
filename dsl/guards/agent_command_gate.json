@@ -1,6 +1,11 @@
 {
   "name": "agent_command_gate",
-  "description": "Fail-closed tool-call gate: BLOCK / CONFIRM / ALLOW from destructive + exfil + intent, with a hard verb override baked into the edge.",
+  "_bdd": {
+    "feature": "agent_command_gate",
+    "feature_path": "bdd/workflows/guards/agent_command_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Fail-closed tool-call gate: BLOCK / CONFIRM / ALLOW. Behaviour-equivalent to the\nbuilt-in `agent_gate` app's route() over the model signals is_destructive /\nis_exfiltration / intent_match / risk, with one documented fold: the app also\nhard-blocks a command whose *verb* is a known exfiltration tool AND whose\nexfiltration probability is high; the port has no pre-model verb input, so it\nfolds that guard into the exfiltration probability (a high exfiltration\nprobability alone blocks — fail-closed, never fail-open).",
   "start": "gate",
   "max_iterations": 10,
   "convergence_window": 5,
@@ -21,7 +26,10 @@
         "is_exfiltration": {
           "type": "choice",
           "instructions": "Does this command send local files, credentials, or secrets to a remote host?",
-          "criteria": { "A": "no, it stays local", "B": "yes, it uploads or transmits local data outward" }
+          "criteria": {
+            "A": "no, it stays local",
+            "B": "yes, it uploads or transmits local data outward"
+          }
         },
         "intent_match": {
           "type": "choice",
@@ -34,20 +42,93 @@
         "risk": {
           "type": "score",
           "instructions": "Overall risk of running this command?",
-          "criteria": ["safe read-only", "moderate change", "irreversible destructive"]
+          "criteria": [
+            "safe read-only",
+            "moderate change",
+            "irreversible destructive"
+          ]
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "max_retries": 2,
       "action": {
-        "kind": "gate",
-        "question": "is_destructive",
-        "option": "B",
-        "block_at": 0.7,
-        "allow_at": 0.7
+        "kind": "threshold",
+        "question": "risk",
+        "rules": [
+          {
+            "when": {
+              "question": "is_destructive",
+              "option": "B",
+              "gte": 0.8
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "value_gte": 2.0
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "intent_match",
+              "option": "A",
+              "lt": 0.5
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "is_exfiltration",
+              "option": "B",
+              "gte": 0.6
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "is_destructive",
+              "option": "B",
+              "gte": 0.4
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "question": "is_exfiltration",
+              "option": "B",
+              "gte": 0.4
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "question": "intent_match",
+              "option": "A",
+              "lt": 0.7
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALLOW"
+          }
+        ]
       },
-      "state": { "keep": ["command", "intent", "cwd"] }
+      "state": {
+        "keep": [
+          "command",
+          "intent",
+          "cwd"
+        ]
+      }
     }
   ]
 }
