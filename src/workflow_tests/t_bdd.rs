@@ -4933,6 +4933,11 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     // choice) cannot route a graph through its `default` branch unnoticed.
     let mut heur_answers_checked = 0usize;
     let mut heur_out_of_contract: Vec<String> = Vec::new();
+    // P110: the same audit, extended to dynamic (`criteria.from_state`) questions,
+    // whose candidate ids are materialised from the state (their literal criteria
+    // is empty, so the static check above skips them).
+    let mut heur_dyn_checked = 0usize;
+    let mut heur_dyn_out_of_contract: Vec<String> = Vec::new();
     // P100: the node-keyed `answers` shape must reproduce the same walk for the
     // same driven states. `keyed_driven` counts the states it reproduced;
     // `keyed_conflict` counts states where some node's heuristic answer *differed
@@ -4961,9 +4966,24 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             }
         };
         let nodes = contract.get(&stem);
+        // P110: the graph the engine walks, so a composed child node's own raw
+        // questions (with their `criteria.from_state`) are reachable by name.
+        let expanded = laya_workflow::spec::expand_spec_nodes(&raw, spec.parent())
+            .unwrap_or_else(|_| raw.clone());
+        // node name -> its raw `questions` object (so a dynamic question's
+        // `criteria.from_state` is reachable as `node_q[node][qid]`).
+        let node_q: HashMap<String, Value> = expanded["nodes"]
+            .as_array()
+            .map(|ns| {
+                ns.iter()
+                    .filter_map(|n| Some((n["name"].as_str()?.to_string(), n["questions"].clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
         for (label, st) in smap {
             // (1) the offline heuristic walk, capturing each node's answer set.
-            let mut heur: Vec<(String, Vec<(String, Value, Value, f64)>)> = Vec::new();
+            let mut heur: Vec<(String, Vec<(String, Value, Value, f64)>, Option<Value>)> =
+                Vec::new();
             let mut h_answers: Vec<Value> = Vec::new();
             let hout = wf.run_with_progress(&HeuristicBackend, st, &mut |r: &NodeResult| {
                 let mut ans: Vec<(String, Value, Value, f64)> = r
@@ -4980,7 +5000,7 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                     })
                     .collect();
                 ans.sort_by(|a, b| a.0.cmp(&b.0));
-                heur.push((r.node_name.clone(), ans));
+                heur.push((r.node_name.clone(), ans, r.action_result.clone()));
                 h_answers.push(r.edge_answer.clone());
             });
             let hout = match hout {
@@ -4993,8 +5013,12 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             //      corpus-wide, before it can route. `none` is the DSL's explicit
             //      fail-closed answer and a dynamic question materialises its
             //      options from the state (empty literal criteria), so both are
-            //      legitimate and skipped.
-            for (node_name, ans) in &heur {
+            //      legitimate and audited separately below.
+            // Mirror the engine's state: `st` plus each prior node's merged
+            // payload (`merge_payload`), so a dynamic question is materialised
+            // from the very state the engine handed that node.
+            let mut acc = st.clone();
+            for (node_name, ans, action_result) in &heur {
                 let Some(qs) = nodes
                     .and_then(|m| m.get(node_name))
                     .and_then(Value::as_array)
@@ -5013,10 +5037,48 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                         .as_array()
                         .map(|a| a.iter().filter_map(Value::as_str).collect())
                         .unwrap_or_default();
+                    let Some(chosen) = a.as_str() else { continue };
+                    // P110: a dynamic (`criteria.from_state`) question has no
+                    // literal answers — its candidate ids are materialised from
+                    // the state. Extend the audit to it: materialise exactly as
+                    // the engine does and require the heuristic's chosen id to be
+                    // one of them (or the DSL's fail-closed `none`), so an
+                    // invented id cannot slip through uncovered just because the
+                    // criteria were dynamic.
+                    let qdef = node_q
+                        .get(node_name)
+                        .and_then(|qs| qs.get(qid))
+                        .cloned();
+                    let is_dynamic = qdef
+                        .as_ref()
+                        .and_then(|q| q.pointer("/criteria/from_state"))
+                        .and_then(Value::as_str)
+                        .is_some();
+                    if is_dynamic && accepted.is_empty() {
+                        let Some(qdef) = qdef else { continue };
+                        let one = json!({ qid.clone(): qdef });
+                        let mat = match laya_workflow::workflow::expand_criteria_from_state(&acc, &one)
+                        {
+                            Ok(m) => m,
+                            Err(_) => continue,
+                        };
+                        let cands: BTreeSet<String> = mat
+                            .get(qid)
+                            .and_then(|q| q.get("criteria"))
+                            .and_then(Value::as_object)
+                            .map(|o| o.keys().cloned().collect())
+                            .unwrap_or_default();
+                        heur_dyn_checked += 1;
+                        if chosen != "none" && !cands.contains(chosen) {
+                            heur_dyn_out_of_contract.push(format!(
+                                "{stem}:{label}:{node_name} heuristic answered dynamic {qid}={chosen:?}, not among the materialised candidates {cands:?}"
+                            ));
+                        }
+                        continue;
+                    }
                     if accepted.is_empty() {
                         continue;
                     }
-                    let Some(chosen) = a.as_str() else { continue };
                     if chosen == "none" {
                         continue;
                     }
@@ -5027,6 +5089,9 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                         ));
                     }
                 }
+                // Mirror the engine: this node's payload is merged into the state
+                // the next node sees.
+                laya_workflow::workflow::merge_payload(&mut acc, action_result);
             }
             // (2)+(3) the contract must be exactly what the node asked, and the
             // script is rebuilt from it alone.
@@ -5036,7 +5101,7 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             // node whose entry differs between visits (inexpressible as a policy).
             let mut per_node: serde_json::Map<String, Value> = serde_json::Map::new();
             let mut keyed_conflict_nodes: Vec<String> = Vec::new();
-            for (node, ans) in &heur {
+            for (node, ans, _ar) in &heur {
                 let qc = nodes.and_then(|m| m.get(node)).cloned().unwrap_or(Value::Null);
                 let listed: BTreeSet<String> = qc
                     .as_array()
@@ -5118,7 +5183,7 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                     continue;
                 }
             };
-            let hnodes: Vec<&String> = heur.iter().map(|(n, _)| n).collect();
+            let hnodes: Vec<&String> = heur.iter().map(|(n, _, _)| n).collect();
             let anodes: Vec<&String> = awalk.iter().map(|(n, _)| n).collect();
             let ha: Vec<&Value> = h_answers.iter().collect();
             let aa: Vec<&Value> = awalk.iter().map(|(_, a)| a).collect();
@@ -5208,6 +5273,24 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     if !heur_out_of_contract.is_empty() {
         for v in heur_out_of_contract.iter().take(10) {
             h.check(&format!("answers-from-list: heuristic out-of-contract: {v}"), false);
+        }
+    }
+    // P110: the corpus audit now covers dynamic questions too — every heuristic
+    // answer on a `criteria.from_state` question is a candidate materialised from
+    // the state (or the fail-closed `none`), never an invented id.
+    h.check(
+        &format!(
+            "answers-from-list: every heuristic answer on a dynamic question is a materialised candidate ({heur_dyn_checked} dynamic answers checked; {} invented)",
+            heur_dyn_out_of_contract.len()
+        ),
+        heur_dyn_out_of_contract.is_empty() && heur_dyn_checked >= 2,
+    );
+    if !heur_dyn_out_of_contract.is_empty() {
+        for v in heur_dyn_out_of_contract.iter().take(10) {
+            h.check(
+                &format!("answers-from-list: dynamic heuristic out-of-contract: {v}"),
+                false,
+            );
         }
     }
     // P100: every driven state was also reproduced from a node-keyed policy, or is

@@ -1,6 +1,6 @@
 # BDD `.feature` vs 手写 JSON workflow — 量化对比测试报告
 
-> **日期**: 2026-10-12
+> **日期**: 2026-10-12（§6 于 2026-10-14 复核到 14 个 authoring 任务的当前数字）
 > **环境**: laya-workflow release binary（构建于 2026-10-11，HEAD `71fb20e`），本地离线执行，无网络依赖
 > **语料**: `bdd/workflows/browser/*.feature` — 29 个真实网站 workflow（每个 >20 步，覆盖 Wikipedia/GitHub/PyPI/arXiv 等 29 个外部站点；另有 `_probe.feature` 探针不计入语料；2026-10-13 起语料源从 `bench/bdd/live/` 移至此处，`bdd compare` 结果数字不变）
 > **对照定义**: 「BDD」= `.feature` 源文件（作者手写）；「JSON」= 同一 workflow 经 `bdd transpile` 编译出的 spec（即手写 JSON DSL 需要表达的等价内容）
@@ -116,16 +116,16 @@
 
 ## 6. 指标 13：作者侧表达力与词汇门禁
 
-来源：`laya-workflow bdd score`（3 个 authoring 任务）。
+来源：`laya-workflow bdd score`（14 个 authoring 任务；2026-10-14 复核）。
 
 | 量 | 值 |
 |---|---|
-| expressiveness（intent → 可编译 workflow） | 3/3，coverage 100% |
-| 词汇 recall | 25/25（100%） |
-| 词汇 precision | 15/15（越界 step 100% 按名拒绝，从未误编译） |
-| `@outputs` 契约 mutation 捕获 | 3/3 |
-| 平均步数 / 任务 | 16.7 |
-| naive draft 需修复次数 | 15 次（编译器逐条反馈） |
+| expressiveness（intent → 可编译 workflow） | 14/14，coverage 100% |
+| 词汇 recall | 143/143（100%） |
+| 词汇 precision | 81/81（越界 step 100% 按名拒绝，从未误编译） |
+| `@outputs` 契约 mutation 捕获 | 14/14 |
+| 平均步数 / 任务 | 18.4（258 步 / 222 unique） |
+| naive draft 需修复次数 | 81 次（编译器逐条反馈） |
 
 JSON 侧无等价的「闭合词汇」——作者可写任意 `op`/`capability` 字符串，没有编译期 recall/precision 可言（见 5.1：越界值零检出）。
 
