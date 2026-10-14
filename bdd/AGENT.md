@@ -264,6 +264,7 @@ Feature: support_ticket_router
 
 - **offline-detection（P29）**：网络型 stem（web_search/web_fetch/agent/rpc/http/webhook…）在本地 mocks 全不可达时 state 判 skip（validate-only），不误报回归；mocks up 时（`bench/mock_services.sh start` + 8791/8792 `mock serve`）全量强断言。
 - **offline-external skip（P33，效率轴）**：离线 smoke **绝不对外网做真实 I/O**。`plugin` 型 capability 没有 `endpoint`/`url` 字段，改从插件脚本静态扫描 `http_get` 调用 + URL 字面量（去注释、识别字符串）判定网络依赖；spec 的网络目标只要含外部 host（非 loopback/RFC1918/link-local/CGNAT）就在离线 smoke 里整 state skip（validate-only，集成/live 任务真跑）。插件 `http_get` 在离线 smoke 里再叠一层 1.5s 超时上限兜底动态 URL。效果：`hf_trending`（huggingface.co 插件）从每次门禁 **16s → 0.2s**，check.sh 从 **15.5s → 1.8s**；注释里提 URL 的插件（如 cua 的 github 链接）不会误判。回归测试 `bdd-smoke-offline-external-skip`。
+- **可查询的词汇表（P90）**：`bdd vocabulary` / MCP `bdd_vocabulary` 把**决策图作者词汇表**（`decision_templates()` —— 即 did-you-mean 索引的那份 curated 模板，按 given/when/then 分组）暴露成可读列表（`--json` 机器可读），让 agent **先读语法再写步骤**，而不是等 build 报红后才靠 did-you-mean 反推。单一事实源：CLI / MCP / did-you-mean 三处同取 `decision_templates()`，回归 `bdd-vocabulary`（11 断言）钉死三处一致 + 计数 floor + 唯一性。
 - **did-you-mean（P28 + P34）**：拼错有两层兜底 —— ① **步骤层（P28）**：决策步骤拼错/放错关键词时，`bdd build` 覆盖门禁逐条给 `did you mean the decision <kind> step: <tmpl>?`；② **语义层（P34）**：`validate_graph_semantics` 的**每个未知引用**（routing 目标 / start / primary_q / action kind / 问题引用 / answer key / gate option / combine fallback / when 运算符 / call capability）都追加 `(did you mean "..."?)`，候选来自图内真实标识符（节点名 + answer 值 / 问题名 / 已知 kind），相似度 <0.5 直接不给（绝不误报）。作者在 build 报错处就能看到该改成什么。
 - **错误定位线号（P35）**：语义校验错误**自带 `.feature` 行号**（`line N: node X: ...`）—— `validate_graph_semantics` 在 `spec.rs` 里跑、离 feature 文本很远，`bdd build` / `bdd transpile` / MCP `bdd_validate` 三处出口都用 `locate_semantic_error_line` 按错误语法（`unknown "X"` / `"X" is not ...` / `... capability "X"`）从 parsed step 里反查最可能的出错行（P39 起 `call the capability` 也精确定位到该行）。agent 拿到的是「哪一行 + 改成什么」，不是一句裸拒绝。
 - **build 诊断带因（P89）**：`bdd build` 的三类红不再是裸行号 —— ① 步骤级错误保留 anyhow 因果链（忘了 `@decision` 会说 “decision step ... is only valid in a @decision feature”，不再只回显该步骤）；② 重名 `Scenario:` 在**该 Scenario 自己的 `line N:`** 上报重（每个 Scenario 是一个节点、名字即 node id；`compile_decision` 在构建 spec 前自查重名）；③ 步骤关键字拼错（`Givn`）给 `(did you mean the `Given` keyword?)`（在 Given/When/Then/And/But 上取 `spec::closest_match`，不够接近则沉默）。两处**刻意不动**并已钉住：policy 键不约束（`Given the policy | banana | yes |` 接受并丢弃）、`| anser |` 改答案列名会静默丢行。回归 section `bdd-cli-diagnostics`（4 断言，驱动真实 CLI 二进制）。
@@ -275,7 +276,7 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **960
 1. 想清楚决策图：几个节点？每个节点问什么问题、答什么路由、产出什么 label/动作。
 2. 绿场起点：**MCP `bdd_new`**（`name`+`cat`+`intent` → 最小合法 `@decision` `.feature` 骨架，
    自验证能过 `bdd build`；`write=true` 落盘、`root` 指定工作区）或 CLI `laya-workflow bdd scaffold`。
-3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展（先查词汇表，生造措辞会被拒）。
+3. 在 `bdd/workflows/<cat>/<name>.feature` 扩展。**先把词汇表拉下来**：CLI `laya-workflow bdd vocabulary`（`--json` 给工具吃）或 MCP **`bdd_vocabulary`** —— 返回决策图全部步骤模板（按 given/when/then 分组，即 did-you-mean 索引那份）—— 照模板替换 `<占位符>`，生造措辞会被拒。
 4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
    validate 逐行错误）或 CLI `laya-workflow bdd build`。拼错会收到 **`line N:` + `did you mean ...?`**
    （P28 步骤层 + P34 语义层 + P35 行号），照建议在对应行改即可。

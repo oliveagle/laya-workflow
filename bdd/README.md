@@ -510,6 +510,13 @@ staying silent when nothing is close enough to guess. Two neighbours are
 deliberately unchanged and now pinned: policy keys are unconstrained, and a
 renamed answer column (`| anser |`) drops rows silently.
 
+The grammar itself is queryable, so an author does not have to reverse-engineer
+it from prose or wait for a red build: `bdd vocabulary` prints the decision
+authoring templates grouped by keyword kind (given/when/then) - the same curated
+list behind the `did you mean` hints - and `bdd vocabulary --json` (or the MCP
+tool `bdd_vocabulary`) returns the same list for an agent to read first. Copy a
+template, replace its `<placeholders>`, then validate with `bdd build`.
+
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 
 A vocabulary that only drives fixtures proves nothing about the web. The live

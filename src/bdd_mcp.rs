@@ -47,6 +47,7 @@ impl McpToolSet for BddTools {
             Arc::new(ImportTool),
             Arc::new(DecideTool),
             Arc::new(ListTool),
+            Arc::new(VocabularyTool),
         ]
     }
 }
@@ -1148,5 +1149,29 @@ impl McpTool for ListTool {
             "live_count": workflows.len() - offline_count,
             "workflows": workflows,
         }))
+    }
+}
+
+
+/// `bdd_vocabulary`: the decision authoring vocabulary - the curated step
+/// templates a `@decision` feature is built from, grouped by keyword kind
+/// (given/when/then). This is the same list behind the `did you mean the
+/// decision ... step` hints, so an agent can read the grammar *before* writing
+/// a step instead of only discovering it from a red build. `bdd_new` opens the
+/// skeleton; this says what to write inside it.
+struct VocabularyTool;
+
+impl McpTool for VocabularyTool {
+    fn name(&self) -> &str {
+        "bdd_vocabulary"
+    }
+    fn description(&self) -> &str {
+        "The decision authoring vocabulary: the curated step templates a @decision feature is built from, grouped by keyword kind (given/when/then). Same list behind the `did you mean the decision ... step` hints - read it to author a step correctly the first time, then validate with bdd_validate (or `bdd build`). Copy a template and replace its <placeholders>; not an exhaustive grammar, but the phrasings the compiler accepts and the did-you-mean index knows."
+    }
+    fn input_schema(&self) -> Value {
+        json!({ "type": "object", "properties": {}, "required": [] })
+    }
+    fn call(&self, _args: &Value) -> Result<Value> {
+        Ok(bdd::vocabulary_json())
     }
 }

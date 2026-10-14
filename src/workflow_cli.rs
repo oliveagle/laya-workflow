@@ -422,6 +422,14 @@ enum BddCmd {
         #[arg(long)]
         pattern: Option<String>,
     },
+    /// Print the decision authoring vocabulary - the step templates the
+    /// `@decision` compiler is built around (the list behind `did you mean`).
+    /// `--json` emits the same list as machine-readable JSON.
+    Vocabulary {
+        /// Emit machine-readable JSON.
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
     /// Check the hand-written BDD probe specs without Chrome.
@@ -2472,6 +2480,9 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             nested: *nested,
             pattern: pattern.clone(),
         })?,
+        BddCmd::Vocabulary { json } => {
+            bdd::vocabulary_cli(&bdd::VocabularyOptions { json: *json })?
+        }
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,
         BddCmd::ArgsProbeCheck => bdd::check_args_probes()?,

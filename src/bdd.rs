@@ -1284,7 +1284,7 @@ pub fn vocabulary_patterns() -> Vec<&'static str> {
 /// the `dec_given/when/then_table` regexes (capture groups → `<name>`). Used to
 /// turn an unmatched step in an @decision feature into an actionable
 /// "did you mean <template>?" suggestion (P28 usability axis).
-fn decision_templates() -> &'static [(&'static str, &'static str)] {
+pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
     &[
         ("given", "a choice question \"<q>\" asks \"<text>\" (table: | answer | meaning |)"),
         ("given", "a score question \"<q>\" asks \"<text>\" (table: | level |)"),
@@ -1325,6 +1325,79 @@ fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("then", "rubric \"<q1>\" at <l1> levels weight <w1> and \"<q2>\" at <l2> levels weight <w2> requiring <min>"),
         ("then", "prepare a UI proposal from operation \"<op>\" field \"<field>\" amount \"<amt>\" surface \"<surface>\" hash \"<hash>\" requiring <min>"),
     ]
+}
+
+/// The three step kinds a `@decision` feature uses, in authoring order. Kept
+/// next to [`decision_templates`] so the vocabulary listing and the compiler's
+/// suggestion index cannot drift apart.
+pub const VOCABULARY_KINDS: [&str; 3] = ["given", "when", "then"];
+
+/// The decision authoring vocabulary as JSON: the curated step templates the
+/// `@decision` compiler is built around, grouped by keyword kind. This is the
+/// same list behind the `did you mean the decision ... step` hints, exposed so
+/// an agent can read the grammar *before* it writes a step instead of only
+/// after a red build. `note` states plainly what it is and what it is not.
+pub fn vocabulary_json() -> Value {
+    let templates = decision_templates();
+    let steps: Vec<Value> = templates
+        .iter()
+        .map(|(kind, tmpl)| json!({"kind": kind, "template": tmpl}))
+        .collect();
+    let mut by_kind = serde_json::Map::new();
+    for kind in VOCABULARY_KINDS {
+        let list: Vec<&str> = templates
+            .iter()
+            .filter(|(k, _)| *k == kind)
+            .map(|(_, t)| *t)
+            .collect();
+        by_kind.insert(kind.to_string(), json!(list));
+    }
+    json!({
+        "count": steps.len(),
+        "kinds": VOCABULARY_KINDS,
+        "steps": steps,
+        "by_kind": Value::Object(by_kind),
+        "note": "Curated authoring templates for a @decision feature, grouped by \
+keyword kind (given/when/then). Write a step by copying a template and \
+replacing <placeholders>; the compiler accepts these phrasings and suggests \
+the closest one on a typo. Deliberately not an exhaustive grammar - these are \
+the phrasings the did-you-mean index knows. Validate the compiled graph with \
+bdd_validate (or `bdd build`) before committing."
+    })
+}
+
+/// Options for `laya-workflow bdd vocabulary`.
+pub struct VocabularyOptions {
+    /// Emit machine-readable JSON instead of the human-readable list.
+    pub json: bool,
+}
+
+/// `laya-workflow bdd vocabulary`: print the decision authoring vocabulary - the
+/// templates behind the compiler's `did you mean` hints - so an agent (or a
+/// human) can read the grammar before writing a step. `--json` returns the same
+/// list for a tool to consume.
+pub fn vocabulary_cli(o: &VocabularyOptions) -> Result<i32> {
+    if o.json {
+        println!("{}", serde_json::to_string_pretty(&vocabulary_json())?);
+        return Ok(0);
+    }
+    let all = decision_templates();
+    println!(
+        "decision vocabulary: {} template(s) across {} keyword kind(s)",
+        all.len(),
+        VOCABULARY_KINDS.len()
+    );
+    for kind in VOCABULARY_KINDS {
+        let list: Vec<&str> = all.iter().filter(|(k, _)| *k == kind).map(|(_, t)| *t).collect();
+        println!("\n{kind} ({})", list.len());
+        for t in list {
+            println!("  {t}");
+        }
+    }
+    println!(
+        "\ncopy a template and replace <placeholders>; then validate with `bdd build <file>` (or MCP bdd_validate)."
+    );
+    Ok(0)
 }
 
 /// "did you mean" suggestion from the decision vocabulary for an unmatched step.

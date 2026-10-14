@@ -3616,3 +3616,111 @@ pub fn test_bdd_app_port_parity(h: &mut Harness) {
         dref_bad == 0,
     );
 }
+
+
+/// P90: `bdd_vocabulary` (MCP) and `bdd vocabulary` (CLI) expose the decision
+/// authoring grammar - the curated step templates behind the compiler's
+/// `did you mean` hints - so an agent can read the vocabulary *before* writing
+/// a step instead of only discovering it from a red build. This pins the two
+/// surfaces to the single in-code source (`bdd::decision_templates`) and to
+/// each other, so the listing cannot drift from the suggestion index.
+pub fn test_bdd_vocabulary(h: &mut Harness) {
+    let templates = bdd::decision_templates();
+    let want_kinds: Vec<String> = bdd::VOCABULARY_KINDS.iter().map(|s| s.to_string()).collect();
+    let want_tmpls: Vec<String> = templates.iter().map(|(_, t)| t.to_string()).collect();
+
+    // ── MCP `bdd_vocabulary` ──────────────────────────────────────────
+    let t = bdd_tool("bdd_vocabulary");
+    let v = t.call(&json!({})).unwrap();
+    h.eq(
+        "bdd_vocabulary: count == the in-code template list",
+        v["count"].as_u64().unwrap() as usize,
+        templates.len(),
+    );
+    h.check(
+        "bdd_vocabulary: no accidental shrink (>= 38 templates)",
+        templates.len() >= 38,
+    );
+    let kinds: Vec<String> = v["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|k| k.as_str().map(str::to_string))
+        .collect();
+    h.eq("bdd_vocabulary: kinds are given/when/then", kinds, want_kinds);
+    let steps = v["steps"].as_array().unwrap();
+    h.check(
+        "bdd_vocabulary: every step names a known kind and a non-empty template",
+        steps.iter().all(|s| {
+            let k = s["kind"].as_str().unwrap_or("");
+            let tm = s["template"].as_str().unwrap_or("");
+            !tm.is_empty() && bdd::VOCABULARY_KINDS.contains(&k)
+        }),
+    );
+    let got_tmpls: Vec<String> = steps
+        .iter()
+        .filter_map(|s| s["template"].as_str().map(str::to_string))
+        .collect();
+    h.eq(
+        "bdd_vocabulary: steps == the in-code templates, in order",
+        got_tmpls.clone(),
+        want_tmpls.clone(),
+    );
+    let mut uniq = std::collections::BTreeSet::new();
+    h.check(
+        "bdd_vocabulary: templates are unique",
+        got_tmpls.iter().all(|s| uniq.insert(s.clone())),
+    );
+    // by_kind is the same list, partitioned; its size must sum to count.
+    let bk = v["by_kind"].as_object().unwrap();
+    let bk_total: usize = bk
+        .values()
+        .map(|a| a.as_array().map(|x| x.len()).unwrap_or(0))
+        .sum();
+    h.eq("bdd_vocabulary: by_kind partitions the templates", bk_total, templates.len());
+    h.check(
+        "bdd_vocabulary: a known template is present",
+        got_tmpls.iter().any(|s| s.contains("call the capability"))
+            && got_tmpls.iter().any(|s| s.contains("the policy")),
+    );
+
+    // ── CLI `bdd vocabulary --json` and the human form ────────────────
+    let root = bdd::repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let cli_json = std::process::Command::new(&bin)
+        .args(["bdd", "vocabulary", "--json"])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd vocabulary --json");
+    let cj: Value = serde_json::from_slice(&cli_json.stdout).expect("--json is valid JSON");
+    h.eq(
+        "bdd vocabulary --json: count == the in-code template list",
+        cj["count"].as_u64().unwrap() as usize,
+        templates.len(),
+    );
+    let cj_tmpls: Vec<String> = cj["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["template"].as_str().map(str::to_string))
+        .collect();
+    h.eq("bdd vocabulary --json == bdd_vocabulary", cj_tmpls, want_tmpls.clone());
+
+    let cli_human = std::process::Command::new(&bin)
+        .args(["bdd", "vocabulary"])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd vocabulary");
+    let text = String::from_utf8_lossy(&cli_human.stdout);
+    h.check(
+        "bdd vocabulary: human form prints the header, the kinds and a template",
+        text.contains("decision vocabulary:")
+            && text.contains("given")
+            && text.contains("call the capability"),
+    );
+}
