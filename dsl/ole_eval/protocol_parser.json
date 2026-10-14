@@ -1,0 +1,95 @@
+{
+  "name": "protocol_parser",
+  "_bdd": {
+    "feature": "protocol_parser",
+    "feature_path": "bdd/workflows/ole_eval/protocol_parser.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed protocol payloads as a single triage node: the model\nproposes one payload for a declared protocol, the workflow extracts and\nnormalizes it (a canonical JSON value, or a single canonical SQL SELECT) and\nreturns the accept / reject decision itself. Port of\ncode/qwen_vm/app_scenarios/protocol_parser.\nThe engine's own verbs: accepted / error(protocol) — the payload normalizes, or\nthe extractor or the normalizer raises a ProtocolError tagged with its\nprotocol.\nFolding boundaries (documented, not computed in the DSL):\n- The payload envelope (a string response for the declared protocol) folds into\nthe `proposal` choice.\n- The extractor (JSON-object recovery for the json protocol; single-statement\nSELECT recovery from fences or labels without sanitizing it for the sql\nprotocol) and the normalizer (JSON key/value shapes; the SQL grammar with no\nJOIN, GROUP BY or comment) are the authority; the harness runs them and hands\nthe DSL one answer per check. A ProtocolError carries the protocol tag, so\nthe reject ladder is keyed on json versus sql.\nEmitted labels: reject_proposal, reject_json, reject_sql,\nreject_unsupported_protocol, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one payload envelope for the declared protocol?",
+          "criteria": {
+            "accepted": "exactly one non-empty response string",
+            "malformed": "the response is empty, not a string, or the transport failed"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "When the payload does not normalize, which protocol does the authority's error carry?",
+          "criteria": {
+            "none": "the payload normalized to its canonical form",
+            "json": "the json extractor or normalizer raised a json ProtocolError",
+            "sql": "the sql extractor or normalizer raised a sql ProtocolError",
+            "unsupported_protocol": "the declared protocol is neither json nor sql"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "json"
+            },
+            "label": "reject_json"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "sql"
+            },
+            "label": "reject_sql"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unsupported_protocol"
+            },
+            "label": "reject_unsupported_protocol"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "task_id"
+        ]
+      }
+    }
+  ]
+}

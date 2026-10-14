@@ -1,0 +1,153 @@
+{
+  "name": "indentation_guard",
+  "_bdd": {
+    "feature": "indentation_guard",
+    "feature_path": "bdd/workflows/ole_eval/indentation_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed Python snippets as a single triage node: the model\nproposes only a snippet, the workflow owns the line-level indentation stack,\na deterministic indentation-only repair and the final ast.parse safety check,\nand returns the decision itself. Port of\ncode/qwen_vm/app_scenarios/indentation_guard.\nThe engine's own verbs: raw_accepted / repaired_accepted / rejected — the\nsnippet is safe as written, safe only after a deterministic indentation repair,\nor it stays unsafe.\nFolding boundaries (documented, not computed in the DSL):\n- Snippet extraction and transport failures fold into the `proposal` choice.\n- The indentation stack (four-space unit, tab/space mixing, first-statement\ncolumn zero, unexpected indent, unmatched dedent), the deterministic repair\n(rescale mixed or non-unit indentation to four-space units; snap an\nunexpected indent or an unmatched dedent) and the final ast.parse check are\nthe authority; the harness runs them and hands the DSL one answer per check.\n- The engine appends every issue; the port carries the first code of the\n*final* (post-repair) validation plus the first repair kind applied. A\nsnippet that is already safe reports no repair even when the repairer would\nhave rescaled it, because raw safety alone decides raw_accepted.\nEmitted labels: reject_proposal, reject_mixed_tab_space, reject_non_unit_width,\nreject_leading_indented_statement, reject_unexpected_indent,\nreject_unindent_no_level, reject_python_indent_error,\nreject_python_syntax_error, repair_rescaled, repair_realigned, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one extractable Python snippet for the indentation guard?",
+          "criteria": {
+            "accepted": "exactly one extractable snippet",
+            "malformed": "no snippet could be extracted, or the transport failed"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "What is the first code of the final (post-repair) indentation validation, when the snippet stays unsafe?",
+          "criteria": {
+            "none": "the snippet is safe (no final issue)",
+            "mixed_tab_space": "a line mixes tabs and spaces",
+            "non_unit_width": "an indentation width is not a multiple of four",
+            "leading_indented_statement": "the first significant statement does not start at column zero",
+            "unexpected_indent": "indentation increased without an opening suite",
+            "unindent_no_level": "a dedent does not match an outer indentation level",
+            "python_indent_error": "ast.parse raised IndentationError or TabError",
+            "python_syntax_error": "ast.parse raised a non-indentation SyntaxError"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        },
+        "repair": {
+          "type": "choice",
+          "instructions": "When the snippet is safe only after repair, which repair kind is applied first?",
+          "criteria": {
+            "none": "no repair is needed (the snippet is safe as written)",
+            "rescaled": "mixed or non-unit leading whitespace is rescaled to four-space units",
+            "realigned": "an unexpected indent or an unmatched dedent is snapped to a level"
+          },
+          "heuristic": {
+            "answer_field": "ev_repair"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "mixed_tab_space"
+            },
+            "label": "reject_mixed_tab_space"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "non_unit_width"
+            },
+            "label": "reject_non_unit_width"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "leading_indented_statement"
+            },
+            "label": "reject_leading_indented_statement"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unexpected_indent"
+            },
+            "label": "reject_unexpected_indent"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unindent_no_level"
+            },
+            "label": "reject_unindent_no_level"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "python_indent_error"
+            },
+            "label": "reject_python_indent_error"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "python_syntax_error"
+            },
+            "label": "reject_python_syntax_error"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "rescaled"
+            },
+            "label": "repair_rescaled"
+          },
+          {
+            "when": {
+              "question": "repair",
+              "answer": "realigned"
+            },
+            "label": "repair_realigned"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "task_id"
+        ]
+      }
+    }
+  ]
+}

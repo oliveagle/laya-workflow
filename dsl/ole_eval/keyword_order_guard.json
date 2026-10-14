@@ -1,0 +1,103 @@
+{
+  "name": "keyword_order_guard",
+  "_bdd": {
+    "feature": "keyword_order_guard",
+    "feature_path": "bdd/workflows/ole_eval/keyword_order_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed Python snippets as a single triage node: the model\nreturns one {\"candidate_python\": \"...\"} object, the workflow tokenizes it,\nenforces selected keyword and clause order with a deterministic block DFA and\nfinishes with ast.parse, then returns the decision itself. Port of\ncode/qwen_vm/app_scenarios/keyword_order_guard.\nThe engine's own verb: ok / not ok — the candidate's selected keyword order and\nPython syntax are valid, or the first violated rule is reported.\nFolding boundaries (documented, not computed in the DSL):\n- The {candidate_python: ...} envelope (JSON-object extraction, the string and\nnon-empty checks) folds into the `proposal` choice.\n- The DFA (if/elif/else phases, try/except/else/finally phases, and the\nfrom-import pair rule) and the final ast.parse check are the authority; the\nharness runs them and hands the DSL one answer per check. The engine reports\nthe first violated rule in source order; the port carries that rule class.\nEmitted labels: reject_proposal, reject_clause_order, reject_import_order,\nreject_not_tokenizable, reject_python_syntax, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response parse as exactly one {candidate_python: string} object with a non-empty snippet?",
+          "criteria": {
+            "ok": "exactly one candidate envelope with a non-empty snippet",
+            "malformed": "no JSON object, or candidate_python missing, not a string, or empty"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "Which rule class does the keyword-order guard report first for this candidate?",
+          "criteria": {
+            "none": "selected keyword order and Python syntax are valid",
+            "clause_order": "a clause (elif/else/except/finally) violates its owning block order",
+            "import_order": "a from/import statement violates the from ... import ... order",
+            "not_tokenizable": "the CPython tokenizer could not scan the candidate",
+            "python_syntax": "ast.parse raised a SyntaxError"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "clause_order"
+            },
+            "label": "reject_clause_order"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "import_order"
+            },
+            "label": "reject_import_order"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "not_tokenizable"
+            },
+            "label": "reject_not_tokenizable"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "python_syntax"
+            },
+            "label": "reject_python_syntax"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "task_id"
+        ]
+      }
+    }
+  ]
+}

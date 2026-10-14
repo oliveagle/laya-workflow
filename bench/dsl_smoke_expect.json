@@ -1996,5 +1996,48 @@
     "repaired_inputs_intent_and_oracle": "repaired",
     "precedence_proposal_before_reject": "rejected_proposal",
     "precedence_reject_before_repair": "rejected_duplicate_no_safe_repair"
+  },
+  "bracket_matcher": {
+    "accept_clean": "accept",
+    "reject_proposal": "reject_proposal",
+    "reject_lexical_error": "reject_lexical_error",
+    "reject_depth_exceeded": "reject_depth_exceeded",
+    "reject_extra_close": "reject_extra_close",
+    "reject_wrong_order": "reject_wrong_order",
+    "reject_unclosed": "reject_unclosed",
+    "precedence_proposal_before_reject": "reject_proposal"
+  },
+  "indentation_guard": {
+    "accept_clean": "accept",
+    "reject_proposal": "reject_proposal",
+    "reject_mixed_tab_space": "reject_mixed_tab_space",
+    "reject_non_unit_width": "reject_non_unit_width",
+    "reject_leading_indented_statement": "reject_leading_indented_statement",
+    "reject_unexpected_indent": "reject_unexpected_indent",
+    "reject_unindent_no_level": "reject_unindent_no_level",
+    "reject_python_indent_error": "reject_python_indent_error",
+    "reject_python_syntax_error": "reject_python_syntax_error",
+    "repair_rescaled": "repair_rescaled",
+    "repair_realigned": "repair_realigned",
+    "precedence_reject_before_repair": "reject_unexpected_indent",
+    "precedence_proposal_before_reject": "reject_proposal"
+  },
+  "keyword_order_guard": {
+    "accept_clean": "accept",
+    "reject_proposal": "reject_proposal",
+    "reject_clause_order": "reject_clause_order",
+    "reject_import_order": "reject_import_order",
+    "reject_not_tokenizable": "reject_not_tokenizable",
+    "reject_python_syntax": "reject_python_syntax",
+    "precedence_proposal_before_reject": "reject_proposal"
+  },
+  "protocol_parser": {
+    "accept_json": "accept",
+    "accept_sql": "accept",
+    "reject_proposal": "reject_proposal",
+    "reject_json": "reject_json",
+    "reject_sql": "reject_sql",
+    "reject_unsupported_protocol": "reject_unsupported_protocol",
+    "precedence_proposal_before_reject": "reject_proposal"
   }
 }

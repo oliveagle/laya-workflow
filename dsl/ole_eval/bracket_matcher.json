@@ -1,0 +1,111 @@
+{
+  "name": "bracket_matcher",
+  "_bdd": {
+    "feature": "bracket_matcher",
+    "feature_path": "bdd/workflows/ole_eval/bracket_matcher.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed Python snippets as a single triage node. The model\nproposes only a candidate snippet; this workflow owns the bracket authority\n(a CPython tokenizer with a manual lexical fallback scanner) and returns the\naccept / reject decision itself together with the engine's own first bracket\nissue. Port of code/qwen_vm/app_scenarios/bracket_matcher.\nThe engine's own verbs: accepted / rejected — the snippet passes bracket\nvalidation, or it is rejected with one or more issues.\nFolding boundaries (documented, not computed in the DSL):\n- Snippet extraction (the completed-reasoning split, the fenced-code match and\nthe code-start heuristic) and the tokenizer fallback both fold into the\n`proposal` choice.\n- The bracket scan (openers / closers, string- and comment-skipping, type\nmatching, the depth cap of 32) is the authority; the harness runs it and\nhands the DSL one answer per check. The engine appends every issue; the port\ncarries only the first-appended issue code, so the reject ladder mirrors the\nengine's own scan order (a lexical tokenizer failure first, then\ndepth / extra-close / wrong-order in scan order, then the unclosed openers).\nEmitted labels: reject_proposal, reject_lexical_error, reject_depth_exceeded,\nreject_extra_close, reject_wrong_order, reject_unclosed, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one extractable Python snippet for bracket validation?",
+          "criteria": {
+            "accepted": "exactly one extractable snippet",
+            "malformed": "no snippet could be extracted, or the transport failed"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "reject_reason": {
+          "type": "choice",
+          "instructions": "What is the engine's first-appended bracket issue code for this snippet?",
+          "criteria": {
+            "none": "no bracket issue: balanced and within the depth limit",
+            "lexical_error": "the CPython tokenizer could not scan the full source",
+            "depth_exceeded": "nesting depth exceeds the limit of 32",
+            "extra_close": "a closing bracket has no active opening bracket",
+            "wrong_order": "a closing bracket does not match the active opening",
+            "unclosed": "an opening bracket is never closed"
+          },
+          "heuristic": {
+            "answer_field": "ev_reject_reason"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "lexical_error"
+            },
+            "label": "reject_lexical_error"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "depth_exceeded"
+            },
+            "label": "reject_depth_exceeded"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "extra_close"
+            },
+            "label": "reject_extra_close"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "wrong_order"
+            },
+            "label": "reject_wrong_order"
+          },
+          {
+            "when": {
+              "question": "reject_reason",
+              "answer": "unclosed"
+            },
+            "label": "reject_unclosed"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "task_id"
+        ]
+      }
+    }
+  ]
+}

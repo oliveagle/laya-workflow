@@ -6181,5 +6181,166 @@
       "ev_reject_reason": "duplicate_no_safe_repair",
       "ev_repair": "oracle"
     }
+  },
+  "bracket_matcher": {
+    "accept_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none"
+    },
+    "reject_lexical_error": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "lexical_error"
+    },
+    "reject_depth_exceeded": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "depth_exceeded"
+    },
+    "reject_extra_close": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "extra_close"
+    },
+    "reject_wrong_order": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "wrong_order"
+    },
+    "reject_unclosed": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unclosed"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "wrong_order"
+    }
+  },
+  "indentation_guard": {
+    "accept_clean": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none",
+      "ev_repair": "none"
+    },
+    "reject_mixed_tab_space": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "mixed_tab_space",
+      "ev_repair": "none"
+    },
+    "reject_non_unit_width": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "non_unit_width",
+      "ev_repair": "none"
+    },
+    "reject_leading_indented_statement": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "leading_indented_statement",
+      "ev_repair": "none"
+    },
+    "reject_unexpected_indent": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unexpected_indent",
+      "ev_repair": "none"
+    },
+    "reject_unindent_no_level": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unindent_no_level",
+      "ev_repair": "none"
+    },
+    "reject_python_indent_error": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "python_indent_error",
+      "ev_repair": "none"
+    },
+    "reject_python_syntax_error": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "python_syntax_error",
+      "ev_repair": "none"
+    },
+    "repair_rescaled": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "rescaled"
+    },
+    "repair_realigned": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none",
+      "ev_repair": "realigned"
+    },
+    "precedence_reject_before_repair": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unexpected_indent",
+      "ev_repair": "realigned"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "mixed_tab_space",
+      "ev_repair": "rescaled"
+    }
+  },
+  "keyword_order_guard": {
+    "accept_clean": {
+      "ev_proposal": "ok",
+      "ev_reject_reason": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none"
+    },
+    "reject_clause_order": {
+      "ev_proposal": "ok",
+      "ev_reject_reason": "clause_order"
+    },
+    "reject_import_order": {
+      "ev_proposal": "ok",
+      "ev_reject_reason": "import_order"
+    },
+    "reject_not_tokenizable": {
+      "ev_proposal": "ok",
+      "ev_reject_reason": "not_tokenizable"
+    },
+    "reject_python_syntax": {
+      "ev_proposal": "ok",
+      "ev_reject_reason": "python_syntax"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "python_syntax"
+    }
+  },
+  "protocol_parser": {
+    "accept_json": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none"
+    },
+    "accept_sql": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "none"
+    },
+    "reject_proposal": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "none"
+    },
+    "reject_json": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "json"
+    },
+    "reject_sql": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "sql"
+    },
+    "reject_unsupported_protocol": {
+      "ev_proposal": "accepted",
+      "ev_reject_reason": "unsupported_protocol"
+    },
+    "precedence_proposal_before_reject": {
+      "ev_proposal": "malformed",
+      "ev_reject_reason": "json"
+    }
   }
 }
