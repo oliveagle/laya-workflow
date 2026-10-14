@@ -497,6 +497,75 @@ pub fn test_validate_call_chain_capability(h: &mut Harness) {
     h.check("validate: declared call capabilities parse (no false positive)", spec::from_spec(&ok).is_ok());
 }
 
+/// Regression (P128): a capability option the engine never reads is a silent
+/// no-op — `max_operatons` leaves the plugin at the default operation cap,
+/// `chorme_binary` leaves Chrome to `$PATH`, and nothing says so. `parse_cap`
+/// now records every key a kind's parser consumes and refuses the rest, so the
+/// typo is a `validate` error with a did-you-mean. The keys the engine reads
+/// *outside* a parser (`platforms` drives the smoke/BDD platform gate,
+/// `description` is an annotation) stay legal.
+pub fn test_validate_unread_option(h: &mut Harness) {
+    // A typo'd option on a real kind: rejected, and named with its near match.
+    let mut bad = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "greet", "with": {}})
+        )]),
+    );
+    bad["capabilities"] = json!({
+        "greet": {"kind": "plugin", "plugin": "textdigest", "max_operatons": 2_000_000}
+    });
+    let r = spec::from_spec(&bad);
+    h.check("validate: a typo'd capability option is rejected", r.is_err());
+    match &r {
+        Err(e) => {
+            let m = e.to_string();
+            h.check("validate: the error names the unread option", m.contains("max_operatons"));
+            h.check("validate: the error says the engine never reads it", m.contains("never reads"));
+            h.check("validate: the error suggests the real option", m.contains("max_operations"));
+        }
+        Ok(_) => h.check("validate: expected an error", false),
+    }
+    // A kind with a unit parser: *every* option is unread, not just typos.
+    let mut dead = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "v", "with": {}})
+        )]),
+    );
+    dead["capabilities"] = json!({"v": {"kind": "validate", "op": "check"}});
+    let r2 = spec::from_spec(&dead);
+    h.check("validate: an option on a unit-parser kind (validate) is unread", r2.is_err());
+    if let Err(e) = &r2 {
+        h.check("validate: it names 'op'", e.to_string().contains("op"));
+    }
+    // No false positive: the options a parser *does* read, and the two read
+    // elsewhere, all stay legal on the same spec.
+    let mut ok = base_spec(
+        "greet",
+        json!([node(
+            "greet",
+            json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "call", "capability": "greet", "with": {}})
+        )]),
+    );
+    ok["capabilities"] = json!({
+        "greet": {
+            "kind": "plugin", "plugin": "textdigest", "dir": "", "entry": "", "op": "run",
+            "browser": "", "max_operations": 2_000_000, "timeout_ms": 1000,
+            "platforms": ["unix"], "description": "an annotated capability"
+        }
+    });
+    h.check("validate: every option a parser reads stays legal", spec::from_spec(&ok).is_ok());
+}
+
 /// Regression (P45): `min_confidence` outside [0, 1] is meaningless. A value
 /// > 1 makes *every* route fail (the node always ESCALATEs) and < 0 is a typo;
 /// both silently misroute at runtime instead of failing up front.

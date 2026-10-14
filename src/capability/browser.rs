@@ -426,6 +426,25 @@ pub(crate) fn default_chrome_binary() -> String {
     "google-chrome".to_string()
 }
 
+/// The binary a `chrome_cdp`/`browser` capability launches.
+///
+/// A declared `chrome_binary` is a spec-authored path: the bundled probe specs
+/// (and every transpiled BDD scenario) write `scripts/bdd/chrome-headless.sh`,
+/// i.e. a path relative to the *checkout*, not to the cwd. Resolving it off
+/// [`super::asset_bases`] is what lets the same spec launch Chrome from any cwd
+/// (P128). Empty falls back to [`default_chrome_binary`] (an env override or a
+/// real binary on `$PATH`). Split out so the policy is unit-testable without
+/// spawning a browser.
+fn launch_binary(c: &BrowserCap) -> String {
+    if c.chrome_binary.is_empty() {
+        default_chrome_binary()
+    } else {
+        super::resolve_asset(&c.chrome_binary)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
 /// Chrome 137+ intentionally ignores `--load-extension` in branded builds.
 /// The supported replacement is a browser-level CDP `Extensions.loadUnpacked`
 /// call after Chrome is launched with `--enable-unsafe-extension-debugging`.
@@ -819,11 +838,7 @@ pub(crate) fn ensure_runtime(
     };
 
     std::fs::create_dir_all(&profile_path)?;
-    let binary = if c.chrome_binary.is_empty() {
-        default_chrome_binary()
-    } else {
-        c.chrome_binary.clone()
-    };
+    let binary = launch_binary(c);
     let mut cmd = std::process::Command::new(&binary);
     cmd.arg(format!(
         "--remote-debugging-port={}",
@@ -4259,6 +4274,46 @@ mod tests {
             owned_idle_ms: 60_000,
             human: false,
         }
+    }
+
+    /// P128: a spec-authored *relative* `chrome_binary` — the bundled
+    /// `scripts/bdd/chrome-headless.sh` every probe spec and every transpiled
+    /// BDD scenario declares — resolves off the checkout that holds the dsl
+    /// tree, so launching Chrome does not depend on the cwd. An empty
+    /// declaration keeps the env/`$PATH` fallback.
+    #[test]
+    fn launch_binary_resolves_a_checkout_relative_spec_path() {
+        let mut c = cap("", true);
+        c.chrome_binary = "scripts/bdd/chrome-headless.sh".to_string();
+        let binary = launch_binary(&c);
+        // The bundled script is declared relative to the checkout. From the
+        // crate root (where this test runs) the authored path already resolves,
+        // so the value names the same file whether it comes back relative or
+        // absolute.
+        let p = std::path::Path::new(&binary);
+        let resolved = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap().join(p)
+        };
+        assert!(
+            resolved.is_file(),
+            "resolved chrome_binary {resolved:?} is not the bundled script"
+        );
+        assert!(binary.ends_with("scripts/bdd/chrome-headless.sh"), "{binary}");
+
+        // A base that holds the path resolves it even when the cwd does not:
+        // this is the property that makes the Chrome launch cwd-independent.
+        let tmp = std::env::temp_dir().join(format!("laya-browser-bin-{}", std::process::id()));
+        let rel = "scripts/bdd/cwd-independent-probe.sh";
+        std::fs::create_dir_all(tmp.join("scripts/bdd")).unwrap();
+        std::fs::write(tmp.join(rel), "#!/bin/sh\n").unwrap();
+        let got = crate::capability::resolve_asset_in(rel, std::slice::from_ref(&tmp));
+        assert_eq!(got, tmp.join(rel));
+        assert!(got.is_absolute(), "{}", got.display());
+        std::fs::remove_dir_all(&tmp).ok();
+
+        assert_eq!(launch_binary(&cap("", true)), default_chrome_binary());
     }
 
     #[test]

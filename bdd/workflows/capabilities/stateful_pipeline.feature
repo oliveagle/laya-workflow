@@ -16,7 +16,7 @@ Feature: stateful_pipeline
       | backlog | {"kind":"queue","op":"push","path":"${env.LAYA_STORE_DIR}/backlog.json"} |
       | backlog_len | {"kind":"queue","op":"length","path":"${env.LAYA_STORE_DIR}/backlog.json"} |
       | ttl_cache | {"kind":"cache","op":"set","path":"${env.LAYA_STORE_DIR}/ttl.json","ttl_secs":600} |
-      | next_run | {"kind":"cron","expr":"0 3 * * *","path":""} |
+      | next_run | {"kind":"cron","expr":"0 3 * * *"} |
       | note | {"kind":"notify","path":"${env.LAYA_STORE_DIR}/intake.log","timestamp":true} |
 
   Scenario: intake

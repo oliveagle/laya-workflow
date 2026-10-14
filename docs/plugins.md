@@ -66,6 +66,15 @@ runs from anywhere (`laya-workflow run --spec
 dsl/capabilities/single_file_plugin.json --state '{"who":"laya"}'`) — no
 directory, no `plugin.json`, no browser, no network.
 
+The same layered resolution covers a `chrome_cdp` capability's `chrome_binary`:
+the bundled probe specs (and every transpiled BDD scenario) write
+`scripts/bdd/chrome-headless.sh`, a path relative to the checkout, so a browser
+scenario launches Chrome from any working directory rather than only from the
+repo root. And because an option no parser reads is a silent no-op, `parse_cap`
+now refuses a capability that declares one: `max_operatons` on a plugin, or
+`ttl_ms` where the cache reads `ttl_secs`, is a `validate` error naming the key
+and its nearest match instead of a value that quietly does nothing.
+
 ## Installing a plugin
 
 `plugin install` fetches **only the one directory** you name — never the whole

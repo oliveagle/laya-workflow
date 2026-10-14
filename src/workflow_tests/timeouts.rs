@@ -391,7 +391,7 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let _ = std::fs::remove_file(&cache_path);
             let cache = std::sync::Arc::new(
                 capability::registry_from(
-                    &[("c", json!({"kind": "cache", "op": "set", "path": cache_path.to_string_lossy(), "ttl_ms": 60000}))],
+                    &[("c", json!({"kind": "cache", "op": "set", "path": cache_path.to_string_lossy(), "ttl_secs": 60}))],
                     Some(p.clone()),
                 )
                 .unwrap(),
@@ -1091,12 +1091,12 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             let reg = capability::registry_from(
                 &[(
                     "s",
-                    json!({"kind": kind, "op": "set", "path": f.to_string_lossy(), "key": "k"}),
+                    json!({"kind": kind, "op": "set", "path": f.to_string_lossy()}),
                 )],
                 Some(p),
             )
             .unwrap();
-            let r = reg.call("s", &json!({"value": "v"}), &json!({}));
+            let r = reg.call("s", &json!({"key": "k", "value": "v"}), &json!({}));
             h.check(
                 &format!("fix: {kind} errors on a corrupt store file"),
                 r.is_err(),

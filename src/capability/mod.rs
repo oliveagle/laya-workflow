@@ -48,6 +48,7 @@ pub mod needle;
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -759,6 +760,92 @@ fn call_http(c: &HttpCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     Ok(json!({ "status": status, "body": body, "capability": "http", "url": url }))
 }
 
+// ── spec-authored relative paths (P127/P128) ──────────────────────────
+/// Bases a *relative* path written by a spec is resolved against, in order.
+///
+/// A spec may name an asset relative to the checkout that holds its dsl tree —
+/// `dsl/capabilities/hello.rhai`, `websites/feishu.com/plugin/collect.sh`,
+/// `scripts/bdd/chrome-headless.sh` — so resolving such a path against the cwd
+/// alone made the same spec behave differently depending on where it was
+/// launched (P127 for a plugin `dir` and a shell script, P128 for a
+/// `chrome_cdp` binary). Order: the cwd (legacy — a hand-run spec's own
+/// assets), each layered spec root (`dsl/` itself), each root's parent (the
+/// checkout that holds it), then the crate root the engine was built from.
+pub(crate) fn asset_bases() -> Vec<PathBuf> {
+    let mut bases: Vec<PathBuf> = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        bases.push(cwd);
+    }
+    for r in crate::spec::spec_roots() {
+        if let Some(parent) = r.path.parent() {
+            bases.push(parent.to_path_buf());
+        }
+        bases.push(r.path.clone());
+    }
+    bases.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    bases
+}
+
+/// Resolve a spec-written path against explicit `bases` (the testable core of
+/// [`resolve_asset`]): an absolute path, or one that already exists relative to
+/// the cwd, wins as authored; otherwise the first base that holds it; otherwise
+/// the path is returned unchanged, so the caller reports exactly what the spec
+/// wrote. Split out so the policy is unit-testable without touching the cwd.
+pub(crate) fn resolve_asset_in(p: &str, bases: &[PathBuf]) -> PathBuf {
+    let path = Path::new(p);
+    if path.is_absolute() || path.exists() {
+        return path.to_path_buf();
+    }
+    for base in bases {
+        let cand = base.join(path);
+        if cand.exists() {
+            return cand;
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Resolve a spec-written path off the layered [`asset_bases`], so it means the
+/// same thing from any cwd.
+pub(crate) fn resolve_asset(p: &str) -> PathBuf {
+    resolve_asset_in(p, &asset_bases())
+}
+
+/// An exec/shell spec that names a *relative* script — `sh
+/// websites/feishu.com/plugin/collect.sh` — expects the checkout that holds the
+/// dsl tree as its working directory. The first relative `/`-bearing token that
+/// exists under a base (but not under the cwd, which is already the default)
+/// selects that base as the cwd; `None` leaves the cwd untouched. `argv` is
+/// either a real argv (`sh script.sh`) or the platform shell's `-c <command>`
+/// form, where one token holds the whole command line — so every token's *words*
+/// are considered.
+pub(crate) fn exec_base_in(argv: &[String], bases: &[PathBuf]) -> Option<PathBuf> {
+    let mut toks: Vec<&str> = Vec::new();
+    for t in argv {
+        if t.contains(char::is_whitespace) {
+            toks.extend(t.split_whitespace());
+        } else {
+            toks.push(t);
+        }
+    }
+    for tok in toks {
+        let p = Path::new(tok);
+        if p.is_absolute() || !tok.contains('/') || p.exists() {
+            continue;
+        }
+        for base in bases {
+            if base.join(p).exists() {
+                return Some(base.clone());
+            }
+        }
+    }
+    None
+}
+
+pub(crate) fn exec_base_for(argv: &[String]) -> Option<PathBuf> {
+    exec_base_in(argv, &asset_bases())
+}
+
 fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Result<Value> {
     if !policy.allow_exec {
         bail!("exec capabilities are disabled (set policy.allow_exec = true to enable)");
@@ -803,7 +890,7 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     let cwd = c
         .cwd
         .clone()
-        .or_else(|| plugin::exec_base_for(&argv).map(|p| p.display().to_string()));
+        .or_else(|| exec_base_for(&argv).map(|p| p.display().to_string()));
     if let Some(d) = &cwd {
         cmd.current_dir(d);
     }

@@ -1144,90 +1144,14 @@ fn read_file_sources(file: &std::path::Path, fallback: &str) -> Result<Sources> 
         dir: parent.map(std::path::Path::to_path_buf),
     })
 }
-/// Bases a *relative* plugin `dir` is resolved against, in order. A spec may
-/// write its `dir` relative to the checkout that holds it
-/// (`dsl/capabilities/hello.rhai`, `websites/feishu.com/plugin/classify.rhai`),
-/// so resolving against the cwd alone made `dsl smoke` fail off a neutral cwd
-/// (P127). Order: the cwd (legacy — a hand-run spec's own assets), each layered
-/// spec root (`dsl/` itself), each root's parent (the checkout that holds it),
-/// then the crate root the engine was built from.
-fn dir_bases() -> Vec<PathBuf> {
-    let mut bases: Vec<PathBuf> = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        bases.push(cwd);
-    }
-    for r in crate::spec::spec_roots() {
-        if let Some(parent) = r.path.parent() {
-            bases.push(parent.to_path_buf());
-        }
-        bases.push(r.path.clone());
-    }
-    bases.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
-    bases
-}
-
-/// Resolve a plugin `dir` written by a spec: an absolute path, or one that
-/// already exists relative to the cwd, wins as authored; otherwise the first
-/// [`dir_bases`] entry that holds it; otherwise the path is returned unchanged
-/// so a missing dir is reported by the caller naming what the spec wrote.
-/// P127: an exec/shell spec that names a *relative* script — `sh
-/// websites/feishu.com/plugin/collect.sh` — expects the checkout that holds the
-/// dsl tree as its working directory. When the command declares no `cwd`, the
-/// first relative `/`-bearing token that exists under a [`dir_bases`] entry
-/// (but not under the cwd, which is already the default) selects that entry as
-/// the cwd, so the spec runs from anywhere. `None` leaves the cwd untouched.
-fn exec_base_in(argv: &[String], bases: &[PathBuf]) -> Option<PathBuf> {
-    // `argv` is either a real argv (`sh script.sh`) or the platform shell's
-    // `-c <command>` form, where a single token holds the whole command line —
-    // so look at the words of every token.
-    let mut toks: Vec<&str> = Vec::new();
-    for t in argv {
-        if t.contains(char::is_whitespace) {
-            toks.extend(t.split_whitespace());
-        } else {
-            toks.push(t);
-        }
-    }
-    for tok in toks {
-        let p = Path::new(tok);
-        if p.is_absolute() || !tok.contains('/') || p.exists() {
-            continue;
-        }
-        for base in bases {
-            if base.join(p).exists() {
-                return Some(base.clone());
-            }
-        }
-    }
-    None
-}
-
-pub(crate) fn exec_base_for(argv: &[String]) -> Option<PathBuf> {
-    exec_base_in(argv, &dir_bases())
-}
-
-fn resolve_dir(dir: &str, bases: &[PathBuf]) -> PathBuf {
-    let p = Path::new(dir);
-    if p.is_absolute() || p.exists() {
-        return p.to_path_buf();
-    }
-    for base in bases {
-        let cand = base.join(p);
-        if cand.exists() {
-            return cand;
-        }
-    }
-    p.to_path_buf()
-}
-
 pub(crate) fn load_sources(cap: &PluginCap) -> Result<Sources> {
     let dir = cap.dir.trim();
     let entry = cap.entry.trim();
     if !dir.is_empty() {
         // Resolve a spec-written relative `dir` off the checkout that holds it,
         // not the cwd, so the spec runs from anywhere (P127).
-        let bases = dir_bases();
-        let resolved = resolve_dir(dir, &bases);
+        let bases = super::asset_bases();
+        let resolved = super::resolve_asset_in(dir, &bases);
         if !resolved.exists() {
             bail!(
                 "plugin dir {dir:?} not found (looked under the cwd, {} spec root(s) and their parents, and the crate root)",
@@ -2859,18 +2783,18 @@ mod tests {
         std::fs::create_dir_all(tmp.join("scripts")).unwrap();
         std::fs::write(tmp.join("scripts/go.sh"), "#!/bin/sh\n").unwrap();
         let sh = vec!["sh".to_string(), "scripts/go.sh".to_string()];
-        assert_eq!(exec_base_in(&sh, std::slice::from_ref(&tmp)), Some(tmp.clone()));
+        assert_eq!(crate::capability::exec_base_in(&sh, std::slice::from_ref(&tmp)), Some(tmp.clone()));
         let sh_c = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
             "sh scripts/go.sh \"\"".to_string(),
         ];
-        assert_eq!(exec_base_in(&sh_c, std::slice::from_ref(&tmp)), Some(tmp.clone()));
+        assert_eq!(crate::capability::exec_base_in(&sh_c, std::slice::from_ref(&tmp)), Some(tmp.clone()));
         let du = vec!["du".to_string(), "-sk".to_string(), "/tmp".to_string()];
-        assert_eq!(exec_base_in(&du, std::slice::from_ref(&tmp)), None);
+        assert_eq!(crate::capability::exec_base_in(&du, std::slice::from_ref(&tmp)), None);
         std::fs::remove_dir_all(&tmp).ok();
         for rel in specs {
-            let solo = resolve_dir(rel, std::slice::from_ref(&crate_root));
+            let solo = crate::capability::resolve_asset_in(rel, std::slice::from_ref(&crate_root));
             assert!(solo.is_file(), "{}", solo.display());
         }
         let err = load_sources(&PluginCap {

@@ -10,7 +10,7 @@ Feature: ticket_structuring
       | max_output | 65536 |
     Given the capabilities
       | rows | {"kind":"csv","op":"parse","headers":true} |
-      | required_fields | {"kind":"validate","op":"check"} |
+      | required_fields | {"kind":"validate"} |
       | fingerprint | {"kind":"hash","op":"sha256"} |
       | budget | {"kind":"tokenize","op":"count","chars_per_token":4.0} |
       | queue | {"kind":"queue","op":"push","path":"${env.LAYA_STORE_DIR}/tickets.json"} |

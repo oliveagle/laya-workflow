@@ -117,6 +117,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-ref-cycle", t_validate::test_validate_ref_cycle),
         ("validate-call-capability", t_validate::test_validate_call_capability),
         ("validate-call-chain-capability", t_validate::test_validate_call_chain_capability),
+        ("validate-unread-option", t_validate::test_validate_unread_option),
         ("validate-min-conf-range", t_validate::test_validate_min_conf_range),
         ("validate-max-iterations", t_validate::test_validate_max_iterations),
         ("validate-threshold-not-exhaustive", t_validate::test_validate_threshold_not_exhaustive),
