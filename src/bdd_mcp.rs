@@ -715,13 +715,17 @@ impl McpTool for DecideTool {
             .run(&crate::backend::HeuristicBackend, &state)
             .map_err(|e| anyhow!("bdd_decide: run failed: {e:#}"))?;
         let j = out.to_json();
-        // The decision label is the projected `result.label` (or `gate_action`
-        // for a gate node) — the same field `check_expect` pins; `trace.final_action`
-        // is only the terminal verb ("stop").
+        // The decision label is the node's decisive projection, in order:
+        // `result.label` (a threshold ladder), `gate_action` (a gate), `route` (a
+        // combine: the choice answer or its review_label), `status` (a rubric:
+        // scored / human_review). Only then fall back to the terminal verb
+        // (`trace.final_action`, typically "stop"), which carries no decision.
         let label = j
             .pointer("/result/label")
             .and_then(Value::as_str)
             .or_else(|| j.pointer("/result/gate_action").and_then(Value::as_str))
+            .or_else(|| j.pointer("/result/route").and_then(Value::as_str))
+            .or_else(|| j.pointer("/result/status").and_then(Value::as_str))
             .unwrap_or_else(|| out.final_action())
             .to_string();
         Ok(json!({
@@ -744,12 +748,22 @@ impl McpTool for DecideTool {
 /// right workflow and know what to feed `bdd_decide`. This is the discovery
 /// half of "use a BDD graph as a decision core": you cannot call what you
 /// cannot find.
-/// The decision labels a node's action can emit, in first-appearance order: a
-/// `threshold` ladder's rule labels, or a `gate` node's BLOCK / ALLOW / CONFIRM
-/// verbs. Other action kinds (`copy_keys`/`rubric`/`combine`/`call`/`none`) do not
-/// produce a top-level `label`, so they contribute nothing here. Deduped, order
-/// preserved (a ladder's order is priority, so it is more meaningful than sort).
-fn action_outputs(action: &Value) -> Vec<String> {
+/// The decision labels a node's action can emit, in first-appearance order — the
+/// same projection `bdd_decide` reports as `label`, so this is exactly the set of
+/// answers a caller can get back:
+///
+///   * `threshold` — the ladder's rule labels (ladder order = priority);
+///   * `gate` — BLOCK / ALLOW / CONFIRM;
+///   * `combine` — the `route` values: the `choice` question's criteria keys minus
+///     the `fallback` (a fallback answer routes to `review_label` instead), plus
+///     `review_label` itself;
+///   * `rubric` — the `status` values scored / human_review (the rubric withholds a
+///     composite score as `human_review` when a dimension is uncertain).
+///
+/// Other action kinds (`copy_keys`/`call`/`none`) project no label, so they
+/// contribute nothing. Deduped, order preserved (a ladder's order is priority, so
+/// it is more meaningful than sort).
+fn action_outputs(action: &Value, questions: Option<&Value>) -> Vec<String> {
     fn push(v: &mut Vec<String>, s: &str) {
         if !v.iter().any(|x| x == s) {
             v.push(s.to_string());
@@ -770,6 +784,34 @@ fn action_outputs(action: &Value) -> Vec<String> {
             push(&mut out, "BLOCK");
             push(&mut out, "ALLOW");
             push(&mut out, "CONFIRM");
+        }
+        Some("combine") => {
+            let fallback = action
+                .get("fallback")
+                .and_then(Value::as_str)
+                .unwrap_or("other");
+            let review = action
+                .get("review_label")
+                .and_then(Value::as_str)
+                .unwrap_or("human_review");
+            if let Some(cq) = action.get("choice").and_then(Value::as_str) {
+                if let Some(keys) = questions
+                    .and_then(|q| q.get(cq))
+                    .and_then(|q| q.get("criteria"))
+                    .and_then(Value::as_object)
+                {
+                    for k in keys.keys() {
+                        if k != fallback {
+                            push(&mut out, k);
+                        }
+                    }
+                }
+            }
+            push(&mut out, review);
+        }
+        Some("rubric") => {
+            push(&mut out, "scored");
+            push(&mut out, "human_review");
         }
         _ => {}
     }
@@ -883,7 +925,8 @@ impl McpTool for ListTool {
                     ns.iter()
                         .filter_map(|n| {
                             let nm = n.get("name")?.as_str()?;
-                            let node_outs = action_outputs(n.get("action").unwrap_or(&Value::Null));
+                            let node_outs =
+                                        action_outputs(n.get("action").unwrap_or(&Value::Null), n.get("questions"));
                             for o in &node_outs {
                                 if !outputs.iter().any(|x| x == o) {
                                     outputs.push(o.clone());

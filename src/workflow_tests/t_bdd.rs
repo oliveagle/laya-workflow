@@ -2953,6 +2953,22 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
         "bdd_decide: a fully-fed state has nothing missing",
         fed["missing_inputs"].as_array().unwrap().is_empty(),
     );
+    // The label is the terminal decision's own projection, not just `stop`: a
+    // `combine` graph returns its `route`, a `rubric` graph its `status`.
+    let route = t
+        .call(&json!({"name": "support_routing", "state": {
+            "message": "invoice due today, customer charged twice, needs refund urgently"}}))
+        .unwrap();
+    h.eq("bdd_decide: combine graph returns its route", route["label"].clone(), json!("billing"));
+    h.check(
+        "bdd_decide: combine result carries route + urgency",
+        route["result"]["route"] == json!("billing") && route["result"]["urgency"] == json!("high"),
+    );
+    let rubric = t
+        .call(&json!({"name": "quality_rubric", "state": {
+            "rubric_usefulness_hint": "high", "rubric_clarity_hint": "high"}}))
+        .unwrap();
+    h.eq("bdd_decide: rubric graph returns its status", rubric["label"].clone(), json!("scored"));
 }
 
 
@@ -3063,6 +3079,19 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
     h.check(
         "bdd_list: top-level outputs == deduped union of node outputs (whole corpus)",
         union_ok,
+    );
+
+    // A `combine` node's decision is its `route`: the choice's criteria minus the
+    // fallback, plus the review label. A `rubric` node's is its `status`.
+    let sr = t.call(&json!({"name": "support_routing"})).unwrap();
+    h.check(
+        "bdd_list: a combine node's outputs are its route values",
+        labels(&sr["workflows"][0]) == vec!["billing", "technical", "account", "human_review"],
+    );
+    let qr = t.call(&json!({"name": "quality_rubric"})).unwrap();
+    h.check(
+        "bdd_list: a rubric node's outputs are scored/human_review",
+        labels(&qr["workflows"][0]) == vec!["scored", "human_review"],
     );
 
     // The scan is recursive (same walk as `spec::discover`), so a nested category

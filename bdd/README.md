@@ -457,8 +457,10 @@ emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
 --out dsl/<cat>`) → audit completeness with `bdd_catalog` → lift any legacy JSON
 workflow back into BDD with `bdd_import` → discover the callable corpus with
 `bdd_list` (each graph also reports its closed set of decision `outputs` — a
-ladder's labels or a gate's BLOCK/ALLOW/CONFIRM — so a caller knows every label
-it can get back before running), and `bdd_decide` echoes that contract back —
+ladder's labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, or a
+rubric node's `status` — the same projection `bdd_decide` returns as its `label`,
+so a caller knows every answer it can get back before running), and `bdd_decide`
+echoes that contract back —
 the declared `inputs` and the `missing_inputs` the state did not supply, so an
 under-fed call is visible instead of a silent defaults-only walk) → run `bdd round-trip` +
 `check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →

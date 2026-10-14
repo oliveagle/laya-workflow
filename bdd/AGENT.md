@@ -286,9 +286,10 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **960
    `laya-workflow bdd import --dir <DIR> --into <cat>`）—— 让「把已知 workflow 转成 BDD」也能在 MCP 里一把完成。
 8. 运行决策：先 **MCP `bdd_list`** 发现可用 workflow（返回每个 `@decision` 图的 `cat`/`name`/`description`/`start`/`nodes`/
    每问 `questions`（id+type+`answer_field`）/ `inputs`（离线调用要喂的 state 字段）/ `outputs`（该图能返回的全部
-   决策 label 闭集：阶梯的 label 或 gate 的 BLOCK/ALLOW/CONFIRM，单节点图即全量、多节点图取 trace 末节点）
+   决策 label 闭集＝`bdd_decide` 能回的全部 label：阶梯 label / gate 的 BLOCK·ALLOW·CONFIRM / combine 的 `route`（choice criteria 去掉
+   fallback，再加 review_label）/ rubric 的 `status`（scored·human_review）；单节点图即全量、多节点图取 trace 末节点）
    —— `bdd_list` 递归扫 `dsl/` 子树（与 `bdd_decide {name}` 的解析同源，`cat` 取相对子路径，如 `routing/sub`）；再用 **MCP `bdd_decide`**
-   （`name` 或 `feature_text`/`feature_path`/`spec_path` + `state` → `label` + 全 `trace` + `result` + 决策契约
+   （`name` 或 `feature_text`/`feature_path`/`spec_path` + `state` → `label`（终态节点的决策投影：threshold label / gate_action / combine `route` / rubric `status`，都没有才回落 `stop`）+ 全 `trace` + `result` + 决策契约
    `inputs`/`missing_inputs`，与 `dsl smoke` 同一离线确定性引擎）跑它：`missing_inputs` 非空说明有声明字段没喂、
    label 可能来自默认值；`inputs` 为空说明离线引擎根本不读 state（该图需真实模型后端驱动）——
    让 BDD 图成为 agent **可发现、可调用、且诚实**的决策核心，而不只是可写的产物。
