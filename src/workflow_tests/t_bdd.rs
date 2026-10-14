@@ -5666,6 +5666,126 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
         &format!("engine-contract: a non-numeric (wrong-typed) answer to a noul question fails closed ({ne})"),
         ne.contains("node think") && ne.contains("\"done\"") && ne.contains("non-numeric value"),
     );
+
+    // P115: a shape-correctness census over *every* spec — not just the 128 the
+    // ledger's states drive. `bdd-answers-from-inventory` audits only
+    // state-carrying specs, so the 35 live-only specs (notify_macos, hf_trending,
+    // …) are never driven offline: a qid-keyed heuristic handler that returns the
+    // wrong shape for a spec's declared type can hide there — exactly the P113
+    // `urgency`-as-score-vs-choice bug. Drive the offline heuristic on each
+    // spec's own statically-declared questions straight from the spec tree and
+    // hold every answer to the engine's shape contract. Unlike the answer-keyed
+    // audit this exercises the *named-handler* path (the one `default_choice`
+    // never reaches), so it has teeth on both halves.
+    {
+        use laya_workflow::backend::HeuristicBackend;
+        use laya_workflow::workflow::Decide;
+        let root = bdd::repo_root();
+        let specs = laya_workflow::spec::discover(&root.join("dsl").to_string_lossy()).unwrap();
+        let mut specs_seen = 0usize;
+        let mut checked_choice = 0usize;
+        let mut checked_num = 0usize;
+        let mut skipped_dynamic = 0usize;
+        let mut bad: Vec<String> = Vec::new();
+        for (stem, path) in specs {
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(raw) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            if raw.get("start").is_none() {
+                continue;
+            }
+            let Some(nodes) = raw.get("nodes").and_then(Value::as_array) else {
+                continue;
+            };
+            specs_seen += 1;
+            for n in nodes {
+                let Some(qs) = n.get("questions").and_then(Value::as_object) else {
+                    continue;
+                };
+                for (qid, qdef) in qs {
+                    // A `criteria.from_state` question materialises its candidates
+                    // from the input state, so a bare-question drive has nothing to
+                    // hold it to; the engine-state-driven audit (P110) owns it.
+                    if qdef.pointer("/criteria/from_state").is_some() {
+                        skipped_dynamic += 1;
+                        continue;
+                    }
+                    let qtype = qdef.get("type").and_then(Value::as_str).unwrap_or("choice");
+                    let one = json!({ qid.clone(): qdef.clone() });
+                    let v = match HeuristicBackend.decide(&json!({}), &one) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            bad.push(format!("{stem}:{qid}: the heuristic refused to answer ({e})"));
+                            continue;
+                        }
+                    };
+                    let Some(d) = v.answers.get(qid) else {
+                        bad.push(format!("{stem}:{qid}: the heuristic returned no answer"));
+                        continue;
+                    };
+                    match qtype {
+                        "choice" => {
+                            checked_choice += 1;
+                            let Some(a) = d.answer.as_str() else {
+                                bad.push(format!(
+                                    "{stem}:{qid}: a choice answer is not a string ({})",
+                                    d.answer
+                                ));
+                                continue;
+                            };
+                            // `none` is the DSL's fail-closed answer; an empty
+                            // criteria fails open (the engine accepts anything there).
+                            if a == "none" {
+                                continue;
+                            }
+                            let keys: Vec<String> = qdef
+                                .get("criteria")
+                                .and_then(Value::as_object)
+                                .map(|o| o.keys().cloned().collect())
+                                .unwrap_or_default();
+                            if keys.is_empty() {
+                                continue;
+                            }
+                            if !keys.iter().any(|k| k == a) {
+                                bad.push(format!(
+                                    "{stem}:{qid}: a choice answer {a:?} is not one of its criteria {keys:?}"
+                                ));
+                            }
+                        }
+                        "score" | "noul" => {
+                            checked_num += 1;
+                            if !d.answer.is_number() {
+                                bad.push(format!(
+                                    "{stem}:{qid}: a {qtype} answer is not a number ({})",
+                                    d.answer
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        h.check(
+            &format!(
+                "engine-contract: the shape census covers every workflow spec ({specs_seen} specs; {checked_choice} choice + {checked_num} score/noul answers held to the declared shape; {skipped_dynamic} dynamic skipped)"
+            ),
+            specs_seen == 163 && checked_choice >= 600 && checked_num >= 100 && skipped_dynamic == 1,
+        );
+        h.check(
+            &format!(
+                "engine-contract: every spec's heuristic answer obeys its question's declared shape ({} violation(s))",
+                bad.len()
+            ),
+            bad.is_empty(),
+        );
+        for b in bad.iter().take(10) {
+            h.check(&format!("engine-contract: shape violation: {b}"), false);
+        }
+    }
 }
 
 /// `bdd run --cdp <url>`: attach to an existing browser instead of launching
