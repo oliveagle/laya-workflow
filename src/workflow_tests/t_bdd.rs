@@ -5483,6 +5483,7 @@ pub fn test_bdd_platform_bound_skip(h: &mut Harness) {
 /// on the heuristic, but guarded where it cannot be bypassed: in the engine.
 pub fn test_bdd_engine_contract(h: &mut Harness) {
     use laya_workflow::backend::{choice, score, verdict, ScriptedBackend};
+    use laya_workflow::workflow::Decision;
     use laya_workflow::spec::{from_spec, load_file};
 
     // gate --"A"--> allow, anything else --> deny; both terminal nodes ask `ok`.
@@ -5604,5 +5605,65 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
         "engine-contract: the heuristic answers a choice `urgency` (a reused score-handler id) with a string option key, in-contract",
         matches!(nm_like.run(&laya_workflow::backend::HeuristicBackend, &json!({})),
                  Ok(o) if o.final_action() == "stop"),
+    );
+
+    // P114: the same contract on the *numeric* side. A `score`/`noul` answer is read
+    // with `as_f64()`, which yields 0.0 for anything that is not a number — so a
+    // string score would let a threshold rule gate on a silent 0.0. Decode the exact
+    // model-path shape (`{"type":"score","score":"high"}` keeps the string in `answer`)
+    // and drive a score question with it.
+    let score_spec = from_spec(&json!({
+        "name": "score_demo",
+        "dsl_version": 2,
+        "start": "rate",
+        "max_iterations": 2,
+        "nodes": [
+            {"name": "rate", "primary_q": "rating",
+             "questions": {"rating": {"type": "score"}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1}
+        ]
+    }))
+    .unwrap();
+    let string_score = laya_workflow::backend::verdict_from_response(&json!({
+        "answers": {"rating": {"type": "score", "score": "high"}}
+    }))
+    .unwrap();
+    let se = match score_spec.run(&ScriptedBackend::new(vec![string_score]), &json!({})) {
+        Ok(_) => "NO ERROR — the string score was silently read as 0.0".to_string(),
+        Err(e) => e.to_string(),
+    };
+    h.check(
+        &format!("engine-contract: a non-numeric (wrong-typed) answer to a score question fails closed ({se})"),
+        se.contains("node rate") && se.contains("\"rating\"") && se.contains("non-numeric value"),
+    );
+
+    // A `noul` question answered with a string (only reachable from a hand-written
+    // backend) fails closed the same way.
+    let noul_spec = from_spec(&json!({
+        "name": "noul_demo",
+        "dsl_version": 2,
+        "start": "think",
+        "max_iterations": 2,
+        "nodes": [
+            {"name": "think", "primary_q": "done",
+             "questions": {"done": {"type": "noul"}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1}
+        ]
+    }))
+    .unwrap();
+    let string_noul = verdict(&[("done", Decision {
+        answer: json!("true"),
+        probabilities: serde_json::Map::new(),
+        confidence: 0.9,
+    })]);
+    let ne = match noul_spec.run(&ScriptedBackend::new(vec![string_noul]), &json!({})) {
+        Ok(_) => "NO ERROR — the string noul was silently read as 0.0".to_string(),
+        Err(e) => e.to_string(),
+    };
+    h.check(
+        &format!("engine-contract: a non-numeric (wrong-typed) answer to a noul question fails closed ({ne})"),
+        ne.contains("node think") && ne.contains("\"done\"") && ne.contains("non-numeric value"),
     );
 }

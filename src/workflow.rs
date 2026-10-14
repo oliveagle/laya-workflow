@@ -338,32 +338,50 @@ impl WorkflowNode {
             .ok_or_else(|| anyhow!("node {}: empty questions", self.name))
     }
 
-    /// Hold **every** backend to the node's question contract (P112): a `choice`
-    /// answer that is not one of its question's `criteria` keys (nor the DSL's
-    /// fail-closed `none`) — or that is not an option-key string at all (a wrong-typed
-    /// `score`/`boolean`/`noul` value) — would silently take the edge's `default` branch — the
-    /// same silent-`default` hole `AnswersBackend::accept` closes on the *caller*
-    /// path, and P98/P110 audit on the offline heuristic. It must not depend on a
-    /// server's optional `--gbnf-strict` constrained decoding (off by default), so
-    /// the engine fails closed here instead. `criteria` empty = fail open (a
-    /// question that declares no answer set cannot be held to one); non-`choice`
-    /// answers carry no criteria.
+    /// Hold **every** backend to the node's question contract (P112/P113/P114): an
+    /// answer whose *shape* does not match what the question declares — a `choice`
+    /// answer that is not an option-key string (P113), a `score`/`noul` answer that is
+    /// not a number (P114) — or a `choice` answer outside its `criteria` keys (nor the
+    /// DSL's fail-closed `none`, P112) would be silently misread by the engine:
+    /// `Edge::resolve` stringifies a number into an unmatched key, and
+    /// `Decision::as_f64` yields 0.0 for anything that is not a number. Either way the
+    /// walk would silently take a branch the backend never chose — the same
+    /// silent-`default` hole `AnswersBackend::accept` closes on the *caller* path and
+    /// P98/P110 audit on the offline heuristic. It must not depend on a server's
+    /// optional `--gbnf-strict` constrained decoding (off by default), so the engine
+    /// fails closed here instead. `criteria` empty = fail open (a question that
+    /// declares no answer set cannot be held to one); non-`choice` answers carry no
+    /// criteria.
     fn hold_in_contract(&self, questions: &Value, verdict: &Verdict) -> Result<()> {
         let Some(qs) = questions.as_object() else {
             return Ok(());
         };
         for (qid, qdef) in qs {
-            if qdef
+            let qtype = qdef
                 .get("type")
                 .and_then(Value::as_str)
-                .unwrap_or("choice")
-                != "choice"
-            {
-                continue;
-            }
+                .unwrap_or("choice");
             let Some(d) = verdict.answers.get(qid.as_str()) else {
                 continue;
             };
+            // `score`/`noul` answers are numbers the engine reads with `as_f64()`
+            // (`Decision::as_f64` yields 0.0 for anything that is not a number). A
+            // string / null / array answer therefore silently scores 0.0, so a
+            // threshold rule gating on it takes the wrong branch with no error. Same
+            // contract as `choice` below, on the numeric side: the answer must be the
+            // shape the question declares.
+            if matches!(qtype, "score" | "noul") {
+                if d.answer.is_number() {
+                    continue;
+                }
+                return Err(anyhow!(
+                    "node {}: the backend answered {qtype} question {qid:?} with the non-numeric value {} — the engine reads that as 0.0, so a threshold rule on it would silently take the wrong branch",
+                    self.name, d.answer
+                ));
+            }
+            if qtype != "choice" {
+                continue;
+            }
             let Some(criteria) = qdef.get("criteria").and_then(Value::as_object) else {
                 continue;
             };
