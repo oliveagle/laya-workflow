@@ -1181,7 +1181,7 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
     let _ = crate::spec::from_spec_with_dir(&s1, None, None).expect("single validates");
     // P37: named patterns beyond single/two_node/nested — gate + loop — each
     // must compile to a valid, fully-wired decision graph. Unknown names error.
-    for pat in ["gate", "loop"] {
+    for pat in ["gate", "loop", "dynamic"] {
         let body = bdd::scaffold_body_pattern("pat_demo", "routing", "risk", "pattern demo", pat)
             .unwrap_or_else(|e| panic!("pattern {pat} builds: {e}"));
         let f = bdd::parse(&body, "<pat>").unwrap_or_else(|e| panic!("pattern {pat} parses: {e}"));
@@ -1199,6 +1199,22 @@ pub fn test_bdd_scaffold(h: &mut Harness) {
     h.check("bdd: gate scaffold has a gate action", gate.contains("Then gate \"risk\" on option \"B\""));
     let lp = bdd::scaffold_body_pattern("l", "loops", "v", "d", "loop").unwrap();
     h.check("bdd: loop scaffold routes back to itself", lp.contains("And the answer \"revise\" goes to \"l\""));
+    let dynb = bdd::scaffold_body_pattern("dyn", "routing", "candidate", "d", "dynamic").unwrap();
+    h.check(
+        "bdd: dynamic scaffold carries the from_state table dialect",
+        dynb.contains("| from_state | candidates |")
+            && dynb.contains("| id_key | id |")
+            && dynb.contains("| value_key | value |")
+            && dynb.contains("| none |"),
+    );
+    h.check(
+        "bdd: dynamic scaffold extracts candidates via a capability",
+        dynb.contains("Then call the capability"),
+    );
+    h.check(
+        "bdd: dynamic scaffold documents itself as the dynamic pattern",
+        dynb.contains("Pattern: dynamic"),
+    );
     h.check("bdd: unknown pattern is rejected", bdd::scaffold_body_pattern("x", "routing", "q", "d", "nope").is_err());
 
     // CLI stdout mode is self-verifying and returns 0.
@@ -3815,6 +3831,24 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
         got_tmpls.iter().any(|s| s.contains("call the capability"))
             && got_tmpls.iter().any(|s| s.contains("the policy")),
     );
+    // P107: table dialects (same step, special table rows) an author cannot guess
+    // from the one-line template — the dynamic-candidate grammar in particular —
+    // are exposed so the grammar is discoverable before it is written.
+    let dialects = v["dialects"].as_array().cloned().unwrap_or_default();
+    h.check(
+        "bdd_vocabulary: exposes the dynamic-criteria table dialect",
+        dialects.iter().any(|d| {
+            d["step"].as_str().map(|s| s.contains("a choice question")).unwrap_or(false)
+                && d["table"]
+                    .as_array()
+                    .map(|rows| rows.iter().any(|r| r.as_str() == Some("| from_state | <state array key, e.g. candidates> |")))
+                    .unwrap_or(false)
+                && d["table"]
+                    .as_array()
+                    .map(|rows| rows.iter().any(|r| r.as_str().map(|s| s.starts_with("| none |")).unwrap_or(false)))
+                    .unwrap_or(false)
+        }),
+    );
 
     // ── CLI `bdd vocabulary --json` and the human form ────────────────
     let root = bdd::repo_root();
@@ -3842,6 +3876,11 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
         .filter_map(|s| s["template"].as_str().map(str::to_string))
         .collect();
     h.eq("bdd vocabulary --json == bdd_vocabulary", cj_tmpls, want_tmpls.clone());
+    h.eq(
+        "bdd vocabulary --json: dialects == bdd_vocabulary's dialects",
+        cj["dialects"].clone(),
+        v["dialects"].clone(),
+    );
 
     let cli_human = std::process::Command::new(&bin)
         .args(["bdd", "vocabulary"])
@@ -3854,6 +3893,12 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
         text.contains("decision vocabulary:")
             && text.contains("given")
             && text.contains("call the capability"),
+    );
+    h.check(
+        "bdd vocabulary: human form names the dynamic table dialect",
+        text.contains("table dialects")
+            && text.contains("from_state")
+            && text.contains("id_key"),
     );
 }
 

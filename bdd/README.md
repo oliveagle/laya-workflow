@@ -536,9 +536,13 @@ decision workflow actually recurs in, `--pattern` (or the CLI aliases `--single`
 / `--nested`) picks a named skeleton: `single` (1 node), `two_node` (the
 default), `nested` (prefilter → sub-workflow → audit pipeline), `gate` (one
 choice node whose risky option is gated — `Then gate "<q>" on option "B" with
-block 0.6 allow 0.7` — for risk/approval gates), or `loop` (a `Background: at
+block 0.6 allow 0.7` — for risk/approval gates), `loop` (a `Background: at
 most N iterations` header plus a self-looping verdict node — accept / revise →
-back to itself / escalate — for iterate-until-good workflows); an unknown
+back to itself / escalate — for iterate-until-good workflows), or `dynamic` (a
+capability extracts candidates into a state array and one choice question
+selects a single id — the awesome-jev span-selection shape; its options are
+materialised from `state` at decide time, so the model picks an id and never
+generates the value); an unknown
 pattern is rejected by name, and `bdd scaffold --help` lists them. The
 `.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
 hand-edited.
@@ -571,7 +575,15 @@ The grammar itself is queryable, so an author does not have to reverse-engineer
 it from prose or wait for a red build: `bdd vocabulary` prints the decision
 authoring templates grouped by keyword kind (given/when/then) - the same curated
 list behind the `did you mean` hints - and `bdd vocabulary --json` (or the MCP
-tool `bdd_vocabulary`) returns the same list for an agent to read first. Copy a
+tool `bdd_vocabulary`) returns the same list for an agent to read first — and
+both also publish the **table dialects**: the special table rows (`| from_state |
+… |` + `| id_key | … |` + `| value_key | … |` + `| none | … |`) that turn a
+one-line `a choice question …` template into a dynamic-candidate question whose
+options come from `state` at decide time. They live under `dialects` in the JSON
+(CLI `--json` and MCP `bdd_vocabulary`), the human form prints a `table dialects`
+section, and `bdd scaffold --pattern dynamic` emits a working example, so the
+grammar an author cannot guess from a one-liner is discoverable before it is
+written. Copy a
 template, replace its `<placeholders>`, then validate with `bdd build`.
 
 ### Live-fire against real sites (`bdd live` / `bdd compare`)

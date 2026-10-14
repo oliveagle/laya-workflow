@@ -1357,6 +1357,7 @@ pub fn vocabulary_json() -> Value {
         "kinds": VOCABULARY_KINDS,
         "steps": steps,
         "by_kind": Value::Object(by_kind),
+        "dialects": vocabulary_dialects(),
         "note": "Curated authoring templates for a @decision feature, grouped by \
 keyword kind (given/when/then). Write a step by copying a template and \
 replacing <placeholders>; the compiler accepts these phrasings and suggests \
@@ -1364,6 +1365,28 @@ the closest one on a typo. Deliberately not an exhaustive grammar - these are \
 the phrasings the did-you-mean index knows. Validate the compiled graph with \
 bdd_validate (or `bdd build`) before committing."
     })
+}
+
+/// Table dialects the compiler accepts inside a step's table, beyond the plain
+/// `| answer | meaning |` option list - phrasings an author cannot guess from a
+/// one-line template. Exposed by `bdd vocabulary` (CLI `--json` and MCP
+/// `bdd_vocabulary`), so an agent discovers the dynamic-candidate grammar
+/// *before* writing it, not from a red build. Single source for both surfaces.
+pub fn vocabulary_dialects() -> Value {
+    json!([
+        {
+            "step": "a choice question \"<q>\" asks \"<text>\"",
+            "dialect": "dynamic criteria from a state array (code extracts the candidates, the model only selects one id - the value is never generated)",
+            "table": [
+                "| answer | meaning |",
+                "| from_state | <state array key, e.g. candidates> |",
+                "| id_key | <id field, default id> |",
+                "| value_key | <value field, default value> |",
+                "| none | <text for the no-candidate option> |"
+            ],
+            "note": "with `from_state`, the sibling keys must be exactly from_state/id_key/value_key/none; the engine materialises one option per candidate id from `state[<state array key>]` at decide time and always adds `none` (the fail-closed no-candidate answer). See `bdd scaffold --pattern dynamic`."
+        }
+    ])
 }
 
 /// Options for `laya-workflow bdd vocabulary`.
@@ -1392,6 +1415,21 @@ pub fn vocabulary_cli(o: &VocabularyOptions) -> Result<i32> {
         println!("\n{kind} ({})", list.len());
         for t in list {
             println!("  {t}");
+        }
+    }
+    if let Some(ds) = vocabulary_dialects().as_array() {
+        println!("\ntable dialects (same step, special table rows):");
+        for d in ds {
+            let step = d.get("step").and_then(Value::as_str).unwrap_or("");
+            let di = d.get("dialect").and_then(Value::as_str).unwrap_or("");
+            println!("  {step}  ->  {di}");
+            if let Some(rows) = d.get("table").and_then(Value::as_array) {
+                for r in rows {
+                    if let Some(r) = r.as_str() {
+                        println!("      {r}");
+                    }
+                }
+            }
         }
     }
     println!(
@@ -3926,6 +3964,7 @@ pub const SCAFFOLD_PATTERNS: &[(&str, &str)] = &[
     ("nested", "prefilter → sub-workflow → audit (pipeline)"),
     ("gate", "one choice node with a gate action (ALLOW/CONFIRM/BLOCK)"),
     ("loop", "refine loop: a choice node that routes back to itself"),
+    ("dynamic", "code extracts candidates into a state array; a choice question selects one id (criteria.from_state)"),
 ];
 
 /// Build a starter `.feature` for a named pattern. Errors on an unknown pattern
@@ -3938,7 +3977,7 @@ pub fn scaffold_body_pattern(
     pattern: &str,
 ) -> Result<String> {
     match pattern {
-        "single" | "two_node" | "nested" | "gate" | "loop" => {}
+        "single" | "two_node" | "nested" | "gate" | "loop" | "dynamic" => {}
         other => {
             let names: Vec<&str> = SCAFFOLD_PATTERNS.iter().map(|(n, _)| *n).collect();
             bail!(
@@ -3952,6 +3991,9 @@ pub fn scaffold_body_pattern(
     }
     if pattern == "loop" {
         return Ok(scaffold_loop(name, cat, desc));
+    }
+    if pattern == "dynamic" {
+        return Ok(scaffold_dynamic(name, cat, desc, primary_q));
     }
     let nodes = if pattern == "single" { 1 } else { 2 };
     Ok(scaffold_body_classic(
@@ -4003,6 +4045,62 @@ fn scaffold_loop(name: &str, cat: &str, desc: &str) -> String {
     b.push_str(&format!("    And the answer \"revise\" goes to \"{name}\"\n"));
     b.push_str("    And the answer \"escalate\" goes to \"STOP\"\n");
     b.push_str("    Then allow up to 3 retries\n");
+    b
+}
+
+/// Dynamic-candidate pattern: a capability extracts candidates into a state
+/// array, then a choice question selects exactly one of them by id
+/// (`criteria.from_state`) - the "the model never generates the value, it only
+/// picks an id" shape of awesome-jev span-selection. The `select` node's table
+/// carries the dynamic dialect of a choice question (`| from_state | ... |` +
+/// `| id_key | ... |` + `| value_key | ... |` + `| none | ... |`) instead of a
+/// static option list.
+fn scaffold_dynamic(name: &str, cat: &str, desc: &str, primary_q: &str) -> String {
+    let q = if primary_q.is_empty() { "candidate" } else { primary_q };
+    let mut b = scaffold_header(
+        name,
+        cat,
+        desc,
+        "dynamic",
+        "a capability extracts candidates into a state array; a choice question selects one id",
+    );
+    b.push_str("@decision\n");
+    b.push_str(&format!("Feature: {name}\n"));
+    b.push_str(&format!("  {desc}\n\n"));
+    b.push_str("  Background:\n");
+    b.push_str("    Given the workflow runs at most 6 iterations\n");
+    b.push_str("    Given the capabilities\n");
+    b.push_str(
+        "      | spans | {\"kind\":\"text\",\"op\":\"spans\",\"pattern\":\"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\"} |\n",
+    );
+    b.push_str("\n");
+    b.push_str(&format!("  Scenario: {name}\n"));
+    b.push_str("    Given a choice question \"has_text\" asks \"Is there source text to scan?\"\n");
+    b.push_str("      | answer | meaning |\n");
+    b.push_str("      | A      | no      |\n");
+    b.push_str("      | B      | yes     |\n");
+    b.push_str("    And answer \"B\" when the field \"text\" contains \"@\" with hit 0.9\n");
+    b.push_str("    When the answer \"B\" goes to \"select\"\n");
+    b.push_str("    And any other answer goes to \"STOP\"\n");
+    b.push_str("    Then call the capability \"spans\"\n");
+    b.push_str("      | with.text | ${state.text} |\n");
+    b.push_str("      | project.candidates | /candidates |\n");
+    b.push_str("    Then allow up to 1 retries\n");
+    b.push_str("\n");
+    b.push_str("  Scenario: select\n");
+    b.push_str(&format!(
+        "    Given a choice question \"{q}\" asks \"Which candidate does the text identify? Select none when it does not establish exactly one.\"\n"
+    ));
+    b.push_str("      | answer | meaning |\n");
+    b.push_str("      | from_state | candidates |\n");
+    b.push_str("      | id_key | id |\n");
+    b.push_str("      | value_key | value |\n");
+    b.push_str("      | none | No candidate is clearly identified. |\n");
+    b.push_str("    And the answer comes from the field \"selected_id\"\n");
+    b.push_str("    When the answer \"none\" goes to \"STOP\"\n");
+    b.push_str("    And any other answer goes to \"STOP\"\n");
+    b.push_str(&format!("    Then keep the answer to \"{q}\"\n"));
+    b.push_str("    Then allow up to 1 retries\n");
     b
 }
 
