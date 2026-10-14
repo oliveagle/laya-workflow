@@ -5663,6 +5663,13 @@ pub struct RunOptions {
     /// is a failure, so a gate that promises browser coverage cannot pass by
     /// doing nothing.
     pub require_browser: bool,
+    /// Attach to an existing CDP endpoint instead of launching Chrome, e.g.
+    /// `http://127.0.0.1:9222`. Every compiled scenario is pointed at it with
+    /// `launch=false, attach=true`, so a long-lived browser another process (or
+    /// a human) started is driven as-is. Implies serial execution, skips the
+    /// "is a local Chrome installed?" gate (the target is remote), and requires
+    /// the endpoint to be reachable — attach never spawns a browser.
+    pub cdp: Option<String>,
 }
 
 impl Default for RunOptions {
@@ -5685,6 +5692,7 @@ impl Default for RunOptions {
             live: false,
             report: None,
             require_browser: false,
+            cdp: None,
         }
     }
 }
@@ -5697,6 +5705,72 @@ fn free_port() -> Result<u16> {
     let port = l.local_addr()?.port();
     drop(l);
     Ok(port)
+}
+
+/// The port of a `http[s]://host:port[/...]` CDP endpoint, if it names one.
+pub fn cdp_url_port(url: &str) -> Option<u16> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let hostport = rest.split('/').next().unwrap_or("");
+    match hostport.rsplit_once(':') {
+        Some((_, p)) => p.parse().ok(),
+        None => Some(if url.starts_with("https://") { 443 } else { 80 }),
+    }
+}
+
+/// Pre-flight for `--cdp`: is the endpoint actually accepting TCP? Attach never
+/// launches, so "not running" must be a clear up-front error rather than a
+/// confusing failure inside the first scenario's browser step.
+pub fn cdp_endpoint_reachable(url: &str) -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let hostport = rest.split('/').next().unwrap_or("");
+    let (host, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) => match p.parse::<u16>() {
+            Ok(p) => (h, p),
+            Err(_) => return false,
+        },
+        None => (
+            hostport,
+            if url.starts_with("https://") { 443 } else { 80 },
+        ),
+    };
+    let Ok(mut addrs) = (host, port).to_socket_addrs() else {
+        return false;
+    };
+    match addrs.next() {
+        Some(addr) => TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(1500))
+            .is_ok(),
+        None => false,
+    }
+}
+
+/// Point a spec's browser capabilities at an external CDP endpoint instead of
+/// launching Chrome: `endpoint=<url>`, `launch=false`, `attach=true`.
+///
+/// Applied to every `chrome_cdp`/`browser` capability, because both the
+/// transpiled `chrome` capability and the hand-written probe specs carry their
+/// own. Pure, so the rewrite is testable without a browser.
+pub fn attach_spec(spec: &mut Value, url: &str) {
+    let Some(caps) = spec.get_mut("capabilities").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for def in caps.values_mut() {
+        let Some(obj) = def.as_object_mut() else {
+            continue;
+        };
+        let kind = obj.get("kind").and_then(Value::as_str).unwrap_or("");
+        if kind == "chrome_cdp" || kind == "browser" {
+            obj.insert("endpoint".into(), json!(url));
+            obj.insert("launch".into(), json!(false));
+            obj.insert("attach".into(), json!(true));
+        }
+    }
 }
 
 /// Serve `directory` over HTTP on a free localhost port for the duration of
@@ -6069,14 +6143,41 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         return Ok(1);
     }
 
+    // Attach mode: drive a CDP endpoint that already exists (a long-lived
+    // browser another process or a human started) instead of launching Chrome.
+    // It supersedes the "is a browser installed?" gate — the target may be
+    // remote or already running — but the endpoint must be live, because attach
+    // never spawns.
+    let attach: Option<String> = o
+        .cdp
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(url) = &attach {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            eprintln!("bdd: --cdp must be a http(s):// CDP endpoint, got {url:?}");
+            return Ok(1);
+        }
+        if !cdp_endpoint_reachable(url) {
+            eprintln!(
+                "bdd: --cdp {url} is not reachable — attach drives an existing browser and \
+                 never launches one; start it (e.g. `chrome --remote-debugging-port=<port>`) \
+                 or drop --cdp to let Laya launch Chrome"
+            );
+            return Ok(1);
+        }
+    }
+
     // Is there a browser to drive at all? The suite's whole claim is that a real
     // page loaded / a real assertion held; without a browser that claim cannot be
     // made, so a browserless box skips (exit 0) rather than failing on the spawn -
     // the same skip-not-fail stance as the plugin fold gate. A box that *wants*
     // the guarantee asks for it with `--require-browser` (which turns the skip
     // into an error), so a gate that promises browser behaviour cannot pass by
-    // doing nothing.
-    match run_browser_gate(resolve_run_chrome().is_some(), o.require_browser) {
+    // doing nothing. Attaching counts as "have a browser": the reachability check
+    // above already proved the target is up.
+    match run_browser_gate(attach.is_some() || resolve_run_chrome().is_some(), o.require_browser) {
         RunBrowserGate::Proceed => {}
         RunBrowserGate::Skip => {
             println!(
@@ -6140,6 +6241,10 @@ pub fn run(o: &RunOptions) -> Result<i32> {
                     return Ok(1);
                 }
             };
+            let mut spec = spec;
+            if let Some(url) = &attach {
+                attach_spec(&mut spec, url);
+            }
             plan.push((feature.clone(), scenario.clone(), spec, config.clone()));
         }
     }
@@ -6156,7 +6261,13 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         return Ok(1);
     }
 
-    let jobs = o.jobs.max(1).min(plan.len());
+    // Attach is serial by construction (one shared external browser), so it
+    // pins the job count; `--port` also pins one endpoint and stays serial-only.
+    let jobs = if attach.is_some() {
+        1
+    } else {
+        o.jobs.max(1).min(plan.len())
+    };
     if o.port != 0 && jobs != 1 {
         eprintln!("error: --port pins one CDP endpoint, so it only works with --jobs 1");
         return Ok(1);
@@ -6173,10 +6284,22 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     // for every scenario it runs, which is what lets scenario 2..N adopt the
     // Chrome that scenario 1 launched instead of paying for a fresh launch
     // (measured 1.9s per scenario with a fresh profile, 0.75s with a reused one).
+    //
+    // In attach mode there is nothing to launch and one shared target, so the
+    // single endpoint is the external URL's port and the "profile" is only a
+    // Laya bookkeeping dir (never the target's own profile, which we do not own).
     let mut endpoints: Vec<(u16, String)> = Vec::new();
     for w in 0..jobs {
-        let port = if o.port != 0 { o.port } else { free_port()? };
-        let profile = std::env::temp_dir().join(format!("laya-bdd-chrome-w{w}-{}", std::process::id()));
+        let (port, profile) = match &attach {
+            Some(url) => (
+                cdp_url_port(url).unwrap_or(0),
+                std::env::temp_dir().join(format!("laya-bdd-attach-w{w}-{}", std::process::id())),
+            ),
+            None => (
+                if o.port != 0 { o.port } else { free_port()? },
+                std::env::temp_dir().join(format!("laya-bdd-chrome-w{w}-{}", std::process::id())),
+            ),
+        };
         std::fs::create_dir_all(&profile)?;
         endpoints.push((port, profile.to_string_lossy().into_owned()));
     }
@@ -6202,11 +6325,15 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     if profile == "production" {
         println!("bdd: profile production  base_url {base_url}  (no local fixtures)");
     }
-    for (w, (port, prof)) in endpoints.iter().enumerate() {
-        println!("bdd: cdp[{w}]   127.0.0.1:{port} headless  ({prof})");
+    match &attach {
+        Some(url) => println!("bdd: cdp attach {url}  (launch=false, attach=true; serial)\n"),
+        None => {
+            for (w, (port, prof)) in endpoints.iter().enumerate() {
+                println!("bdd: cdp[{w}]   127.0.0.1:{port} headless  ({prof})");
+            }
+            println!("bdd: headless chrome\n");
+        }
     }
-    println!("bdd: headless chrome\n");
-
     let mut results: Vec<RunResult> = Vec::new();
     let mut failures: Vec<(String, String)> = Vec::new();
     let mut done = 0usize;
@@ -6300,6 +6427,14 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     }
 
     // Hand-written probes (local profile only: they exercise local fixtures).
+    // In attach mode the probe spec's own `chrome` capability is rewritten to
+    // the attach target (a temp copy), so the probe drives the borrowed browser
+    // rather than insisting on a Laya-owned one.
+    let probe_attach_dir = if attach.is_some() {
+        Some(tempfile_build_dir()?)
+    } else {
+        None
+    };
     let mut add_probe = |path: &Path,
                          state_extra: Value,
                          expect: &str,
@@ -6321,8 +6456,27 @@ pub fn run(o: &RunOptions) -> Result<i32> {
                 state.insert(k.clone(), v.clone());
             }
         }
+        let run_path: PathBuf = match (&attach, &probe_attach_dir) {
+            (Some(url), Some(dir)) => match std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            {
+                Some(mut spec) => {
+                    attach_spec(&mut spec, url);
+                    let stem = path
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "probe".into());
+                    let p = dir.join(format!("{stem}.attach.json"));
+                    let _ = std::fs::write(&p, serde_json::to_string(&spec).unwrap_or_default());
+                    p
+                }
+                None => path.to_path_buf(),
+            },
+            _ => path.to_path_buf(),
+        };
         let started = std::time::Instant::now();
-        let (rc, out) = run_scenario(path, &Value::Object(state), o.timeout_secs);
+        let (rc, out) = run_scenario(&run_path, &Value::Object(state), o.timeout_secs);
         let elapsed = started.elapsed().as_secs_f64();
         let mut problems: Vec<String> = Vec::new();
         if !must_fail && rc != 0 {
@@ -9030,6 +9184,8 @@ pub fn live(o: &LiveOptions) -> Result<i32> {
         // `bdd live` exists only to drive a real browser against real sites; a
         // missing browser there is a failure, not something to skip quietly.
         require_browser: true,
+        // Live-fire launches its own browser; attaching is a `bdd run --cdp` knob.
+        cdp: None,
     };
     run(&ro)
 }

@@ -1080,6 +1080,12 @@ Two things that were measured rather than assumed:
   port and profile. The runner therefore hands every scenario the *same* CDP
   endpoint, so only the first one pays for a launch. A private profile dir per
   run is still required — a fixed one collides with the interactive Chrome.
+  Measured with a wrapper that logs every launch: `bdd run
+  bdd/features/assertions.feature` (14 scenarios) and `bdd run
+  bdd/features/assertions.feature bdd/features/navigation.feature` (16
+  scenarios, two features in one invocation) each started Chrome **exactly
+  once** — so passing several features to one `bdd run` shares a single browser,
+  and there is no need to start a runner per feature.
 * **Parallel execution is not the win it looks like.** `--jobs N` works and is
   clean, but on the machine this was measured on the box was at load 20–40 from
   other work, and serial runs ranged 7.8s–33.9s on identical code. No honest
@@ -1133,6 +1139,33 @@ the same reason: the host cannot demonstrate the claim. A capability that is
 carry a platform-specific probe without becoming platform-bound itself. The
 `exec_preflight_guard` and `data_pipeline_local` corpus specs use this to keep
 their POSIX pipelines while still validating on Windows.
+
+### Attaching to an existing browser (`bdd run --cdp`)
+
+By default the runner launches its own headless Chrome and tears it down. With
+`--cdp <url>` it instead **attaches** to a CDP endpoint that is already up — a
+long-lived browser another process or a person started:
+
+```bash
+chrome --headless=new --remote-debugging-port=9222 --user-data-dir=/tmp/live-cdp about:blank &
+laya-workflow bdd run --cdp http://127.0.0.1:9222 bdd/features/assertions.feature
+```
+
+Every compiled scenario (and every hand-written probe specimen) has its browser
+capability rewritten to `endpoint=<url>, launch=false, attach=true`, so:
+
+* nothing is launched — a wrapper that counts Chrome starts records **0** for an
+  attach run, where a normal run records 1;
+* the endpoint is used as-is: no owner-marker proof (you did not start it), and
+  nothing is written into its profile (Laya's tab bookkeeping goes to its own
+  `laya-cdp-attach-<port>` dir);
+* the local "is Chrome installed?" gate is skipped, because the target may be
+  remote — but a **dead** endpoint fails fast with an actionable message rather
+  than silently launching;
+* execution is serial (one shared browser), and `--jobs` is forced to 1.
+
+`bdd live` (`dsl/browser` live-fire) still launches its own browser; attaching is
+a `bdd run` knob.
 
 ## Known limits
 

@@ -5667,3 +5667,89 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
         ne.contains("node think") && ne.contains("\"done\"") && ne.contains("non-numeric value"),
     );
 }
+
+/// `bdd run --cdp <url>`: attach to an existing browser instead of launching
+/// one. Pins the pure pieces (config merge, URL→port, reachability pre-flight,
+/// and the capability `attach` flag) so the wiring is not only exercised on a
+/// machine that happens to have a browser.
+pub fn test_bdd_cdp_attach(h: &mut Harness) {
+    use laya_workflow::bdd::{attach_spec, cdp_endpoint_reachable, cdp_url_port};
+
+    // The rewrite points every browser capability at the external endpoint
+    // with launch=false/attach=true, and leaves non-browser capabilities alone.
+    let mut spec = json!({
+        "capabilities": {
+            "chrome": {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:${state.cdp_port}",
+                       "launch": true, "profile_dir": "${state.cdp_profile}", "human": true},
+            "bdd": {"kind": "plugin", "plugin": "bdd"}
+        }
+    });
+    attach_spec(&mut spec, "http://127.0.0.1:9222");
+    h.eq(
+        "cdp attach: endpoint rewritten",
+        spec["capabilities"]["chrome"]["endpoint"].clone(),
+        json!("http://127.0.0.1:9222"),
+    );
+    h.eq(
+        "cdp attach: launch=false",
+        spec["capabilities"]["chrome"]["launch"].clone(),
+        json!(false),
+    );
+    h.eq(
+        "cdp attach: attach=true",
+        spec["capabilities"]["chrome"]["attach"].clone(),
+        json!(true),
+    );
+    h.eq(
+        "cdp attach: unrelated chrome keys preserved",
+        spec["capabilities"]["chrome"]["human"].clone(),
+        json!(true),
+    );
+    h.check(
+        "cdp attach: non-browser capability untouched",
+        spec["capabilities"]["bdd"].get("attach").is_none()
+            && spec["capabilities"]["bdd"]["kind"] == json!("plugin"),
+    );
+
+    // Every browser capability is rewritten, not just the first.
+    let mut two = json!({
+        "capabilities": {
+            "chrome": {"kind": "chrome_cdp", "launch": true},
+            "page_open": {"kind": "browser", "endpoint": "http://127.0.0.1:1", "launch": true}
+        }
+    });
+    attach_spec(&mut two, "http://127.0.0.1:9333");
+    h.check(
+        "cdp attach: every browser capability is rewritten",
+        two["capabilities"]["chrome"]["endpoint"] == json!("http://127.0.0.1:9333")
+            && two["capabilities"]["page_open"]["endpoint"] == json!("http://127.0.0.1:9333")
+            && two["capabilities"]["page_open"]["attach"] == json!(true),
+    );
+
+    // URL → port, including the implicit-port forms.
+    h.eq("cdp url: explicit port", cdp_url_port("http://127.0.0.1:9222"), Some(9222));
+    h.eq("cdp url: http default", cdp_url_port("http://host/path"), Some(80));
+    h.eq("cdp url: https default", cdp_url_port("https://host"), Some(443));
+
+    // Reachability pre-flight: nothing listens on port 1 here, and a bogus host
+    // must not resolve to "reachable".
+    h.check(
+        "cdp attach: an unreachable endpoint is detected",
+        !cdp_endpoint_reachable("http://127.0.0.1:1"),
+    );
+
+    // The capability parses `attach` and does not imply launch.
+    let reg = capability::Registry::from_spec(&json!({
+        "capabilities": {
+            "chrome": {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222", "attach": true}
+        }
+    }))
+    .unwrap();
+    match reg.get("chrome").unwrap() {
+        capability::Capability::Browser(b) => h.check(
+            "cdp attach: capability parses attach=true with launch=false",
+            b.attach && !b.launch,
+        ),
+        _ => h.check("cdp attach: capability is a browser", false),
+    }
+}
