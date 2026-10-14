@@ -4646,6 +4646,14 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     // choice) cannot route a graph through its `default` branch unnoticed.
     let mut heur_answers_checked = 0usize;
     let mut heur_out_of_contract: Vec<String> = Vec::new();
+    // P100: the node-keyed `answers` shape must reproduce the same walk for the
+    // same driven states. `keyed_driven` counts the states it reproduced;
+    // `keyed_conflict` counts states where some node's heuristic answer *differed
+    // between its own visits*, which a one-entry-per-node policy cannot express
+    // (that is a real limit of the shape, so it is counted + named, never dropped).
+    let mut keyed_driven = 0usize;
+    let mut keyed_conflict = 0usize;
+    let mut keyed_conflict_names: BTreeSet<String> = BTreeSet::new();
     for spec in &specs {
         let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
         let Some(smap) = states_obj.get(&stem).and_then(Value::as_object) else {
@@ -4749,6 +4757,10 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             // script is rebuilt from it alone.
             let mut script: Vec<Value> = Vec::new();
             let mut ok = true;
+            // The node-keyed policy: one entry per visited node, plus a note of any
+            // node whose entry differs between visits (inexpressible as a policy).
+            let mut per_node: serde_json::Map<String, Value> = serde_json::Map::new();
+            let mut keyed_conflict_nodes: Vec<String> = Vec::new();
             for (node, ans) in &heur {
                 let qc = nodes.and_then(|m| m.get(node)).cloned().unwrap_or(Value::Null);
                 let listed: BTreeSet<String> = qc
@@ -4785,7 +4797,19 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                     o.insert("confidence".into(), json!(conf));
                     entry.insert(qid.clone(), Value::Object(o));
                 }
-                script.push(Value::Object(entry));
+                let entry_v = Value::Object(entry);
+                match per_node.get(node) {
+                    Some(prev) if prev != &entry_v => {
+                        if !keyed_conflict_nodes.contains(node) {
+                            keyed_conflict_nodes.push(node.clone());
+                        }
+                    }
+                    Some(_) => {}
+                    None => {
+                        per_node.insert(node.clone(), entry_v.clone());
+                    }
+                }
+                script.push(entry_v);
             }
             if ok {
                 contract_ok += 1;
@@ -4830,6 +4854,51 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             if hnodes == anodes && ha == aa && hl == al {
                 driven_states += 1;
                 specs_driven.insert(stem.clone());
+                // (5) P100: the same walk stated as a per-node policy (the node-keyed
+                //     `answers` shape) must reproduce it. A node whose answer differs
+                //     between its visits has no keyed form — counted + named above.
+                if keyed_conflict_nodes.is_empty() {
+                    match AnswersBackend::from_json(&Value::Object(per_node.clone())) {
+                        Ok(keyed_be) => {
+                            let mut kwalk: Vec<(String, Value)> = Vec::new();
+                            match wf.run_with_progress(&keyed_be, st, &mut |r: &NodeResult| {
+                                kwalk.push((r.node_name.clone(), r.edge_answer.clone()));
+                            }) {
+                                Ok(kout) => {
+                                    let knodes: Vec<&String> =
+                                        kwalk.iter().map(|(n, _)| n).collect();
+                                    let ka: Vec<&Value> =
+                                        kwalk.iter().map(|(_, a)| a).collect();
+                                    let kj = kout.to_json();
+                                    let kl = decision_label(&kj["result"], kout.final_action());
+                                    if knodes == anodes && ka == aa && kl == al {
+                                        keyed_driven += 1;
+                                    } else {
+                                        h.check(
+                                            &format!(
+                                                "answers-from-list[keyed]: {stem}:{label} the node-keyed policy reproduces the visit-order walk (v={anodes:?} k={knodes:?} vl={al} kl={kl})"
+                                            ),
+                                            false,
+                                        );
+                                    }
+                                }
+                                Err(e) => h.check(
+                                    &format!("answers-from-list[keyed]: {stem}:{label} keyed walk runs ({e:#})"),
+                                    false,
+                                ),
+                            }
+                        }
+                        Err(e) => h.check(
+                            &format!("answers-from-list[keyed]: {stem}:{label} keyed policy builds ({e:#})"),
+                            false,
+                        ),
+                    }
+                } else {
+                    keyed_conflict += 1;
+                    for n in &keyed_conflict_nodes {
+                        keyed_conflict_names.insert(format!("{stem}:{n}"));
+                    }
+                }
             } else {
                 h.check(
                     &format!(
@@ -4862,6 +4931,21 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
         for v in heur_out_of_contract.iter().take(10) {
             h.check(&format!("answers-from-list: heuristic out-of-contract: {v}"), false);
         }
+    }
+    // P100: every driven state was also reproduced from a node-keyed policy, or is
+    // named as keyed-inexpressible (a node whose answer differed between visits).
+    h.check(
+        &format!(
+            "answers-from-list[keyed]: the node-keyed policy reproduces the visit-order walk for {keyed_driven} offline states ({keyed_conflict} keyed-inexpressible)",
+            ),
+        keyed_driven + keyed_conflict == driven_states && keyed_driven >= 950,
+    );
+    if keyed_conflict > 0 {
+        let names: Vec<String> = keyed_conflict_names.iter().cloned().collect();
+        h.check(
+            &format!("answers-from-list[keyed]: keyed-inexpressible nodes (a node answering differently across its own visits) = {names:?}"),
+            names.len() <= 8,
+        );
     }
     // The registered set minus what we drove is the audited skip set: the nested
     // sub-workflow spec, and any state whose offline walk needs an unreachable
