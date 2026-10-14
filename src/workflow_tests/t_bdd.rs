@@ -5308,6 +5308,84 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             names.len() <= 8,
         );
     }
+    // P111: the *caller's* `answers` path fails closed on two answers P96's
+    // choice check alone lets through — the silent-`default` hole P110 closed on
+    // the heuristic path:
+    //   (a) an *invented* dynamic candidate id: a `criteria.from_state` question's
+    //       literal `criteria` is empty, so the check can only bite if it sees the
+    //       *materialised* criteria — which `WorkflowNode::run` builds from the
+    //       node's input state before it asks the backend; and
+    //   (b) a *wrong-typed* answer (a `score` object for a `choice` question): it
+    //       carries no `criteria` key, so the choice check skips it and the engine
+    //       silently takes the edge's `default` branch.
+    // Prove both on the visit-order array and the node-keyed object, while the
+    // real, correctly-typed candidate drives the very same graph to STOP.
+    {
+        let spec = root.join("dsl").join("capabilities").join("span_selection.json");
+        let wf = laya_workflow::spec::load_file(&spec.to_string_lossy()).unwrap();
+        // `extract` projects state.candidates from this text (one email id).
+        let st = json!({ "text": "please reach me at billing@example.com for the invoice" });
+        let has_text = json!({"has_text": {"type":"choice","choice":"B","confidence":0.99}});
+        let ok_step = json!({"ok": {"type":"choice","choice":"A","confidence":0.99}});
+        let good =
+            json!({"billing_contact": {"type":"choice","choice":"candidate_0","confidence":0.99}});
+        let bad =
+            json!({"billing_contact": {"type":"choice","choice":"candidate_99","confidence":0.99}});
+
+        // Positive control: the real candidate passes `select` and walks to STOP.
+        let arr_ok = AnswersBackend::from_json(&json!([has_text.clone(), good.clone(), ok_step.clone()])).unwrap();
+        h.check(
+            "answers-from-list[dynamic]: the caller's real candidate drives the dynamic graph to STOP",
+            matches!(wf.run(&arr_ok, &st), Ok(o) if o.final_action() == "stop"),
+        );
+        // Negative (visit-order array): an invented id is refused, by name.
+        let arr_bad = AnswersBackend::from_json(&json!([has_text.clone(), bad.clone()])).unwrap();
+        let e = wf.run(&arr_bad, &st).unwrap_err().to_string();
+        h.check(
+            &format!("answers-from-list[dynamic]: an invented id on the visit-order path fails closed ({e})"),
+            e.contains("candidate_99") && e.contains("not one of its accepted answers"),
+        );
+        // Negative (node-keyed object): the same id is refused on that shape too.
+        let obj_bad = AnswersBackend::from_json(
+            &json!({"extract": has_text, "select": bad}),
+        )
+        .unwrap();
+        let e2 = wf.run(&obj_bad, &st).unwrap_err().to_string();
+        h.check(
+            &format!("answers-from-list[dynamic]: an invented id on the node-keyed path fails closed ({e2})"),
+            e2.contains("candidate_99") && e2.contains("not one of its accepted answers"),
+        );
+        // Negative (wrong type): a `score` object for a `choice` question is
+        // refused on a static question and on the dynamic one alike — the same
+        // silent `default` reached by the other door.
+        let score_static =
+            json!({"has_text": {"type":"score","score":0.9,"confidence":0.9}});
+        let score_dyn = json!({"billing_contact": {"type":"score","score":0.9,"confidence":0.9}});
+        let static_ok = json!({"has_text": {"type":"choice","choice":"B","confidence":0.99}});
+        let e3 = wf
+            .run(
+                &AnswersBackend::from_json(&json!([score_static, good.clone(), ok_step.clone()]))
+                    .unwrap(),
+                &st,
+            )
+            .unwrap_err()
+            .to_string();
+        h.check(
+            &format!("answers-from-list[dynamic]: a score-typed answer on a static choice question fails closed ({e3})"),
+            e3.contains("\"has_text\"") && e3.contains("but the question is a \"choice\" one"),
+        );
+        let e4 = wf
+            .run(
+                &AnswersBackend::from_json(&json!([static_ok, score_dyn])).unwrap(),
+                &st,
+            )
+            .unwrap_err()
+            .to_string();
+        h.check(
+            &format!("answers-from-list[dynamic]: a score-typed answer on a dynamic choice question fails closed ({e4})"),
+            e4.contains("\"billing_contact\"") && e4.contains("but the question is a \"choice\" one"),
+        );
+    }
     // The registered set minus what we drove is the audited skip set: only the
     // spec whose offline walk needs an external network endpoint (it runs in the
     // integration job). It must stay tiny + named.

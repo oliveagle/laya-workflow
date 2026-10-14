@@ -177,11 +177,13 @@ impl Decide for ScriptedBackend {
 /// (`exhausted()` is then true). That lets a caller drive the graph one question
 /// at a time instead of guessing the whole walk up front.
 pub struct AnswersBackend {
-    /// Visit-order mode: one entry per node the walk visits, consumed in order.
-    script: Vec<Verdict>,
+    /// Visit-order mode: one entry per node the walk visits, consumed in order,
+    /// paired with the caller's raw per-question answer objects so `accept` can
+    /// check that each answer's declared `type` is the one the question asks.
+    script: Vec<(Verdict, Map<String, Value>)>,
     /// Node-keyed mode: one entry per node name, reused on every visit to that
     /// node. Populated (and `keyed` set) when `answers` is an object.
-    by_node: std::collections::HashMap<String, Verdict>,
+    by_node: std::collections::HashMap<String, (Verdict, Map<String, Value>)>,
     keyed: bool,
     cursor: std::cell::Cell<usize>,
     exhausted: std::cell::Cell<bool>,
@@ -203,7 +205,8 @@ impl AnswersBackend {
                         "answers[{i}] is empty — each entry must answer the question(s) its node asks"
                     ));
                 }
-                script.push(v);
+                let raw = entry.as_object().cloned().unwrap_or_default();
+                script.push((v, raw));
             }
             (script, std::collections::HashMap::new(), false)
         } else if let Some(obj) = answers.as_object() {
@@ -217,7 +220,8 @@ impl AnswersBackend {
                         "answers[{node}] is empty — each node entry must answer the question(s) that node asks"
                     ));
                 }
-                by_node.insert(node.clone(), v);
+                let raw = entry.as_object().cloned().unwrap_or_default();
+                by_node.insert(node.clone(), (v, raw));
             }
             (Vec::new(), by_node, true)
         } else {
@@ -251,11 +255,17 @@ impl AnswersBackend {
     }
 
     /// The shared per-entry checks: every question the node asks must be answered,
-    /// and every choice answer must be one the question accepts (the engine would
-    /// otherwise silently take the edge's `default` branch). Returns the entry on
-    /// success; `label` names the entry for the error text (`answers[i]` /
-    /// `answers[node]`).
-    fn accept(&self, label: &str, v: &Verdict, questions: &Value) -> Result<Verdict> {
+    /// every answer must carry the `type` the question declares, and every choice
+    /// answer must be one the question accepts (the engine would otherwise silently
+    /// take the edge's `default` branch). Returns the entry on success; `label`
+    /// names the entry for the error text (`answers[i]` / `answers[node]`).
+    fn accept(
+        &self,
+        label: &str,
+        v: &Verdict,
+        raw: &Map<String, Value>,
+        questions: &Value,
+    ) -> Result<Verdict> {
         let asked: Vec<String> = questions
             .as_object()
             .map(|o| o.keys().cloned().collect())
@@ -283,6 +293,18 @@ impl AnswersBackend {
                 .and_then(|d| d.get("type"))
                 .and_then(Value::as_str)
                 .unwrap_or("choice");
+            // P111: the answer must be the type the question declares. A
+            // wrong-typed answer (e.g. a `score` object for a `choice` question - a
+            // plausible model slip) carries no `criteria` key, so the engine would
+            // silently take the edge's `default` branch. Fail closed, naming the
+            // entry, the question and both types.
+            if let Some(sent) = raw.get(q).and_then(|a| a.get("type")).and_then(Value::as_str) {
+                if sent != qtype {
+                    return Err(anyhow!(
+                        "{label} answers question {q:?} with a {sent:?} answer, but the question is a {qtype:?} one — a {sent:?} answer cannot be matched against its criteria, so the walk would otherwise silently take the default branch"
+                    ));
+                }
+            }
             if qtype != "choice" {
                 continue;
             }
@@ -313,7 +335,7 @@ impl Decide for AnswersBackend {
             .as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
-        let Some(v) = self.script.get(i) else {
+        let Some((v, raw)) = self.script.get(i) else {
             self.exhausted.set(true);
             return Err(anyhow!(
                 "the walk needs another step but `answers` has only {} entr{}; the node asks question(s) {} — append one answer object for this step",
@@ -322,7 +344,7 @@ impl Decide for AnswersBackend {
                 serde_json::to_string(&asked).unwrap_or_default(),
             ));
         };
-        let out = self.accept(&format!("answers[{i}]"), v, questions)?;
+        let out = self.accept(&format!("answers[{i}]"), v, raw, questions)?;
         self.cursor.set(i + 1);
         Ok(out)
     }
@@ -331,7 +353,7 @@ impl Decide for AnswersBackend {
         if !self.keyed {
             return self.decide(state, questions);
         }
-        let Some(v) = self.by_node.get(node) else {
+        let Some((v, raw)) = self.by_node.get(node) else {
             self.exhausted.set(true);
             let mut keys: Vec<&String> = self.by_node.keys().collect();
             keys.sort();
@@ -345,7 +367,7 @@ impl Decide for AnswersBackend {
                 serde_json::to_string(&asked).unwrap_or_default(),
             ));
         };
-        self.accept(&format!("answers[{node}]"), v, questions)
+        self.accept(&format!("answers[{node}]"), v, raw, questions)
     }
 }
 
