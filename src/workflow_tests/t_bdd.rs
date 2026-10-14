@@ -4272,7 +4272,49 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
     h.eq("answers: [] asks at the start node", start["at_node"].clone(), json!("unauthenticated"));
     h.eq("answers: [] sets needs_answer", start["needs_answer"].clone(), json!(true));
     h.eq("answers: [] ran no step", start["steps_so_far"].as_array().unwrap().len(), 0);
-    h.check("answers: [] names the event question", start["ask"]["event"].is_object());
+    // The `ask` payload is the node's own *contract* — the same shape `bdd_list`
+    // reports at `nodes[].questions` — so a step-wise caller answers straight
+    // from the reply, with no separate inventory call.
+    let ask = start["ask"].as_array().cloned().unwrap_or_default();
+    h.check(
+        "answers: [] ask is a per-node contract list (id/type/answers/from_state)",
+        !ask.is_empty()
+            && ask.iter().all(|q| {
+                q.get("id").is_some()
+                    && q.get("type").is_some()
+                    && q.get("answers").is_some()
+                    && q.get("from_state").is_some()
+            }),
+    );
+    let event = ask.iter().find(|q| q["id"] == "event").cloned().unwrap_or(Value::Null);
+    let event_answers: Vec<&str> = event["answers"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    h.eq("answers: [] names the event question", event["id"].clone(), json!("event"));
+    h.check(
+        "answers: [] ask lists event's accepted answers",
+        event_answers.len() == 6
+            && event_answers.contains(&"login")
+            && event_answers.contains(&"halt"),
+    );
+    // `ask` and `bdd_list`'s per-node `questions` are the same contract: a caller
+    // can read the next step from either.
+    let listed = bdd_tool("bdd_list")
+        .call(&json!({"name": "agent_permission_gate"}))
+        .unwrap();
+    let listed_q = listed["workflows"]
+        .as_array()
+        .and_then(|ws| ws.iter().find(|w| w["name"] == "agent_permission_gate"))
+        .and_then(|w| w["nodes"].as_array())
+        .and_then(|ns| ns.iter().find(|n| n["name"] == "unauthenticated"))
+        .map(|n| n["questions"].clone())
+        .unwrap_or(Value::Null);
+    h.eq(
+        "answers: [] ask == bdd_list's per-node contract (same shape, same node)",
+        start["ask"].clone(),
+        listed_q,
+    );
 
     // (2) A full caller script drives the graph; the trace echoes the caller's
     //     answers (login -> authorize -> halt), not the heuristic's.
@@ -4318,6 +4360,13 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
     h.eq("answers: a short script stops (not ok)", short["ok"].clone(), json!(false));
     h.eq("answers: the short script stops at the next node", short["at_node"].clone(), json!("authenticated"));
     h.eq("answers: the short script ran the one step it had", short["steps_so_far"].as_array().unwrap().len(), 1);
+    h.check(
+        "answers: the short script's ask is the next node's contract",
+        short["ask"]
+            .as_array()
+            .map(|a| a.iter().any(|q| q["id"] == "event"))
+            .unwrap_or(false),
+    );
 
     // (4) A non-array `answers` is rejected before any walk.
     h.check(

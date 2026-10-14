@@ -606,17 +606,22 @@ fn spec_rel_key(path: &std::path::Path) -> Option<String> {
     s.strip_suffix(".json").map(str::to_string)
 }
 
-/// The `questions` object of a node in a spec, or Null when absent — used to
-/// hand a step-wise caller the next node's questions.
-fn spec_questions_of(spec: &Value, node: &str) -> Value {
+/// The per-node question contract of a spec's node — the *same* shape `bdd_list`
+/// exposes at `nodes[].questions`: a list of `{id, type, answers, from_state}`.
+/// Empty list when the node is unknown. A step-wise caller gets the next node's
+/// *contract* (not the raw deduped `questions` map, which also carries prose and
+/// merges shared ids across nodes), so one `bdd_decide {answers: []}` reply is
+/// enough to answer the next question — no separate `bdd_list` call to learn the
+/// accepted answers.
+fn spec_node_contract(spec: &Value, node: &str) -> Value {
     spec.get("nodes")
         .and_then(Value::as_array)
         .and_then(|ns| {
             ns.iter()
                 .find(|n| n.get("name").and_then(Value::as_str) == Some(node))
         })
-        .and_then(|n| n.get("questions").cloned())
-        .unwrap_or(Value::Null)
+        .map(node_question_contract)
+        .unwrap_or_else(|| Value::Array(Vec::new()))
 }
 
 impl McpTool for DecideTool {
@@ -624,7 +629,7 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far} naming the start node's question, so a caller can walk the graph one question at a time, appending one answer object per needs_answer reply until it returns ok:true."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed)."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -636,7 +641,7 @@ impl McpTool for DecideTool {
                 "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
                 "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
                 "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."},
-                "answers": {"type": "array", "description": "Drive the graph with your own answers instead of the offline heuristic. One object per node the walk visits, each {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} in the same shape laya-tch returns. Pass [] to start a step-wise walk: the reply then names the start node's question (ok:false, needs_answer:true, at_node, ask, steps_so_far), and you append one answer per reply until ok:true."}
+                "answers": {"type": "array", "description": "Drive the graph with your own answers instead of the offline heuristic. One object per node the walk visits, each {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} in the same shape laya-tch returns. Pass [] to start a step-wise walk: the reply then names the start node (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is the node's own questions, each with the answers it accepts (`{id,type,answers,from_state}`, the same shape `bdd_list` reports) — and you append one answer per reply until ok:true."}
             }
         })
     }
@@ -802,7 +807,7 @@ impl McpTool for DecideTool {
                             "backend": "answers",
                             "needs_answer": true,
                             "at_node": at_node,
-                            "ask": spec_questions_of(&spec_value, &at_node),
+                            "ask": spec_node_contract(&spec_value, &at_node),
                             "steps_so_far": steps,
                             "message": format!("{e:#}"),
                         }));
