@@ -1,12 +1,12 @@
-# The gate before you push, in about a second.
+# The gate before you push, in about twenty seconds.
 #
-#   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~1s warm
-#   scripts/verify.sh --full       ... and the timeout section too         +169s
+#   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~18s warm
+#   scripts/verify.sh --full       ... and the timeout section too        +169s
 #   scripts/verify.sh --no-build   tests only (you already built)
 #   scripts/verify.sh spec engine  only these sections
 #
-# Why the split: `laya-workflow-tests` has 22 sections and 21 of them finish in
-# 0.16s. The other one, `capability-timeouts`, takes 168.9s on its own - it is
+# Why the split: `laya-workflow-tests` has 101 sections and 100 of them finish
+# in about 10s. The other one, `capability-timeouts`, takes 168.9s on its own - it is
 # almost the entire runtime of a "full" run, and almost none of it is needed to
 # answer "did I break something". Running the whole thing by reflex is how a
 # 3-second question turns into a 3-minute one.
@@ -87,9 +87,11 @@ fi
 
 # ── 3. do the plugins still compile and still route? ─────────────────────────
 # It is the only stage that can catch a plugin edit: the Rust suite never
-# executes Rhai. Every plugin, not a sample: 19 shipped `.rhai` files, plus the
+# executes Rhai. Every plugin, not a sample: 20 shipped `.rhai` files, plus the
 # goofish intent routing, the fold guard and the feishu classifier fixtures —
-# all in-process in the binary, one command, no Python.
+# all in-process in the binary, one command, no Python. The fold guard drives a
+# real browser; where none is installed it is skipped, not failed, so the gate
+# stays honest on a browserless box (CI installs no browser).
 T0=$SECONDS
 stage "plugin gate"
 if ! "$ROOT/target/release/laya-workflow" plugin check 2>&1 | sed 's/^/   /'; then

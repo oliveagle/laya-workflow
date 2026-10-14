@@ -1957,6 +1957,17 @@ fn walkdir(dir: PathBuf) -> Vec<PathBuf> {
     out
 }
 fn fold_gate(spec: &Path, root: &Path) -> Result<u32> {
+    // The fold guard drives a real browser: the goofish plugin opens a page so
+    // the gate can prove an intent-only query does *not* browse. On a box with
+    // no Chrome/Chromium the run can only fail on the spawn, which says nothing
+    // about the plugin - so skip, exactly as CI (which installs no browser)
+    // would. Set `CHROME_BIN` / `LAYA_CHROME_BINARY` to force it.
+    if !crate::capability::browser::chrome_available() {
+        eprintln!(
+            "plugin gate: fold skipped (no Chrome/Chromium on PATH; set CHROME_BIN to run the fold guard)"
+        );
+        return Ok(0);
+    }
     // Resolve the spec's last allow_paths entry, expanding ${env.HOME} the way
     // the engine does (serde_json treats unresolved references as errors, so
     // the user has set $HOME — we only need to substitute the prefix).

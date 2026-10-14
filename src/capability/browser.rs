@@ -339,10 +339,67 @@ fn repo_extension_path() -> String {
     concat!(env!("CARGO_MANIFEST_DIR"), "/extensions/laya-browser").to_string()
 }
 
+/// The well-known Chrome/Chromium executable names, most-branded first so a
+/// real `google-chrome` is preferred over a distro `chromium-browser` when both
+/// are installed.
+pub const CHROME_BINARY_NAMES: [&str; 5] = [
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+];
+
+/// Pure half of [`find_chrome_binary`]: search the given directories for the
+/// first `CHROME_BINARY_NAMES` entry that resolves to a **regular file**. Name
+/// priority dominates directory priority, which is what makes a branded Chrome
+/// win over a distro Chromium anywhere on `$PATH`. Split out so the policy is
+/// unit-testable without touching the process environment.
+pub fn find_chrome_binary_in(dirs: &[std::path::PathBuf]) -> Option<String> {
+    for name in CHROME_BINARY_NAMES {
+        for dir in dirs {
+            let cand = dir.join(name);
+            if cand.is_file() {
+                return Some(cand.to_string_lossy().into_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a Chrome/Chromium binary by probing [`CHROME_BINARY_NAMES`] along
+/// `$PATH` and returning the first regular file. `Command::new` would search
+/// `PATH` for a bare name, but the engine also has to *report* and *probe* the
+/// binary it is about to launch, so it resolves the path itself rather than
+/// leaving the lookup to the OS.
+pub(crate) fn find_chrome_binary() -> Option<String> {
+    let path = std::env::var_os("PATH")?;
+    let dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+    find_chrome_binary_in(&dirs)
+}
+
+/// True when a Chrome/Chromium the engine could drive is available: an
+/// explicit `CHROME_BIN` / `LAYA_CHROME_BINARY` override, or a resolved binary
+/// on `$PATH`. Gates that depend on a real browser use this to skip cleanly
+/// (rather than fail on the spawn) wherever no browser is installed - which is
+/// the default in CI.
+pub(crate) fn chrome_available() -> bool {
+    for var in ["LAYA_CHROME_BINARY", "CHROME_BIN"] {
+        if std::env::var(var).map(|v| !v.is_empty()).unwrap_or(false) {
+            return true;
+        }
+    }
+    find_chrome_binary().is_some()
+}
+
 pub(crate) fn default_chrome_binary() -> String {
-    if let Ok(path) = std::env::var("LAYA_CHROME_BINARY") {
-        if !path.is_empty() {
-            return path;
+    // Explicit override wins: the historical `LAYA_CHROME_BINARY` as well as
+    // the ecosystem-wide `CHROME_BIN` that browser automation already honours.
+    for var in ["LAYA_CHROME_BINARY", "CHROME_BIN"] {
+        if let Ok(path) = std::env::var(var) {
+            if !path.is_empty() {
+                return path;
+            }
         }
     }
     if cfg!(target_os = "macos") {
@@ -351,18 +408,14 @@ pub(crate) fn default_chrome_binary() -> String {
     if cfg!(target_os = "windows") {
         return r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string();
     }
-    for name in [
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium",
-        "chromium-browser",
-        "chrome",
-    ] {
-        let candidate = std::path::Path::new(name);
-        // PATH is searched by Command::new, but avoid selecting a relative file by accident.
-        if candidate.is_absolute() && candidate.is_file() {
-            return name.to_string();
-        }
+    // POSIX: resolve a real binary on `$PATH`. The previous version built bare
+    // candidate names but only accepted them when `is_absolute()`, so every
+    // probe was skipped and it always fell through to the hard-coded
+    // "google-chrome" - which then failed to spawn wherever the installed
+    // browser is named `chromium` / `chromium-browser` (every distro but a
+    // branded-Chrome install).
+    if let Some(found) = find_chrome_binary() {
+        return found;
     }
     "google-chrome".to_string()
 }
@@ -735,8 +788,19 @@ pub(crate) fn ensure_runtime(
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-networking",
-    ])
-    .arg("--start-maximized")
+    ]);
+    // Headless boxes (CI, servers, containers) have no X display, so a windowed
+    // Chrome can never expose CDP there and every browser-backed gate would
+    // hang to its startup timeout. Fall back to the new headless mode (CDP and
+    // the `Extensions.loadUnpacked` handshake both work) and drop the sandbox,
+    // which a container without user namespaces cannot start.
+    #[cfg(unix)]
+    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        cmd.arg("--headless=new")
+            .arg("--no-sandbox")
+            .arg("--disable-gpu");
+    }
+    cmd.arg("--start-maximized")
     .arg("about:blank")
     .stdout(std::process::Stdio::null())
     .stderr(std::process::Stdio::null());
