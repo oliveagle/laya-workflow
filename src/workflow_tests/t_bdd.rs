@@ -4095,3 +4095,159 @@ pub fn test_bdd_list_routes(h: &mut Harness) {
         checked_specs >= 60 && checked_steps >= 400,
     );
 }
+
+/// bdd-label-accounted: every label `bdd_decide` returns is *accounted for* — it
+/// is either one of the graph's declared outputs (the enumerable decision), the
+/// run's terminal verb (`final_action`, e.g. stop/escalate), or — only on a graph
+/// with an opaque `call` node — a label a capability payload supplied
+/// (`label_source == "capability"`). A graph that returns an undeclared,
+/// non-terminal label with no opaque node is a hole and fails here. This is the
+/// mirror of `bdd-output-coverage`: that gate stops `outputs` advertising labels
+/// no run returns; this one stops a run returning a label `outputs` never
+/// advertised.
+pub fn test_bdd_label_accounted(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::bdd_mcp::{
+        declared_outputs, decision_label, has_opaque_outputs, label_source,
+    };
+    use laya_workflow::dsl_smoke::{
+        coverage_ledger_live_only, ensure_env_dirs, network_bound_external,
+    };
+
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    let root = bdd::repo_root();
+    let dsl_root = root.join("dsl");
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+    let live_only = coverage_ledger_live_only().unwrap_or_default();
+
+    let specs = laya_workflow::spec::discover(&dsl_root.to_string_lossy()).expect("discover dsl");
+    let mut checked = 0usize;
+    let mut capability_specs: Vec<String> = Vec::new();
+    let mut capability_labels = 0usize;
+    for (stem, path) in &specs {
+        let Some(smap) = states_obj.get(stem).and_then(Value::as_object) else {
+            continue;
+        };
+        let rel = path
+            .strip_prefix(&dsl_root)
+            .unwrap_or(path)
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if live_only.contains_key(&rel) {
+            continue;
+        }
+        let raw: Value = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        if network_bound_external(&raw) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&path.to_string_lossy()) {
+            Ok(w) => w,
+            Err(_) => continue,
+        };
+        let declared = declared_outputs(&raw);
+        let opaque = has_opaque_outputs(&raw);
+        let mut errored = false;
+        for (_lab, st) in smap {
+            let out = match wf.run(&HeuristicBackend, st) {
+                Ok(o) => o,
+                Err(_) => {
+                    errored = true;
+                    break;
+                }
+            };
+            let j = out.to_json();
+            let result = j.get("result").unwrap_or(&Value::Null);
+            let fa = out.final_action();
+            let label = decision_label(result, fa);
+            let src = label_source(&raw, result, fa);
+            let expect_src = if declared.iter().any(|o| o == &label) {
+                "decision"
+            } else if label == fa {
+                "terminal"
+            } else if opaque {
+                "capability"
+            } else {
+                "unknown"
+            };
+            h.check(
+                &format!("bdd: {rel} label_source({label}) is {expect_src}"),
+                src == expect_src,
+            );
+            if src == "capability" {
+                capability_labels += 1;
+                if !capability_specs.contains(&rel) {
+                    capability_specs.push(rel.clone());
+                }
+                h.check(
+                    &format!("bdd: {rel} capability label {label} needs an opaque call node"),
+                    opaque,
+                );
+            }
+            if src == "unknown" {
+                h.check(
+                    &format!("bdd: {rel} returned an unaccounted label {label}"),
+                    false,
+                );
+            }
+        }
+        if errored {
+            continue;
+        }
+        checked += 1;
+    }
+    h.check(
+        &format!("bdd: label accounting checked {checked} offline specs (floor 60)"),
+        checked >= 60,
+    );
+    // The opaque escape is real but tiny: only a capability graph whose payload
+    // emits an undeclared decision label needs it. A growing set means the
+    // inventory is silently incomplete and should be investigated, not widened.
+    h.check(
+        &format!(
+            "bdd: the capability-output escape names a tiny, bounded set ({:?})",
+            capability_specs
+        ),
+        capability_specs.len() <= 3,
+    );
+    h.check(
+        &format!("bdd: the capability-output escape is exercised ({capability_labels} labels)"),
+        capability_labels > 0,
+    );
+
+    // The MCP surface carries the same contract: bdd_list flags a graph whose
+    // `call` node can emit an undeclared label, and bdd_decide names the source.
+    let list = bdd_tool("bdd_list").call(&json!({})).unwrap();
+    let find = |n: &str| -> Value {
+        list["workflows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["name"] == n)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    h.eq(
+        "bdd_list: cua_desktop reports outputs_complete=false (its call payload emits a label)",
+        find("cua_desktop")["outputs_complete"].clone(),
+        json!(false),
+    );
+    h.eq(
+        "bdd_list: agent_permission_gate reports outputs_complete=true (no call node)",
+        find("agent_permission_gate")["outputs_complete"].clone(),
+        json!(true),
+    );
+}

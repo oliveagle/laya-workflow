@@ -476,6 +476,24 @@ every registered offline state the engine trace's `next` must equal what the
 exposed edge resolves to (the node `min_confidence` gate included) — a
 projection that disagreed with the engine fails.
 
+Its mirror is `bdd-label-accounted`: every label a call returns must be *accounted
+for*. `bdd_decide` reports `label_source` — `decision` (the label is one of the
+graph's declared outputs, the enumerable decision), `terminal` (the run's
+terminal verb, e.g. `stop`/`escalate` — the graph projects no decision on that
+path), or `capability` (an undeclared label a `call` node's runtime payload
+supplied). An undeclared, non-terminal label on a graph with no `call` node is
+`unknown` — a hole, and the gate fails on it. A graph with a `call` node has an
+*opaque* output set: the payload can set any state key `bdd_decide` projects as
+the label (`label`/`gate_action`/`route`/`status`), so `bdd_list` cannot
+enumerate it and marks the graph `outputs_complete: false` — the flag that tells
+a caller not to read `outputs` there as exhaustive. The `bdd-label-accounted`
+regression test runs every registered state of every offline spec, asserts each
+returned label's `label_source`, and fails on `unknown`; it also pins the
+`capability` escape to a genuinely small, exercised set (currently exactly one
+spec, whose driver returns `needs_clarification`), so a graph silently joining
+the opaque set is investigated rather than waved through.
+
+
 For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
 that already passes `bdd build`, with the authoring vocabulary as comments) →

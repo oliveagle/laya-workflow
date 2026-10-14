@@ -611,7 +611,7 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -776,6 +776,8 @@ impl McpTool for DecideTool {
         Ok(json!({
             "ok": true,
             "label": label,
+            "label_source": label_source(&spec_value, j.get("result").unwrap_or(&Value::Null), out.final_action()),
+            "outputs_complete": !has_opaque_outputs(&spec_value),
             "final_action": out.final_action(),
             "trace": j.get("trace").cloned().unwrap_or(Value::Null),
             "result": j.get("result").cloned().unwrap_or(Value::Null),
@@ -933,6 +935,48 @@ pub fn decision_label(result: &Value, final_action: &str) -> String {
         .to_string()
 }
 
+/// Whether a graph's output set is *opaque*: at least one node's action is a
+/// `call` (a capability/plugin), whose runtime payload can set any state key —
+/// including one `bdd_decide` projects as the decision label (`label` /
+/// `gate_action` / `route` / `status`). `bdd_list` therefore cannot enumerate such
+/// a graph's complete output set from the spec alone; it marks the graph
+/// `outputs_complete: false` so a caller does not read `outputs` as exhaustive.
+pub fn has_opaque_outputs(spec: &Value) -> bool {
+    spec.get("nodes")
+        .and_then(Value::as_array)
+        .map(|ns| {
+            ns.iter().any(|n| {
+                n.get("action").and_then(|a| a.get("kind")).and_then(Value::as_str) == Some("call")
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Where a run's returned `label` came from, so a caller knows how to read it:
+///
+///   * `"decision"` — the label is one of the graph's declared outputs (a
+///     threshold ladder's label, a gate verb, a combine `route`, a rubric
+///     `status`) — the intended, enumerable decision;
+///   * `"terminal"` — the label is the run's terminal verb (`final_action`, e.g.
+///     `stop` / `escalate`), the graph projecting no decision on the path taken;
+///   * `"capability"` — the label is neither declared nor the terminal verb, and
+///     the graph has an opaque `call` node whose payload supplied it (a label the
+///     inventory cannot enumerate from the spec);
+///   * `"unknown"` — undeclared, non-terminal, on a graph with no opaque node: a
+///     hole the `bdd-label-accounted` gate fails on.
+pub fn label_source(spec: &Value, result: &Value, final_action: &str) -> &'static str {
+    let label = decision_label(result, final_action);
+    if declared_outputs(spec).iter().any(|o| o == &label) {
+        "decision"
+    } else if label == final_action {
+        "terminal"
+    } else if has_opaque_outputs(spec) {
+        "capability"
+    } else {
+        "unknown"
+    }
+}
+
 /// Recursively collect `(cat, path)` for every decision spec under `root` (the
 /// `dsl/` tree). `cat` is the spec's directory relative to `root` — `routing`,
 /// `apps`, or a nested `routing/sub` — so a nested hierarchy stays discoverable.
@@ -1076,7 +1120,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -1196,6 +1240,9 @@ impl McpTool for ListTool {
                 "offline": live.is_none(),
                 "verified_by": live.and_then(|e| e.get("covered_by")).cloned().unwrap_or(Value::Null),
                 "why_live": live.and_then(|e| e.get("reason")).cloned().unwrap_or(Value::Null),
+                // false when a `call` node's payload can emit a label the spec
+                // cannot enumerate, so `outputs` is not a proven-complete set.
+                "outputs_complete": !has_opaque_outputs(&spec),
             }));
         }
         let offline_count = workflows
