@@ -2917,6 +2917,42 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
         "bdd_decide: no state errors",
         t.call(&json!({"feature_path": "bdd/workflows/guards/agent_permission_gate.feature"})).is_err(),
     );
+    // The decision contract is reported: `inputs` is the declared set of offline
+    // state fields the graph reads and `missing_inputs` is that set minus what the
+    // caller supplied — the honest signal that an under-fed call returns defaults.
+    let empty = t
+        .call(&json!({"name": "agent_permission_gate", "state": {}}))
+        .unwrap();
+    let declared: Vec<String> = empty["inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    let missing: Vec<String> = empty["missing_inputs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    h.check(
+        "bdd_decide: inputs lists the declared offline fields",
+        declared
+            == vec!["ev_authenticated", "ev_authorized", "ev_blocked", "ev_risk", "ev_unauthenticated"],
+    );
+    h.check(
+        "bdd_decide: an empty state flags every declared input missing",
+        missing == declared && !missing.is_empty(),
+    );
+    let fed = t
+        .call(&json!({"name": "agent_permission_gate", "state": {
+            "ev_unauthenticated": "login", "ev_authenticated": "authorize",
+            "ev_authorized": "halt", "ev_risk": "low", "ev_blocked": "no"}}))
+        .unwrap();
+    h.check(
+        "bdd_decide: a fully-fed state has nothing missing",
+        fed["missing_inputs"].as_array().unwrap().is_empty(),
+    );
 }
 
 
@@ -3028,6 +3064,36 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
         "bdd_list: top-level outputs == deduped union of node outputs (whole corpus)",
         union_ok,
     );
+
+    // The scan is recursive (same walk as `spec::discover`), so a nested category
+    // is both discoverable here and resolvable by `bdd_decide {name}`; `cat` is the
+    // spec's directory relative to the dsl root. Proven on a throwaway tree.
+    {
+        let base = std::env::temp_dir().join(format!("laya-scan-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dsl = base.join("dsl");
+        for rel in ["routing/a.json", "routing/sub/b.json", "apps/c.json", "apps/skip.config.json"] {
+            let f = dsl.join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(&f, "{}").unwrap();
+        }
+        let found = laya_workflow::bdd_mcp::scan_dsl_specs(&dsl);
+        let pairs: Vec<(String, String)> = found
+            .iter()
+            .map(|(c, p)| (c.clone(), p.file_name().unwrap().to_string_lossy().into_owned()))
+            .collect();
+        h.check(
+            "bdd_list: recursive scan keeps nested cats as relative paths",
+            pairs
+                == vec![
+                    ("apps".to_string(), "c.json".to_string()),
+                    ("routing".to_string(), "a.json".to_string()),
+                    ("routing/sub".to_string(), "b.json".to_string()),
+                ],
+        );
+        h.check("bdd_list: recursive scan skips *.config.json sidecars", found.len() == 3);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     // bdd_decide resolves the same port name through the corpus.
     let d = bdd_tool("bdd_decide")

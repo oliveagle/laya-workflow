@@ -598,7 +598,7 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer) and the result object."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; when `inputs` is empty the graph reads no state at all and every call returns the same default walk, so drive it with a real backend)."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -694,6 +694,23 @@ impl McpTool for DecideTool {
                 .map_err(|e| anyhow!("bdd_decide: {e:#}"))?
         };
 
+        // The state fields the offline engine reads (declared on the graph's
+        // questions) and which of them the caller did not supply. A missing
+        // field is not an error — only some paths read some fields — but it is
+        // the honest signal that a returned label may come from defaults rather
+        // than from the caller's state: an empty `state` on a graph with declared
+        // inputs yields the all-defaults walk, not a data-driven call.
+        let mut declared: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for n in wf.nodes.values() {
+            inputs_from_questions(Some(&n.questions), &mut declared);
+        }
+        let provided: std::collections::BTreeSet<String> = state
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        let inputs: Vec<String> = declared.iter().cloned().collect();
+        let missing_inputs: Vec<String> = declared.difference(&provided).cloned().collect();
+
         let out = wf
             .run(&crate::backend::HeuristicBackend, &state)
             .map_err(|e| anyhow!("bdd_decide: run failed: {e:#}"))?;
@@ -714,6 +731,8 @@ impl McpTool for DecideTool {
             "trace": j.get("trace").cloned().unwrap_or(Value::Null),
             "result": j.get("result").cloned().unwrap_or(Value::Null),
             "iterations": j.get("iterations").cloned().unwrap_or(Value::Null),
+            "inputs": inputs,
+            "missing_inputs": missing_inputs,
         }))
     }
 }
@@ -757,6 +776,59 @@ fn action_outputs(action: &Value) -> Vec<String> {
     out
 }
 
+/// Recursively collect `(cat, path)` for every decision spec under `root` (the
+/// `dsl/` tree). `cat` is the spec's directory relative to `root` — `routing`,
+/// `apps`, or a nested `routing/sub` — so a nested hierarchy stays discoverable.
+/// This walks the tree exactly like `spec::discover`, so `bdd_list` can never
+/// hide a spec that `bdd_decide {name}` would still resolve.
+pub fn scan_dsl_specs(root: &std::path::Path) -> Vec<(String, std::path::PathBuf)> {
+    let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let p = e.path();
+            if p.is_dir() {
+                dirs.push(p);
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                continue;
+            }
+            let fname = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if fname.ends_with(".config.json") {
+                continue;
+            }
+            let cat = p
+                .parent()
+                .and_then(|d| d.strip_prefix(root).ok())
+                .map(|d| d.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            out.push((cat, p));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Fold a node's declared questions into the set of state fields a
+/// deterministic (offline) call reads — every question's
+/// `heuristic.answer_field`.
+fn inputs_from_questions(qs: Option<&Value>, into: &mut std::collections::BTreeSet<String>) {
+    if let Some(o) = qs.and_then(Value::as_object) {
+        for q in o.values() {
+            if let Some(af) = q.pointer("/heuristic/answer_field").and_then(Value::as_str) {
+                into.insert(af.to_string());
+            }
+        }
+    }
+}
+
 struct ListTool;
 
 impl McpTool for ListTool {
@@ -764,7 +836,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Filter with cat and/or name. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -780,120 +852,101 @@ impl McpTool for ListTool {
         let name_filter = args.get("name").and_then(Value::as_str);
         let dsl = bdd::repo_root().join("dsl");
         let mut workflows: Vec<Value> = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&dsl) {
-            let mut cats: Vec<_> = rd.flatten().collect();
-            cats.sort_by_key(|e| e.file_name());
-            for e in cats {
-                if !e.path().is_dir() {
-                    continue;
-                }
-                let cat = e.file_name().to_string_lossy().into_owned();
-                if cat_filter.map(|f| f != cat).unwrap_or(false) {
-                    continue;
-                }
-                let mut files: Vec<_> = std::fs::read_dir(e.path())
-                    .map(|r| r.flatten().collect())
-                    .unwrap_or_default();
-                files.sort_by_key(|x| x.file_name());
-                for fe in files {
-                    let p = fe.path();
-                    if p.extension().and_then(|x| x.to_str()) != Some("json") {
-                        continue;
-                    }
-                    let fname = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    if fname.ends_with(".config.json") {
-                        continue;
-                    }
-                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-                    if name_filter.map(|f| f != stem).unwrap_or(false) {
-                        continue;
-                    }
-                    let Ok(txt) = std::fs::read_to_string(&p) else { continue };
-                    let Ok(spec) = serde_json::from_str::<Value>(&txt) else { continue };
-                    if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
-                        continue;
-                    }
-                    // The closed output vocabulary of the graph: every label any
-                    // node can emit (for a single-node graph this is exactly its
-                    // output set; a multi-node graph's terminal label is the last
-                    // node's, visible in the `trace`). Deduped, first-appearance
-                    // order so a node keeps its ladder's priority order.
-                    let mut outputs: Vec<String> = Vec::new();
-                    let nodes: Vec<Value> = spec["nodes"]
-                        .as_array()
-                        .map(|ns| {
-                            ns.iter()
-                                .filter_map(|n| {
-                                    let nm = n.get("name")?.as_str()?;
-                                    let node_outs = action_outputs(n.get("action").unwrap_or(&Value::Null));
-                                    for o in &node_outs {
-                                        if !outputs.iter().any(|x| x == o) {
-                                            outputs.push(o.clone());
-                                        }
-                                    }
-                                    Some(json!({
-                                        "name": nm,
-                                        "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),
-                                        "outputs": node_outs,
-                                    }))
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    // Questions deduped by id (first wins, since a shared id
-                    // means the same question), plus the state fields a
-                    // deterministic call reads.
-                    let mut qmap: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
-                    let mut inputs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-                    if let Some(ns) = spec["nodes"].as_array() {
-                        for n in ns {
-                            if let Some(qs) = n.get("questions").and_then(Value::as_object) {
-                                for (qid, q) in qs {
-                                    let af = q.pointer("/heuristic/answer_field").and_then(Value::as_str);
-                                    if let Some(a) = af {
-                                        inputs.insert(a.to_string());
-                                    }
-                                    qmap.entry(qid.clone()).or_insert_with(|| {
-                                        let mut e = serde_json::Map::new();
-                                        if let Some(t) = q.get("type").and_then(Value::as_str) {
-                                            e.insert("type".into(), json!(t));
-                                        }
-                                        if let Some(a) = af {
-                                            e.insert("answer_field".into(), json!(a));
-                                        }
-                                        Value::Object(e)
-                                    });
+        for (cat, p) in scan_dsl_specs(&dsl) {
+            if cat_filter
+                .map(|f| cat != f && !cat.starts_with(&format!("{f}/")))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let stem = p
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if name_filter.map(|f| f != stem).unwrap_or(false) {
+                continue;
+            }
+            let Ok(txt) = std::fs::read_to_string(&p) else { continue };
+            let Ok(spec) = serde_json::from_str::<Value>(&txt) else { continue };
+            if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
+                continue;
+            }
+            // The closed output vocabulary of the graph: every label any node can
+            // emit (for a single-node graph this is exactly its output set; a
+            // multi-node graph's terminal label is the last node's, visible in the
+            // `trace`). Deduped, first-appearance order so a node keeps its
+            // ladder's priority order.
+            let mut outputs: Vec<String> = Vec::new();
+            let nodes: Vec<Value> = spec["nodes"]
+                .as_array()
+                .map(|ns| {
+                    ns.iter()
+                        .filter_map(|n| {
+                            let nm = n.get("name")?.as_str()?;
+                            let node_outs = action_outputs(n.get("action").unwrap_or(&Value::Null));
+                            for o in &node_outs {
+                                if !outputs.iter().any(|x| x == o) {
+                                    outputs.push(o.clone());
                                 }
                             }
+                            Some(json!({
+                                "name": nm,
+                                "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),
+                                "outputs": node_outs,
+                            }))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Questions deduped by id (first wins, since a shared id means the
+            // same question), plus the state fields a deterministic call reads.
+            let mut qmap: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+            let mut inputs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            if let Some(ns) = spec["nodes"].as_array() {
+                for n in ns {
+                    inputs_from_questions(n.get("questions"), &mut inputs);
+                    if let Some(qs) = n.get("questions").and_then(Value::as_object) {
+                        for (qid, q) in qs {
+                            let af = q.pointer("/heuristic/answer_field").and_then(Value::as_str);
+                            qmap.entry(qid.clone()).or_insert_with(|| {
+                                let mut e = serde_json::Map::new();
+                                if let Some(t) = q.get("type").and_then(Value::as_str) {
+                                    e.insert("type".into(), json!(t));
+                                }
+                                if let Some(a) = af {
+                                    e.insert("answer_field".into(), json!(a));
+                                }
+                                Value::Object(e)
+                            });
                         }
                     }
-                    let questions: Vec<Value> = qmap
-                        .into_iter()
-                        .map(|(id, v)| {
-                            let mut o = serde_json::Map::new();
-                            o.insert("id".into(), json!(id));
-                            if let Value::Object(m) = v {
-                                for (k, val) in m {
-                                    o.insert(k, val);
-                                }
-                            }
-                            Value::Object(o)
-                        })
-                        .collect();
-                    workflows.push(json!({
-                        "cat": cat,
-                        "name": stem,
-                        "spec_name": spec.get("name").cloned().unwrap_or(Value::Null),
-                        "description": spec.get("description").cloned().unwrap_or(Value::Null),
-                        "start": spec.get("start").cloned().unwrap_or(Value::Null),
-                        "node_count": nodes.len(),
-                        "nodes": nodes,
-                        "questions": questions,
-                        "inputs": inputs.into_iter().collect::<Vec<_>>(),
-                        "outputs": outputs,
-                    }));
                 }
             }
+            let questions: Vec<Value> = qmap
+                .into_iter()
+                .map(|(id, v)| {
+                    let mut o = serde_json::Map::new();
+                    o.insert("id".into(), json!(id));
+                    if let Value::Object(m) = v {
+                        for (k, val) in m {
+                            o.insert(k, val);
+                        }
+                    }
+                    Value::Object(o)
+                })
+                .collect();
+            workflows.push(json!({
+                "cat": cat,
+                "name": stem,
+                "spec_name": spec.get("name").cloned().unwrap_or(Value::Null),
+                "description": spec.get("description").cloned().unwrap_or(Value::Null),
+                "start": spec.get("start").cloned().unwrap_or(Value::Null),
+                "node_count": nodes.len(),
+                "nodes": nodes,
+                "questions": questions,
+                "inputs": inputs.into_iter().collect::<Vec<_>>(),
+                "outputs": outputs,
+            }));
         }
         Ok(json!({
             "count": workflows.len(),
