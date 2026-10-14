@@ -5473,3 +5473,93 @@ pub fn test_bdd_platform_bound_skip(h: &mut Harness) {
         "a/b.json".to_string(),
     );
 }
+
+/// P112: the engine holds **every** backend to the node's question contract — the
+/// `choice` answer of *any* backend (a served System One without `--gbnf-strict`,
+/// an offline heuristic on an unseen state, the caller's `answers`) must be one of
+/// the question's `criteria` keys, or the DSL's fail-closed `none`; otherwise it
+/// fails closed instead of silently taking the edge's `default` branch. This is the
+/// same hole `AnswersBackend::accept` closes on the caller path and P98/P110 audit
+/// on the heuristic, but guarded where it cannot be bypassed: in the engine.
+pub fn test_bdd_engine_contract(h: &mut Harness) {
+    use laya_workflow::backend::{choice, verdict, ScriptedBackend};
+    use laya_workflow::spec::{from_spec, load_file};
+
+    // gate --"A"--> allow, anything else --> deny; both terminal nodes ask `ok`.
+    let spec = json!({
+        "name": "contract_demo",
+        "dsl_version": 2,
+        "start": "gate",
+        "max_iterations": 4,
+        "nodes": [
+            {"name": "gate", "primary_q": "verdict",
+             "questions": {"verdict": {"type": "choice", "criteria": {"A": "allow it", "B": "deny it"}}},
+             "edge": {"condition": {"A": "allow"}, "default": "deny"},
+             "min_confidence": 0.0, "max_retries": 1},
+            {"name": "allow", "primary_q": "ok",
+             "questions": {"ok": {"type": "choice", "criteria": {"A": "yes"}}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1},
+            {"name": "deny", "primary_q": "ok",
+             "questions": {"ok": {"type": "choice", "criteria": {"A": "yes"}}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1}
+        ]
+    });
+    let wf = from_spec(&spec).unwrap();
+
+    // Baseline: a valid criteria key walks the named edge (A -> allow -> STOP).
+    let ok = ScriptedBackend::new(vec![
+        verdict(&[("verdict", choice("A", &[("A", 0.9), ("B", 0.1)]))]),
+        verdict(&[("ok", choice("A", &[("A", 0.9)]))]),
+    ]);
+    h.check(
+        "engine-contract: a valid criteria key walks its named edge (A -> allow -> STOP)",
+        matches!(wf.run(&ok, &json!({})), Ok(o) if o.final_action() == "stop"),
+    );
+
+    // The hole: a backend answer OUTSIDE the question's criteria used to silently
+    // take the edge's `default` branch (the model path with `--gbnf-strict` off).
+    let bad = ScriptedBackend::new(vec![verdict(&[(
+        "verdict",
+        choice("Z", &[("A", 0.5), ("B", 0.5)]),
+    )])]);
+    let e = wf.run(&bad, &json!({})).unwrap_err().to_string();
+    h.check(
+        &format!("engine-contract: an answer outside the question's criteria fails closed, naming node/question/value/accepted ({e})"),
+        e.contains("node gate")
+            && e.contains("\"verdict\"")
+            && e.contains("\"Z\"")
+            && e.contains("[\"A\", \"B\"]"),
+    );
+
+    // `none` stays the DSL's fail-closed answer even when it is not a criteria key.
+    let none = ScriptedBackend::new(vec![
+        verdict(&[("verdict", choice("none", &[("A", 0.5), ("B", 0.5)]))]),
+        verdict(&[("ok", choice("A", &[("A", 0.9)]))]),
+    ]);
+    h.check(
+        "engine-contract: `none` stays accepted (it routes the default branch, not a silent typo)",
+        matches!(wf.run(&none, &json!({})), Ok(o) if o.final_action() == "stop"),
+    );
+
+    // A dynamic (`criteria.from_state`) question is held to its *materialised*
+    // candidates: the engine expands them from the node's input state before it
+    // asks the backend, so a model id that is not a candidate fails closed.
+    let root = bdd::repo_root();
+    let dynp = root.join("dsl").join("capabilities").join("span_selection.json");
+    let dwf = load_file(&dynp.to_string_lossy()).unwrap();
+    let dst = json!({ "text": "please reach me at billing@example.com for the invoice" });
+    let dbad = ScriptedBackend::new(vec![
+        verdict(&[("has_text", choice("B", &[("A", 0.1), ("B", 0.9)]))]),
+        verdict(&[(
+            "billing_contact",
+            choice("candidate_99", &[("candidate_0", 0.4), ("none", 0.4)]),
+        )]),
+    ]);
+    let de = dwf.run(&dbad, &dst).unwrap_err().to_string();
+    h.check(
+        &format!("engine-contract: a model answer outside a dynamic question's materialised candidates fails closed ({de})"),
+        de.contains("node select") && de.contains("candidate_99"),
+    );
+}

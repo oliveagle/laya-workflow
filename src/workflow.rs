@@ -338,11 +338,59 @@ impl WorkflowNode {
             .ok_or_else(|| anyhow!("node {}: empty questions", self.name))
     }
 
+    /// Hold **every** backend to the node's question contract (P112): a `choice`
+    /// answer that is not one of its question's `criteria` keys (nor the DSL's
+    /// fail-closed `none`) would silently take the edge's `default` branch — the
+    /// same silent-`default` hole `AnswersBackend::accept` closes on the *caller*
+    /// path, and P98/P110 audit on the offline heuristic. It must not depend on a
+    /// server's optional `--gbnf-strict` constrained decoding (off by default), so
+    /// the engine fails closed here instead. `criteria` empty = fail open (a
+    /// question that declares no answer set cannot be held to one); non-`choice`
+    /// answers carry no criteria.
+    fn hold_in_contract(&self, questions: &Value, verdict: &Verdict) -> Result<()> {
+        let Some(qs) = questions.as_object() else {
+            return Ok(());
+        };
+        for (qid, qdef) in qs {
+            if qdef
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("choice")
+                != "choice"
+            {
+                continue;
+            }
+            let Some(d) = verdict.answers.get(qid.as_str()) else {
+                continue;
+            };
+            let Some(ans) = d.answer.as_str() else {
+                continue;
+            };
+            if ans == "none" {
+                continue;
+            }
+            let Some(criteria) = qdef.get("criteria").and_then(Value::as_object) else {
+                continue;
+            };
+            if criteria.is_empty() || criteria.contains_key(ans) {
+                continue;
+            }
+            let mut allowed: Vec<&String> = criteria.keys().collect();
+            allowed.sort();
+            return Err(anyhow!(
+                "node {}: the backend answered question {qid:?} with {ans:?}, which is not one of its accepted answers {allowed:?} — refusing to silently take the edge's default branch",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+
     /// Ask the backend, resolve the edge, and classify the resulting action.
     pub fn run<B: Decide + ?Sized>(&self, backend: &B, state: &Value) -> Result<NodeResult> {
         let t0 = Instant::now();
         let questions = expand_criteria_from_state(state, &self.questions)?;
         let verdict = backend.decide_at(&self.name, &self.backend_state(state), &questions)?;
+        self.hold_in_contract(&questions, &verdict)?;
         let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         let primary = self.primary()?;
