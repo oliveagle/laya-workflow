@@ -971,6 +971,20 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
     T.get_or_init(|| {
         vec![
             (
+                // A conjunction of leaf conditions joined by ` and `. Listed
+                // first so a genuine conjunction (which may itself contain a
+                // quoted `"` or the word `and`) is not swallowed by the looser
+                // single-condition rules below. `parse_conjunction_leaves`
+                // splits on the ` and ` that starts another condition, and the
+                // marker `(?:"|the answer)` keeps an ` and ` inside a quoted
+                // option from matching.
+                Regex::new(
+                    r#"^label "(?P<label>[^"]+)" when (?P<rest>.+ and (?:"|the answer).+)$"#,
+                )
+                .unwrap(),
+                "label_all",
+            ),
+            (
                 Regex::new(
                     r#"^label "(?P<label>[^"]+)" when the answer to "(?P<q>[^"]+)" is "(?P<a>.+)"$"#,
                 )
@@ -1094,6 +1108,107 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
     })
 }
 
+/// The leaf conditions a conjunctive `label` rule may join with ` and `. Each
+/// mirrors one single-condition step, minus the `label "..." when ` prefix, so a
+/// conjunct reads exactly like the standalone step it generalises.
+fn leaf_when_table() -> &'static Vec<(Regex, &'static str)> {
+    static T: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    T.get_or_init(|| {
+        vec![
+            (
+                Regex::new(r#"^the answer to "(?P<q>[^"]+)" is "(?P<a>[^"]+)" with at least (?P<c>\d+(?:\.\d+)?) confidence$"#).unwrap(),
+                "opt_gte",
+            ),
+            (
+                Regex::new(r#"^the answer to "(?P<q>[^"]+)" is "(?P<a>[^"]+)" with at most (?P<c>\d+(?:\.\d+)?) confidence$"#).unwrap(),
+                "opt_lt",
+            ),
+            (
+                Regex::new(r#"^the answer to "(?P<q>[^"]+)" is one of (?P<list>.+)$"#).unwrap(),
+                "ans_in",
+            ),
+            (
+                Regex::new(r#"^the answer to "(?P<q>[^"]+)" is "(?P<a>[^"]+)"$"#).unwrap(),
+                "ans",
+            ),
+            (
+                Regex::new(r#"^the answer is "(?P<a>[^"]+)" with at least (?P<c>\d+(?:\.\d+)?) confidence$"#).unwrap(),
+                "opt_gte_impl",
+            ),
+            (
+                Regex::new(r#"^the answer is "(?P<a>[^"]+)"$"#).unwrap(),
+                "ans_impl",
+            ),
+            (
+                Regex::new(r#"^"(?P<q>[^"]+)" is at least (?P<n>\d+(?:\.\d+)?)$"#).unwrap(),
+                "v_gte",
+            ),
+            (
+                Regex::new(r#"^"(?P<q>[^"]+)" is below (?P<n>\d+(?:\.\d+)?)$"#).unwrap(),
+                "v_lt",
+            ),
+        ]
+    })
+}
+
+fn parse_num(s: &str) -> Option<f64> {
+    s.parse::<f64>().ok()
+}
+
+/// Parse one leaf condition of a conjunctive rule into its `when` object.
+fn parse_leaf_when(text: &str) -> Option<Value> {
+    let t = text.trim();
+    for (re, tag) in leaf_when_table().iter() {
+        let Some(c) = re.captures(t) else { continue };
+        return match *tag {
+            "opt_gte" => Some(json!({"question": c["q"].to_string(), "option": c["a"].to_string(), "gte": parse_num(&c["c"])?})),
+            "opt_lt" => Some(json!({"question": c["q"].to_string(), "option": c["a"].to_string(), "lt": parse_num(&c["c"])?})),
+            "ans_in" => {
+                let toks = quoted_tokens(&c["list"]);
+                if toks.is_empty() {
+                    None
+                } else {
+                    Some(json!({"question": c["q"].to_string(), "answer_in": toks}))
+                }
+            }
+            "ans" => Some(json!({"question": c["q"].to_string(), "answer": c["a"].to_string()})),
+            "opt_gte_impl" => Some(json!({"option": c["a"].to_string(), "gte": parse_num(&c["c"])?})),
+            "ans_impl" => Some(json!({"answer": c["a"].to_string()})),
+            "v_gte" => Some(json!({"question": c["q"].to_string(), "value_gte": parse_num(&c["n"])?})),
+            "v_lt" => Some(json!({"question": c["q"].to_string(), "value_lt": parse_num(&c["n"])?})),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Split a conjunctive rule body into leaf `when` objects. Parses the whole
+/// body first (so an ` and ` inside a quoted option does not split a leaf),
+/// then walks every ` and ` boundary, taking the first split whose left side is
+/// a leaf and whose right side recurses. Fails loudly on a body that is not a
+/// conjunction of known leaves — the compiler never silently drops a condition.
+fn parse_conjunction_leaves(rest: &str) -> Result<Vec<Value>> {
+    if let Some(w) = parse_leaf_when(rest) {
+        return Ok(vec![w]);
+    }
+    let mut from = 0usize;
+    while let Some(pos) = rest[from..].find(" and ") {
+        let i = from + pos;
+        let (l, r) = (&rest[..i], &rest[i + 5..]);
+        if let Some(lw) = parse_leaf_when(l) {
+            if let Ok(mut rw) = parse_conjunction_leaves(r) {
+                let mut v = vec![lw];
+                v.append(&mut rw);
+                return Ok(v);
+            }
+        }
+        from = i + 5;
+    }
+    bail!(
+        "cannot parse `{rest}` as conditions joined by ` and ` (each must be a `the answer to \"…\" is …` or `\"question\" is at least|below …` condition)"
+    )
+}
+
 /// Match a decision step and return `(captures, tag)`. Order is load-bearing:
 /// the specific `when the answer to ... is ...` rule is tried before the loose
 /// `when "Q" is at least N` rule, and both before `otherwise`.
@@ -1170,6 +1285,7 @@ fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\" with at most <c> confidence"),
         ("then", "label \"<label>\" when the answer to \"<q>\" is one of <list>"),
         ("then", "label \"<label>\" when the answer is \"<a>\""),
+        ("then", "label \"<label>\" when <cond> and <cond>"),
         ("then", "label \"<label>\" when \"<q>\" is at least <n>"),
         ("then", "label \"<label>\" when \"<q>\" is below <n>"),
         ("then", "label \"<label>\" otherwise"),
@@ -2569,6 +2685,28 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             }
             "edge_default" => {
                 edge_default = Some(caps["node"].to_string());
+            }
+            "label_all" => {
+                // `caps["rest"]` spans only up to the matched ` and `; recover the
+                // whole conjunction body from the full match instead, splitting at
+                // the quoted label (`" when `), so every conjunct is kept.
+                let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                let rest = whole
+                    .split_once("\" when ")
+                    .map(|(_, r)| r.to_string())
+                    .unwrap_or_else(|| whole.to_string());
+                let leaves = parse_conjunction_leaves(&rest)
+                    .map_err(|e| anyhow!("line {}: {e:#}", st.line))?;
+                if leaves.len() < 2 {
+                    bail!(
+                        "line {}: a conjunctive `label` rule needs at least two conditions joined by ` and `",
+                        st.line
+                    );
+                }
+                rules.push(json!({
+                    "when": {"all": leaves},
+                    "label": caps["label"].to_string()
+                }));
             }
             "label_eq" => {
                 rules.push(json!({
@@ -7008,52 +7146,36 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
 }
 
 /// One `label ...` rule of a threshold action.
-fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
-    let label = imp_str("threshold rule label", rule.get("label"))?;
-    imp_tok("threshold rule label", label)?;
-    let when = rule
-        .get("when")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow!("cannot import: threshold rule has no `when` object"))?;
+/// Render one leaf threshold condition (the part after `when `) back to its
+/// step text. The single-condition steps and the conjuncts of a conjunction
+/// share this, so a leaf round-trips exactly the same way in both.
+fn imp_when_leaf(when: &serde_json::Map<String, Value>, q_fallback: &str) -> Result<String> {
     let q = when.get("question").and_then(Value::as_str);
-    if when.get("always").and_then(Value::as_bool) == Some(true) {
-        st.push("then", format!("label \"{label}\" otherwise"), vec![]);
-        return Ok(());
-    }
     if let Some(list) = when.get("answer_in").and_then(Value::as_array) {
         let qq = q.ok_or_else(|| anyhow!("cannot import: `answer_in` rule needs a question"))?;
         imp_tok("answer_in question", qq)?;
         let toks = imp_tokens("answer_in", list)?;
-        st.push(
-            "then",
-            format!("label \"{label}\" when the answer to \"{qq}\" is one of {toks}"),
-            vec![],
-        );
-        return Ok(());
+        return Ok(format!("the answer to \"{qq}\" is one of {toks}"));
     }
     if let Some(a) = when.get("answer").and_then(Value::as_str) {
         imp_tok("answer", a)?;
         if let Some(c) = when.get("value_gte") {
             let c = imp_num(imp_f64("value_gte", Some(c))?)?;
-            let body = match q {
+            return Ok(match q {
                 Some(qq) => {
                     imp_tok("answer question", qq)?;
-                    format!("label \"{label}\" when the answer to \"{qq}\" is \"{a}\" with at least {c} confidence")
+                    format!("the answer to \"{qq}\" is \"{a}\" with at least {c} confidence")
                 }
-                None => format!("label \"{label}\" when the answer is \"{a}\" with at least {c} confidence"),
-            };
-            st.push("then", body, vec![]);
-            return Ok(());
+                None => format!("the answer is \"{a}\" with at least {c} confidence"),
+            });
         }
-        let body = match q {
+        return Ok(match q {
             Some(qq) => {
                 imp_tok("answer question", qq)?;
-                format!("label \"{label}\" when the answer to \"{qq}\" is \"{a}\"")
+                format!("the answer to \"{qq}\" is \"{a}\"")
             }
-            None => format!("label \"{label}\" when the answer is \"{a}\""),
-        };
-        st.push("then", body, vec![]);
-        return Ok(());
+            None => format!("the answer is \"{a}\""),
+        });
     }
     if let Some(opt) = when.get("option").and_then(Value::as_str) {
         imp_tok("option", opt)?;
@@ -7069,20 +7191,16 @@ fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
                 when.get("gte"), when.get("lt")
             ),
         };
-        let body = match q {
+        return Ok(match q {
             Some(qq) => {
                 imp_tok("option question", qq)?;
-                format!("label \"{label}\" when the answer to \"{qq}\" is \"{opt}\" with {cmp} {c} confidence")
+                format!("the answer to \"{qq}\" is \"{opt}\" with {cmp} {c} confidence")
             }
             None if cmp == "at least" => {
-                format!("label \"{label}\" when the answer is \"{opt}\" with at least {c} confidence")
+                format!("the answer is \"{opt}\" with at least {c} confidence")
             }
-            None => bail!(
-                "cannot import: an `option` + `lt` rule needs an explicit `question`"
-            ),
-        };
-        st.push("then", body, vec![]);
-        return Ok(());
+            None => bail!("cannot import: an `option` + `lt` rule needs an explicit `question`"),
+        });
     }
     if let Some(v) = when.get("value_gte") {
         // A rule may omit `question`; the compiler fills the action's own
@@ -7091,17 +7209,52 @@ fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
         let qq = q.unwrap_or(q_fallback);
         imp_tok("value_gte question", qq)?;
         let v = imp_num(imp_f64("value_gte", Some(v))?)?;
-        st.push("then", format!("label \"{label}\" when \"{qq}\" is at least {v}"), vec![]);
-        return Ok(());
+        return Ok(format!("\"{qq}\" is at least {v}"));
     }
     if let Some(v) = when.get("value_lt") {
         let qq = q.unwrap_or(q_fallback);
         imp_tok("value_lt question", qq)?;
         let v = imp_num(imp_f64("value_lt", Some(v))?)?;
-        st.push("then", format!("label \"{label}\" when \"{qq}\" is below {v}"), vec![]);
-        return Ok(());
+        return Ok(format!("\"{qq}\" is below {v}"));
     }
     bail!("cannot import: threshold rule with unsupported `when`: {when:?}")
+}
+
+/// One `label ...` rule of a threshold action.
+fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
+    let label = imp_str("threshold rule label", rule.get("label"))?;
+    imp_tok("threshold rule label", label)?;
+    let when = rule
+        .get("when")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("cannot import: threshold rule has no `when` object"))?;
+    if when.get("always").and_then(Value::as_bool) == Some(true) {
+        st.push("then", format!("label \"{label}\" otherwise"), vec![]);
+        return Ok(());
+    }
+    // A conjunction: render each conjunct as a leaf and join with ` and `, the
+    // same spelling `parse_conjunction_leaves` splits back apart.
+    if let Some(all) = when.get("all").and_then(Value::as_array) {
+        let mut parts: Vec<String> = Vec::new();
+        for sub in all {
+            let so = sub
+                .as_object()
+                .ok_or_else(|| anyhow!("cannot import: `when.all` conditions must be objects"))?;
+            parts.push(imp_when_leaf(so, q_fallback)?);
+        }
+        if parts.len() < 2 {
+            bail!("cannot import: a conjunctive rule needs at least two conditions");
+        }
+        st.push(
+            "then",
+            format!("label \"{label}\" when {}", parts.join(" and ")),
+            vec![],
+        );
+        return Ok(());
+    }
+    let body = imp_when_leaf(when, q_fallback)?;
+    st.push("then", format!("label \"{label}\" when {body}"), vec![]);
+    Ok(())
 }
 
 /// The `Then` steps that rebuild a node's action.

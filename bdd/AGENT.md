@@ -200,7 +200,10 @@ Feature: support_ticket_router
 **Then 动作**：
 - 阈值规则（**有序**，round-trip 断言顺序）：`label "L" when the answer to "Q" is "X"` /
   `... is one of "X","Y"` / `... when the answer is "X"`（implicit）/ `... with at least C confidence` /
-  `label "L" when "Q" is at least N` / `label "L" when "Q" is below N` / `label "L" otherwise`
+  `label "L" when "Q" is at least N` / `label "L" when "Q" is below N` / `label "L" otherwise`；
+  **合取**：把任意两个叶子条件用 ` and ` 连起来（`label "L" when <cond> and <cond>`，
+  如 `label "PAGER_BILLING" when the answer to "category" is "billing" and "urgency" is at least 1.5`），
+  编译成 `{"all": [...]}`（每个叶子仍可各自点名 `question`）。用于「两个信号同时成立」的场景。
 - state：`keep the answer to "Q"`（copy_keys）、`keep the state key "K"`
 - 节点设置：`the primary question is "Q"`、`the action reads the question "Q"`、
   `require confidence at least N`、`allow up to N retries`

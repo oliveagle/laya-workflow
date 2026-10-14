@@ -597,6 +597,51 @@ fn suggest(target: &str, candidates: &[&str]) -> String {
     }
 }
 
+/// Recursively validate a threshold rule `when`: every `question` it names must
+/// be a declared question (or the action's own), and every operator key must be
+/// one the runtime understands. A conjunction `{"all": [..]}` is checked through
+/// each conjunct, so a bad question or a typo'd operator inside a conjunction is
+/// caught at validate time instead of silently never matching at runtime.
+fn validate_threshold_when(
+    when: &Value,
+    node: &str,
+    has_q: &dyn Fn(&str) -> bool,
+    aq: Option<&str>,
+    q_candidates: &[&str],
+    known_keys: &[&str],
+) -> Result<()> {
+    if let Some(all) = when.get("all").and_then(Value::as_array) {
+        if all.len() < 2 {
+            bail!(
+                "node {node}: threshold rule `when.all` needs at least two conditions to conjoin"
+            );
+        }
+        for sub in all {
+            validate_threshold_when(sub, node, has_q, aq, q_candidates, known_keys)?;
+        }
+    }
+    let w = when
+        .as_object()
+        .ok_or_else(|| anyhow!("node {node}: threshold rule `when` must be an object"))?;
+    if let Some(q) = w.get("question").and_then(Value::as_str) {
+        if !(has_q(q) || aq == Some(q)) {
+            bail!(
+                "node {node}: threshold rule references unknown question {q:?}{}",
+                suggest(q, q_candidates)
+            );
+        }
+    }
+    for k in w.keys() {
+        if !known_keys.contains(&k.as_str()) {
+            bail!(
+                "node {node}: threshold rule uses unknown when operator {k:?}{}",
+                suggest(k.as_str(), known_keys)
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A threshold rule `when` that matches everything — `{"always": true}`.
 /// (`apply_rules_multi` / `rule_matches_multi` return true on `always`
 /// before looking at any other operator.)
@@ -798,7 +843,7 @@ fn validate_graph_semantics(
         "combine", "gate", "ui_proposal", "call",
     ];
     const KNOWN_WHEN_KEYS: &[&str] = &[
-        "question", "always", "answer", "answer_in", "option", "gte",
+        "question", "always", "all", "answer", "answer_in", "option", "gte",
         "lt", "value_gte", "value_lt",
     ];
     for n in node_list {
@@ -866,25 +911,15 @@ fn validate_graph_semantics(
                 if kind == "threshold" {
                     if let Some(rules) = action.get("rules").and_then(|v| v.as_array()) {
                         for r in rules {
-                            let wq = r.pointer("/when/question").and_then(|v| v.as_str());
-                            if let Some(q) = wq {
-                                let known = has_q(q) || aq == Some(q);
-                                if !known {
-                                    bail!(
-                                        "node {name}: threshold rule references unknown question {q:?}{}",
-                                        suggest(q, &q_candidates)
-                                    );
-                                }
-                            }
-                            if let Some(w) = r.get("when").and_then(|v| v.as_object()) {
-                                for k in w.keys() {
-                                    if !KNOWN_WHEN_KEYS.contains(&k.as_str()) {
-                                        bail!(
-                                            "node {name}: threshold rule uses unknown when operator {k:?}{}",
-                                            suggest(k.as_str(), KNOWN_WHEN_KEYS)
-                                        );
-                                    }
-                                }
+                            if let Some(w) = r.get("when") {
+                                validate_threshold_when(
+                                    w,
+                                    name,
+                                    &has_q,
+                                    aq,
+                                    &q_candidates,
+                                    KNOWN_WHEN_KEYS,
+                                )?;
                             }
                         }
                     }
@@ -1953,6 +1988,12 @@ fn rule_matches(when: &Value, d: &crate::workflow::Decision) -> bool {
     {
         return true;
     }
+    // A conjunction: every sub-condition must hold. Each sub-condition is a
+    // leaf `when` (no nested `question` here — `rule_matches_multi` resolves
+    // the question scope and then delegates the leaves to this function).
+    if let Some(all) = when.get("all").and_then(|v| v.as_array()) {
+        return all.iter().all(|w| rule_matches(w, d));
+    }
     if let Some(ans) = when.get("answer_in").and_then(|v| v.as_array()) {
         let a = d.as_str();
         return ans.iter().filter_map(|x| x.as_str()).any(|x| x == a);
@@ -1992,6 +2033,10 @@ fn rule_matches_multi(
         .unwrap_or(false)
     {
         return true;
+    }
+    // A conjunction: resolve each conjunct against its own question scope.
+    if let Some(all) = when.get("all").and_then(|x| x.as_array()) {
+        return all.iter().all(|w| rule_matches_multi(w, v, default_d));
     }
     match when.get("question").and_then(|x| x.as_str()) {
         Some(q) => match v.answers.get(q) {

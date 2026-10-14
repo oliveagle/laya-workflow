@@ -3151,5 +3151,20 @@
       "trace.steps.0.action": "stop",
       "trace.steps.0.answer": "halt"
     }
+  },
+  "email_triage": {
+    "billing_urgent": "PAGER_BILLING",
+    "outage": "PAGER_ONCALL",
+    "spam": "TRASH",
+    "phishing": "QUARANTINE",
+    "fyi": "FYI_ONLY"
+  },
+  "draft_scorer": {
+    "ooo_team": "send_now",
+    "angry_support": "sleep",
+    "thanks_mentor": "send_now",
+    "typo_client": "polish",
+    "resign_manager": "sleep",
+    "ok_manager": "rewrite"
   }
 }

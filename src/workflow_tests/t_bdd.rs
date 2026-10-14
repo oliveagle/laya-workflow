@@ -3141,4 +3141,117 @@ pub fn test_bdd_app_port_parity(h: &mut Harness) {
         "bdd: content_policy_gate matches the app on its 6 reference cases",
         cref_bad == 0,
     );
+
+    // ── email_triage ↔ email_triage port: exact parity, including the two
+    //    `category AND urgency` conjunction branches ──
+    let et = load("dsl/apps/email_triage.json");
+    let ecats = ["billing", "technical", "sales", "account", "hr", "other"];
+    let (mut et_cases, mut et_bad) = (0usize, 0usize);
+    for cat in ecats {
+        for &p_spam in &[0.0, 0.5, 0.8] {
+            for &p_phish in &[0.0, 0.5, 0.8] {
+                for &urg in &[0.0, 1.0, 1.5, 2.0] {
+                    for &p_reply in &[0.0, 0.5, 0.8] {
+                        let mut answers = std::collections::HashMap::new();
+                        answers.insert("category".into(), dec(json!(cat), Map::new()));
+                        answers.insert("spam".into(), dec(json!("B"), bchoice(p_spam)));
+                        answers.insert("phishing".into(), dec(json!("B"), bchoice(p_phish)));
+                        answers.insert("urgency".into(), dec(json!(urg), Map::new()));
+                        answers.insert(
+                            "needs_reply".into(),
+                            dec(json!("B"), bchoice(p_reply)),
+                        );
+                        let v = Verdict { answers, input_tokens: 0, latency_ms: 0.0 };
+                        let app = apps::email_triage::route(&v)["action"]
+                            .as_str()
+                            .unwrap()
+                            .to_string();
+                        let port = label_of(&et, &v);
+                        et_cases += 1;
+                        if app != port {
+                            et_bad += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    h.check(
+        &format!("bdd: email_triage port == app on the grid ({et_cases} verdicts)"),
+        et_bad == 0,
+    );
+
+    // ── draft_scorer ↔ draft_scorer port: exact parity, including the
+    //    `typo AND low clarity` / `sensitive AND hostile tone` conjunctions and
+    //    the fall-through to the author's own `send_now` answer ──
+    let ds = load("dsl/apps/draft_scorer.json");
+    let (mut ds_cases, mut ds_bad) = (0usize, 0usize);
+    for &p_typo in &[0.0, 0.5, 0.8] {
+        for &p_sens in &[0.0, 0.5, 0.8] {
+            for &clarity in &[0.0, 1.0, 1.5, 3.0] {
+                for &tone in &[0.0, 1.0, 2.0] {
+                    for key in ["send_now", "polish", "sleep", "rewrite"] {
+                        let mut answers = std::collections::HashMap::new();
+                        answers.insert("has_typo".into(), dec(json!("B"), bchoice(p_typo)));
+                        answers.insert("is_sensitive".into(), dec(json!("B"), bchoice(p_sens)));
+                        answers.insert("clarity".into(), dec(json!(clarity), Map::new()));
+                        answers.insert("tone".into(), dec(json!(tone), Map::new()));
+                        answers.insert("send_now".into(), dec(json!(key), Map::new()));
+                        let v = Verdict { answers, input_tokens: 0, latency_ms: 0.0 };
+                        let app = apps::draft_scorer::route(&v)["suggestion"]
+                            .as_str()
+                            .unwrap()
+                            .to_string();
+                        let port = label_of(&ds, &v);
+                        ds_cases += 1;
+                        if app != port {
+                            ds_bad += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    h.check(
+        &format!("bdd: draft_scorer port == app on the grid ({ds_cases} verdicts)"),
+        ds_bad == 0,
+    );
+
+    // The two apps' own reference cases, driven by the offline heuristic, so the
+    // parity holds end to end and not only on hand-built verdicts.
+    let eq = apps::email_triage::questions();
+    let mut eref_bad = 0usize;
+    for (subject, body, from, _want) in apps::email_triage::cases() {
+        let state = json!({"subject": subject, "body": body, "from": from});
+        let v = hb.decide(&state, &eq).unwrap();
+        let app = apps::email_triage::route(&v)["action"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if app != label_of(&et, &v) {
+            eref_bad += 1;
+        }
+    }
+    h.check(
+        "bdd: email_triage port matches the app on its 5 reference emails",
+        eref_bad == 0,
+    );
+
+    let dq = apps::draft_scorer::questions();
+    let mut dref_bad = 0usize;
+    for (text, audience, _want) in apps::draft_scorer::cases() {
+        let state = json!({"audience": audience, "text": text});
+        let v = hb.decide(&state, &dq).unwrap();
+        let app = apps::draft_scorer::route(&v)["suggestion"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        if app != label_of(&ds, &v) {
+            dref_bad += 1;
+        }
+    }
+    h.check(
+        "bdd: draft_scorer port matches the app on its 6 reference drafts",
+        dref_bad == 0,
+    );
 }

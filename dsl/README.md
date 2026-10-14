@@ -13,7 +13,7 @@ laya-workflow export agent_gate                        # built-in Rust workflow 
 ```
 
 Layout: specs live in folders by domain (`guards/`, `routing/`, `loops/`,
-`pipelines/`, `ole_eval/`, `browser/`, `agents/`). `laya-workflow list` walks the tree recursively.
+`pipelines/`, `ole_eval/`, `browser/`, `agents/`, `apps/`). `laya-workflow list` walks the tree recursively.
 
 Spec roots are **layered**. A bare `"workflow": "name"` ref (and `list`) resolves
 against, highest priority first: an explicit pin (`--dsl-dir` / `$LAYA_DSL_DIR`,
@@ -50,6 +50,8 @@ Specs in this directory:
 | `agent_command_gate.json` | single-node ordered `threshold` ladder (BLOCK/CONFIRM/ALLOW) over is_destructive/is_exfiltration/intent_match/risk — the BDD port of the built-in `agent_gate` app |
 | `support_ticket_router.json` | multi-node routing, `min_confidence`, ordered `threshold` |
 | `content_policy_gate.json` | 6-way choice, cross-question probability rules, WARN on severity/category — the BDD port of the built-in `content_moderation` app |
+| `email_triage.json` | 6-way choice + score + `{"all": [...]}` conjunction rules (category AND urgency) — the BDD port of the built-in `email_triage` app |
+| `draft_scorer.json` | score cutoffs + choice-and-score conjunctions + fall-through to the author's own `send_now` answer — the BDD port of the built-in `draft_scorer` app |
 | `triage_then_moderate.json` | 3-hop chain with conditional jumps |
 | `iterative_refine_loop.json` | self-loop + retry budget + convergence |
 | `intake_pipeline_nested.json` | nested reference to `support_ticket_router` |

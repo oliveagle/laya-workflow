@@ -1,0 +1,163 @@
+{
+  "name": "email_triage",
+  "_bdd": {
+    "feature": "email_triage",
+    "feature_path": "bdd/workflows/apps/email_triage.feature",
+    "mode": "decision"
+  },
+  "description": "Email triage: read an email on six questions and route it to one action.\nBehaviour-equivalent to the built-in `email_triage` app's route(): QUARANTINE a\nphishing attempt, TRASH spam, page the owning team when a blocking billing or\ntechnical issue needs a human, reply today when a reply is needed on a blocking\nissue, queue the reply when a reply is needed at all, else FYI only. The two\n\"blocking issue for team X\" branches are a conjunction of the category answer\nand the urgency score, written as `label ... when <cond> and <cond>`.",
+  "start": "triage",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "triage",
+      "primary_q": "category",
+      "questions": {
+        "category": {
+          "type": "choice",
+          "instructions": "Which team should handle this email?",
+          "criteria": {
+            "billing": "invoices, payments, refunds",
+            "technical": "bugs, outages, integrations",
+            "sales": "pricing, demos, new purchases",
+            "account": "login, access, profile changes",
+            "hr": "hiring, leave, payroll",
+            "other": "none of the above"
+          }
+        },
+        "spam": {
+          "type": "choice",
+          "instructions": "Is this email unsolicited bulk marketing or spam?",
+          "criteria": {
+            "A": "no, it is a legitimate one-to-one or business email",
+            "B": "yes, it is spam, bulk marketing, or unsolicited promo"
+          }
+        },
+        "phishing": {
+          "type": "choice",
+          "instructions": "Is this email a phishing or scam attempt to steal money, credentials, or personal data?",
+          "criteria": {
+            "A": "no, it is a legitimate business email",
+            "B": "yes, it tries to steal credentials, money, or personal data"
+          }
+        },
+        "urgency": {
+          "type": "score",
+          "instructions": "How urgent is the issue?",
+          "criteria": [
+            "no time pressure",
+            "needs attention soon",
+            "blocking issue or hard deadline"
+          ]
+        },
+        "needs_reply": {
+          "type": "choice",
+          "instructions": "Does the sender expect a reply or follow-up action?",
+          "criteria": {
+            "A": "no, FYI only or auto-notification",
+            "B": "yes, the sender needs a response"
+          }
+        },
+        "sentiment": {
+          "type": "score",
+          "instructions": "Sender tone?",
+          "criteria": [
+            "angry or very negative",
+            "negative",
+            "neutral",
+            "positive"
+          ]
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "category",
+        "rules": [
+          {
+            "when": {
+              "question": "phishing",
+              "option": "B",
+              "gte": 0.5
+            },
+            "label": "QUARANTINE"
+          },
+          {
+            "when": {
+              "question": "spam",
+              "option": "B",
+              "gte": 0.5
+            },
+            "label": "TRASH"
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "question": "category",
+                  "answer": "billing"
+                },
+                {
+                  "question": "urgency",
+                  "value_gte": 1.5
+                }
+              ]
+            },
+            "label": "PAGER_BILLING"
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "question": "category",
+                  "answer": "technical"
+                },
+                {
+                  "question": "urgency",
+                  "value_gte": 1.5
+                }
+              ]
+            },
+            "label": "PAGER_ONCALL"
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "question": "needs_reply",
+                  "option": "B",
+                  "gte": 0.5
+                },
+                {
+                  "question": "urgency",
+                  "value_gte": 1.5
+                }
+              ]
+            },
+            "label": "REPLY_TODAY"
+          },
+          {
+            "when": {
+              "question": "needs_reply",
+              "option": "B",
+              "gte": 0.5
+            },
+            "label": "REPLY_QUEUE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "FYI_ONLY"
+          }
+        ]
+      }
+    }
+  ]
+}

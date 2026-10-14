@@ -1,0 +1,144 @@
+{
+  "name": "draft_scorer",
+  "_bdd": {
+    "feature": "draft_scorer",
+    "feature_path": "bdd/workflows/apps/draft_scorer.feature",
+    "mode": "decision"
+  },
+  "description": "Draft scorer: read a message on tone / clarity / typo / sensitivity and the\nauthor's own send-now choice, then recommend one action. Behaviour-equivalent\nto the built-in `draft_scorer` app's route(): a typo on a below-clear draft is\n\"polish\", a sensitive message in a hostile tone is \"sleep\", a confused draft is\n\"rewrite\", else fall back to the author's own `send_now` choice. The first two\nbranches are a conjunction of a choice signal and a score cutoff, written as\n`label ... when <cond> and <cond>`.",
+  "start": "score",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "score",
+      "primary_q": "send_now",
+      "questions": {
+        "tone": {
+          "type": "score",
+          "instructions": "Overall tone?",
+          "criteria": [
+            "angry / hostile",
+            "tense",
+            "neutral",
+            "warm / friendly"
+          ]
+        },
+        "clarity": {
+          "type": "score",
+          "instructions": "How clearly does the message convey its point?",
+          "criteria": [
+            "confusing",
+            "ambiguous",
+            "clear",
+            "crystal clear"
+          ]
+        },
+        "has_typo": {
+          "type": "choice",
+          "instructions": "Does the message contain obvious typos, broken sentences, or autocorrect errors?",
+          "criteria": {
+            "A": "no, it reads cleanly",
+            "B": "yes, there are typos or broken sentences"
+          }
+        },
+        "is_sensitive": {
+          "type": "choice",
+          "instructions": "Is the message on a sensitive topic (layoffs, legal, money conflict, breakup, politics)?",
+          "criteria": {
+            "A": "no, it is a normal business or social message",
+            "B": "yes, it touches layoffs / legal / money conflict / politics"
+          }
+        },
+        "send_now": {
+          "type": "choice",
+          "instructions": "Best next action?",
+          "criteria": {
+            "send_now": "send as-is",
+            "polish": "light edits recommended",
+            "sleep": "sleep on it / get a second opinion",
+            "rewrite": "major rewrite required"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "clarity",
+        "rules": [
+          {
+            "when": {
+              "all": [
+                {
+                  "question": "has_typo",
+                  "option": "B",
+                  "gte": 0.5
+                },
+                {
+                  "question": "clarity",
+                  "value_lt": 1.5
+                }
+              ]
+            },
+            "label": "polish"
+          },
+          {
+            "when": {
+              "all": [
+                {
+                  "question": "is_sensitive",
+                  "option": "B",
+                  "gte": 0.5
+                },
+                {
+                  "question": "tone",
+                  "value_lt": 1.0
+                }
+              ]
+            },
+            "label": "sleep"
+          },
+          {
+            "when": {
+              "question": "clarity",
+              "value_lt": 0.5
+            },
+            "label": "rewrite"
+          },
+          {
+            "when": {
+              "question": "send_now",
+              "answer": "polish"
+            },
+            "label": "polish"
+          },
+          {
+            "when": {
+              "question": "send_now",
+              "answer": "sleep"
+            },
+            "label": "sleep"
+          },
+          {
+            "when": {
+              "question": "send_now",
+              "answer": "rewrite"
+            },
+            "label": "rewrite"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "send_now"
+          }
+        ]
+      }
+    }
+  ]
+}

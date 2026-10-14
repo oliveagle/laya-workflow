@@ -6934,5 +6934,58 @@
       "ev_unauthenticated": "halt",
       "ev_risk": "high"
     }
+  },
+  "email_triage": {
+    "billing_urgent": {
+      "subject": "Re: invoice duplicate charge",
+      "body": "Hi, we were billed twice for March. Please refund today or we cancel.",
+      "from": "user@acme.com"
+    },
+    "outage": {
+      "subject": "ALL HANDS: prod outage",
+      "body": "Payments API 500 since 14:32 UTC. Need hotfix before sprint end.",
+      "from": "sre@x.com"
+    },
+    "spam": {
+      "subject": "Earn $5000/week!!!",
+      "body": "Limited offer! Click here to earn. 50% off premium membership",
+      "from": "promo@spam.tld"
+    },
+    "phishing": {
+      "subject": "verify your account",
+      "body": "Your account will be suspended unless you confirm credentials at http://evil.example",
+      "from": "noreply@susp.cn"
+    },
+    "fyi": {
+      "subject": "Office closed Monday",
+      "body": "Reminder office closed Monday. No action needed.",
+      "from": "mgr@acme.com"
+    }
+  },
+  "draft_scorer": {
+    "ooo_team": {
+      "audience": "team",
+      "text": "Hey everyone, I'll be OOO next week. Back on 15th. ping me if urgent."
+    },
+    "angry_support": {
+      "audience": "support",
+      "text": "This is UNACCEPTABLE. I've told you THREE times. Fix NOW."
+    },
+    "thanks_mentor": {
+      "audience": "mentor",
+      "text": "Hi! Thanks so much for the kind words — made my morning."
+    },
+    "typo_client": {
+      "audience": "client",
+      "text": "Per our prev discusion, pls find the attched doc."
+    },
+    "resign_manager": {
+      "audience": "manager",
+      "text": "I've decided to leave. Here's my 2-week plan and handoffs."
+    },
+    "ok_manager": {
+      "audience": "manager",
+      "text": "ok"
+    }
   }
 }
