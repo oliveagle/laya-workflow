@@ -5271,6 +5271,12 @@ pub struct RunOptions {
     pub live: bool,
     /// Write a per-scenario JSON report here (exit code, seconds, verdict).
     pub report: Option<String>,
+    /// Make a missing browser an error instead of a clean skip. With it unset
+    /// `bdd run` on a browserless box exits 0 with a "skipped" line (the same
+    /// skip-not-fail stance as the plugin fold gate); with it set, the absence
+    /// is a failure, so a gate that promises browser coverage cannot pass by
+    /// doing nothing.
+    pub require_browser: bool,
 }
 
 impl Default for RunOptions {
@@ -5292,6 +5298,7 @@ impl Default for RunOptions {
                 .into_owned(),
             live: false,
             report: None,
+            require_browser: false,
         }
     }
 }
@@ -5537,6 +5544,83 @@ struct RunResult {
     elapsed: f64,
 }
 
+/// The well-known Chrome/Chromium install locations `bdd run` falls back to
+/// when nothing is on `$PATH` - the same list `scripts/bdd/chrome-headless.sh`
+/// probes, so the preflight probe and the launcher agree on what "available"
+/// means.
+fn platform_chrome_defaults() -> Vec<&'static str> {
+    if cfg!(target_os = "macos") {
+        vec![
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    } else if cfg!(target_os = "windows") {
+        vec![r"C:\Program Files\Google\Chrome\Application\chrome.exe"]
+    } else {
+        vec![
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+        ]
+    }
+}
+
+/// Pure half of [`resolve_run_chrome`]: an explicit override wins outright (the
+/// wrapper `exec`s it and fails loudly if the path is wrong), else the first
+/// well-known name that resolves to a regular file under `dirs`. Split out so
+/// the policy is unit-testable - and deliberately *without* the platform
+/// defaults, whose presence would make the "nothing found" case depend on the
+/// machine the test runs on.
+pub fn resolve_run_chrome_in(over: Option<&str>, dirs: &[std::path::PathBuf]) -> Option<String> {
+    if let Some(v) = over {
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    crate::capability::browser::find_chrome_binary_in(dirs)
+}
+
+/// The browser `bdd run` will actually drive. `$LAYA_BDD_REAL_CHROME` /
+/// `$CHROME_BIN` (what `scripts/bdd/chrome-headless.sh` honours) beat a real
+/// binary on `$PATH`, which beats the platform default install locations.
+fn resolve_run_chrome() -> Option<String> {
+    let over = ["LAYA_BDD_REAL_CHROME", "CHROME_BIN"]
+        .iter()
+        .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()));
+    let dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    if let Some(found) = resolve_run_chrome_in(over.as_deref(), &dirs) {
+        return Some(found);
+    }
+    platform_chrome_defaults()
+        .into_iter()
+        .find(|d| std::path::Path::new(d).is_file())
+        .map(str::to_string)
+}
+
+/// What `bdd run` does once the browser probe has finished. Pure, so the
+/// skip-versus-fail contract is pinned in the offline suite rather than only on
+/// a machine that happens to have no browser.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RunBrowserGate {
+    /// A browser is available: run.
+    Proceed,
+    /// No browser and the caller did not demand one: skip cleanly (exit 0).
+    Skip,
+    /// No browser but the caller demanded one (`--require-browser`): exit 1.
+    Fail,
+}
+
+pub fn run_browser_gate(have_browser: bool, require_browser: bool) -> RunBrowserGate {
+    match (have_browser, require_browser) {
+        (true, _) => RunBrowserGate::Proceed,
+        (false, true) => RunBrowserGate::Fail,
+        (false, false) => RunBrowserGate::Skip,
+    }
+}
+
 pub fn run(o: &RunOptions) -> Result<i32> {
     let root = repo_root();
     let feature_dir = root.join("bdd").join("features");
@@ -5597,6 +5681,31 @@ pub fn run(o: &RunOptions) -> Result<i32> {
              integration tests run against a real target, never the local fixture server"
         );
         return Ok(1);
+    }
+
+    // Is there a browser to drive at all? The suite's whole claim is that a real
+    // page loaded / a real assertion held; without a browser that claim cannot be
+    // made, so a browserless box skips (exit 0) rather than failing on the spawn -
+    // the same skip-not-fail stance as the plugin fold gate. A box that *wants*
+    // the guarantee asks for it with `--require-browser` (which turns the skip
+    // into an error), so a gate that promises browser behaviour cannot pass by
+    // doing nothing.
+    match run_browser_gate(resolve_run_chrome().is_some(), o.require_browser) {
+        RunBrowserGate::Proceed => {}
+        RunBrowserGate::Skip => {
+            println!(
+                "bdd: skipped - no Chrome/Chromium found (set LAYA_BDD_REAL_CHROME or \
+                 CHROME_BIN, or install one); re-run with --require-browser to make this an error"
+            );
+            return Ok(0);
+        }
+        RunBrowserGate::Fail => {
+            eprintln!(
+                "bdd: no Chrome/Chromium found; set LAYA_BDD_REAL_CHROME or CHROME_BIN, \
+                 or install one (required by --require-browser)"
+            );
+            return Ok(1);
+        }
     }
     let tag_filter = o
         .tags
@@ -6941,6 +7050,9 @@ pub fn live(o: &LiveOptions) -> Result<i32> {
         out: o.out.clone(),
         live: true,
         report: o.json.clone(),
+        // `bdd live` exists only to drive a real browser against real sites; a
+        // missing browser there is a failure, not something to skip quietly.
+        require_browser: true,
     };
     run(&ro)
 }

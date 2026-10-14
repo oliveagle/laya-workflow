@@ -97,12 +97,13 @@ it skips the slow timeout section by default.
 ## Verify before you push
 
 ```bash
-scripts/verify.sh            # build + plugin gate + fast suite   ~18s warm
+scripts/verify.sh            # build + plugin gate + bdd + fast suite   ~30s warm
+#   ... set LAYA_BDD_SKIP_BROWSER=1 to skip the ~14s real-Chrome bdd run
 scripts/verify.sh --full     # ... and the timeout section        +170s
 ```
 
-`laya-workflow-tests` has 101 sections. One hundred of them finish in **about
-10s**; `capability-timeouts` alone takes **168.9s**, because it waits on real timeouts.
+`laya-workflow-tests` has 103 sections. All but `capability-timeouts` finish in
+**about 10s**; `capability-timeouts` alone takes **168.9s**, because it waits on real timeouts.
 Running the whole binary by reflex turns a sub-second question into a
 three-minute one, which is long enough that you stop doing it before every
 change. `verify.sh` runs the fast one hundred by default, always runs the plugin

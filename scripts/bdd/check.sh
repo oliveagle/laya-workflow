@@ -6,13 +6,20 @@
 # bdd/features is hand-written; every spec under it is generated. This catches
 # the failures that would otherwise surface minutes later as a red browser test
 # - a step that no longer parses, a step that now compiles to the wrong op, and
-# a scenario that compiles to a spec `validate` rejects. It needs no Chrome and no network, which is why it is
-# safe in CI; the CDP run in `laya-workflow bdd run` is the separate local gate,
-# because CI installs no browser.
+# a scenario that compiles to a spec `validate` rejects.
+#
+# The last stage runs `laya-workflow bdd run`, which drives a real headless
+# Chrome. `bdd run` skips cleanly (exit 0, with a "skipped" line) where no
+# browser is installed, so this file stays green on a browserless CI runner and
+# green on a browserless box, while a *broken* scenario still fails wherever a
+# browser does exist. It is the only gate that exercises the browser
+# scenarios, and until it existed a real bug (release.feature bound no browser
+# handle) sat in them unnoticed. Set LAYA_BDD_SKIP_BROWSER=1 to skip the stage
+# for speed.
 #
 # Both scripts/verify.sh and .github/workflows/ci.yml call this, so there is
-# one definition of "the BDD documents are still buildable" rather than two
-# that can drift.
+# one definition of "the BDD documents still build and still behave" rather
+# than two that can drift.
 #
 # The checks live in the Rust binary (`laya-workflow bdd <check|build>`), the
 # port of the former scripts/bdd/*.py toolchain — no Python involved.
@@ -191,6 +198,25 @@ if ! "$BIN" dsl smoke > "$out/smoke.log" 2> "$out/smoke.err"; then
   cat "$out/smoke.log" >&2
   exit 1
 fi
+# The browser run: the bdd/features scenarios and the hand-written probes
+# actually drive a real headless Chrome over CDP. `bdd run` skips cleanly when
+# no browser is present, so this stage is green on a browserless box; it fails
+# only when a scenario genuinely fails while a browser *is* available.
+if [ "${LAYA_BDD_SKIP_BROWSER:-}" = "1" ]; then
+  echo "browser run: skipped (LAYA_BDD_SKIP_BROWSER=1)"
+else
+  if ! "$BIN" bdd run > "$out/browsers.log" 2>&1; then
+    echo "bdd check: the browser run failed:" >&2
+    tail -40 "$out/browsers.log" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  if grep -q "bdd: skipped - no Chrome" "$out/browsers.log"; then
+    echo "browser run: skipped (no Chrome/Chromium on this box)"
+  else
+    grep -E "bdd: [0-9]+ passed" "$out/browsers.log" | tail -1 | sed 's/^bdd: /browser run: /' || true
+  fi
+fi
+
 smoke_line="$(grep -oE "[0-9]+/[0-9]+ specs OK" "$out/smoke.log" | tail -1)"
 echo "$n/$n scenarios compile, validate and are 100% covered, $probes/$probes probe specs validate, $decision_n/$decision_n decision workflows compile at 100% coverage and round-trip to their dsl spec; behavioural smoke: $smoke_line"
 # Every dsl spec is accounted for: either it carries offline smoke states, or it

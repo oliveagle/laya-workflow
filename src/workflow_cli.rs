@@ -469,6 +469,10 @@ enum BddCmd {
         /// Write a per-scenario JSON report here.
         #[arg(long)]
         report: Option<String>,
+        /// Fail (exit 1) instead of skipping cleanly when no browser is found.
+        /// Without it, a browserless box prints a "skipped" line and exits 0.
+        #[arg(long, default_value_t = false)]
+        require_browser: bool,
     },
     /// Score the authoring corpus: expressiveness, vocabulary recall/precision,
     /// the @outputs contract, and (optionally) an end-to-end run. Answers "how
@@ -2439,6 +2443,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             out,
             live,
             report,
+            require_browser,
         } => bdd::run(&bdd::RunOptions {
             features: features.clone(),
             filter: filter.clone(),
@@ -2452,6 +2457,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             out: out.clone(),
             live: *live,
             report: report.clone(),
+            require_browser: *require_browser,
         })?,
         BddCmd::Score { check, run, json, tasks } => bdd::score(&bdd::ScoreOptions {
             check: *check,

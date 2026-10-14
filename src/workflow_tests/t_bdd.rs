@@ -2309,3 +2309,80 @@ Feature: exec only
         spec2["capabilities"]["bdd"].get("browser").is_none(),
     );
 }
+
+/// The "is there a browser at all?" contract of `bdd run`: the probe policy
+/// (explicit override beats `$PATH` beats platform defaults) and the
+/// skip-versus-fail decision when nothing is found. Both are pure, so they are
+/// pinned offline instead of only on a machine that happens to lack a browser.
+pub fn test_bdd_browser_gate(h: &mut Harness) {
+    use laya_workflow::bdd::{resolve_run_chrome_in, run_browser_gate, RunBrowserGate};
+
+    let tag = std::process::id();
+    let empty = std::env::temp_dir().join(format!("laya-bgate-empty-{tag}"));
+    let branded = std::env::temp_dir().join(format!("laya-bgate-branded-{tag}"));
+    let dirshadow = std::env::temp_dir().join(format!("laya-bgate-dir-{tag}"));
+    for d in [&empty, &branded, &dirshadow] {
+        let _ = std::fs::remove_dir_all(d);
+        std::fs::create_dir_all(d).unwrap();
+    }
+    std::fs::write(branded.join("chromium-browser"), b"#!/bin/sh\n").unwrap();
+    std::fs::write(branded.join("google-chrome"), b"#!/bin/sh\n").unwrap();
+    std::fs::create_dir_all(dirshadow.join("chromium")).unwrap();
+
+    // An explicit override wins outright - no filesystem, no platform probing -
+    // because scripts/bdd/chrome-headless.sh `exec`s it and fails loudly if it is
+    // wrong, so the gate must not second-guess it.
+    h.eq(
+        "bdd gate: an explicit override is taken as-is",
+        resolve_run_chrome_in(Some("/opt/none/chrome"), &[empty.clone()]),
+        Some("/opt/none/chrome".to_string()),
+    );
+    h.eq(
+        "bdd gate: an empty override falls through to the PATH search",
+        resolve_run_chrome_in(Some(""), &[empty.clone()]),
+        None,
+    );
+    h.eq(
+        "bdd gate: an empty directory yields no browser",
+        resolve_run_chrome_in(None, &[empty.clone()]),
+        None,
+    );
+    // Branded name dominates, and a *directory* named like the binary is not one.
+    h.eq(
+        "bdd gate: google-chrome on PATH wins over chromium-browser",
+        resolve_run_chrome_in(None, &[branded.clone()]),
+        Some(branded.join("google-chrome").to_string_lossy().into_owned()),
+    );
+    h.eq(
+        "bdd gate: a directory named chromium is not a browser",
+        resolve_run_chrome_in(None, &[dirshadow.clone()]),
+        None,
+    );
+
+    // The decision itself: a browser always runs; its absence skips unless the
+    // caller demanded one, in which case the absence is a failure.
+    h.eq(
+        "bdd gate: browser present, no requirement -> Proceed",
+        run_browser_gate(true, false),
+        RunBrowserGate::Proceed,
+    );
+    h.eq(
+        "bdd gate: browser present, required -> Proceed",
+        run_browser_gate(true, true),
+        RunBrowserGate::Proceed,
+    );
+    h.eq(
+        "bdd gate: no browser, required -> Fail",
+        run_browser_gate(false, true),
+        RunBrowserGate::Fail,
+    );
+    h.eq(
+        "bdd gate: no browser, not required -> Skip",
+        run_browser_gate(false, false),
+        RunBrowserGate::Skip,
+    );
+
+    for d in [&empty, &branded, &dirshadow] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}

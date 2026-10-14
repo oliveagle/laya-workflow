@@ -1,11 +1,13 @@
-# The gate before you push, in about twenty seconds.
+# The gate before you push, in about half a minute.
 #
-#   scripts/verify.sh              build + unit tests + plugin gate + fast suite   ~18s warm
+#   scripts/verify.sh              build + unit tests + plugin gate + bdd + fast suite   ~30s warm
+#                                  (~14s of that is the real-Chrome bdd run; export
+#                                   LAYA_BDD_SKIP_BROWSER=1 to skip it, ~18s)
 #   scripts/verify.sh --full       ... and the timeout section too        +169s
 #   scripts/verify.sh --no-build   tests only (you already built)
 #   scripts/verify.sh spec engine  only these sections
 #
-# Why the split: `laya-workflow-tests` has 101 sections and 100 of them finish
+# Why the split: `laya-workflow-tests` has 103 sections and 102 of them finish
 # in about 10s. The other one, `capability-timeouts`, takes 168.9s on its own - it is
 # almost the entire runtime of a "full" run, and almost none of it is needed to
 # answer "did I break something". Running the whole thing by reflex is how a
@@ -108,10 +110,12 @@ printf '   [%ss]\n' "$((SECONDS-T0))"
 # bdd/features/*.feature is hand-written; every spec under it is generated.
 # This catches a step that no longer parses, or a scenario that compiles to a
 # spec the engine rejects - both of which would otherwise surface minutes later
-# as a red browser test. No Chrome, no network, so it is cheap enough for the
-# default gate. The logic lives in scripts/bdd/check.sh so that CI and this
-# script cannot drift apart; the CDP run is a separate, explicit gate
-# (`laya-workflow bdd run`).
+# as a red browser test. The logic lives in scripts/bdd/check.sh so that CI and
+# this script cannot drift apart. That script ends with `laya-workflow bdd run`,
+# which drives a real headless Chrome; it skips cleanly (exit 0) where no browser
+# is installed, so this gate is green on a browserless box while still exercising
+# the browser scenarios wherever a browser exists. Set LAYA_BDD_SKIP_BROWSER=1 to
+# skip that stage for a faster gate.
 stage "bdd transpile"
 if [ -d "$ROOT/bdd/features" ] && compgen -G "$ROOT/bdd/features/*.feature" >/dev/null; then
   if ! "$ROOT/scripts/bdd/check.sh" "$CLI" 2>"$TMPERR" | sed 's/^/   /'; then

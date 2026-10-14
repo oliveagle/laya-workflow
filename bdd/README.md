@@ -675,10 +675,15 @@ sequence past the 15s capability timeout.
 ## What is gated, and where
 
 **`scripts/bdd/check.sh`** is the one definition of "the BDD documents still
-build": check the step table, check the hand-written probe specs, run the
-plugin's argument-error probes, compile every `.feature`, then
-`laya-workflow validate` each generated spec. No Chrome, no network, ~0.4s. Two
-callers, so they cannot drift:
+build and still behave": check the step table, check the hand-written probe
+specs, run the plugin's argument-error probes, compile every `.feature`,
+`laya-workflow validate` each generated spec, run the offline behavioural
+smoke, and finally `laya-workflow bdd run`, which drives a real headless Chrome
+over CDP. The browser stage is **skip-not-fail**: `bdd run` prints a `skipped`
+line and exits 0 where no browser is installed, so the file stays green on a
+browserless CI runner, but a broken scenario fails wherever a browser exists.
+Set `LAYA_BDD_SKIP_BROWSER=1` to skip that stage for speed. Two callers, so
+they cannot drift:
 
 * `scripts/verify.sh` — the pre-push gate.
 * `.github/workflows/ci.yml` — a step in the offline job.
@@ -971,10 +976,14 @@ after a normal run: 0 dirs, 0 chrome procs
 after SIGINT mid-run: 0 dirs, 0 chrome procs
 ```
 
-**`laya-workflow bdd run`** is the CDP run. It needs a local Chrome, so it
-is an explicit local gate and deliberately *not* in CI: the runners install no
-browser, and adding one is a separate decision rather than something to smuggle
-in here.
+**`laya-workflow bdd run`** is the CDP run. It drives a real local Chrome and
+is the last stage of both `scripts/bdd/check.sh` and the pre-push gate
+(`scripts/verify.sh`). Where no browser is installed it skips cleanly (exit 0,
+a `skipped` line) rather than failing — the same skip-not-fail stance as the
+plugin fold gate — so a browserless CI runner stays green while a machine with
+a browser gates the scenarios for real. `--require-browser` turns that skip
+into an error when a guarantee is wanted; `LAYA_BDD_SKIP_BROWSER=1` skips the
+stage for speed.
 
 ## Known limits
 
