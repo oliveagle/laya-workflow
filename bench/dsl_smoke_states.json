@@ -6789,5 +6789,115 @@
       "ev_proposal": "accepted",
       "ev_gate": "malicious_pattern"
     }
+  },
+  "literature_synthesis_guard": {
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_oversized_output": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_duplicate_key": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_missing_field": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_bad_theme_name": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_too_many_claims": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_dangerous_token": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "accept_valid": {
+      "ev_proposal": "accepted",
+      "ev_gate": "none"
+    },
+    "reject_unknown_theme": {
+      "ev_proposal": "accepted",
+      "ev_gate": "unknown_theme"
+    },
+    "reject_theme_scope_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_gate": "theme_scope_mismatch"
+    },
+    "reject_duplicate_request_id": {
+      "ev_proposal": "accepted",
+      "ev_gate": "duplicate_request_id"
+    },
+    "reject_duplicate_claim_id": {
+      "ev_proposal": "accepted",
+      "ev_gate": "duplicate_claim_id"
+    },
+    "reject_duplicate_claim_text": {
+      "ev_proposal": "accepted",
+      "ev_gate": "duplicate_claim_text"
+    },
+    "reject_paper_id_not_found": {
+      "ev_proposal": "accepted",
+      "ev_gate": "paper_id_not_found"
+    },
+    "reject_paper_outside_theme": {
+      "ev_proposal": "accepted",
+      "ev_gate": "paper_outside_theme"
+    },
+    "reject_evidence_relation_mismatch": {
+      "ev_proposal": "accepted",
+      "ev_gate": "evidence_relation_mismatch"
+    },
+    "reject_evidence_not_in_abstract_corpus": {
+      "ev_proposal": "accepted",
+      "ev_gate": "evidence_not_in_abstract_corpus"
+    },
+    "reject_fabricated_citation": {
+      "ev_proposal": "accepted",
+      "ev_gate": "fabricated_citation"
+    },
+    "reject_contradictory_evidence_for_paper": {
+      "ev_proposal": "accepted",
+      "ev_gate": "contradictory_evidence_for_paper"
+    },
+    "reject_contradictory_evidence": {
+      "ev_proposal": "accepted",
+      "ev_gate": "contradictory_evidence"
+    },
+    "reject_citation_graph_disconnected": {
+      "ev_proposal": "accepted",
+      "ev_gate": "citation_graph_disconnected"
+    },
+    "reject_core_coverage_below_threshold": {
+      "ev_proposal": "accepted",
+      "ev_gate": "core_coverage_below_threshold"
+    },
+    "reject_no_supporting_evidence": {
+      "ev_proposal": "accepted",
+      "ev_gate": "no_supporting_evidence"
+    },
+    "revise_duplicate_evidence_collapsed": {
+      "ev_proposal": "accepted",
+      "ev_gate": "duplicate_evidence_collapsed"
+    },
+    "revise_insufficient_distinct_support": {
+      "ev_proposal": "accepted",
+      "ev_gate": "insufficient_distinct_support"
+    },
+    "revise_strength_downgraded": {
+      "ev_proposal": "accepted",
+      "ev_gate": "strength_downgraded"
+    },
+    "revise_strength_upgraded": {
+      "ev_proposal": "accepted",
+      "ev_gate": "strength_upgraded"
+    }
   }
 }

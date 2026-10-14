@@ -1,0 +1,223 @@
+{
+  "name": "literature_synthesis_guard",
+  "_bdd": {
+    "feature": "literature_synthesis_guard",
+    "feature_path": "bdd/workflows/ole_eval/literature_synthesis_guard.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed adaptive literature syntheses as a single triage node.\nThe model proposes only a theme and claim-to-evidence mappings; this workflow\nowns the fixed citation graph and abstract-like corpus, verifies paper IDs and\nquotes, computes citation-graph coverage and claim strength, and returns the\nACCEPT / REVISE / REJECT decision itself together with the engine's own first\nblocking cause. It never searches, downloads, or opens a paper.\nPort of code/qwen_vm/app_scenarios/literature_synthesis_guard.\nThe engine's own verbs: ACCEPT (the synthesis is fully supported), REVISE\n(only repairable issues: duplicate evidence, thin support, or a strength that\ndisagrees with the computed strength), or REJECT (one or more hard-blocking\nreasons), each carrying the engine's own first-seen cause.\nFolding boundaries (documented, not computed in the DSL):\n- The proposal envelope (the balanced-object extraction size cap, the\nduplicate-key rejection, the dangerous-token scan, exactly the keys\nrequest_id/review_id/theme/claims, the identifier/shape checks, the 1..8\nclaim count, the 4-key claim shape, the 1..16 evidence count, the 3-key\nevidence shape, the paper_id format, the whitelisted relation and the\nquote length) folds into the `proposal` choice.\n- The fixed paper corpus, the theme scopes and their core-paper sets are the\nauthority; the harness runs the deterministic review and hands the DSL one\nanswer per check. The engine appends every reason in stage order; the port\ncarries only the first-appended cause, so the ladder mirrors the engine's\nown stage order (ledger, theme, claims, evidence, graph, coverage, strength).\n- The engine's own stage machine (START -> PROPOSAL_PARSED -> THEME_CHECKED ->\nCLAIMS_CHECKED -> EVIDENCE_CHECKED -> GRAPH_CHECKED -> COVERAGE_CHECKED ->\nSTRENGTH_CHECKED -> DECIDED) is a linear pipeline with no alternative\nbranches, so a single evaluation is one node visit.\n- The in-memory request ledger (the DUPLICATE_REQUEST_ID replay guard) is not\nreplayed inside the DSL; the harness owns it.\nEmitted labels: reject_proposal, reject_duplicate_request_id, reject_unknown_theme,\nreject_theme_scope_mismatch, reject_duplicate_claim_id, reject_duplicate_claim_text,\nreject_paper_id_not_found, reject_paper_outside_theme, reject_evidence_relation_mismatch,\nreject_evidence_not_in_abstract_corpus, reject_fabricated_citation,\nreject_contradictory_evidence_for_paper, reject_contradictory_evidence,\nreject_citation_graph_disconnected, reject_core_coverage_below_threshold,\nreject_no_supporting_evidence, revise, accept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one synthesis proposal {request_id, review_id, theme, claims} whose claims and evidence satisfy the envelope (identifiers, 1..8 claims, 1..16 evidence each, whitelisted relations, paper_id format and quote lengths)?",
+          "criteria": {
+            "accepted": "exactly one structurally valid synthesis proposal",
+            "malformed": "no JSON object, an oversized output, a duplicate key, a dangerous token, a wrong key set, or a claim/evidence outside the envelope"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "gate": {
+          "type": "choice",
+          "instructions": "Against the fixed citation graph and abstract corpus, which first review cause does the engine report for this proposal?",
+          "criteria": {
+            "none": "every stage passed: the synthesis is accepted",
+            "duplicate_request_id": "the request_id was already reviewed in this session",
+            "unknown_theme": "the theme name is not a known theme",
+            "theme_scope_mismatch": "the theme scope does not match the known theme's scope",
+            "duplicate_claim_id": "two claims reuse a claim_id",
+            "duplicate_claim_text": "two claims carry the same normalized claim text",
+            "paper_id_not_found": "a cited paper_id is absent from the fixed corpus",
+            "paper_outside_theme": "a cited paper does not belong to the proposal's theme",
+            "evidence_relation_mismatch": "a quote is in the corpus but its declared relation differs from the corpus relation",
+            "evidence_not_in_abstract_corpus": "a quote is not a verbatim corpus evidence span for the paper",
+            "fabricated_citation": "a quote appears neither in the paper's evidence spans nor in its abstract",
+            "contradictory_evidence_for_paper": "one paper carries two different relations within a claim",
+            "contradictory_evidence": "a claim carries both supporting and refuting evidence",
+            "duplicate_evidence_collapsed": "a claim lists the same paper relation twice",
+            "citation_graph_disconnected": "the claim's valid papers are not connected in the citation graph",
+            "core_coverage_below_threshold": "the theme's core papers are covered below the minimum core coverage",
+            "no_supporting_evidence": "a claim has no supporting evidence",
+            "insufficient_distinct_support": "a claim has only one distinct supporting paper",
+            "strength_downgraded": "the proposed strength is stronger than the computed strength",
+            "strength_upgraded": "the proposed strength is weaker than the computed strength"
+          },
+          "heuristic": {
+            "answer_field": "ev_gate"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "duplicate_request_id"
+            },
+            "label": "reject_duplicate_request_id"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "unknown_theme"
+            },
+            "label": "reject_unknown_theme"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "theme_scope_mismatch"
+            },
+            "label": "reject_theme_scope_mismatch"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "duplicate_claim_id"
+            },
+            "label": "reject_duplicate_claim_id"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "duplicate_claim_text"
+            },
+            "label": "reject_duplicate_claim_text"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "paper_id_not_found"
+            },
+            "label": "reject_paper_id_not_found"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "paper_outside_theme"
+            },
+            "label": "reject_paper_outside_theme"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "evidence_relation_mismatch"
+            },
+            "label": "reject_evidence_relation_mismatch"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "evidence_not_in_abstract_corpus"
+            },
+            "label": "reject_evidence_not_in_abstract_corpus"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "fabricated_citation"
+            },
+            "label": "reject_fabricated_citation"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "contradictory_evidence_for_paper"
+            },
+            "label": "reject_contradictory_evidence_for_paper"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "contradictory_evidence"
+            },
+            "label": "reject_contradictory_evidence"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "citation_graph_disconnected"
+            },
+            "label": "reject_citation_graph_disconnected"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "core_coverage_below_threshold"
+            },
+            "label": "reject_core_coverage_below_threshold"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "no_supporting_evidence"
+            },
+            "label": "reject_no_supporting_evidence"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "duplicate_evidence_collapsed"
+            },
+            "label": "revise"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "insufficient_distinct_support"
+            },
+            "label": "revise"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "strength_downgraded"
+            },
+            "label": "revise"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "strength_upgraded"
+            },
+            "label": "revise"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}
