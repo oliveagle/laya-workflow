@@ -451,6 +451,21 @@ pub fn coverage_ledger_live_only() -> Result<BTreeMap<String, Value>> {
     Ok(out)
 }
 
+/// A repo-relative path with `/` separators on every OS.
+///
+/// `Path::display()` yields `\` on Windows, but every consumer of these strings
+/// — the `bench/dsl_coverage_ledger.json` keys, the `[spec]` lines the doc-check
+/// quotes, and the isolation-audit messages — is authored with `/`. Leaking the
+/// host separator made the coverage-ledger lookup miss every entry on Windows
+/// (`browser\github` vs `browser/github`), so `dsl smoke` reported each
+/// live-declared spec as unaccounted. Normalise at the source.
+pub fn slashed(p: &Path, root: &Path) -> String {
+    p.strip_prefix(root)
+        .unwrap_or(p)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 pub fn coverage_ledger_audit(
     specs: &[PathBuf],
     root: &Path,
@@ -462,7 +477,7 @@ pub fn coverage_ledger_audit(
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow::anyhow!("bench/dsl_coverage_ledger.json needs a `live_only` object"))?;
     let rel_of = |p: &Path| -> String {
-        let r = p.strip_prefix(root).unwrap_or(p).display().to_string();
+        let r = slashed(p, root);
         r.strip_suffix(".json").unwrap_or(&r).to_string()
     };
     let mut problems = Vec::new();
@@ -608,7 +623,7 @@ pub fn isolation_audit(repo_root: &Path) -> Vec<String> {
     let dsl = repo_root.join("dsl");
     let mut problems = Vec::new();
 
-    let rel = |p: &Path| p.strip_prefix(repo_root).unwrap_or(p).display().to_string();
+    let rel = |p: &Path| slashed(p, repo_root);
     let ext = |p: &Path| p.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
 
     // (1) the BDD tree carries sources, never json; its sources are filed under
@@ -746,7 +761,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                 continue;
             }
         };
-        let rel = spec.strip_prefix(&root).unwrap_or(spec).display().to_string();
+        let rel = slashed(spec, &root);
         if !opts.quiet {
             println!("[spec] {rel}  start={} nodes={}", wf.start, wf.nodes.len());
         }

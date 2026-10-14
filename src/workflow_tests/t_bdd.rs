@@ -5293,4 +5293,22 @@ pub fn test_bdd_platform_bound_skip(h: &mut Harness) {
         "bdd: a capability with no `platforms` is portable",
         !platform_bound_here(&portable),
     );
+
+    // Windows `Path::display()` yields `\`; the coverage-ledger keys, the
+    // `[spec]` lines and the audit messages are all authored with `/`. The
+    // normaliser is what keeps the ledger lookup from missing every entry on
+    // Windows (`browser\github` vs `browser/github`). Pinned offline with a
+    // literal backslash so it holds on any OS.
+    use laya_workflow::dsl_smoke::slashed;
+    use std::path::Path as P;
+    h.eq(
+        "bdd: slashed normalises backslashes to forward slashes",
+        slashed(P::new("browser\\github.json"), P::new("dsl")),
+        "browser/github.json".to_string(),
+    );
+    h.eq(
+        "bdd: slashed strips the root prefix",
+        slashed(P::new("/repo/dsl/a/b.json"), P::new("/repo/dsl")),
+        "a/b.json".to_string(),
+    );
 }
