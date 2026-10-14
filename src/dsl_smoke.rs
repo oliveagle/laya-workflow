@@ -374,6 +374,21 @@ fn is_private_host(host: &str) -> bool {
 /// the ledger cannot rot into a silent hole.
 ///
 /// Returns `(offline_verified, live_declared, problems)`.
+/// The `bench/dsl_coverage_ledger.json` `live_only` map: rel-spec (no `.json`)
+/// → `{covered_by, reason}`. This is the authority for "this spec is *not*
+/// behaviour-verified offline": `dsl smoke` counts its size as the live-declared
+/// set, and `bdd_list` / `bdd_decide` report it per spec so all three agree.
+pub fn coverage_ledger_live_only() -> Result<BTreeMap<String, Value>> {
+    let ledger = load_table("dsl_coverage_ledger.json")?;
+    let mut out: BTreeMap<String, Value> = BTreeMap::new();
+    if let Some(o) = ledger.get("live_only").and_then(Value::as_object) {
+        for (k, v) in o {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    Ok(out)
+}
+
 pub fn coverage_ledger_audit(
     specs: &[PathBuf],
     root: &Path,

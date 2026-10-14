@@ -464,7 +464,9 @@ echoes that contract back —
 the declared `inputs` (every heuristic source field, every `${state.*}` a node
 interpolates, and the fields a kind reads directly) and the `missing_inputs` the
 state did not supply, so an under-fed call is visible instead of a silent
-defaults-only walk) → run `bdd round-trip` +
+defaults-only walk; and `offline` (with `bdd_list`'s `offline_count`/`live_count`)
+says whether the graph is offline-behaviour-verified at all, or only live-tested
+— `verified_by`/`why_live` name the live gate) → run `bdd round-trip` +
 `check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →
 audit → lift a legacy spec → list the corpus → run a decision — runs over MCP
 without shelling out.

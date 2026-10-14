@@ -288,10 +288,11 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **960
    每问 `questions`（id+type+`answer_field`）/ `inputs`（离线调用要喂的 state 字段＝每问 heuristic 的源字段 `answer_field`/`field`/`extract_numeric` ＋ 动作里
    所有 `${state.X}` 插值 ＋ 类型隐含读（如 `ui_proposal` 的 `surface`/`snapshot_hash`））/ `outputs`（该图能返回的全部
    决策 label 闭集＝`bdd_decide` 能回的全部 label：阶梯 label / gate 的 BLOCK·ALLOW·CONFIRM / combine 的 `route`（choice criteria 去掉
-   fallback，再加 review_label）/ rubric 的 `status`（scored·human_review）；单节点图即全量、多节点图取 trace 末节点）
+   fallback，再加 review_label）/ rubric 的 `status`（scored·human_review）；单节点图即全量、多节点图取 trace 末节点）/ `offline`（true＝该图经 `dsl smoke`
+   离线行为验证，离线 `bdd_decide` 可信；false＝只在 live 验证过——`verified_by` 指 gate、`why_live` 说明原因，离线调用只是默认走查）+ 顶层 `offline_count`/`live_count`）
    —— `bdd_list` 递归扫 `dsl/` 子树（与 `bdd_decide {name}` 的解析同源，`cat` 取相对子路径，如 `routing/sub`）；再用 **MCP `bdd_decide`**
    （`name` 或 `feature_text`/`feature_path`/`spec_path` + `state` → `label`（终态节点的决策投影：threshold label / gate_action / combine `route` / rubric `status`，都没有才回落 `stop`）+ 全 `trace` + `result` + 决策契约
-   `inputs`/`missing_inputs`，与 `dsl smoke` 同一离线确定性引擎）跑它：`missing_inputs` 非空说明有声明字段没喂、
+   `inputs`/`missing_inputs`/`offline`/`verified_by`/`why_live`，与 `dsl smoke` 同一离线确定性引擎）跑它：`missing_inputs` 非空说明有声明字段没喂、
    label 可能来自默认值；`inputs` 为空说明离线引擎确实不读 state（该图需真实模型后端驱动）——
    让 BDD 图成为 agent **可发现、可调用、且诚实**的决策核心，而不只是可写的产物。
 9. 全量门禁：`laya-workflow bdd round-trip`（160/160 复现）+ `scripts/bdd/check.sh`。

@@ -2978,6 +2978,24 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
             "rubric_usefulness_hint": "high", "rubric_clarity_hint": "high"}}))
         .unwrap();
     h.eq("bdd_decide: rubric graph returns its status", rubric["label"].clone(), json!("scored"));
+    // Offline honesty rides along with the decision contract: an offline-verified
+    // graph reports offline=true and no live gate; a live-only graph cannot be
+    // walked offline, so the call fails with the live gate named rather than
+    // returning a defaults-only label.
+    let off = t.call(&json!({"name": "agent_permission_gate", "state": {}})).unwrap();
+    h.eq("bdd_decide: an offline graph reports offline=true", off["offline"].clone(), json!(true));
+    h.check(
+        "bdd_decide: an offline graph carries no live gate",
+        off["verified_by"].is_null() && off["why_live"].is_null(),
+    );
+    let live_err = t
+        .call(&json!({"name": "arxiv", "state": {}}))
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "bdd_decide: a live-only graph fails offline and names its live gate",
+        live_err.contains("not offline-verifiable") && live_err.contains("bdd live"),
+    );
 }
 
 
@@ -2990,6 +3008,43 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
     let all = t.call(&json!({})).unwrap();
     let total = all["count"].as_u64().unwrap();
     h.check("bdd_list: lists the whole corpus", total >= 160);
+    // Offline honesty partitions the corpus: `offline_count` + `live_count` == the
+    // returned count, and every graph says whether offline behaviour-verification
+    // exists (same ledger `dsl smoke` counts as the live-declared set).
+    let offline = all["offline_count"].as_u64().unwrap();
+    let live = all["live_count"].as_u64().unwrap();
+    h.check(
+        "bdd_list: offline_count + live_count == count",
+        offline + live == total,
+    );
+    h.eq("bdd_list: unfiltered live_count is the ledger's 35", live, 35);
+    let live_wf = all["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == "arxiv")
+        .expect("browser/arxiv is in the corpus");
+    h.eq(
+        "bdd_list: a live-only graph reports offline=false",
+        live_wf["offline"].clone(),
+        json!(false),
+    );
+    h.check(
+        "bdd_list: a live-only graph names its live gate + reason",
+        live_wf["verified_by"].as_str().map(|s| !s.is_empty()).unwrap_or(false)
+            && live_wf["why_live"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+    );
+    let off_wf = t.call(&json!({"name": "agent_permission_gate"})).unwrap();
+    let off_entry = &off_wf["workflows"][0];
+    h.eq(
+        "bdd_list: an offline graph reports offline=true",
+        off_entry["offline"].clone(),
+        json!(true),
+    );
+    h.check(
+        "bdd_list: an offline graph carries no live gate",
+        off_entry["verified_by"].is_null() && off_entry["why_live"].is_null(),
+    );
     let per_cat = t.call(&json!({"cat": "guards"})).unwrap();
     h.check(
         "bdd_list: cat filter narrows",
