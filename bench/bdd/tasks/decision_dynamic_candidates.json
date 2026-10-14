@@ -1,0 +1,93 @@
+{
+  "id": "decision_dynamic_candidates",
+  "intent": "Select exactly one candidate id out of a list that code extracted from the source text: scan the text for candidate spans, then decide which candidate a stated policy identifies. The model only picks an id from the candidates the code produced - it never generates the value; the selected id is turned back into the real value by a capability. Route to a not-found node when no candidate is clearly identified, and carry the candidate list plus the picked value through.",
+  "feature": "bdd/workflows/capabilities/span_selection.feature",
+  "known_steps": [
+    {
+      "kind": "given",
+      "text": "the workflow runs at most 6 iterations"
+    },
+    {
+      "kind": "given",
+      "text": "the capabilities"
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"has_text\" asks \"Is there source text to scan?\""
+    },
+    {
+      "kind": "given",
+      "text": "answer \"B\" when the field \"text\" contains \"@\" with hit 0.9"
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"billing_contact\" asks \"Which candidate email address is explicitly identified by text as the billing contact? Select none when the text does not establish exactly one.\""
+    },
+    {
+      "kind": "given",
+      "text": "the answer comes from the field \"selected_id\""
+    },
+    {
+      "kind": "given",
+      "text": "a choice question \"ok\" asks \"proceed\""
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"select\""
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"pick\""
+    },
+    {
+      "kind": "when",
+      "text": "any other answer goes to \"STOP\""
+    },
+    {
+      "kind": "when",
+      "text": "the answer \"none\" goes to \"not_found\""
+    },
+    {
+      "kind": "then",
+      "text": "call the capability \"spans\""
+    },
+    {
+      "kind": "then",
+      "text": "call the capability \"pick_candidate\""
+    },
+    {
+      "kind": "then",
+      "text": "keep the answer to \"billing_contact\""
+    },
+    {
+      "kind": "then",
+      "text": "allow up to 1 retries"
+    }
+  ],
+  "unknown_steps": [
+    {
+      "kind": "given",
+      "text": "a dynamic choice question \"billing_contact\" asks \"Which one?\""
+    },
+    {
+      "kind": "given",
+      "text": "the options are materialised from the state \"candidates\""
+    },
+    {
+      "kind": "then",
+      "text": "select from the state \"candidates\""
+    },
+    {
+      "kind": "then",
+      "text": "pick the candidate with id \"candidate_0\""
+    },
+    {
+      "kind": "then",
+      "text": "materialise the candidates from state"
+    },
+    {
+      "kind": "when",
+      "text": "when no candidate is found go to \"not_found\""
+    }
+  ]
+}

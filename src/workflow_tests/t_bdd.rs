@@ -2024,7 +2024,7 @@ pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
         .filter(|p| p.extension().map(|e| e == "json").unwrap_or(false))
         .collect();
     files.sort();
-    h.check("bdd: score corpus tasks >= 13", files.len() >= 13);
+    h.check("bdd: score corpus tasks >= 14", files.len() >= 14);
     let mut decision = 0usize;
     let mut browser = 0usize;
     for f in &files {
@@ -2045,7 +2045,7 @@ pub fn test_bdd_score_corpus_floor(h: &mut Harness) {
             browser += 1;
         }
     }
-    h.check("bdd: decision score tasks >= 10", decision >= 10);
+    h.check("bdd: decision score tasks >= 11", decision >= 11);
     h.check("bdd: browser score tasks >= 3", browser >= 3);
 }
 
@@ -2067,6 +2067,7 @@ pub fn test_bdd_score_e2e_decision(h: &mut Harness) {
         "decision_memory_admission",
         "decision_gate_action",
         "decision_risk_control",
+        "decision_dynamic_candidates",
     ];
     let report = std::env::temp_dir().join(format!("laya-bdd-score-e2e-{}.json", std::process::id()));
     let _ = std::fs::remove_file(&report);
@@ -2079,7 +2080,7 @@ pub fn test_bdd_score_e2e_decision(h: &mut Harness) {
     h.eq("bdd: score --run decision gate passes", rc.unwrap_or(-1), 0);
     let d: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
     let tasks = d["tasks"].as_array().unwrap();
-    h.eq("bdd: score --run covers all decision tasks", tasks.len(), 10);
+    h.eq("bdd: score --run covers all decision tasks", tasks.len(), 11);
     for t in tasks {
         let id = t["id"].as_str().unwrap_or("?");
         h.check(
