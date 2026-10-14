@@ -1,0 +1,325 @@
+{
+  "name": "agent_permission_gate",
+  "_bdd": {
+    "feature": "agent_permission_gate",
+    "feature_path": "bdd/workflows/guards/agent_permission_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval self_evolving permission workflow (workflows/agent_permission.py):\na deterministic permission state machine unauthenticated -> authenticated ->\nauthorized -> blocked, driven by typed events, plus a calibrated-risk verdict\n(BLOCK / ESCALATE / EXECUTE). The model only proposes the event and its risk\nband; the state machine and the verdict thresholds are deterministic. The\nreference walks a fixed-length trace, so the port makes the trace's end an\nexplicit `halt` event and each run is a bounded walk.",
+  "start": "unauthenticated",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "unauthenticated",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "No session yet. login authenticates; logout is a no-op; authorize, request and violation are refused here.",
+          "criteria": {
+            "login": "present credentials and authenticate",
+            "authorize": "request a scope -- refused until authenticated",
+            "request": "perform a scoped action -- refused",
+            "violation": "break the permission rules",
+            "logout": "end the session",
+            "halt": "the trace ends here; stop the walk"
+          },
+          "heuristic": {
+            "answer_field": "ev_unauthenticated"
+          }
+        },
+        "risk": {
+          "type": "choice",
+          "instructions": "Calibrated risk of the proposed action: low below 0.4, uncertain 0.4 up to 0.5, high at or above 0.5?",
+          "criteria": {
+            "low": "calibrated risk below 0.4",
+            "uncertain": "calibrated risk 0.4 up to 0.5, confidence < 0.6",
+            "high": "calibrated risk at or above 0.5"
+          },
+          "heuristic": {
+            "answer_field": "ev_risk"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "login": "authenticated",
+          "logout": "unauthenticated",
+          "authorize": "refused",
+          "request": "refused",
+          "violation": "blocked"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "risk",
+              "answer": "high"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "answer": "uncertain"
+            },
+            "label": "ESCALATE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "EXECUTE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "authenticated",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "Authenticated but unscoped. authorize grants a scope; login re-authenticates; request is refused until authorized.",
+          "criteria": {
+            "login": "present credentials and authenticate",
+            "authorize": "request a scope -- granted here",
+            "request": "perform a scoped action -- refused",
+            "violation": "break the permission rules",
+            "logout": "end the session",
+            "halt": "the trace ends here; stop the walk"
+          },
+          "heuristic": {
+            "answer_field": "ev_authenticated"
+          }
+        },
+        "risk": {
+          "type": "choice",
+          "instructions": "Calibrated risk of the proposed action: low below 0.4, uncertain 0.4 up to 0.5, high at or above 0.5?",
+          "criteria": {
+            "low": "calibrated risk below 0.4",
+            "uncertain": "calibrated risk 0.4 up to 0.5, confidence < 0.6",
+            "high": "calibrated risk at or above 0.5"
+          },
+          "heuristic": {
+            "answer_field": "ev_risk"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "authorize": "authorized",
+          "login": "authenticated",
+          "logout": "unauthenticated",
+          "request": "refused",
+          "violation": "blocked"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "risk",
+              "answer": "high"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "answer": "uncertain"
+            },
+            "label": "ESCALATE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "EXECUTE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "authorized",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "Authorized with a scope. request is allowed; authorize again is refused; login re-authenticates back to authenticated.",
+          "criteria": {
+            "login": "present credentials and authenticate",
+            "authorize": "request a scope -- refused, already authorized",
+            "request": "perform a scoped action -- allowed",
+            "violation": "break the permission rules",
+            "logout": "end the session",
+            "halt": "the trace ends here; stop the walk"
+          },
+          "heuristic": {
+            "answer_field": "ev_authorized"
+          }
+        },
+        "risk": {
+          "type": "choice",
+          "instructions": "Calibrated risk of the proposed action: low below 0.4, uncertain 0.4 up to 0.5, high at or above 0.5?",
+          "criteria": {
+            "low": "calibrated risk below 0.4",
+            "uncertain": "calibrated risk 0.4 up to 0.5, confidence < 0.6",
+            "high": "calibrated risk at or above 0.5"
+          },
+          "heuristic": {
+            "answer_field": "ev_risk"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "request": "authorized",
+          "login": "authenticated",
+          "logout": "unauthenticated",
+          "authorize": "refused",
+          "violation": "blocked"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "risk",
+              "answer": "high"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "answer": "uncertain"
+            },
+            "label": "ESCALATE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "EXECUTE"
+          }
+        ]
+      }
+    },
+    {
+      "name": "blocked",
+      "primary_q": "event",
+      "questions": {
+        "event": {
+          "type": "choice",
+          "instructions": "Blocked by a violation. The state machine never leaves blocked, so every event is refused.",
+          "criteria": {
+            "login": "present credentials and authenticate",
+            "authorize": "request a scope",
+            "request": "perform a scoped action",
+            "violation": "break the permission rules",
+            "logout": "end the session",
+            "halt": "the trace ends here; stop the walk"
+          },
+          "heuristic": {
+            "answer_field": "ev_blocked"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "login": "refused",
+          "authorize": "refused",
+          "request": "refused",
+          "violation": "blocked",
+          "logout": "refused"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "event",
+        "rules": [
+          {
+            "when": {
+              "question": "event",
+              "answer": "login"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "BLOCK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "refused",
+      "primary_q": "risk",
+      "questions": {
+        "risk": {
+          "type": "choice",
+          "instructions": "The permission state machine refused this event, so the action is blocked whatever the calibrated risk.",
+          "criteria": {
+            "low": "calibrated risk below 0.4",
+            "uncertain": "calibrated risk 0.4 up to 0.5, confidence < 0.6",
+            "high": "calibrated risk at or above 0.5"
+          },
+          "heuristic": {
+            "answer_field": "ev_risk"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "risk",
+        "rules": [
+          {
+            "when": {
+              "question": "risk",
+              "answer": "high"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "answer": "uncertain"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "BLOCK"
+          }
+        ]
+      }
+    }
+  ]
+}

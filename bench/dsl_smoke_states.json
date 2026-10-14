@@ -6899,5 +6899,30 @@
       "ev_proposal": "accepted",
       "ev_gate": "strength_upgraded"
     }
+  },
+  "agent_permission_gate": {
+    "auth_execute": {
+      "ev_unauthenticated": "login",
+      "ev_authenticated": "authorize",
+      "ev_authorized": "halt",
+      "ev_risk": "low"
+    },
+    "violation_blocked": {
+      "ev_unauthenticated": "violation",
+      "ev_blocked": "halt",
+      "ev_risk": "low"
+    },
+    "refused_request": {
+      "ev_unauthenticated": "request",
+      "ev_risk": "low"
+    },
+    "escalate_uncertain": {
+      "ev_unauthenticated": "halt",
+      "ev_risk": "uncertain"
+    },
+    "block_high": {
+      "ev_unauthenticated": "halt",
+      "ev_risk": "high"
+    }
   }
 }

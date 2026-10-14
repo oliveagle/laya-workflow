@@ -3083,5 +3083,71 @@
     "revise_insufficient_distinct_support": "revise",
     "revise_strength_downgraded": "revise",
     "revise_strength_upgraded": "revise"
+  },
+  "agent_permission_gate": {
+    "auth_execute": {
+      "result.label": "EXECUTE",
+      "result.ev_unauthenticated": "login",
+      "result.ev_authenticated": "authorize",
+      "result.ev_authorized": "halt",
+      "result.ev_risk": "low",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "unauthenticated",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "login",
+      "trace.steps.0.next": "authenticated",
+      "trace.steps.1.node": "authenticated",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "authorize",
+      "trace.steps.1.next": "authorized",
+      "trace.steps.2.node": "authorized",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "halt"
+    },
+    "violation_blocked": {
+      "result.label": "BLOCK",
+      "result.ev_unauthenticated": "violation",
+      "result.ev_blocked": "halt",
+      "result.ev_risk": "low",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "unauthenticated",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "violation",
+      "trace.steps.0.next": "blocked",
+      "trace.steps.1.node": "blocked",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "halt"
+    },
+    "refused_request": {
+      "result.label": "BLOCK",
+      "result.ev_unauthenticated": "request",
+      "result.ev_risk": "low",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "unauthenticated",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "request",
+      "trace.steps.0.next": "refused",
+      "trace.steps.1.node": "refused",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "low"
+    },
+    "escalate_uncertain": {
+      "result.label": "ESCALATE",
+      "result.ev_unauthenticated": "halt",
+      "result.ev_risk": "uncertain",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "unauthenticated",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "halt"
+    },
+    "block_high": {
+      "result.label": "BLOCK",
+      "result.ev_unauthenticated": "halt",
+      "result.ev_risk": "high",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "unauthenticated",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "halt"
+    }
   }
 }
