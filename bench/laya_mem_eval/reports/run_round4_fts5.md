@@ -1,7 +1,7 @@
 # laya-mem evaluation report (2026-09-30 18:39)
 
-- binary: `/home/oliveagle/repos/github.com/oliveagle/laya-workflow/target/debug/laya-workflow`
-- spec dir: `/home/oliveagle/repos/github.com/oliveagle/laya-workflow/dsl/laya_mem`
+- binary: `target/debug/laya-workflow` (debug build of this repo)
+- spec dir: `dsl/laya_mem` (this repo's laya-mem specs)
 
 ## Gate metrics
 
