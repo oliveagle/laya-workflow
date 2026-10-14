@@ -69,13 +69,13 @@ laya-workflow bdd live                           # 实战：29 个真实网站�
 
 ```bash
 # 1. 改 .feature / plugins/bdd/main.rhai
-# 2. 本地门禁（不需要 Chrome）
+# 2. 本地门禁（编译 / 词汇 / 离线 smoke；check.sh 末段真跑浏览器，无浏览器自动跳过）
 laya-workflow bdd build --assist
 # 3. 有词汇表外步骤？先看 --assist 的建议（带置信度），
 #    把可接受的规则写进 plugins/bdd/main.rhai，再重跑。建议永远不直接编译。
-# 4. 需要真跑浏览器（有 Chrome 的机器 / CI）
-laya-workflow bdd run
-scripts/bdd/check.sh            # 或 scripts/verify.sh，含本门禁
+# 4. 真跑浏览器（有 Chrome 的机器）：
+laya-workflow bdd run           # 无浏览器时打印 skipped 并 exit 0；--require-browser 则改判 error
+scripts/bdd/check.sh            # 或 scripts/verify.sh：编译 + 离线 smoke + 浏览器真跑（无浏览器自动跳过）
 # 5. 生产 IT（可选，有部署目标时）
 laya-workflow bdd build --profile production --base-url <real>
 laya-workflow bdd run --profile production --base-url <real>
@@ -115,7 +115,7 @@ laya-workflow bdd run --profile production --base-url <real>
 - `laya-workflow bdd vocabulary-check` — 词汇表（step → op/assertion）
 - `laya-workflow bdd transpile` — 编译器（Gherkin → spec）
 - `laya-workflow bdd build` — 统一 accuracy gate + 多产物（本指南的核心命令）
-- `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）
+- `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）；无浏览器时 skip（exit 0），`--require-browser` 改判 error，`LAYA_BDD_SKIP_BROWSER=1` 关掉 `check.sh` 里的这一段
 - `laya-workflow bdd build --assist` — needle 建议模块（只建议，不编译）
 - `bench/bdd/` — bdd 工具链 JSON 数据（authoring 造册 `tasks/*.json`、实战结果 `live/`、`args_probes.json`）；`bdd/` 内无任何 `.json`
 - `bench/bdd/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
