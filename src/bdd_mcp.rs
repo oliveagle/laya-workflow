@@ -663,7 +663,7 @@ impl McpTool for DecideTool {
         }
 
         let mut rel_key: Option<String> = None;
-        let (wf, spec_value) = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
+        let (wf, spec_value, spec_dir) = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
             let path = if std::path::Path::new(rel).is_absolute() {
                 std::path::PathBuf::from(rel)
             } else {
@@ -678,6 +678,7 @@ impl McpTool for DecideTool {
                 crate::spec::load_file(&path.to_string_lossy())
                     .map_err(|e| anyhow!("bdd_decide: cannot load spec {rel}: {e:#}"))?,
                 sv,
+                path.parent().map(|d| d.to_path_buf()),
             )
         } else if let Some(name) = args.get("name").and_then(Value::as_str) {
             // Resolve a workflow by its port name across the repo dsl tree, so
@@ -701,6 +702,7 @@ impl McpTool for DecideTool {
                         crate::spec::load_file(&hits[0].to_string_lossy())
                             .map_err(|e| anyhow!("bdd_decide: cannot load {:?}: {e:#}", hits[0]))?,
                         sv,
+                        hits[0].parent().map(|d| d.to_path_buf()),
                     )
                 }
                 n => {
@@ -746,8 +748,15 @@ impl McpTool for DecideTool {
                 crate::spec::from_spec_with_dir(&spec, None, None)
                     .map_err(|e| anyhow!("bdd_decide: {e:#}"))?,
                 sv,
+                None,
             )
         };
+        // The graph the engine *walks* with reference nodes inlined — the same node
+        // list `bdd_list` reports. The step-wise `ask` names an inlined node
+        // (`{ref}::{node}`), so its contract must be read from the expanded spec,
+        // not the raw one; for a graph with no reference node this is the spec itself.
+        let spec_value = crate::spec::expand_spec_nodes(&spec_value, spec_dir.as_deref())
+            .unwrap_or(spec_value);
 
         // The state fields the graph reads (its questions' heuristic sources, its
         // `${state.*}` interpolations, kind-implicit reads) and which of them the
@@ -1269,6 +1278,11 @@ impl McpTool for ListTool {
             if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
                 continue;
             }
+            // Report the graph the engine *walks*: inline every `{"workflow": …}`
+            // reference node (namespaced) so a composed workflow's inner nodes
+            // appear with their own contracts. Falls back to the raw node list if
+            // expansion fails (a broken reference would fail the engine too).
+            let spec = crate::spec::expand_spec_nodes(&spec, p.parent()).unwrap_or(spec);
             // The closed output vocabulary of the graph: every label any node can
             // emit (for a single-node graph this is exactly its output set; a
             // multi-node graph's terminal label is the last node's, visible in the

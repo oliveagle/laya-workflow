@@ -3996,6 +3996,12 @@ pub fn test_bdd_list_routes(h: &mut Harness) {
             Ok(v) => v,
             Err(_) => continue,
         };
+        // P102: `bdd_list` reports the graph the engine *walks* — `{"workflow": …}`
+        // reference nodes inlined (namespaced) — so the projection identity is
+        // against the *expanded* spec, which is also what makes a composed spec
+        // (e.g. intake_pipeline_nested) comparable at all.
+        let raw = laya_workflow::spec::expand_spec_nodes(&raw, spec_path.parent())
+            .unwrap_or(raw);
         let spec_nodes = raw["nodes"].as_array().cloned().unwrap_or_default();
         let listed_nodes = wf["nodes"].as_array().unwrap();
         h.eq(
@@ -4060,6 +4066,10 @@ pub fn test_bdd_list_routes(h: &mut Harness) {
             Ok(w) => w,
             Err(_) => continue,
         };
+        // Same expanded view as part 1: after inlining, a nested step's node name
+        // (`{ref}::{inner}`) is a real entry here, so its transition is checked
+        // rather than skipped.
+        let raw = laya_workflow::spec::expand_spec_nodes(&raw, path.parent()).unwrap_or(raw);
         let nodes = raw["nodes"].as_array().cloned().unwrap_or_default();
         let mut errored = false;
         let mut agrees = true;
@@ -4078,13 +4088,9 @@ pub fn test_bdd_list_routes(h: &mut Harness) {
                 let answer = &step["answer"];
                 let next = step["next"].clone();
                 let Some(sn) = nodes.iter().find(|n| n["name"] == nm) else {
-                    // A nested sub-workflow step (a container handoff) is recorded
-                    // as `<container>::<inner>`; its routing belongs to the inner
-                    // graph, so skip it here rather than fail on a name the top
-                    // level does not own. A missing non-nested name is a real hole.
-                    if !nm.contains("::") {
-                        agrees = false;
-                    }
+                    // Every step the engine took must be an expanded node: a miss
+                    // is a real hole (a name the inventory does not own).
+                    agrees = false;
                     continue;
                 };
                 let (routes, default) = spec_edge(sn);
@@ -4636,7 +4642,6 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
 
     let mut driven_states = 0usize;
     let mut contract_ok = 0usize;
-    let mut nested = 0usize;
     let mut specs_driven: BTreeSet<String> = BTreeSet::new();
     // Corpus-wide heuristic-path contract audit (P98): every answer the offline
     // heuristic itself produced must be one its question accepts (or the DSL's
@@ -4664,18 +4669,6 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
         if network_bound_external(&raw) {
-            continue;
-        }
-        // A nested sub-workflow container pulls in another spec's nodes at run
-        // time; the top-level contract cannot describe their questions, so skip
-        // (the ledger's offline set is otherwise fully driven).
-        if raw
-            .get("nodes")
-            .and_then(Value::as_array)
-            .map(|ns| ns.iter().any(|n| n.get("workflow").is_some()))
-            .unwrap_or(false)
-        {
-            nested += 1;
             continue;
         }
         let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
@@ -4916,9 +4909,12 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
         ),
         driven_states == contract_ok && specs_driven.len() >= 125,
     );
+    // P102: a composed (sub-workflow) spec is no longer skipped — `bdd_list`
+    // now reports the inlined node list, so its per-node contract describes the
+    // sub-graph's nodes and the whole walk is drivable from the inventory.
     h.check(
-        &format!("answers-from-list: only the {nested} nested sub-workflow spec(s) are skipped"),
-        nested <= 2,
+        "answers-from-list: the composed (sub-workflow) spec is driven from the inventory, not skipped",
+        specs_driven.contains("intake_pipeline_nested"),
     );
     h.check(
         &format!(
@@ -4947,17 +4943,15 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             names.len() <= 8,
         );
     }
-    // The registered set minus what we drove is the audited skip set: the nested
-    // sub-workflow spec, and any state whose offline walk needs an unreachable
-    // local endpoint (it runs in the integration job). It must stay tiny + named.
+    // The registered set minus what we drove is the audited skip set: only the
+    // spec whose offline walk needs an external network endpoint (it runs in the
+    // integration job). It must stay tiny + named.
     let mut no_walk: BTreeSet<String> = states_obj.keys().cloned().collect();
     for s in &specs_driven {
         no_walk.remove(s);
     }
     h.check(
-        &format!("answers-from-list: not driven (nested / offline-unreachable) = {no_walk:?}"),
-        no_walk.len() == 2
-            && no_walk.contains("hf_trending")
-            && no_walk.contains("intake_pipeline_nested"),
+        &format!("answers-from-list: not driven (external only) = {no_walk:?}"),
+        no_walk.len() == 1 && no_walk.contains("hf_trending"),
     );
 }

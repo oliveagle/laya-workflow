@@ -1114,6 +1114,195 @@ fn validate_graph_semantics(
     Ok(())
 }
 
+/// Inline every `{"workflow": …}` reference node into a plain-node spec — the
+/// node list the engine actually *walks*. The engine inlines the same way
+/// (namespaced `"{ref}::"` node names; edges and `start` redirected; a
+/// reference node's `edge.default` becomes the sub-graph's completion
+/// handoff), so this JSON view is the surface `bdd_list` reports and the
+/// contract `bdd_decide` names for an inlined node. It binds no capability, so
+/// it is for readers (`bdd_list`, the step-wise `ask`), never for `from_spec`.
+/// Returns a spec of the same shape when there is no reference node.
+pub fn expand_spec_nodes(spec: &Value, base_dir: Option<&std::path::Path>) -> Result<Value> {
+    let mut ref_stack: Vec<String> = Vec::new();
+    expand_spec_nodes_cycle(spec, base_dir, &mut ref_stack)
+}
+
+fn expand_spec_nodes_cycle(
+    spec: &Value,
+    base_dir: Option<&std::path::Path>,
+    ref_stack: &mut Vec<String>,
+) -> Result<Value> {
+    check_version(spec)?;
+    let start = spec
+        .get("start")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("spec missing 'start'"))?
+        .to_string();
+    let node_list = spec
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| anyhow!("spec missing 'nodes' array"))?;
+
+    let mut out_nodes: Vec<Value> = Vec::with_capacity(node_list.len());
+    // (sub_name, prefixed_start) pairs, so nodes emitted *after* the reference
+    // are redirected too (order-independent) — mirrors the engine.
+    let mut ref_redirects: Vec<(String, String)> = Vec::new();
+    for n in node_list {
+        let Some(wref) = n.get("workflow") else {
+            out_nodes.push(n.clone());
+            continue;
+        };
+        let (sub_spec, sub_dir) = resolve_ref_dir(wref, base_dir)?;
+        // Cycle guard: a workflow must not reference itself transitively.
+        let ident = sub_spec
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .or_else(|| match wref {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            });
+        if let Some(id) = &ident {
+            if ref_stack.iter().any(|s| s == id) {
+                let mut chain = ref_stack.clone();
+                chain.push(id.clone());
+                bail!("workflow reference cycle detected: {}", chain.join(" -> "));
+            }
+            ref_stack.push(id.clone());
+        }
+        let sub_name = n
+            .get("name")
+            .and_then(|v| v.as_str())
+            .or_else(|| sub_spec.get("name").and_then(|v| v.as_str()))
+            .unwrap_or("sub")
+            .to_string();
+        let prefix = format!("{sub_name}::");
+        // Expand the sub-graph's own nodes first (recursively), so a nested
+        // reference inside the sub is already flattened when we re-prefix.
+        let sub = expand_spec_nodes_cycle(&sub_spec, sub_dir.as_deref(), ref_stack)?;
+        if ident.is_some() {
+            ref_stack.pop();
+        }
+        let continue_to = n
+            .get("edge")
+            .and_then(|e| e.get("default"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let sub_start = format!(
+            "{prefix}{}",
+            sub.get("start").and_then(|v| v.as_str()).unwrap_or("start")
+        );
+        ref_redirects.push((sub_name.clone(), sub_start.clone()));
+        // Nodes emitted before the reference still point at the bare sub-name.
+        for existing in out_nodes.iter_mut() {
+            redirect_node_dests(existing, &sub_name, &sub_start);
+        }
+        let sub_nodes = sub
+            .get("nodes")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        // Names of the (already-expanded) sub nodes: only a dest that *is* one of
+        // them is re-prefixed; a `STOP` becomes the completion handoff.
+        let sub_names: std::collections::HashSet<String> = sub_nodes
+            .iter()
+            .filter_map(|x| x.get("name").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+        for sn in &sub_nodes {
+            let mut nn = sn.clone();
+            let sn_name = nn
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if let Some(o) = nn.as_object_mut() {
+                o.insert("name".to_string(), json!(format!("{prefix}{sn_name}")));
+            }
+            if let Some(e) = nn.get_mut("edge").and_then(|e| e.as_object_mut()) {
+                if let Some(cond) = e.get_mut("condition").and_then(|c| c.as_object_mut()) {
+                    for dest in cond.values_mut() {
+                        let Some(d) = dest.as_str() else { continue };
+                        if d == "STOP" {
+                            if let Some(ct) = &continue_to {
+                                *dest = json!(ct);
+                            }
+                        } else if sub_names.contains(d) {
+                            *dest = json!(format!("{prefix}{d}"));
+                        }
+                    }
+                }
+                if let Some(d) = e.get("default").and_then(|v| v.as_str()).map(str::to_string) {
+                    if d == "STOP" {
+                        if let Some(ct) = &continue_to {
+                            e.insert("default".to_string(), json!(ct));
+                        }
+                    } else if sub_names.contains(&d) {
+                        e.insert("default".to_string(), json!(format!("{prefix}{d}")));
+                    }
+                }
+            }
+            out_nodes.push(nn);
+        }
+    }
+    // Order-independent reference redirect for nodes emitted after a reference.
+    for existing in out_nodes.iter_mut() {
+        for (sub_name, sub_start) in &ref_redirects {
+            redirect_node_dests(existing, sub_name, sub_start);
+        }
+    }
+    // If `start` names a reference node, redirect it to that sub-workflow's own
+    // start (also namespaced).
+    let mut new_start = start;
+    let names: std::collections::HashSet<String> = out_nodes
+        .iter()
+        .filter_map(|n| n.get("name").and_then(|v| v.as_str()).map(str::to_string))
+        .collect();
+    if !names.contains(&new_start) {
+        if let Some(rest) = node_list.iter().find(|n| {
+            n.get("name").and_then(|v| v.as_str()) == Some(new_start.as_str())
+                || n.get("workflow").and_then(|v| v.as_str()) == Some(new_start.as_str())
+        }) {
+            if let Some(wref) = rest.get("workflow") {
+                let (sub_spec, _) = resolve_ref_dir(wref, base_dir)?;
+                let sub_name = rest
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| sub_spec.get("name").and_then(|v| v.as_str()))
+                    .unwrap_or("sub");
+                let sub_start = sub_spec
+                    .get("start")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("start");
+                new_start = format!("{sub_name}::{sub_start}");
+            }
+        }
+    }
+    let mut out = spec.clone();
+    if let Some(o) = out.as_object_mut() {
+        o.insert("nodes".to_string(), Value::Array(out_nodes));
+        o.insert("start".to_string(), json!(new_start));
+    }
+    Ok(out)
+}
+
+/// Redirect a node's edge destinations that name the bare reference `from` to
+/// the sub-graph's prefixed `to` — condition values and the default, leaving
+/// `STOP` and any non-sub destination alone.
+fn redirect_node_dests(node: &mut Value, from: &str, to: &str) {
+    let Some(e) = node.get_mut("edge").and_then(|e| e.as_object_mut()) else {
+        return;
+    };
+    if let Some(cond) = e.get_mut("condition").and_then(|c| c.as_object_mut()) {
+        for dest in cond.values_mut() {
+            if dest.as_str() == Some(from) {
+                *dest = json!(to);
+            }
+        }
+    }
+    if e.get("default").and_then(|v| v.as_str()) == Some(from) {
+        e.insert("default".to_string(), json!(to));
+    }
+}
 pub fn from_spec_with_dir(
     spec: &Value,
     parent: Option<&Value>,
