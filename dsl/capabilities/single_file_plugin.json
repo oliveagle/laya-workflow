@@ -1,7 +1,7 @@
 {
   "name": "single_file_plugin",
   "dsl_version": 2,
-  "description": "Run a single .rhai file as a plugin (kind: \"plugin\", dir = the file): no plugin directory, no plugin.json, no browser, no network. The smallest possible extension seam \u2014 one script file. Run it from the repo root so the relative `dir` resolves.",
+  "description": "Run a single .rhai file as a plugin (kind: \"plugin\", dir = the file): no plugin directory, no plugin.json, no browser, no network. The smallest possible extension seam \u2014 one script file. A relative `dir` resolves against the dsl root, the checkout that holds it, and the cwd, so the spec runs from anywhere.",
   "start": "greet",
   "max_iterations": 2,
   "policy": {

@@ -60,9 +60,11 @@ directory plugin and for `plugin install`.
 ```
 
 A runnable copy ships in the repo: `dsl/capabilities/single_file_plugin.json`
-points `dir` at the bare `dsl/capabilities/hello.rhai`. Run it from the repo root
-(`laya-workflow run --spec dsl/capabilities/single_file_plugin.json --state
-'{"who":"laya"}'`) — no directory, no `plugin.json`, no browser, no network.
+points `dir` at the bare `dsl/capabilities/hello.rhai`. That relative `dir`
+resolves against the dsl root, the checkout that holds it, and the cwd, so it
+runs from anywhere (`laya-workflow run --spec
+dsl/capabilities/single_file_plugin.json --state '{"who":"laya"}'`) — no
+directory, no `plugin.json`, no browser, no network.
 
 ## Installing a plugin
 

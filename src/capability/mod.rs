@@ -798,7 +798,13 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
     }
     let mut cmd = std::process::Command::new(&argv[0]);
     cmd.args(&argv[1..]);
-    if let Some(d) = &c.cwd {
+    // A declared `cwd` wins; otherwise a relative script in the argv selects the
+    // checkout that holds it, so the spec runs from anywhere (P127).
+    let cwd = c
+        .cwd
+        .clone()
+        .or_else(|| plugin::exec_base_for(&argv).map(|p| p.display().to_string()));
+    if let Some(d) = &cwd {
         cmd.current_dir(d);
     }
     for (k, v) in &c.env {

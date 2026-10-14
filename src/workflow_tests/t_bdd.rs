@@ -6567,3 +6567,53 @@ pub fn test_bdd_cdp_attach(h: &mut Harness) {
         _ => h.check("cdp attach: capability is a browser", false),
     }
 }
+
+/// P127: `dsl smoke` is cwd-independent. A spec's relative plugin `dir` resolves
+/// off the checkout that holds the dsl tree (`dir_bases`: the cwd, each layered
+/// spec root and its parent, then the crate root), not the cwd alone. Run the
+/// real CLI from a directory outside every checkout — the exact failure this
+/// pins was `feishu_unread_digest` (`dir: websites/feishu.com/...`) and
+/// `single_file_plugin` (`dir: dsl/capabilities/hello.rhai`) failing off a
+/// neutral cwd while the repo-root run stayed green.
+pub fn test_dsl_smoke_cwd_independent(h: &mut Harness) {
+    let root = bdd::repo_root();
+    let total = laya_workflow::dsl_smoke::discover_specs(&root.join("dsl"))
+        .expect("discover the corpus")
+        .len();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    // A cwd outside every checkout: no `dsl/`, no `plugins/`, no `.git` above it.
+    let cwd = std::env::temp_dir().join(format!("laya-cwd-smoke-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(&cwd).unwrap();
+    let out = std::process::Command::new(&bin)
+        .args(["dsl", "smoke", "--quiet"])
+        .current_dir(&cwd)
+        .output()
+        .expect("run dsl smoke");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    h.check(
+        "dsl-smoke: exits 0 from a cwd outside any checkout",
+        out.status.success(),
+    );
+    if !out.status.success() {
+        eprintln!("{}", &text[..text.len().min(4000)]);
+    }
+    h.check(
+        "dsl-smoke: every spec passes off a neutral cwd",
+        text.contains(&format!("{total}/{total} specs OK")),
+    );
+    h.check(
+        "dsl-smoke: the isolation audit still runs off a neutral cwd",
+        text.contains("isolation: bdd/ holds no json"),
+    );
+    let _ = std::fs::remove_dir_all(&cwd);
+}
