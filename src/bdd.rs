@@ -5468,11 +5468,13 @@ pub fn check_doc() -> Result<i32> {
     // from the same authority `dsl smoke` prints: the states table, the expect
     // table, and the coverage-ledger audit. A number nobody recomputes rots on
     // the next edit; a label that reads the live gate cannot.
-    let n_expect = std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .and_then(|v| v.as_object().map(|o| o.len()))
-        .unwrap_or(0);
+    let expect_keys: std::collections::BTreeSet<String> =
+        std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
+            .unwrap_or_default();
+    let n_expect = expect_keys.len();
     let states_map: std::collections::BTreeMap<String, Value> =
         std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json"))
             .ok()
@@ -5486,6 +5488,47 @@ pub fn check_doc() -> Result<i32> {
     let (n_offline, n_live, _) =
         crate::dsl_smoke::coverage_ledger_audit(&specs, &dsl_root, &states_map)
             .unwrap_or((0, 0, Vec::new()));
+
+    // The sentence "Every one of the N checked-in dsl/<cat>/<name>.json specs is the
+    // compiled output of a @decision feature ... proven equivalent in both
+    // directions by `laya-workflow bdd round-trip`" quotes the round-trip gate, so
+    // run that gate and quote *its* line: N is its total, and the "proven" half is
+    // its rc. Same rule as the ledger counts above - a number nobody recomputes
+    // rots on the next conversion (this one said 99 while the corpus held 163).
+    let (rt_rc, rt_line) = round_trip_impl(true, &RoundTripOptions::default())?;
+    let rt_line = rt_line.unwrap_or_default();
+    let (rt_matched, rt_total) = Regex::new(r"bdd roundtrip: (\d+)/(\d+)")
+        .unwrap()
+        .captures(&rt_line)
+        .map(|c| {
+            (
+                c[1].parse::<i64>().unwrap_or(0),
+                c[2].parse::<i64>().unwrap_or(0),
+            )
+        })
+        .unwrap_or((0, 0));
+
+    // Collapse whitespace in the README before searching labels.
+    let flat_readme = ws.replace_all(&readme, " ").into_owned();
+
+    // The README also enumerates the pinned stems themselves ("+N pinned in the
+    // decision workflows: a/b/c/..."). The count must equal the length of the list
+    // it introduces (they drifted apart: "+67" over a 73-name list), and every name
+    // must be a real pin, so a rename cannot leave a phantom behind.
+    let pinned_rx = Regex::new(r"\+(\d+) pinned in the decision workflows: ([^;]+)").unwrap();
+    let pinned_lists: Vec<Vec<String>> = pinned_rx
+        .captures_iter(&flat_readme)
+        .map(|c| {
+            c[2].split('/')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        })
+        .collect();
+    let pinned_truth: Vec<Vec<i64>> = pinned_lists
+        .iter()
+        .map(|l| vec![l.len() as i64])
+        .collect();
 
     // label regex -> owner source ("transpile" = count it here).
     let labels: Vec<(Regex, &str)> = vec![
@@ -5502,6 +5545,12 @@ pub fn check_doc() -> Result<i32> {
         (Regex::new(r"(\d+) of (\d+) specs carry behavioural states").unwrap(), "ledger"),
         (Regex::new(r"(\d+) labelled expectation sets").unwrap(), "ledger"),
         (Regex::new(r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)").unwrap(), "ledger"),
+        // The round-trip authority and its enumerated pin list.
+        (Regex::new(r"Every one of the (\d+) checked-in").unwrap(), "roundtrip"),
+        (
+            Regex::new(r"\+(\d+) pinned in the decision workflows").unwrap(),
+            "pinned",
+        ),
     ];
     let quoted_blocks: Vec<(Regex, &str)> = vec![
         (
@@ -5549,6 +5598,8 @@ pub fn check_doc() -> Result<i32> {
         .map(|(rx, src)| match *src {
             "transpile" => vec![vec![n_scenarios as i64]],
             "ledger" => ledger_truth(rx.as_str()),
+            "roundtrip" => vec![vec![rt_total]],
+            "pinned" => pinned_truth.clone(),
             "vocabulary" => rx
                 .captures_iter(&vocab_out)
                 .map(|c| (1..c.len()).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect())
@@ -5561,8 +5612,6 @@ pub fn check_doc() -> Result<i32> {
         })
         .collect();
 
-    // Collapse whitespace in the README before searching labels.
-    let flat_readme = ws.replace_all(&readme, " ").into_owned();
     let mut problems: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (i, (rx, src)) in labels.iter().enumerate() {
@@ -5604,6 +5653,29 @@ pub fn check_doc() -> Result<i32> {
                 },
                 rx.as_str()
             ));
+        }
+    }
+
+    // The README's "the two are proven equivalent in both directions" is the
+    // round-trip gate's claim to keep: a drift (or a dsl spec with no BDD source)
+    // makes it false, and a false claim about a gate is worse than no claim.
+    if rt_rc != 0 || rt_matched != rt_total || rt_total == 0 {
+        problems.push(format!(
+            "the README says round-trip proves the dsl tree is the compiled output of the \
+             bdd tree in both directions, but the gate reports {rt_matched}/{rt_total} \
+             (rc={rt_rc}) - fix the drift or drop the claim"
+        ));
+    }
+    // A name in the pinned list that is not a real pin is a phantom: the rename
+    // that orphaned it also quieted the count above it.
+    for list in &pinned_lists {
+        for name in list {
+            if !expect_keys.contains(name) {
+                problems.push(format!(
+                    "the README lists {name:?} as a pinned stem, but it is not a key of \
+                     bench/dsl_smoke_expect.json - a rename left a phantom behind"
+                ));
+            }
         }
     }
 
@@ -9073,7 +9145,10 @@ pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
     Ok(1)
 }
 
-pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
+/// Round-trip gate: the README cites its line, so the doc gate needs it without
+/// the printing — the same `(rc, Some(success line))` shape `check_vocabulary_impl`
+/// uses, so a gate's number is never compared against a copy of itself.
+fn round_trip_impl(silent: bool, o: &RoundTripOptions) -> Result<(i32, Option<String>)> {
     let root = repo_root();
     let wf_root = root.join("bdd").join("workflows");
     let mut features: Vec<PathBuf> = Vec::new();
@@ -9208,15 +9283,25 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
         std::fs::write(&out, serde_json::to_string_pretty(&verdicts)?)?;
     }
 
-    println!("bdd roundtrip: {matched}/{total} decision workflows reproduce their dsl spec");
-    for p in &problems {
-        println!("  {p}");
+    let line = format!(
+        "bdd roundtrip: {matched}/{total} decision workflows reproduce their dsl spec"
+    );
+    if !silent {
+        println!("{line}");
+        for p in &problems {
+            println!("  {p}");
+        }
+        if !problems.is_empty() {
+            eprintln!("bdd roundtrip: FAIL - {}/{} drifted", problems.len(), total);
+        }
     }
-    if !problems.is_empty() {
-        eprintln!("bdd roundtrip: FAIL - {}/{} drifted", problems.len(), total);
-        return Ok(1);
-    }
-    Ok(0)
+    let rc = if problems.is_empty() { 0 } else { 1 };
+    Ok((rc, Some(line)))
+}
+
+pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
+    let (rc, _) = round_trip_impl(false, o)?;
+    Ok(rc)
 }
 
 /// Recursively collect `*.feature` files under a directory.
