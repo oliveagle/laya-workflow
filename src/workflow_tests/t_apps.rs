@@ -233,6 +233,45 @@ pub fn test_app_workflows(h: &mut Harness) {
         "BLOCK".to_string(),
     );
 
+    // The documented composition half: a *safe* command must route past the gate
+    // into the triage node in the same graph (this was dead code before the edge
+    // fix — both answers routed to STOP, so `triage` was unreachable).
+    let be_safe = ScriptedBackend::new(vec![
+        verdict(&[
+            ("is_destructive", choice("A", &[("A", 0.9), ("B", 0.1)])),
+            ("is_exfiltration", choice("A", &[("A", 0.95), ("B", 0.05)])),
+            ("intent_match", choice("A", &[("A", 0.95), ("B", 0.05)])),
+            ("risk", score(0.2, &[0.8, 0.15, 0.05])),
+        ]),
+        verdict(&[
+            ("category", choice("billing", &[("billing", 0.7), ("other", 0.3)])),
+            ("spam", choice("A", &[("A", 0.9), ("B", 0.1)])),
+            ("phishing", choice("A", &[("A", 0.95), ("B", 0.05)])),
+            ("urgency", score(2.4, &[0.05, 0.15, 0.8])),
+            ("needs_reply", choice("B", &[("A", 0.2), ("B", 0.8)])),
+            ("sentiment", score(1.2, &[0.2, 0.4, 0.3, 0.1])),
+        ]),
+    ]);
+    let out_safe = apps::gateway_workflow()
+        .run(&be_safe, &json!({"command": "ls -la /tmp", "intent": "list files"}))
+        .unwrap();
+    let visited: Vec<String> = out_safe
+        .trace
+        .steps
+        .iter()
+        .map(|s| s["node"].as_str().unwrap_or("?").to_string())
+        .collect();
+    h.eq(
+        "gateway: safe -> the gate routes into the triage chain",
+        visited,
+        vec!["gate".to_string(), "triage".to_string()],
+    );
+    h.eq(
+        "gateway: safe -> triage's label is merged",
+        out_safe.state["action"].as_str().unwrap_or("").to_string(),
+        "PAGER_BILLING".to_string(),
+    );
+
     // ── optimizer loops ─────────────────────────────────────────────
 }
 

@@ -7678,12 +7678,16 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
         let wf = imp_str("node.workflow", Some(wf))?;
         imp_tok("node.workflow", wf)?;
         out.push_str(&format!("    Given the sub workflow \"{wf}\"\n"));
-        let default = o
+        // Emit the handoff step exactly when the node carries an edge default.
+        // `STOP` is *not* a reason to omit it: the compiler records an explicit
+        // `edge.default: "STOP"` for `continue at "STOP"`, but *no edge at all*
+        // for a reference node with no handoff step, so dropping the `STOP` step
+        // would recompile to a different graph and `same_graph` would fail.
+        if let Some(default) = o
             .get("edge")
             .and_then(|e| e.get("default"))
             .and_then(Value::as_str)
-            .unwrap_or("STOP");
-        if default != "STOP" {
+        {
             imp_tok("node.edge.default", default)?;
             // The step body literally starts with `when` (it is a Given-kind
             // step); the vocabulary spells it that way.

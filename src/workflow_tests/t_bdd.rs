@@ -2674,6 +2674,46 @@ pub fn test_bdd_import(h: &mut Harness) {
         Err(e) => h.check(&format!("bdd import: real spec is present ({e})"), false),
     }
 
+    // A sub-workflow reference node whose handoff default is `STOP` must survive
+    // the round-trip: the compiler records an explicit `edge.default: "STOP"` for
+    // `continue at "STOP"` but *no edge at all* for a reference node with no
+    // handoff step, so the importer has to re-emit the `continue at "STOP"` step
+    // (omitting it recompiles to a node with no edge and `same_graph` fails). The
+    // live case is `dsl/apps/gateway_triage.json` (safe path -> the email_triage
+    // chain), whose `triage` node hands off at `STOP`.
+    let compose = repo_root().join("dsl").join("apps").join("gateway_triage.json");
+    match std::fs::read_to_string(&compose) {
+        Ok(t) => {
+            let cs: Value = serde_json::from_str(&t).unwrap();
+            match import_spec(&cs) {
+                Ok(ft) => {
+                    h.check(
+                        "bdd import: a STOP handoff on a sub-workflow node is re-emitted",
+                        ft.contains("completes continue at \"STOP\""),
+                    );
+                    match parse(&ft, "<import>") {
+                        Ok(f) => match compile_decision(&f, &json!({})) {
+                            Ok(rb) => h.check(
+                                "bdd import: apps/gateway_triage (sub-workflow STOP handoff) round-trips",
+                                same_graph(&cs, &rb),
+                            ),
+                            Err(e) => h.check(
+                                &format!("bdd import: gateway feature compiles ({e:#})"),
+                                false,
+                            ),
+                        },
+                        Err(e) => h.check(
+                            &format!("bdd import: gateway feature parses ({e:#})"),
+                            false,
+                        ),
+                    }
+                }
+                Err(e) => h.check(&format!("bdd import: gateway spec imports ({e:#})"), false),
+            }
+        }
+        Err(e) => h.check(&format!("bdd import: gateway spec is present ({e})"), false),
+    }
+
     // Inexpressible specs are refused by name, never silently mis-imported.
     let bad_kind = json!({"name":"x","start":"n","nodes":[{"name":"n","primary_q":"ok","questions":{},"edge":{"condition":{},"default":"STOP"},"action":{"kind":"teleport"}}]});
     h.check(
@@ -3764,6 +3804,54 @@ pub fn test_bdd_app_port_parity(h: &mut Harness) {
         "bdd: draft_scorer port matches the app on its 6 reference drafts",
         dref_bad == 0,
     );
+
+    // ── gateway (composed) ↔ gateway_triage port: parity on the gate half
+    //    *and* the composed triage half, driven by the offline heuristic end
+    //    to end. This is the composition port: the built-in `gateway_workflow`
+    //    gates a tool call and, when it is safe, runs the email-triage chain in
+    //    the same graph; the spec reproduces both the gate's BLOCK (unsafe) and
+    //    the triage label the merged state carries (safe). The app writes the
+    //    verdict to `state.action`, the spec to `state.label`; compare those.
+    let gw_spec = spec::load_file(
+        &root
+            .join("dsl/apps/gateway_triage.json")
+            .to_string_lossy(),
+    )
+    .unwrap();
+    let gw_states = [
+        (
+            "unsafe",
+            json!({"command": "sudo rm -rf /", "intent": "free up disk space", "cwd": "/"}),
+        ),
+        (
+            "safe_billing",
+            json!({
+                "command": "ls -la /tmp",
+                "intent": "list files",
+                "cwd": "/tmp",
+                "subject": "Re: invoice duplicate charge",
+                "body": "Hi, we were billed twice for March. Please refund today or we cancel.",
+                "from": "user@acme.com"
+            }),
+        ),
+    ];
+    let (mut gw_cases, mut gw_bad) = (0usize, 0usize);
+    for (_name, state) in &gw_states {
+        let app = apps::gateway_workflow().run(&hb, state).unwrap();
+        let port = gw_spec.run(&hb, state).unwrap();
+        let app_label = app.state["action"].as_str().unwrap_or("?");
+        let port_label = port.state["label"].as_str().unwrap_or("?");
+        gw_cases += 1;
+        if app_label != port_label {
+            gw_bad += 1;
+        }
+    }
+    h.check(
+        &format!(
+            "bdd: gateway_triage port == gateway app on the gate + composed triage states ({gw_cases} states)"
+        ),
+        gw_bad == 0,
+    );
 }
 
 /// P90: `bdd_vocabulary` (MCP) and `bdd vocabulary` (CLI) expose the decision
@@ -4333,8 +4421,16 @@ pub fn test_bdd_label_accounted(h: &mut Harness) {
             Ok(w) => w,
             Err(_) => continue,
         };
-        let declared = declared_outputs(&raw);
-        let opaque = has_opaque_outputs(&raw);
+        // Report the graph the engine *walks*, mirroring `bdd_decide` /
+        // `bdd_list`: inline every `{"workflow": …}` reference node so a
+        // composed workflow's child labels belong to its own declared output
+        // set. Without this a composition whose child emits the returned label
+        // (e.g. `gateway_triage`, safe path -> the email-triage chain) reads as
+        // an unaccounted label even though `bdd_list` enumerates it.
+        let expanded = laya_workflow::spec::expand_spec_nodes(&raw, path.parent())
+            .unwrap_or_else(|_| raw.clone());
+        let declared = declared_outputs(&expanded);
+        let opaque = has_opaque_outputs(&expanded);
         let mut errored = false;
         for (_lab, st) in smap {
             let out = match wf.run(&HeuristicBackend, st) {
@@ -4348,7 +4444,7 @@ pub fn test_bdd_label_accounted(h: &mut Harness) {
             let result = j.get("result").unwrap_or(&Value::Null);
             let fa = out.final_action();
             let label = decision_label(result, fa);
-            let src = label_source(&raw, result, fa);
+            let src = label_source(&expanded, result, fa);
             let expect_src = if declared.iter().any(|o| o == &label) {
                 "decision"
             } else if label == fa {

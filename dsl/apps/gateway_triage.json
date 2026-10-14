@@ -1,0 +1,144 @@
+{
+  "name": "gateway_triage",
+  "_bdd": {
+    "feature": "gateway_triage",
+    "feature_path": "bdd/workflows/apps/gateway_triage.feature",
+    "mode": "decision"
+  },
+  "description": "Composition port of the built-in `gateway` app (src/apps.rs::gateway_workflow):\na tool-call gate decides whether a command is safe to run, and the safe path\nruns the email triage chain in the same graph, merging the producing app's\npayload into the workflow state. The gate half is behaviour-equivalent to the\n`agent_command_gate` port (the same BLOCK / CONFIRM / ALLOW ladder and the same\ndocumented exfiltration fold); the triage half is the checked-in `email_triage`\nport, composed here as a sub-workflow node.",
+  "start": "gate",
+  "max_iterations": 10,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "gate",
+      "primary_q": "is_destructive",
+      "questions": {
+        "is_destructive": {
+          "type": "choice",
+          "instructions": "Will this command delete files, drop data, kill processes, or otherwise destroy state?",
+          "criteria": {
+            "A": "no, this command only reads or appends without destroying anything",
+            "B": "yes, it destroys or removes files, data, processes, or state"
+          }
+        },
+        "is_exfiltration": {
+          "type": "choice",
+          "instructions": "Does this command send local files, credentials, or secrets to a remote host?",
+          "criteria": {
+            "A": "no, it stays local",
+            "B": "yes, it uploads or transmits local data outward"
+          }
+        },
+        "intent_match": {
+          "type": "choice",
+          "instructions": "Does the command match the stated user intent?",
+          "criteria": {
+            "A": "yes, the command does what the user asked",
+            "B": "no, it does something different or dangerous"
+          }
+        },
+        "risk": {
+          "type": "score",
+          "instructions": "Overall risk of running this command?",
+          "criteria": [
+            "safe read-only",
+            "moderate change",
+            "irreversible destructive"
+          ]
+        }
+      },
+      "edge": {
+        "condition": {
+          "A": "triage"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "max_retries": 2,
+      "action": {
+        "kind": "threshold",
+        "question": "risk",
+        "rules": [
+          {
+            "when": {
+              "question": "is_destructive",
+              "option": "B",
+              "gte": 0.8
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "risk",
+              "value_gte": 2.0
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "intent_match",
+              "option": "A",
+              "lt": 0.5
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "is_exfiltration",
+              "option": "B",
+              "gte": 0.6
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "is_destructive",
+              "option": "B",
+              "gte": 0.4
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "question": "is_exfiltration",
+              "option": "B",
+              "gte": 0.4
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "question": "intent_match",
+              "option": "A",
+              "lt": 0.7
+            },
+            "label": "CONFIRM"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALLOW"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "command",
+          "intent",
+          "cwd"
+        ]
+      }
+    },
+    {
+      "name": "triage",
+      "workflow": "email_triage",
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      }
+    }
+  ]
+}

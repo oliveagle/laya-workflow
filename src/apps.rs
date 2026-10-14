@@ -601,7 +601,11 @@ pub fn gateway_workflow() -> ResilientWorkflow {
     let gate = WorkflowNode::new(
         "gate",
         agent_gate::questions(),
-        Edge::new(&[("A", "STOP"), ("B", "STOP")], Some("STOP"), 0.0),
+        // The safe answer (A: not destructive) is the documented "safe -> run
+        // the triage chain" path; before the fix both answers routed to STOP,
+        // which made `triage` unreachable dead code (and un-portable to BDD,
+        // whose validator rejects an unreachable node).
+        Edge::new(&[("A", "triage"), ("B", "STOP")], Some("STOP"), 0.0),
     )
     .with_primary(agent_gate::PRIMARY_Q)
     .with_action(|state: &Value, v: &Verdict| {

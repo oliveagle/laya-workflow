@@ -7034,5 +7034,20 @@
       "audience": "manager",
       "text": "ok"
     }
+  },
+  "gateway_triage": {
+    "unsafe": {
+      "command": "sudo rm -rf /",
+      "intent": "free up disk space",
+      "cwd": "/"
+    },
+    "safe_billing": {
+      "command": "ls -la /tmp",
+      "intent": "list files",
+      "cwd": "/tmp",
+      "subject": "Re: invoice duplicate charge",
+      "body": "Hi, we were billed twice for March. Please refund today or we cancel.",
+      "from": "user@acme.com"
+    }
   }
 }

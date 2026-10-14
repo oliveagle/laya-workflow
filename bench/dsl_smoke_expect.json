@@ -3173,5 +3173,24 @@
     "typo_client": "polish",
     "resign_manager": "sleep",
     "ok_manager": "rewrite"
+  },
+  "gateway_triage": {
+    "unsafe": {
+      "result.label": "BLOCK",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "gate",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "B"
+    },
+    "safe_billing": {
+      "result.label": "PAGER_BILLING",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "gate",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "A",
+      "trace.steps.1.node": "triage::triage",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "billing"
+    }
   }
 }
