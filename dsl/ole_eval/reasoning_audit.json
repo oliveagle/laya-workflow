@@ -1,0 +1,372 @@
+{
+  "name": "reasoning_audit",
+  "_bdd": {
+    "feature": "reasoning_audit",
+    "feature_path": "bdd/workflows/ole_eval/reasoning_audit.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed reasoning traces as a three-node DFA, port of the\nimmutable request-level reasoning traces and deterministic audit replay\n(code/qwen_vm/app_scenarios/reasoning_audit). The model proposes only a trace\n(a request_id, a claimed_result and steps of opcode/operands); it never\ncreates authority. The engine executes the tiny opcode set, hashes every step\ninto a SHA-256 chain, appends to an append-only ledger, and replays the trace\nto detect tampering, missing/reordered steps, duplicate request IDs and\ninconsistent conclusions. The verdict and the engine's own first cause are\ncomputed locally.\nThe engine's own verbs: a trace builds and replays (valid) or it is rejected\nwith the engine's first raised build error, the ledger's duplicate rejection,\nor the replay's first violation code.\nStates: proposal -> build -> replay. The parse node folds the conservative\nJSON recovery (a fenced block or the first balanced object) and the proposal\nschema (exactly the keys request_id, claimed_result and steps). The build node\nfolds request_id validation, the candidate-step schema, deterministic opcode\nexecution and the append-only ledger's duplicate rejection. The replay node\nfolds re-execution, sequence and hash-chain verification, the claim/conclusion\ncheck and the trusted-root check. A proposal that fails parse never reaches\nthe builder; a build failure never reaches the replay.\nFolding boundaries (documented, not computed in the DSL):\n- The JSON recovery and the proposal schema fold into the `proposal` choice.\n- The opcode set (CONST/ADD/SUB/MUL/DIV/MOD/EQ/NE/LT/LE/GT/GE/AND/OR/NOT/\nMAX/MIN), the operand rules (1..8 items, integers/booleans or the literal\n\"result\"), the numeric safety limit, the 64-step cap, the canonical-JSON\nSHA-256 chain and the append-only ledger are the authority; the harness runs\nthem and hands the DSL one answer per check. The engine raises on the first\nbuild error and collects replay violations in order, so the ladders mirror\nthe engine's own raise order and its ordered violation tuple.\n- The replay `violations` is an ordered, de-duplicated tuple; the port carries\nonly its first code.\nEmitted labels: reject_proposal, reject_request_id, reject_step_count,\nreject_step_schema, reject_opcode, reject_operands, reject_execution,\nreject_duplicate_request_id, reject_trace_not_object,\nreject_unexpected_trace_field, reject_unsupported_schema_version,\nreject_invalid_request_id, reject_invalid_previous_hash,\nreject_invalid_step_count, reject_invalid_step_schema,\nreject_sequence_mismatch, reject_missing_or_out_of_order_step,\nreject_request_id_mismatch, reject_hash_chain_break, reject_opcode_replay_failed,\nreject_resolved_operand_mismatch, reject_replayed_result_mismatch,\nreject_entry_hash_mismatch, reject_root_hash_mismatch,\nreject_final_result_mismatch, reject_conclusion_mismatch,\nreject_conclusion_inconsistent, reject_trusted_root_mismatch,\nreject_ledger_hash_chain_break, accept.",
+  "start": "proposal",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "proposal",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one balanced JSON object with exactly the keys request_id, claimed_result and steps?",
+          "criteria": {
+            "parsed": "exactly one schema-valid trace proposal",
+            "malformed": "no balanced object, a non-object value, or a wrong key set"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "parsed": "build"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "proposal_ok"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    },
+    {
+      "name": "build",
+      "primary_q": "build",
+      "questions": {
+        "build": {
+          "type": "choice",
+          "instructions": "What is the engine's first build cause for this proposal (validate request_id and the step schema, execute the opcodes, then append to the ledger)?",
+          "criteria": {
+            "ok": "the trace built, hashed and appended",
+            "request_id": "request_id does not match ^[a-z0-9][a-z0-9._-]{0,127}$",
+            "step_count": "steps is not a list of between 1 and 64 entries",
+            "step_schema": "a step is not exactly an opcode/operands object",
+            "opcode": "an opcode is not in the supported set",
+            "operands": "operands is not a non-empty list of at most 8 items",
+            "execution": "a deterministic opcode error: bad arity, a non-integer/boolean operand, a zero divisor, a numeric-safety overflow, an unsupported result type, or a result reference before the first opcode",
+            "duplicate_request_id": "the request_id is already in the append-only ledger"
+          },
+          "heuristic": {
+            "answer_field": "ev_build"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "ok": "replay"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "build",
+        "rules": [
+          {
+            "when": {
+              "question": "build",
+              "answer": "request_id"
+            },
+            "label": "reject_request_id"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "step_count"
+            },
+            "label": "reject_step_count"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "step_schema"
+            },
+            "label": "reject_step_schema"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "opcode"
+            },
+            "label": "reject_opcode"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "operands"
+            },
+            "label": "reject_operands"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "execution"
+            },
+            "label": "reject_execution"
+          },
+          {
+            "when": {
+              "question": "build",
+              "answer": "duplicate_request_id"
+            },
+            "label": "reject_duplicate_request_id"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "build_ok"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    },
+    {
+      "name": "replay",
+      "primary_q": "replay",
+      "questions": {
+        "replay": {
+          "type": "choice",
+          "instructions": "What is the replay's first violation code (or valid) when the trace is re-executed and verified against the trusted root?",
+          "criteria": {
+            "valid": "the trace replayed with no violation",
+            "trace_not_object": "the trace is not a JSON object",
+            "unexpected_or_missing_trace_field": "the trace key set is not exactly the seven trace keys",
+            "unsupported_schema_version": "schema_version is not 1",
+            "invalid_request_id": "the trace request_id fails the id pattern",
+            "invalid_previous_request_hash": "previous_request_hash is not a lowercase SHA-256 hex digest",
+            "invalid_step_count": "steps is not a list of between 1 and 64 entries",
+            "invalid_step_schema": "a stored step's key set is not exactly the eight step keys",
+            "sequence_mismatch": "a step's sequence is not its 1-based position",
+            "missing_or_out_of_order_step": "a step is missing or out of order",
+            "request_id_mismatch": "a step's request_id differs from the trace's",
+            "hash_chain_break": "a step's previous_hash does not equal the prior step's entry_hash",
+            "opcode_replay_failed": "re-executing a step's opcode raised",
+            "resolved_operand_mismatch": "a step's resolved_operands differ from the re-executed operands",
+            "replayed_result_mismatch": "a step's result differs from the re-executed result",
+            "entry_hash_mismatch": "a step's entry_hash does not match the recomputed hash",
+            "root_hash_mismatch": "root_hash does not match the recomputed chain tail",
+            "final_result_mismatch": "final_result differs from the re-executed final result",
+            "conclusion_mismatch": "conclusion is not the one derived from the final result",
+            "conclusion_inconsistent_with_claim": "claimed_result differs from final_result",
+            "trusted_root_mismatch": "the trace root does not equal the trusted expected root",
+            "ledger_hash_chain_break": "the trace's previous_request_hash breaks the ledger chain"
+          },
+          "heuristic": {
+            "answer_field": "ev_replay"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "replay",
+        "rules": [
+          {
+            "when": {
+              "question": "replay",
+              "answer": "valid"
+            },
+            "label": "accept"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "trace_not_object"
+            },
+            "label": "reject_trace_not_object"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "unexpected_or_missing_trace_field"
+            },
+            "label": "reject_unexpected_trace_field"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "unsupported_schema_version"
+            },
+            "label": "reject_unsupported_schema_version"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "invalid_request_id"
+            },
+            "label": "reject_invalid_request_id"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "invalid_previous_request_hash"
+            },
+            "label": "reject_invalid_previous_hash"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "invalid_step_count"
+            },
+            "label": "reject_invalid_step_count"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "invalid_step_schema"
+            },
+            "label": "reject_invalid_step_schema"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "sequence_mismatch"
+            },
+            "label": "reject_sequence_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "missing_or_out_of_order_step"
+            },
+            "label": "reject_missing_or_out_of_order_step"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "request_id_mismatch"
+            },
+            "label": "reject_request_id_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "hash_chain_break"
+            },
+            "label": "reject_hash_chain_break"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "opcode_replay_failed"
+            },
+            "label": "reject_opcode_replay_failed"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "resolved_operand_mismatch"
+            },
+            "label": "reject_resolved_operand_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "replayed_result_mismatch"
+            },
+            "label": "reject_replayed_result_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "entry_hash_mismatch"
+            },
+            "label": "reject_entry_hash_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "root_hash_mismatch"
+            },
+            "label": "reject_root_hash_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "final_result_mismatch"
+            },
+            "label": "reject_final_result_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "conclusion_mismatch"
+            },
+            "label": "reject_conclusion_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "conclusion_inconsistent_with_claim"
+            },
+            "label": "reject_conclusion_inconsistent"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "trusted_root_mismatch"
+            },
+            "label": "reject_trusted_root_mismatch"
+          },
+          {
+            "when": {
+              "question": "replay",
+              "answer": "ledger_hash_chain_break"
+            },
+            "label": "reject_ledger_hash_chain_break"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_replay"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

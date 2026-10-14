@@ -6482,5 +6482,163 @@
       "ev_proposal": "malformed",
       "ev_check": "consistent"
     }
+  },
+  "reasoning_audit": {
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed"
+    },
+    "reject_request_id": {
+      "ev_proposal": "parsed",
+      "ev_build": "request_id"
+    },
+    "reject_step_count": {
+      "ev_proposal": "parsed",
+      "ev_build": "step_count"
+    },
+    "reject_step_schema": {
+      "ev_proposal": "parsed",
+      "ev_build": "step_schema"
+    },
+    "reject_opcode": {
+      "ev_proposal": "parsed",
+      "ev_build": "opcode"
+    },
+    "reject_operands": {
+      "ev_proposal": "parsed",
+      "ev_build": "operands"
+    },
+    "reject_execution": {
+      "ev_proposal": "parsed",
+      "ev_build": "execution"
+    },
+    "reject_duplicate_request_id": {
+      "ev_proposal": "parsed",
+      "ev_build": "duplicate_request_id"
+    },
+    "accept_valid": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "valid"
+    },
+    "reject_replay_unknown": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "unlisted"
+    },
+    "precedence_proposal_before_build": {
+      "ev_proposal": "malformed",
+      "ev_build": "opcode",
+      "ev_replay": "valid"
+    },
+    "precedence_build_before_replay": {
+      "ev_proposal": "parsed",
+      "ev_build": "execution",
+      "ev_replay": "valid"
+    },
+    "replay_trace_not_object": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "trace_not_object"
+    },
+    "replay_unexpected_or_missing_trace_field": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "unexpected_or_missing_trace_field"
+    },
+    "replay_unsupported_schema_version": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "unsupported_schema_version"
+    },
+    "replay_invalid_request_id": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "invalid_request_id"
+    },
+    "replay_invalid_previous_request_hash": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "invalid_previous_request_hash"
+    },
+    "replay_invalid_step_count": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "invalid_step_count"
+    },
+    "replay_invalid_step_schema": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "invalid_step_schema"
+    },
+    "replay_sequence_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "sequence_mismatch"
+    },
+    "replay_missing_or_out_of_order_step": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "missing_or_out_of_order_step"
+    },
+    "replay_request_id_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "request_id_mismatch"
+    },
+    "replay_hash_chain_break": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "hash_chain_break"
+    },
+    "replay_opcode_replay_failed": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "opcode_replay_failed"
+    },
+    "replay_resolved_operand_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "resolved_operand_mismatch"
+    },
+    "replay_replayed_result_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "replayed_result_mismatch"
+    },
+    "replay_entry_hash_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "entry_hash_mismatch"
+    },
+    "replay_root_hash_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "root_hash_mismatch"
+    },
+    "replay_final_result_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "final_result_mismatch"
+    },
+    "replay_conclusion_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "conclusion_mismatch"
+    },
+    "replay_conclusion_inconsistent_with_claim": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "conclusion_inconsistent_with_claim"
+    },
+    "replay_trusted_root_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "trusted_root_mismatch"
+    },
+    "replay_ledger_hash_chain_break": {
+      "ev_proposal": "parsed",
+      "ev_build": "ok",
+      "ev_replay": "ledger_hash_chain_break"
+    }
   }
 }
