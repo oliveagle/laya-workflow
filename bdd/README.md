@@ -499,6 +499,17 @@ the `validate` error now carries the offending `.feature` **line number** and a
 the author sees *which line* and *what value* at the error site
 (`line 10: node classify: edge condition targets unknown node "biling" (did you mean "billing"?)`).
 
+Three failure modes that used to print a bare line now carry the cause
+(P89). A step-level error keeps its `anyhow` chain, so a feature that forgot
+`@decision` says *decision step ... is only valid in a @decision feature*
+instead of echoing the step. A duplicate `Scenario:` name is reported at the
+scenario's own `line N:` - it is a node id, and every scenario is one node.
+And a line whose step *keyword* is mangled (`Givn`) gets a
+`(did you mean the Given keyword?)` hint over Given/When/Then/And/But,
+staying silent when nothing is close enough to guess. Two neighbours are
+deliberately unchanged and now pinned: policy keys are unconstrained, and a
+renamed answer column (`| anser |`) drops rows silently.
+
 ### Live-fire against real sites (`bdd live` / `bdd compare`)
 
 A vocabulary that only drives fixtures proves nothing about the web. The live
