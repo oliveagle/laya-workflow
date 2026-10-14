@@ -1,0 +1,245 @@
+{
+  "name": "verifiable_cot",
+  "_bdd": {
+    "feature": "verifiable_cot",
+    "feature_path": "bdd/workflows/ole_eval/verifiable_cot.feature",
+    "mode": "decision"
+  },
+  "description": "Deterministic trace VM for verifiable chain-of-thought as a three-node DFA.\nThe model proposes only typed steps ({\"trace\":[load/const/arith/compare/\nbranch/assert]}); the parser, the control-flow contract and the deterministic\nexecution are the authority, and the final PASS / REJECT verdict is computed\nlocally from the authoritative inputs. Model prose, verdict fields and\nself-assertions are rejected and never read. Port of\ncode/qwen_vm/app_scenarios/verifiable_cot.\nStates: proposal -> contract -> execution. The parse node folds the JSON\nenvelope and the per-step opcode schema; the contract node folds the\ncontrol-flow validation (duplicate ids, undefined jump targets, loops,\nunreachable steps, the input contract); the execution node folds the typed\nevaluation and its termination. A proposal that fails parse never reaches the\ncontract node, and a contract failure never reaches execution.\nFolding boundaries (documented, not computed in the DSL):\n- The response envelope, the JSON-object recovery, the {\"trace\":[...]} shape and\nthe per-step schema (opcode allow-list, required/extra fields, bounded\nidentifiers, operator sets, the 32-step cap) fold into the `proposal` choice.\n- The control-flow contract and the typed execution are the authority; the\nharness runs them and hands the DSL one answer per check. The execution node\ncarries the engine's own terminate reason, which is the first reason the\ndeterministic VM reports.\nEmitted labels: reject_proposal, reject_duplicate_step_id,\nreject_undefined_step_target, reject_loop, reject_unreachable_step,\nreject_input_contract, reject_undefined_input, reject_undefined_variable,\nreject_type_error, reject_division_by_zero, reject_number_bound,\nreject_ends_before_assert, reject_step_limit, reject_assert_conflict, PASS.",
+  "start": "proposal",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "proposal",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response parse as exactly one {\\\"trace\\\":[...]} envelope whose steps satisfy the opcode schema (allow-listed op, exact fields, bounded identifiers, valid operators, at most 32 steps)?",
+          "criteria": {
+            "parsed": "exactly one schema-valid typed trace",
+            "malformed": "no JSON object, wrong envelope key, empty or oversized trace array, unknown opcode, missing or extra step field, bad identifier or operator"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "parsed": "contract"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "parsed"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    },
+    {
+      "name": "contract",
+      "primary_q": "contract",
+      "questions": {
+        "contract": {
+          "type": "choice",
+          "instructions": "Does the parsed trace satisfy the control-flow contract (unique step ids, every branch target defined, no loop, no unreachable step, valid inputs)?",
+          "criteria": {
+            "ok": "the trace satisfies the control-flow contract",
+            "duplicate_step_id": "two steps share an id",
+            "undefined_step_target": "a branch or fallthrough targets an undefined step",
+            "loop": "the control-flow graph contains a cycle",
+            "unreachable_step": "at least one step is unreachable from the entry step",
+            "input_contract": "an input name is not an identifier, a value is not an int, or it exceeds the numeric bound"
+          },
+          "heuristic": {
+            "answer_field": "ev_contract"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "ok": "execution"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "contract",
+        "rules": [
+          {
+            "when": {
+              "question": "contract",
+              "answer": "duplicate_step_id"
+            },
+            "label": "reject_duplicate_step_id"
+          },
+          {
+            "when": {
+              "question": "contract",
+              "answer": "undefined_step_target"
+            },
+            "label": "reject_undefined_step_target"
+          },
+          {
+            "when": {
+              "question": "contract",
+              "answer": "loop"
+            },
+            "label": "reject_loop"
+          },
+          {
+            "when": {
+              "question": "contract",
+              "answer": "unreachable_step"
+            },
+            "label": "reject_unreachable_step"
+          },
+          {
+            "when": {
+              "question": "contract",
+              "answer": "input_contract"
+            },
+            "label": "reject_input_contract"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "contract_ok"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    },
+    {
+      "name": "execution",
+      "primary_q": "execution",
+      "questions": {
+        "execution": {
+          "type": "choice",
+          "instructions": "How does the deterministic execution terminate (typed evaluation, then the first assert reached)?",
+          "criteria": {
+            "pass": "an assert matches the executed boolean -> PASS",
+            "undefined_input": "a load reads an input that was not provided",
+            "undefined_variable": "arith/compare/branch/assert read an undefined variable",
+            "type_error": "an operand is not an int, or a branch/assert condition is not a bool",
+            "division_by_zero": "arith // or % with a zero right operand",
+            "number_bound": "an arithmetic result exceeds the numeric bound",
+            "ends_before_assert": "the executed path reaches the end of the trace without an assert",
+            "step_limit": "execution exceeds the step limit",
+            "assert_conflict": "an assert contradicts the executed boolean -> REJECT"
+          },
+          "heuristic": {
+            "answer_field": "ev_execution"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "execution",
+        "rules": [
+          {
+            "when": {
+              "question": "execution",
+              "answer": "undefined_input"
+            },
+            "label": "reject_undefined_input"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "undefined_variable"
+            },
+            "label": "reject_undefined_variable"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "type_error"
+            },
+            "label": "reject_type_error"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "division_by_zero"
+            },
+            "label": "reject_division_by_zero"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "number_bound"
+            },
+            "label": "reject_number_bound"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "ends_before_assert"
+            },
+            "label": "reject_ends_before_assert"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "step_limit"
+            },
+            "label": "reject_step_limit"
+          },
+          {
+            "when": {
+              "question": "execution",
+              "answer": "assert_conflict"
+            },
+            "label": "reject_assert_conflict"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

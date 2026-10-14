@@ -6342,5 +6342,80 @@
       "ev_proposal": "malformed",
       "ev_reject_reason": "json"
     }
+  },
+  "verifiable_cot": {
+    "pass_clean": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "pass"
+    },
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed"
+    },
+    "contract_duplicate_step_id": {
+      "ev_proposal": "parsed",
+      "ev_contract": "duplicate_step_id"
+    },
+    "contract_undefined_target": {
+      "ev_proposal": "parsed",
+      "ev_contract": "undefined_step_target"
+    },
+    "contract_loop": {
+      "ev_proposal": "parsed",
+      "ev_contract": "loop"
+    },
+    "contract_unreachable_step": {
+      "ev_proposal": "parsed",
+      "ev_contract": "unreachable_step"
+    },
+    "contract_input_contract": {
+      "ev_proposal": "parsed",
+      "ev_contract": "input_contract"
+    },
+    "execution_undefined_input": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "undefined_input"
+    },
+    "execution_undefined_variable": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "undefined_variable"
+    },
+    "execution_type_error": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "type_error"
+    },
+    "execution_division_by_zero": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "division_by_zero"
+    },
+    "execution_number_bound": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "number_bound"
+    },
+    "execution_ends_before_assert": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "ends_before_assert"
+    },
+    "execution_step_limit": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "step_limit"
+    },
+    "execution_assert_conflict": {
+      "ev_proposal": "parsed",
+      "ev_contract": "ok",
+      "ev_execution": "assert_conflict"
+    },
+    "precedence_contract_over_execution": {
+      "ev_proposal": "parsed",
+      "ev_contract": "loop",
+      "ev_execution": "pass"
+    }
   }
 }
