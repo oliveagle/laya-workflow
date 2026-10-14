@@ -40,6 +40,12 @@ pub struct BrowserCap {
     /// Start Chrome only when explicitly requested. Connecting to an already
     /// running endpoint never needs `allow_exec`.
     pub launch: bool,
+    /// Attach to a CDP endpoint this process did **not** launch (a browser a
+    /// human started, or another tool's). Skips the Laya-ownership proof and
+    /// the owner marker, since we neither launched nor own that profile: we
+    /// only borrow a tab. `launch` is ignored while `attach` is set — attach
+    /// never spawns, and an unreachable endpoint is an error, not a launch.
+    pub attach: bool,
     pub startup_timeout_ms: u64,
     pub timeout_ms: u64,
     pub max_text: usize,
@@ -543,6 +549,15 @@ fn owner_marker_path(profile_path: &std::path::Path) -> std::path::PathBuf {
     profile_path.join("laya-owner.json")
 }
 
+/// Where an *attached* (not Laya-launched) browser's target bookkeeping lives.
+///
+/// It must not be the target's own profile - we did not launch that browser and
+/// must not write into it - so it goes under the process temp dir, keyed by the
+/// endpoint port so repeated runs against the same endpoint share one registry.
+fn attach_owner_dir(endpoint: &str) -> Result<std::path::PathBuf> {
+    Ok(std::env::temp_dir().join(format!("laya-cdp-attach-{}", endpoint_port(endpoint)?)))
+}
+
 fn write_owner_marker(
     profile_path: &std::path::Path,
     endpoint: &str,
@@ -642,6 +657,44 @@ pub(crate) fn ensure_runtime(
                 rt.endpoint
             );
         }
+        return Ok(endpoint);
+    }
+
+    // Explicit attach: borrow a browser this process did not launch. There is
+    // no owner marker to check and no profile we may write to, so skip both.
+    // `launch` is ignored - attach never spawns, and an unreachable endpoint is
+    // an error rather than an invitation to start one.
+    if c.attach {
+        if http_json(
+            &endpoint,
+            "GET",
+            "/json/version",
+            bounded_timeout(c.timeout_ms, policy),
+        )
+        .is_err()
+        {
+            bail!(
+                "CDP attach endpoint {endpoint} is not reachable; with attach=true Laya does \
+                 not launch a browser (start one at that endpoint, or set launch=true)"
+            );
+        }
+        // Non-intrusive by default: do not inject Laya's observation extension
+        // into a browser we do not own. A flow that needs the extension sets
+        // `extension_path` explicitly to opt in.
+        if !c.extension_path.is_empty() {
+            let extension = stringify(&expand(&Value::String(c.extension_path.clone()), state, with));
+            if std::path::Path::new(&extension).join("manifest.json").is_file() {
+                ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
+            }
+        }
+        let owner_dir = attach_owner_dir(&endpoint)?;
+        std::fs::create_dir_all(&owner_dir)?;
+        initialize_owned_targets(&owner_dir, &endpoint);
+        *guard = Some(BrowserRuntime {
+            endpoint: endpoint.clone(),
+            owner_dir,
+            _lock: None,
+        });
         return Ok(endpoint);
     }
 
@@ -4198,6 +4251,7 @@ mod tests {
             profile_dir: String::new(),
             extension_path: String::new(),
             launch,
+            attach: false,
             startup_timeout_ms: 1_000,
             timeout_ms: 1,
             max_text: 1_000,
@@ -4591,6 +4645,7 @@ mod real_browser_tests {
             extension_path: concat!(env!("CARGO_MANIFEST_DIR"), "/extensions/laya-browser")
                 .to_string(),
             launch: true,
+            attach: false,
             startup_timeout_ms: 20_000,
             timeout_ms: 8_000,
             max_text: 6_000,

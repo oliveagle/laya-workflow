@@ -40,14 +40,42 @@ policy and cleanup rules below apply unchanged to plugin-driven work.
 }
 ```
 
+Every field is optional except that you need *a* way to reach a browser:
+
+| field | meaning |
+|---|---|
+| `endpoint` | CDP HTTP base, e.g. `http://127.0.0.1:9222` (defaults to `$LAYA_BROWSER_CDP` then `127.0.0.1:9222`) |
+| `launch` | start (and own) Chrome if the endpoint is not already up |
+| `attach` | borrow a browser this process did **not** launch — see below |
+| `profile_dir` | profile to launch with (ignored while attaching) |
+| `chrome_binary` | the binary to launch (ignored while attaching) |
+
+`launch` and `attach` answer two different questions:
+
+* **`launch: true`** — "if nothing is running here, start one and own it." A
+  live endpoint is reused only when it is a **Laya-owned** singleton: the owner
+  marker (`<profile>/laya-owner.json`) matches, and a live process still runs
+  with that profile and port. Anything else is refused, because writing an owner
+  marker into a profile Laya did not create would claim someone else's browser.
+* **`attach: true`** — "a browser is already running here and I did not launch
+  it; just use it." No owner-marker check, no launch, and no writes into the
+  target's profile (Laya's per-target bookkeeping goes to its own
+  `laya-cdp-attach-<port>` dir under the temp dir). An unreachable endpoint is
+  an error, not an invitation to start one. This is what drives a long-lived
+  browser another process (or a human) started — and what `bdd run --cdp <url>`
+  sets on every spec it compiles.
+
 The first call:
 
-- checks `/json/version` and attaches if Chrome is already running;
+- checks `/json/version` and, for `launch: true`, attaches if a **Laya-owned**
+  Chrome is already running (with `attach: true`, to any reachable instance);
 - otherwise requires `policy.allow_exec`, creates/locks one profile, and starts
   one foreground Chrome window with CDP;
 - injects the unpacked plugin through browser-level CDP
   (`Extensions.loadUnpacked`), which works with current branded Chrome releases
-  where the command-line extension flag is ignored;
+  where the command-line extension flag is ignored — skipped while attaching
+  unless `extension_path` is set explicitly, so Laya does not inject anything
+  into a browser it does not own;
 - keeps a process-global binding to that endpoint. A second endpoint in the same
   process fails fast with `the Chrome CDP singleton is already bound...`;
 - uses a profile lock to stop two Laya processes from racing the initial launch.
@@ -454,5 +482,12 @@ cargo test --lib capability::browser::real_browser_tests::real_chrome_singleton_
 
 If you prefer an existing profile, start Chrome once with
 `--remote-debugging-port=9222` and load `extensions/laya-browser` through
-`chrome://extensions`. Then set `launch: false`; Laya will reuse that exact
-instance and refuse to launch a second one.
+`chrome://extensions`. Then set `launch: false` **and `attach: true`**; Laya will
+reuse that exact instance (no owner-marker proof, no launch, nothing written into
+your profile) and refuse to start a second one.
+
+`launch: false` alone is *not* enough for a browser Laya did not start: without
+`attach`, the endpoint is only reused when the owner marker and a matching live
+process prove Laya created it, and otherwise fails with
+`CDP endpoint … is not a laya-workflow-owned singleton; set launch=true so Laya
+creates a marked instance`. To drive such a browser as-is, set `attach: true`.

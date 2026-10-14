@@ -307,6 +307,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             profile_dir: def.get("profile_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             extension_path: def.get("extension_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             launch: def.get("launch").and_then(|v| v.as_bool()).unwrap_or(false),
+            attach: def.get("attach").and_then(|v| v.as_bool()).unwrap_or(false),
             startup_timeout_ms: def.get("startup_timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
             timeout_ms: def.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000),
             max_text: def.get("max_text").and_then(|v| v.as_u64()).unwrap_or(6_000) as usize,
