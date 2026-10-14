@@ -158,6 +158,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-mcp-transpile", t_bdd::test_bdd_mcp_transpile),
         ("bdd-mcp-import", t_bdd::test_bdd_mcp_import),
         ("bdd-mcp-decide", t_bdd::test_bdd_mcp_decide),
+        ("bdd-mcp-answers", t_bdd::test_bdd_mcp_answers),
         ("bdd-mcp-list", t_bdd::test_bdd_mcp_list),
         ("bdd-cli-diagnostics", t_bdd::test_bdd_cli_diagnostics),
         ("bdd-vocabulary", t_bdd::test_bdd_vocabulary),

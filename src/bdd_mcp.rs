@@ -606,12 +606,25 @@ fn spec_rel_key(path: &std::path::Path) -> Option<String> {
     s.strip_suffix(".json").map(str::to_string)
 }
 
+/// The `questions` object of a node in a spec, or Null when absent — used to
+/// hand a step-wise caller the next node's questions.
+fn spec_questions_of(spec: &Value, node: &str) -> Value {
+    spec.get("nodes")
+        .and_then(Value::as_array)
+        .and_then(|ns| {
+            ns.iter()
+                .find(|n| n.get("name").and_then(Value::as_str) == Some(node))
+        })
+        .and_then(|n| n.get("questions").cloned())
+        .unwrap_or(Value::Null)
+}
+
 impl McpTool for DecideTool {
     fn name(&self) -> &str {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far} naming the start node's question, so a caller can walk the graph one question at a time, appending one answer object per needs_answer reply until it returns ok:true."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -622,7 +635,8 @@ impl McpTool for DecideTool {
                 "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature decision workflow, e.g. bdd/workflows/guards/agent_permission_gate.feature."},
                 "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
                 "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
-                "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."}
+                "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."},
+                "answers": {"type": "array", "description": "Drive the graph with your own answers instead of the offline heuristic. One object per node the walk visits, each {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} in the same shape laya-tch returns. Pass [] to start a step-wise walk: the reply then names the start node's question (ok:false, needs_answer:true, at_node, ask, steps_so_far), and you append one answer per reply until ok:true."}
             }
         })
     }
@@ -754,18 +768,64 @@ impl McpTool for DecideTool {
         let verified_by = live.and_then(|e| e.get("covered_by")).cloned().unwrap_or(Value::Null);
         let why_live = live.and_then(|e| e.get("reason")).cloned().unwrap_or(Value::Null);
 
-        let out = wf.run(&crate::backend::HeuristicBackend, &state).map_err(|e| {
-            // A live-only graph (chrome/network/manual) cannot be walked offline;
-            // name the live gate in the failure so the caller routes to it rather
-            // than reading a bare runtime error.
-            if offline {
-                anyhow!("bdd_decide: run failed: {e:#}")
-            } else {
-                let by = verified_by.as_str().unwrap_or("live");
-                let why = why_live.as_str().unwrap_or("");
-                anyhow!("bdd_decide: run failed offline: {e:#}\n(this graph is not offline-verifiable; verified by: {by}; {why})")
+        // Backend: the caller may supply their own answers (an agent / a real
+        // model drives the graph) instead of the offline heuristic. The graph
+        // stays the deterministic decision core; only the perceptions come from
+        // outside. With too few answers, the call reports the next question
+        // instead of failing, so a caller can walk one step at a time.
+        let answers = args.get("answers");
+        let (out, backend_mode) = match answers {
+            Some(ans) => {
+                if !ans.is_array() {
+                    return Err(anyhow!(
+                        "bdd_decide: `answers` must be an array of per-node answer objects (one per node the walk visits; [] starts a step-wise walk)"
+                    ));
+                }
+                let be = crate::backend::AnswersBackend::from_json(ans)
+                    .map_err(|e| anyhow!("bdd_decide: {e:#}"))?;
+                let mut steps: Vec<Value> = Vec::new();
+                let mut at_node = wf.start.clone();
+                let res = wf.run_with_progress(&be, &state, &mut |r: &crate::workflow::NodeResult| {
+                    steps.push(json!({
+                        "node": r.node_name,
+                        "action": r.action.as_str(),
+                        "answer": r.edge_answer,
+                        "confidence": (r.confidence * 10000.0).round() / 10000.0,
+                    }));
+                    at_node = r.next_node.clone().unwrap_or_default();
+                });
+                match res {
+                    Ok(o) => (o, "answers"),
+                    Err(e) if be.exhausted() => {
+                        return Ok(json!({
+                            "ok": false,
+                            "backend": "answers",
+                            "needs_answer": true,
+                            "at_node": at_node,
+                            "ask": spec_questions_of(&spec_value, &at_node),
+                            "steps_so_far": steps,
+                            "message": format!("{e:#}"),
+                        }));
+                    }
+                    Err(e) => return Err(anyhow!("bdd_decide: {e:#}")),
+                }
             }
-        })?;
+            None => {
+                let o = wf.run(&crate::backend::HeuristicBackend, &state).map_err(|e| {
+                    // A live-only graph (chrome/network/manual) cannot be walked
+                    // offline; name the live gate in the failure so the caller
+                    // routes to it rather than reading a bare runtime error.
+                    if offline {
+                        anyhow!("bdd_decide: run failed: {e:#}")
+                    } else {
+                        let by = verified_by.as_str().unwrap_or("live");
+                        let why = why_live.as_str().unwrap_or("");
+                        anyhow!("bdd_decide: run failed offline: {e:#}\n(this graph is not offline-verifiable; verified by: {by}; {why})")
+                    }
+                })?;
+                (o, "heuristic")
+            }
+        };
         let j = out.to_json();
         // The decision label is the node's decisive projection, in order:
         // `result.label` (a threshold ladder), `gate_action` (a gate), `route` (a
@@ -775,6 +835,7 @@ impl McpTool for DecideTool {
         let label = decision_label(j.get("result").unwrap_or(&Value::Null), out.final_action());
         Ok(json!({
             "ok": true,
+            "backend": backend_mode,
             "label": label,
             "label_source": label_source(&spec_value, j.get("result").unwrap_or(&Value::Null), out.final_action()),
             "outputs_complete": !has_opaque_outputs(&spec_value),

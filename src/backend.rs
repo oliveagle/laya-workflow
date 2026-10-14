@@ -155,6 +155,98 @@ impl Decide for ScriptedBackend {
     }
 }
 
+/// A caller-supplied answer script: one `Verdict` per node the walk visits,
+/// in order. This is how an agent (or any non-heuristic caller) drives a graph —
+/// the BDD graph stays the deterministic decision core, and the caller supplies
+/// the perceptions the offline `HeuristicBackend` would otherwise invent.
+///
+/// Each script entry is a `{<qid>: <answer>}` object in the same shape
+/// `laya-tch` returns (see [`verdict_from_response`]): a `choice` needs
+/// `choice` + `probabilities` + `confidence`, a `score` a `score`, a `noul` a
+/// `noul` probability. The backend answers every question the current node asks
+/// from the current entry, and refuses — naming the question and the entry —
+/// when an entry is missing a question it is asked, or when the walk needs more
+/// steps than the script provides (`exhausted()` is then true). That lets a
+/// caller drive the graph one question at a time instead of guessing the whole
+/// walk up front.
+pub struct AnswersBackend {
+    script: Vec<Verdict>,
+    cursor: std::cell::Cell<usize>,
+    exhausted: std::cell::Cell<bool>,
+}
+
+impl AnswersBackend {
+    /// Parse the `answers` argument: an array of `{<qid>: <answer>}` objects, one
+    /// per node visited. An empty array is allowed — the first call then reports
+    /// the start node's question instead of running a step.
+    pub fn from_json(answers: &Value) -> Result<Self> {
+        let arr = answers.as_array().ok_or_else(|| {
+            anyhow!(
+                "answers must be an array of per-node answer objects (one per node the walk visits; [] starts a step-wise walk)"
+            )
+        })?;
+        let mut script = Vec::with_capacity(arr.len());
+        for (i, entry) in arr.iter().enumerate() {
+            let wrapped = serde_json::json!({ "answers": entry });
+            let v = verdict_from_response(&wrapped).map_err(|e| anyhow!("answers[{i}]: {e:#}"))?;
+            if v.answers.is_empty() {
+                return Err(anyhow!(
+                    "answers[{i}] is empty — each entry must answer the question(s) its node asks"
+                ));
+            }
+            script.push(v);
+        }
+        Ok(Self {
+            script,
+            cursor: std::cell::Cell::new(0),
+            exhausted: std::cell::Cell::new(false),
+        })
+    }
+
+    /// How many answers the walk has consumed so far.
+    pub fn calls(&self) -> usize {
+        self.cursor.get()
+    }
+
+    /// True once the walk needed more answers than the script supplied.
+    pub fn exhausted(&self) -> bool {
+        self.exhausted.get()
+    }
+}
+
+impl Decide for AnswersBackend {
+    fn decide(&self, _state: &Value, questions: &Value) -> Result<Verdict> {
+        let i = self.cursor.get();
+        let asked: Vec<String> = questions
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        let Some(v) = self.script.get(i) else {
+            self.exhausted.set(true);
+            return Err(anyhow!(
+                "the walk needs another step but `answers` has only {} entr{}; the node asks question(s) {} — append one answer object for this step",
+                self.script.len(),
+                if self.script.len() == 1 { "y" } else { "ies" },
+                serde_json::to_string(&asked).unwrap_or_default(),
+            ));
+        };
+        let missing: Vec<String> = asked
+            .iter()
+            .filter(|q| !v.answers.contains_key(*q))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            return Err(anyhow!(
+                "answers[{i}] does not answer question(s) {} asked by this node (it answers {})",
+                serde_json::to_string(&missing).unwrap_or_default(),
+                serde_json::to_string(&v.answers.keys().collect::<Vec<_>>()).unwrap_or_default(),
+            ));
+        }
+        self.cursor.set(i + 1);
+        Ok(v.clone())
+    }
+}
+
 /// Deterministic rule-based backend for offline runs and CI.
 ///
 /// It reproduces the *decisions* the neural model makes on the app reference

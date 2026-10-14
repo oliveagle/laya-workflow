@@ -4251,3 +4251,90 @@ pub fn test_bdd_label_accounted(h: &mut Harness) {
         json!(true),
     );
 }
+
+
+/// P94: `bdd_decide` accepts caller-supplied `answers` — an agent / real model
+/// drives the graph with its own perceptions while the graph stays the
+/// deterministic decision core. Step-wise: `answers: []` names the start node's
+/// question, and a short script stops at the next node instead of silently
+/// falling back to the offline heuristic for the remaining steps.
+pub fn test_bdd_mcp_answers(h: &mut Harness) {
+    let t = bdd_tool("bdd_decide");
+    let spec = "dsl/guards/agent_permission_gate.json";
+
+    // (1) `answers: []` starts a step-wise walk: no step runs, the reply names
+    //     the start node and its question instead of inventing answers.
+    let start = t
+        .call(&json!({"spec_path": spec, "state": {}, "answers": []}))
+        .unwrap();
+    h.eq("answers: [] is not ok (it needs an answer)", start["ok"].clone(), json!(false));
+    h.eq("answers: [] reports backend=answers", start["backend"].clone(), json!("answers"));
+    h.eq("answers: [] asks at the start node", start["at_node"].clone(), json!("unauthenticated"));
+    h.eq("answers: [] sets needs_answer", start["needs_answer"].clone(), json!(true));
+    h.eq("answers: [] ran no step", start["steps_so_far"].as_array().unwrap().len(), 0);
+    h.check("answers: [] names the event question", start["ask"]["event"].is_object());
+
+    // (2) A full caller script drives the graph; the trace echoes the caller's
+    //     answers (login -> authorize -> halt), not the heuristic's.
+    let step = |e: &str, r: &str| {
+        json!({
+            "event": {"type": "choice", "choice": e, "confidence": 1.0},
+            "risk":  {"type": "choice", "choice": r, "confidence": 1.0}
+        })
+    };
+    let driven = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": [step("login", "low"), step("authorize", "low"), step("halt", "high")]}))
+        .unwrap();
+    h.eq("answers: a full script returns ok", driven["ok"].clone(), json!(true));
+    h.eq("answers: the driven call reports backend=answers", driven["backend"].clone(), json!("answers"));
+    let steps = driven["trace"]["steps"].as_array().unwrap();
+    h.eq("answers: three steps walked", steps.len(), 3);
+    let fed: Vec<&str> = steps.iter().filter_map(|s| s["answer"].as_str()).collect();
+    h.check("answers: the trace echoes the caller's answers", fed == vec!["login", "authorize", "halt"]);
+    let nodes: Vec<&str> = steps.iter().filter_map(|s| s["node"].as_str()).collect();
+    h.check(
+        "answers: the walk follows the caller's route",
+        nodes == vec!["unauthenticated", "authenticated", "authorized"],
+    );
+    h.eq("answers: the caller's risk band fixes the terminal label", driven["label"].clone(), json!("BLOCK"));
+
+    // (2b) Control: the SAME empty state through the heuristic backend walks the
+    //      defaults-only path — its first answer is the invented "none", not the
+    //      caller's "login". So the answers really drove the run.
+    let heur = t.call(&json!({"spec_path": spec, "state": {}})).unwrap();
+    h.eq("answers: the heuristic backend is labelled", heur["backend"].clone(), json!("heuristic"));
+    h.eq(
+        "answers: the heuristic invents 'none' with no state",
+        heur["trace"]["steps"][0]["answer"].clone(),
+        json!("none"),
+    );
+
+    // (3) A short script stops at the next node and asks again — it does NOT
+    //     silently fall back to the heuristic for the remaining steps.
+    let short = t
+        .call(&json!({"spec_path": spec, "state": {}, "answers": [step("login", "low")]}))
+        .unwrap();
+    h.eq("answers: a short script stops (not ok)", short["ok"].clone(), json!(false));
+    h.eq("answers: the short script stops at the next node", short["at_node"].clone(), json!("authenticated"));
+    h.eq("answers: the short script ran the one step it had", short["steps_so_far"].as_array().unwrap().len(), 1);
+
+    // (4) A non-array `answers` is rejected before any walk.
+    h.check(
+        "answers: a non-array is rejected",
+        t.call(&json!({"spec_path": spec, "state": {},
+            "answers": {"event": {"type": "choice", "choice": "login", "confidence": 1.0}}}))
+            .is_err(),
+    );
+
+    // (5) An entry that omits a question its node asks is rejected, naming both.
+    let err = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": [{"risk": {"type": "choice", "choice": "low", "confidence": 1.0}}]}))
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "answers: an entry missing an asked question is rejected, naming it",
+        err.contains("answers[0]") && err.contains("event"),
+    );
+}
