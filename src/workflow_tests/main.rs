@@ -160,6 +160,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
         ("bdd-port-check", t_bdd::test_bdd_port_check),
         ("bdd-import", t_bdd::test_bdd_import),
+        ("bdd-import-dir", t_bdd::test_bdd_import_dir),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

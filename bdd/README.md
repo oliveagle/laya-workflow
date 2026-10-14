@@ -682,7 +682,13 @@ smoke, and finally `laya-workflow bdd run`, which drives a real headless Chrome
 over CDP. `laya-workflow bdd import-check` runs the reverse of the round-trip:
 it imports every checked-in spec back to a `.feature` and recompiles it, so the
 two spellings are proven interchangeable (a spec is not just compilable *from*
-its feature, it is *recoverable from the spec alone*). A cross-repo
+its feature, it is *recoverable from the spec alone*). `laya-workflow bdd
+import` is the tool that lifts any known workflow into BDD: one `<spec.json>`,
+or `--dir <DIR>` to import a whole tree at once, with `--into <cat>` filing the
+port under `bdd/workflows/<cat>/` and `dsl/<cat>/` so both gates cover it. Every
+feature is verified — re-parsed and recompiled to the same graph — *before* it
+is written, and a directory with nothing importable is an error, not a silent
+pass. A cross-repo
 `laya-workflow bdd port-check` (gated by `LAYA_OLE_EVAL_SOURCES`) proves every
 upstream scenario has a port and every port a source. The browser stage is
 **skip-not-fail**: `bdd run` prints a `skipped`

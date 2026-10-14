@@ -533,14 +533,28 @@ enum BddCmd {
         json: Option<String>,
     },
     /// Import: turn an existing workflow spec (a `.json`) back into a
-    /// `@decision` `.feature` that compiles to the very same graph. The
+    /// `@decision` `.feature` that compiles to the very same graph — the
     /// inverse of `transpile`; the tool that lifts any known workflow into BDD.
+    /// Pass one `<SPEC>`, or `--dir <DIR>` for a whole tree at once.
     Import {
-        /// Path to the spec `.json` to import.
-        spec: String,
-        /// Write the `.feature` here instead of stdout.
+        /// Path to the spec `.json` to import (omit with `--dir`).
+        #[arg(required_unless_present = "dir")]
+        spec: Option<String>,
+        /// Import every decision spec under this directory.
+        #[arg(long, conflicts_with = "spec")]
+        dir: Option<String>,
+        /// Write the `.feature` here — a file for one spec, a directory for `--dir`.
         #[arg(long)]
         out: Option<String>,
+        /// File the port under `bdd/workflows/<cat>/` and copy its spec to `dsl/<cat>/`.
+        #[arg(long)]
+        into: Option<String>,
+        /// Write the report as JSON here (`--dir` only).
+        #[arg(long)]
+        json: Option<String>,
+        /// Overwrite an existing target instead of reporting a collision.
+        #[arg(long)]
+        force: bool,
     },
     /// Import gate: prove every checked-in spec is recoverable from a feature
     /// that `import` emits (the reverse of `round-trip`).
@@ -2510,17 +2524,28 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             timeout_secs: *timeout_secs,
             json: json.clone(),
         })?,
-        BddCmd::RoundTrip { json } => bdd::round_trip(&bdd::RoundTripOptions {
-            json: json.clone(),
-        })?,
+        BddCmd::RoundTrip { json } => {
+            bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?
+        }
         BddCmd::PortCheck { sources, cat, json } => bdd::port_check(&bdd::PortCheckOptions {
             sources: std::path::PathBuf::from(sources),
             cat: cat.clone(),
             json: json.clone(),
         })?,
-        BddCmd::Import { spec, out } => bdd::import(&bdd::ImportOptions {
+        BddCmd::Import {
+            spec,
+            dir,
+            out,
+            into,
+            json,
+            force,
+        } => bdd::import(&bdd::ImportOptions {
             spec: spec.clone(),
+            dir: dir.clone(),
             out: out.clone(),
+            into: into.clone(),
+            json: json.clone(),
+            force: *force,
         })?,
         BddCmd::ImportCheck { json } => bdd::import_check(&bdd::ImportCheckOptions {
             json: json.clone(),

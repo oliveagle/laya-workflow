@@ -2656,3 +2656,198 @@ pub fn test_bdd_import(h: &mut Harness) {
         import_spec(&not_a_spec).is_err(),
     );
 }
+
+/// `bdd import --dir`: lift a whole tree of JSON workflows into `.feature`s, one
+/// per decision spec, each verified before it is written. `*.config.json`
+/// sidecars are skipped by name, any json without a `nodes` array is skipped as
+/// "not a decision spec", and a directory with nothing importable is an error
+/// rather than a silent pass — the `--dir` twin of the single-file `bdd import`.
+/// The `--into` filing (`repo_cat_paths` + `normalise_name`) is what makes a
+/// ported spec/feature pair pass both `round-trip` and `import-check`.
+pub fn test_bdd_import_dir(h: &mut Harness) {
+    use laya_workflow::bdd::{
+        collect_spec_dir, compile_decision, import, import_spec, normalise_name, parse,
+        repo_cat_paths, same_graph, ImportOptions,
+    };
+
+    let base = std::env::temp_dir().join(format!("laya-import-dir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("src");
+    let out = base.join("out");
+    let mk = |rel: &str, body: &str| {
+        let p = src.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, body).unwrap();
+    };
+
+    // A one-node decision spec that survives import: a choice question -> STOP,
+    // with `max_iterations` pinned the way every checked-in spec pins it.
+    let one = |name: &str| {
+        json!({
+            "name": name,
+            "description": "probe",
+            "start": "go",
+            "max_iterations": 12,
+            "nodes": [{
+                "name": "go",
+                "primary_q": "ok",
+                "questions": {"ok": {"type": "choice", "instructions": "i", "criteria": {"A": "a", "B": "b"}}},
+                "edge": {"condition": {}, "default": "STOP"}
+            }]
+        })
+    };
+    mk("alpha.json", &serde_json::to_string(&one("alpha")).unwrap());
+    mk(
+        "nested/beta.json",
+        &serde_json::to_string(&one("beta")).unwrap(),
+    );
+    mk("notes.json", "{\"note\": \"this is not a workflow\"}");
+    mk("bad.json", "{ not json at all");
+    mk("side.config.json", "{\"pages\": 3}");
+
+    // (1) discovery: decision specs found recursively; non-specs skipped.
+    let (found, skipped) = collect_spec_dir(&src).expect("collect_spec_dir");
+    let names: Vec<String> = found.iter().map(|f| f.name.clone()).collect();
+    h.check(
+        "bdd import --dir: finds decision specs recursively (alpha + nested/beta)",
+        names == vec!["alpha".to_string(), "beta".to_string()],
+    );
+    h.check(
+        "bdd import --dir: `*.config.json` is ignored, never a skip complaint",
+        skipped.iter().all(|s| !s.contains("side.config.json")),
+    );
+    h.check(
+        "bdd import --dir: a non-workflow json and a broken json are both skipped",
+        skipped.len() == 2
+            && skipped.iter().any(|s| s.contains("notes.json"))
+            && skipped.iter().any(|s| s.contains("bad.json")),
+    );
+
+    // (2) every found spec imports and recompiles to the same graph.
+    for f in &found {
+        let ok = match import_spec(&f.spec) {
+            Ok(t) => match parse(&t, "<import-dir>") {
+                Ok(p) => compile_decision(&p, &json!({}))
+                    .map(|rb| same_graph(&f.spec, &rb))
+                    .unwrap_or(false),
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+        h.check(
+            &format!("bdd import --dir: `{}` round-trips through import", f.name),
+            ok,
+        );
+    }
+
+    // (3) the write half: `--out <DIR>` writes one `.feature` per decision spec.
+    let dir_arg = src.to_string_lossy().into_owned();
+    let out_arg = out.to_string_lossy().into_owned();
+    let rc = import(&ImportOptions {
+        dir: Some(dir_arg.clone()),
+        out: Some(out_arg.clone()),
+        ..Default::default()
+    })
+    .expect("import --dir --out");
+    h.check(
+        "bdd import --dir --out: exits 0 when everything imports",
+        rc == 0,
+    );
+    h.check(
+        "bdd import --dir --out: a .feature lands for each decision spec",
+        out.join("alpha.feature").is_file() && out.join("beta.feature").is_file(),
+    );
+    h.check(
+        "bdd import --dir --out: no file is written for a skipped json",
+        !out.join("notes.feature").exists() && !out.join("bad.feature").exists(),
+    );
+
+    // (4) a second run collides (rc 1); --force clears it.
+    let rc_again = import(&ImportOptions {
+        dir: Some(dir_arg.clone()),
+        out: Some(out_arg.clone()),
+        ..Default::default()
+    })
+    .expect("import --dir --out (again)");
+    h.check(
+        "bdd import --dir --out: an existing target is a collision (rc 1)",
+        rc_again == 1,
+    );
+    let rc_force = import(&ImportOptions {
+        dir: Some(dir_arg.clone()),
+        out: Some(out_arg.clone()),
+        force: true,
+        ..Default::default()
+    })
+    .expect("import --dir --out --force");
+    h.check(
+        "bdd import --dir --out --force: overwrites and exits 0",
+        rc_force == 0,
+    );
+
+    // (5) a dry run (no --out / --into) writes nothing and exits 0.
+    let rc_dry = import(&ImportOptions {
+        dir: Some(dir_arg.clone()),
+        ..Default::default()
+    })
+    .expect("import --dir (dry run)");
+    h.check(
+        "bdd import --dir: a dry run exits 0 and writes nothing",
+        rc_dry == 0 && !out.join("gamma.feature").exists(),
+    );
+
+    // (6) a directory with no decision spec is an error, never a silent pass.
+    let empty = base.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    h.check(
+        "bdd import --dir: a directory with no decision spec is an error",
+        import(&ImportOptions {
+            dir: Some(empty.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .is_err(),
+    );
+
+    // (7) `<SPEC>` and `--dir` are mutually exclusive.
+    h.check(
+        "bdd import: <SPEC> together with --dir is rejected",
+        import(&ImportOptions {
+            spec: Some("a.json".into()),
+            dir: Some("b".into()),
+            ..Default::default()
+        })
+        .is_err(),
+    );
+
+    // (8) the `--into` filing: feature under bdd/workflows/<cat>/, spec under dsl/<cat>/.
+    let root = std::path::Path::new("/repo");
+    let (feat, spec_out) = repo_cat_paths(root, "scratch", "alpha");
+    h.check(
+        "bdd import --into: the port files under bdd/workflows/<cat>/ and dsl/<cat>/",
+        feat == root.join("bdd/workflows/scratch/alpha.feature")
+            && spec_out == root.join("dsl/scratch/alpha.json"),
+    );
+    let pinned = normalise_name(&one("a display name"), "alpha");
+    h.check(
+        "bdd import --into: the filed spec's name is pinned to the port stem",
+        pinned.get("name").and_then(Value::as_str) == Some("alpha"),
+    );
+    let pinned_feature = match import_spec(&pinned) {
+        Ok(t) => t,
+        Err(e) => {
+            h.check(
+                &format!("bdd import --into: pinned spec imports ({e:#})"),
+                false,
+            );
+            return;
+        }
+    };
+    let pinned_back =
+        compile_decision(&parse(&pinned_feature, "<import-dir>").unwrap(), &json!({})).unwrap();
+    h.check(
+        "bdd import --into: the pinned spec is self-consistent (name == stem)",
+        same_graph(&pinned, &pinned_back),
+    );
+
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -7477,21 +7477,96 @@ pub fn import_spec(spec: &Value) -> Result<String> {
     Ok(out)
 }
 
-/// `bdd import`: a spec file → a `.feature` that compiles back to it.
+/// A spec discovered under `bdd import --dir`: its file stem (the port name),
+/// its path (for messages) and the parsed JSON.
+pub struct FoundSpec {
+    pub name: String,
+    pub path: PathBuf,
+    pub spec: Value,
+}
+
+/// Where `--dir` should send each imported `.feature` (and, under `--into`, its
+/// spec). The single-spec path writes to stdout / `--out <FILE>` inline.
+enum ImportDest {
+    /// `--dir --out <DIR>`: write `<DIR>/<name>.feature` for every spec.
+    Dir(PathBuf),
+    /// `--into <cat>`: file the feature under `bdd/workflows/<cat>/` and copy the
+    /// spec to `dsl/<cat>/`, so `round-trip` and `import-check` cover the pair.
+    RepoCat(String),
+    /// `--dir` with no destination: report what would be imported, write nothing.
+    DryRun,
+}
+
+/// `bdd import`: lift a known workflow into BDD — the inverse of `transpile`.
+///
+/// * `<SPEC>` — one `.json` → one `.feature` (to stdout, `--out <FILE>`, or
+///   `--into <cat>` to file it into this repo's trees).
+/// * `--dir <DIR>` — every decision spec under `DIR` → one `.feature` each
+///   (`--out <DIR>`, or `--into <cat>` to port them all; neither = a dry run
+///   that only reports). `*.config.json` sidecars are skipped by name, and any
+///   json without a non-empty `nodes` is skipped as "not a decision spec".
+///
+/// A feature is verified *before* it is written: it must re-parse, and the graph
+/// it compiles back to must equal the source spec under `same_graph`. A spec BDD
+/// cannot spell (or cannot round-trip) is reported, never written half-way.
 pub fn import(o: &ImportOptions) -> Result<i32> {
-    let text = std::fs::read_to_string(&o.spec)
-        .with_context(|| format!("reading {}", o.spec))?;
-    let spec: Value = serde_json::from_str(&text)
-        .with_context(|| format!("parsing {} as JSON", o.spec))?;
-    let feature = import_spec(&spec)?;
+    if o.spec.is_some() && o.dir.is_some() {
+        bail!("pass either <SPEC> or --dir <DIR>, not both");
+    }
+    if o.out.is_some() && o.into.is_some() {
+        bail!("pass either --out or --into, not both");
+    }
+    match (&o.spec, &o.dir) {
+        (Some(spec), None) => import_one(spec, o),
+        (None, Some(dir)) => import_dir(dir, o),
+        (None, None) => {
+            bail!("pass a <SPEC> path to import one spec, or --dir <DIR> to import a whole tree")
+        }
+        (Some(_), Some(_)) => {
+            unreachable!("guarded above: <SPEC> and --dir are mutually exclusive")
+        }
+    }
+}
+
+/// One `.json` → one `.feature`.
+fn import_one(spec_path: &str, o: &ImportOptions) -> Result<i32> {
+    let text =
+        std::fs::read_to_string(spec_path).with_context(|| format!("reading {spec_path}"))?;
+    let spec: Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing {spec_path} as JSON"))?;
+    let stem = Path::new(spec_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "workflow".into());
+    let mut feature = import_spec(&spec)?;
+
+    if let Some(cat) = &o.into {
+        let (feat, spec_out) = repo_cat_paths(&repo_root(), cat, &stem);
+        if (feat.exists() || spec_out.exists()) && !o.force {
+            bail!(
+                "{} already holds `{stem}` (--force to overwrite)",
+                feat.parent().unwrap_or(Path::new("")).display()
+            );
+        }
+        feature = import_spec(&normalise_name(&spec, &stem))?;
+        write_file(&feat, &feature)?;
+        write_file(
+            &spec_out,
+            &format!(
+                "{}\n",
+                serde_json::to_string_pretty(&normalise_name(&spec, &stem))?
+            ),
+        )?;
+        eprintln!(
+            "bdd import: wrote {} (+ spec {})",
+            feat.display(),
+            spec_out.display()
+        );
+        return Ok(0);
+    }
     match &o.out {
         Some(p) => {
-            if let Some(parent) = Path::new(p).parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
-            }
-            std::fs::write(p, &feature).with_context(|| format!("writing {p}"))?;
+            write_file(Path::new(p), &feature)?;
             eprintln!("bdd import: wrote {p}");
         }
         None => print!("{feature}"),
@@ -7499,17 +7574,275 @@ pub fn import(o: &ImportOptions) -> Result<i32> {
     Ok(0)
 }
 
-/// Options for `bdd import`.
+/// The port name `--into` files a workflow under: the source file stem, which
+/// must already be a slug because `compile` slugs the `Feature:` line and the
+/// round-trip gate compares that against the spec's `name`.
+pub fn repo_cat_paths(root: &Path, cat: &str, stem: &str) -> (PathBuf, PathBuf) {
+    (
+        root.join("bdd")
+            .join("workflows")
+            .join(cat)
+            .join(format!("{stem}.feature")),
+        root.join("dsl").join(cat).join(format!("{stem}.json")),
+    )
+}
+
+/// Copy a spec for filing under `--into`, pinning its `name` to the port stem so
+/// `import` emits `Feature: <stem>` and the recompiled graph carries the same
+/// name — that is what makes the filed pair pass both `round-trip` and
+/// `import-check`.
+pub fn normalise_name(spec: &Value, stem: &str) -> Value {
+    let mut s = spec.clone();
+    if let Some(obj) = s.as_object_mut() {
+        obj.insert("name".to_string(), json!(stem));
+    }
+    s
+}
+
+/// Write `text` to `path`, creating the parent directory first.
+fn write_file(path: &Path, text: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+    }
+    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Recursively collect every decision spec under `dir`: a `.json` that parses to
+/// an object with a non-empty `nodes` array. `*.config.json` sidecars are
+/// config, not workflows. Returns the specs, plus a reason line for each json
+/// that was skipped because it is *not* a workflow.
+pub fn collect_spec_dir(dir: &Path) -> Result<(Vec<FoundSpec>, Vec<String>)> {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let rd =
+            std::fs::read_dir(&d).with_context(|| format!("reading spec dir {}", d.display()))?;
+        for e in rd.flatten() {
+            let p = e.path();
+            let fname = e.file_name().to_string_lossy().into_owned();
+            if p.is_dir() {
+                if !fname.starts_with('.') {
+                    stack.push(p);
+                }
+            } else if p.is_file() && fname.ends_with(".json") {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+
+    let mut found = Vec::new();
+    let mut skipped = Vec::new();
+    for p in files {
+        let rel = p.strip_prefix(dir).unwrap_or(&p).display().to_string();
+        let fname = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if fname.ends_with(".config.json") {
+            continue; // a config sidecar, never a workflow
+        }
+        let text =
+            std::fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?;
+        let spec: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                skipped.push(format!("{rel}: not JSON ({e})"));
+                continue;
+            }
+        };
+        let is_spec = spec
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(|n| !n.is_empty())
+            .unwrap_or(false);
+        if !is_spec {
+            skipped.push(format!("{rel}: not a decision spec (no non-empty `nodes`)"));
+            continue;
+        }
+        found.push(FoundSpec {
+            name: fname.trim_end_matches(".json").to_string(),
+            path: p,
+            spec,
+        });
+    }
+    Ok((found, skipped))
+}
+
+/// `--dir`: every decision spec under `dir` → one `.feature` each. Each is
+/// verified (re-parse + recompile + `same_graph`) before it is written.
+fn import_dir(dir: &str, o: &ImportOptions) -> Result<i32> {
+    let dir = Path::new(dir);
+    if !dir.is_dir() {
+        bail!("--dir {} is not a directory", dir.display());
+    }
+    let root = repo_root();
+    let dest = if let Some(cat) = &o.into {
+        ImportDest::RepoCat(cat.clone())
+    } else if let Some(out) = &o.out {
+        ImportDest::Dir(PathBuf::from(out))
+    } else {
+        ImportDest::DryRun
+    };
+
+    let (found, skipped) = collect_spec_dir(dir)?;
+    if found.is_empty() {
+        bail!(
+            "no decision spec (*.json with a non-empty `nodes`) found under {}",
+            dir.display()
+        );
+    }
+
+    let mut report: Vec<Value> = Vec::new();
+    let mut written = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    for f in &found {
+        let rel = f
+            .path
+            .strip_prefix(dir)
+            .unwrap_or(&f.path)
+            .display()
+            .to_string();
+        let feature = match import_spec(&f.spec) {
+            Ok(t) => t,
+            Err(e) => {
+                failed.push(format!("{rel}: {e:#}"));
+                report.push(json!({"name": f.name, "status": "unspellable"}));
+                continue;
+            }
+        };
+        let verified = match parse(&feature, "<import>") {
+            Ok(pf) => match compile_decision(&pf, &json!({})) {
+                Ok(rb) => same_graph(&f.spec, &rb),
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+        if !verified {
+            failed.push(format!(
+                "{rel}: the imported feature does not compile back to the same graph"
+            ));
+            report.push(json!({"name": f.name, "status": "not-round-trippable"}));
+            continue;
+        }
+        match &dest {
+            ImportDest::DryRun => {
+                report.push(json!({"name": f.name, "status": "importable"}));
+            }
+            ImportDest::Dir(out_dir) => {
+                let path = out_dir.join(format!("{}.feature", f.name));
+                if path.exists() && !o.force {
+                    failed.push(format!(
+                        "{rel}: {} exists (--force to overwrite)",
+                        path.display()
+                    ));
+                    report.push(json!({"name": f.name, "status": "collision"}));
+                    continue;
+                }
+                write_file(&path, &feature)?;
+                written += 1;
+                report.push(
+                    json!({"name": f.name, "status": "written", "out": path.to_string_lossy()}),
+                );
+            }
+            ImportDest::RepoCat(cat) => {
+                let (feat, spec_out) = repo_cat_paths(&root, cat, &f.name);
+                if (feat.exists() || spec_out.exists()) && !o.force {
+                    failed.push(format!(
+                        "{rel}: `{}` is already in the tree (--force to overwrite)",
+                        f.name
+                    ));
+                    report.push(json!({"name": f.name, "status": "collision"}));
+                    continue;
+                }
+                let spec = normalise_name(&f.spec, &f.name);
+                let feature = import_spec(&spec)?;
+                write_file(&feat, &feature)?;
+                write_file(
+                    &spec_out,
+                    &format!("{}\n", serde_json::to_string_pretty(&spec)?),
+                )?;
+                written += 1;
+                report.push(json!({
+                    "name": f.name,
+                    "status": "ported",
+                    "feature": feat.to_string_lossy(),
+                    "spec": spec_out.to_string_lossy()
+                }));
+            }
+            ImportDest::RepoCat(_) | ImportDest::Dir(_) | ImportDest::DryRun => {
+                unreachable!("handled above")
+            }
+        }
+    }
+
+    if let Some(path) = &o.json {
+        let out = json!({
+            "dir": dir.display().to_string(),
+            "counts": {"found": found.len(), "written": written, "skipped": skipped.len(), "failed": failed.len()},
+            "specs": report,
+            "skipped": skipped
+        });
+        write_file(
+            Path::new(path),
+            &format!("{}\n", serde_json::to_string_pretty(&out)?),
+        )?;
+    }
+
+    println!(
+        "bdd import: {} spec(s) found under {} - {} {}, {} skipped, {} failed",
+        found.len(),
+        dir.display(),
+        written,
+        match dest {
+            ImportDest::DryRun => "importable (dry run; pass --out or --into to write)",
+            _ => "written",
+        },
+        skipped.len(),
+        failed.len()
+    );
+    for s in &skipped {
+        eprintln!("bdd import: skipped {s}");
+    }
+    for f in &failed {
+        eprintln!("bdd import: cannot import {f}");
+    }
+    if failed.is_empty() {
+        Ok(0)
+    } else {
+        Ok(1)
+    }
+}
+
+/// Options for `bdd import` (one spec, or a whole directory).
 pub struct ImportOptions {
-    /// Path to the spec `.json` to import.
-    pub spec: String,
-    /// Write the `.feature` here instead of stdout.
+    /// One spec `.json` to import (omit with `--dir`).
+    pub spec: Option<String>,
+    /// Import every decision spec under this directory.
+    pub dir: Option<String>,
+    /// Write the `.feature` here — a file for one spec, a directory for `--dir`.
     pub out: Option<String>,
+    /// File the port under `bdd/workflows/<cat>/` and copy the spec to `dsl/<cat>/`.
+    pub into: Option<String>,
+    /// Write the report as JSON here.
+    pub json: Option<String>,
+    /// Overwrite an existing target instead of reporting a collision.
+    pub force: bool,
 }
 
 impl Default for ImportOptions {
     fn default() -> Self {
-        Self { spec: String::new(), out: None }
+        Self {
+            spec: None,
+            dir: None,
+            out: None,
+            into: None,
+            json: None,
+            force: false,
+        }
     }
 }
 
@@ -7554,13 +7887,18 @@ pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
     let mut problems: Vec<String> = Vec::new();
     let mut verdicts: Vec<Value> = Vec::new();
     for f in &features {
-        let text = std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
+        let text =
+            std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
         let feature = parse(&text, &f.to_string_lossy())?;
         if !has_tag(&feature.tags, "decision") {
             continue;
         }
         total += 1;
-        let rel = f.strip_prefix(&wf_root).unwrap().to_string_lossy().into_owned();
+        let rel = f
+            .strip_prefix(&wf_root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let rel = rel.trim_start_matches('/').to_string();
         let (cat, fname) = match rel.rsplit_once('/') {
             Some((c, n)) => (c.to_string(), n.to_string()),
@@ -7571,7 +7909,10 @@ pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
         let dsl_text = match std::fs::read_to_string(&dsl_path) {
             Ok(t) => t,
             Err(_) => {
-                problems.push(format!("{rel}: no dsl counterpart at {}", dsl_path.display()));
+                problems.push(format!(
+                    "{rel}: no dsl counterpart at {}",
+                    dsl_path.display()
+                ));
                 verdicts.push(json!({"feature": rel, "ok": false, "reason": "no dsl counterpart"}));
                 continue;
             }
@@ -7583,7 +7924,8 @@ pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
             Ok(t) => t,
             Err(e) => {
                 problems.push(format!("{rel}: import failed: {e:#}"));
-                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("import: {e:#}")}));
+                verdicts
+                    .push(json!({"feature": rel, "ok": false, "reason": format!("import: {e:#}")}));
                 continue;
             }
         };
@@ -7591,15 +7933,21 @@ pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
             Ok(f) => f,
             Err(e) => {
                 problems.push(format!("{rel}: the imported feature does not parse: {e:#}"));
-                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("reparse: {e:#}")}));
+                verdicts.push(
+                    json!({"feature": rel, "ok": false, "reason": format!("reparse: {e:#}")}),
+                );
                 continue;
             }
         };
         let spec = match compile_decision(&back, &json!({})) {
             Ok(s) => s,
             Err(e) => {
-                problems.push(format!("{rel}: the imported feature does not compile: {e:#}"));
-                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("recompile: {e:#}")}));
+                problems.push(format!(
+                    "{rel}: the imported feature does not compile: {e:#}"
+                ));
+                verdicts.push(
+                    json!({"feature": rel, "ok": false, "reason": format!("recompile: {e:#}")}),
+                );
                 continue;
             }
         };
