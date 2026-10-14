@@ -1237,6 +1237,14 @@ pub fn test_bdd_mcp_new(h: &mut Harness) {
     h.check("bdd_new: Feature line", text.contains("Feature: intake_triage\n"));
     h.check("bdd_new: intent as description", text.contains("Route an intake request to the owning team or escalate"));
     h.check("bdd_new: score node in default", text.contains("Given a score question \"severity\" asks"));
+    h.check(
+        "bdd_new: next hands off to bdd_vocabulary",
+        r["next"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap_or("").contains("bdd_vocabulary")),
+    );
     h.check("bdd_new: write=false by default", r["written"].is_null());
     // single=true emits a 1-node start.
     let r1 = t.call(&json!({"name": "intake_triage", "single": true})).unwrap();

@@ -290,7 +290,7 @@ impl McpTool for NewTool {
         "bdd_new"
     }
     fn description(&self) -> &str {
-        "Open a greenfield decision workflow: from an intent, generate a minimal valid @decision .feature skeleton that already passes bdd build — the cheapest valid start to the authoring loop. Returns the skeleton text (optionally writes it to bdd/workflows/<cat>/<name>.feature when write=true), the compile/validate verdict and next-step commands. Then extend + validate with bdd_validate and audit with bdd_catalog."
+        "Open a greenfield decision workflow: from an intent, generate a minimal valid @decision .feature skeleton that already passes bdd build — the cheapest valid start to the authoring loop. Returns the skeleton text (optionally writes it to bdd/workflows/<cat>/<name>.feature when write=true), the compile/validate verdict and next-step commands. Read the step grammar with bdd_vocabulary before editing steps, extend + validate with bdd_validate, and audit with bdd_catalog."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -372,6 +372,7 @@ impl McpTool for NewTool {
             "written": written,
             "feature_text": body,
             "next": [
+                "read the step grammar with bdd_vocabulary (or `bdd vocabulary`) before editing steps",
                 "extend the graph, then validate with bdd_validate (or `bdd build`)",
                 "emit the dsl spec with `bdd transpile <file> --out dsl/<cat>`",
                 "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
