@@ -5976,41 +5976,127 @@ fn dispose_profiles(profiles: &[String]) -> usize {
 }
 
 /// Run one scenario: `<exe> run --spec <spec> --state <json>`, with a timeout.
+/// Read a child pipe to EOF, so a spec whose output exceeds the ~64KiB pipe
+/// buffer cannot deadlock the child in `write()`.
+fn drain_pipe<R: std::io::Read>(r: Option<R>) -> Vec<u8> {
+    let mut buf = Vec::new();
+    if let Some(mut r) = r {
+        let _ = r.read_to_end(&mut buf);
+    }
+    buf
+}
+
+/// Kill the child **and everything it spawned**, then reap it.
+///
+/// `Child::kill` signals only the direct child. The `run --spec` child launches
+/// its own Chrome, which would survive as an orphan holding the CDP port — the
+/// very leak the runner's own Chrome teardown exists to avoid. The child is
+/// spawned into a fresh process group precisely so the whole tree can be taken
+/// down here (unix: negative pid; Windows: `taskkill /T`).
+fn kill_process_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // The child leads its own group (set at spawn), so -pid reaches Chrome too.
+        unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 fn run_scenario(spec_path: &Path, state: &Value, timeout_secs: u64) -> (i32, String) {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
         Err(e) => return (-1, format!("cannot locate current exe: {e}")),
     };
     let state_json = state.to_string();
-    let child = std::process::Command::new(exe)
-        .arg("run")
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("run")
         .arg("--spec")
         .arg(spec_path)
         .arg("--state")
         .arg(&state_json)
+        // One line per completed node on stderr, so a timeout can name the last
+        // node the spec reached instead of only reporting that it timed out.
+        .arg("--progress")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn();
-    let child = match child {
+        .stderr(std::process::Stdio::piped());
+    #[cfg(unix)]
+    {
+        // Own process group: `kill_process_tree` takes Chrome down with it.
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return (-1, format!("spawn failed: {e}")),
     };
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let out_h = std::thread::spawn(move || drain_pipe(stdout));
+    let err_h = std::thread::spawn(move || drain_pipe(stderr));
+
+    // A hard deadline that *reaps*: the old shape moved `Child` into a waiter
+    // thread and only gave up on the receiver, so the child (and its Chrome)
+    // kept running after the runner had moved on — a hung probe then burned its
+    // whole budget while the machine accumulated orphans.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let out = child.wait_with_output().ok();
-        let _ = tx.send(out);
-    });
-    match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
-        Ok(Some(out)) => {
-            let combined =
-                String::from_utf8_lossy(&out.stdout).into_owned() + String::from_utf8_lossy(&out.stderr).as_ref();
-            (out.status.code().unwrap_or(-1), combined)
+    let mut status: Option<std::process::ExitStatus> = None;
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                status = Some(st);
+                break;
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    timed_out = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                kill_process_tree(&mut child);
+                return (-1, format!("wait failed: {e}"));
+            }
         }
-        Ok(None) => (-1, "run failed to execute".into()),
-        Err(_) => (124, format!("timed out after {timeout_secs}s")),
     }
+    if timed_out {
+        kill_process_tree(&mut child);
+    }
+    let out = out_h.join().unwrap_or_default();
+    let err = err_h.join().unwrap_or_default();
+    if timed_out {
+        let last = String::from_utf8_lossy(&err)
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && l.starts_with("[laya-progress]"))
+            .map(str::to_string)
+            .unwrap_or_else(|| "<no node completed>".to_string());
+        return (
+            124,
+            format!("timed out after {timeout_secs}s (child killed); last node: {last}"),
+        );
+    }
+    let combined =
+        String::from_utf8_lossy(&out).into_owned() + String::from_utf8_lossy(&err).as_ref();
+    (status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1), combined)
 }
 
 /// The deterministic assert/cdp error lines, without the run's noise.

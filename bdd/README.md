@@ -1104,6 +1104,23 @@ after a normal run: 0 dirs, 0 chrome procs
 after SIGINT mid-run: 0 dirs, 0 chrome procs
 ```
 
+**The same leak, one level down.** Each scenario (and each hand-written probe)
+runs as a nested `laya-workflow run --spec` child, and `--timeout-secs` used to
+bound only the *wait*: on the deadline the runner stopped waiting but never
+killed the child, so a hung spec left `run` — and the Chrome it launched —
+running while the runner moved on to the next one. A probe that hangs then burns
+its whole budget and the run never reaches its report. The deadline now kills
+the child's **whole process group** (so Chrome dies too) and reaps it, and the
+child is run with `--progress` so the failure names the last node it reached:
+
+```
+timed out after 180s (child killed); last node: [laya-progress]  wait_htmx  route  0.4s  → assert
+```
+
+Measured on a spec whose only step is `sleep 300`, with `--timeout-secs 3`:
+before, the `sleep` survived the run (`pgrep sleep 300` → 1); after, the run
+returns at 3.0s and nothing survives.
+
 **`laya-workflow bdd run`** is the CDP run. It drives a real local Chrome and
 is the last stage of both `scripts/bdd/check.sh` and the pre-push gate
 (`scripts/verify.sh`). Where no browser is installed it skips cleanly (exit 0,
