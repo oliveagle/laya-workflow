@@ -609,6 +609,7 @@ fn validate_threshold_when(
     aq: Option<&str>,
     q_candidates: &[&str],
     known_keys: &[&str],
+    q_types: &std::collections::HashMap<String, String>,
 ) -> Result<()> {
     if let Some(all) = when.get("all").and_then(Value::as_array) {
         if all.len() < 2 {
@@ -617,7 +618,7 @@ fn validate_threshold_when(
             );
         }
         for sub in all {
-            validate_threshold_when(sub, node, has_q, aq, q_candidates, known_keys)?;
+            validate_threshold_when(sub, node, has_q, aq, q_candidates, known_keys, q_types)?;
         }
     }
     let w = when
@@ -637,6 +638,44 @@ fn validate_threshold_when(
                 "node {node}: threshold rule uses unknown when operator {k:?}{}",
                 suggest(k.as_str(), known_keys)
             );
+        }
+    }
+    // P122: a leaf may only read the answer the way its question's *declared
+    // type* produces it. The operators read the `Decision` three different ways:
+    //   * `option` / `gte` / `lt` -> `d.prob(key)`
+    //   * `value_gte` / `value_lt` -> `d.as_f64()`
+    //   * `answer` / `answer_in` -> `d.as_str()`
+    // A `choice` answer is an option-key string with keyed probabilities; a
+    // `score` answer is a number whose probabilities are ordinal ("0","1",…); a
+    // `noul` answer is a probability number exposing only "true"/"false". So a
+    // leaf whose operator reads a shape its question never produces is not an
+    // error at runtime — it silently compares against 0.0 / the number's text and
+    // takes a branch nobody chose. Same bug class as a dead `copy_keys` key or a
+    // dangling edge; caught here instead of misrouting in production.
+    let q_scope = w.get("question").and_then(Value::as_str).or(aq);
+    if let Some(q) = q_scope {
+        if let Some(t) = q_types.get(q).map(String::as_str) {
+            let has = |k: &str| w.contains_key(k);
+            if (has("gte") || has("lt")) && !has("option") {
+                bail!(
+                    "node {node}: threshold rule `gte`/`lt` without `option` — the engine reads them only inside an `option` block, so they are silently ignored and the rule matches on its other keys"
+                );
+            }
+            if (has("value_gte") || has("value_lt")) && t == "choice" {
+                bail!(
+                    "node {node}: threshold rule applies `value_gte`/`value_lt` to the choice question {q:?} — a choice answer is an option-key string, so `as_f64()` reads 0.0 every time and the comparison never sees the answer"
+                );
+            }
+            if has("option") && t == "score" {
+                bail!(
+                    "node {node}: threshold rule applies `option` to the score question {q:?} — a score carries ordinal probabilities keyed \"0\",\"1\",…, so `prob` is always 0.0 and the branch is decided by the operator's polarity, not the answer"
+                );
+            }
+            if (has("answer") || has("answer_in")) && t == "noul" {
+                bail!(
+                    "node {node}: threshold rule applies `answer`/`answer_in` to the noul question {q:?} — a noul answer is the probability text (e.g. \"0.9\"), never \"true\"/\"false\"; compare with `option` + `gte`/`lt`"
+                );
+            }
         }
     }
     Ok(())
@@ -689,6 +728,11 @@ fn thr_rule_is_catch_all(r: &Value) -> bool {
 ///     negative value) runs the workflow zero times and a non-integer silently
 ///     falls back to the default 50, so a spec that claims to bound the loop
 ///     does not
+///   * (P122) a threshold rule leaf's operator is coherent with its question's
+///     declared type: `option`/`gte`/`lt` on a `score`, `value_gte`/`value_lt` on
+///     a `choice`, `answer`/`answer_in` on a `noul`, and `gte`/`lt` outside an
+///     `option` block all compare against a shape the question never produces
+///     (0.0 or a number's text), so the rule silently takes a branch nobody chose
 ///   * (P45) a threshold ladder is total: every rule carries a `label`, the last
 ///     rule is an unconditional catch-all (else some score emits the literal
 ///     "unmatched"), no rule follows a catch-all (dead code), and no `when`
@@ -892,6 +936,20 @@ fn validate_graph_semantics(
             .as_ref()
             .map(|m| m.keys().map(|k| k.as_str()).collect())
             .unwrap_or_default();
+        // P122: each question's declared type, so a rule leaf's operator can be
+        // matched against the shape that question actually produces.
+        let q_types: std::collections::HashMap<String, String> = questions
+            .as_ref()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| {
+                        v.get("type")
+                            .and_then(Value::as_str)
+                            .map(|t| (k.clone(), t.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let has_q = |q: &str| {
             questions.as_ref().map(|m| m.contains_key(q)).unwrap_or(false)
         };
@@ -955,6 +1013,7 @@ fn validate_graph_semantics(
                                     aq,
                                     &q_candidates,
                                     KNOWN_WHEN_KEYS,
+                                    &q_types,
                                 )?;
                             }
                         }

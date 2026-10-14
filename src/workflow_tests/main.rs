@@ -121,6 +121,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-max-iterations", t_validate::test_validate_max_iterations),
         ("validate-threshold-not-exhaustive", t_validate::test_validate_threshold_not_exhaustive),
         ("validate-threshold-dead-rules", t_validate::test_validate_threshold_dead_rules),
+        ("validate-rule-scope-coherence", t_validate::test_validate_rule_scope_coherence),
         ("validate-repo-specs-strict", t_validate::test_validate_repo_specs_strict),
         ("state", t_state::test_state_home_override),
         ("bdd-decision", t_bdd::test_bdd_decision),

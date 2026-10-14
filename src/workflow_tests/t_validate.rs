@@ -699,3 +699,158 @@ pub fn test_validate_repo_specs_strict(h: &mut Harness) {
         ),
     }
 }
+
+/// P122: a threshold rule leaf's operator must read the shape its question's
+/// *declared type* produces. The engine reads `option`/`gte`/`lt` through
+/// `Decision::prob`, `value_gte`/`value_lt` through `Decision::as_f64`, and
+/// `answer`/`answer_in` through `Decision::as_str`; a `choice` answer is an
+/// option-key string, a `score` answer is a number with ordinal probabilities,
+/// and a `noul` answer is a probability number. A leaf whose operator reads a
+/// shape its question never produces compares against 0.0 (or a number's text)
+/// and silently takes a branch nobody chose — the same class as a dead
+/// `copy_keys` key or a dangling edge, caught here instead of misrouting.
+pub fn test_validate_rule_scope_coherence(h: &mut Harness) {
+    fn node_with(questions: Value, action_q: &str, rules: Value) -> Value {
+        base_spec(
+            "a",
+            json!([node(
+                "a",
+                questions,
+                json!({"condition": {}, "default": "STOP"}),
+                json!({"kind": "threshold", "question": action_q, "rules": rules})
+            )]),
+        )
+    }
+    let choice_q = json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}});
+    let score_q = json!({"s": {"type": "score", "instructions": "?", "criteria": ["minor", "degraded"]}});
+    let noul_q = json!({"n": {"type": "noul", "instructions": "?", "truthy": "yes", "falsy": "no"}});
+
+    // `value_gte`/`value_lt` read `as_f64()` — a choice answer is a string -> 0.0.
+    let bad = node_with(
+        choice_q.clone(),
+        "c",
+        json!([
+            {"when": {"value_gte": 0.5}, "label": "A"},
+            {"when": {"always": true}, "label": "B"}
+        ]),
+    );
+    h.check(
+        "validate: value_gte on a choice question rejected",
+        spec::from_spec(&bad).is_err(),
+    );
+    if let Err(e) = spec::from_spec(&bad) {
+        let m = e.to_string();
+        h.check(
+            "validate: choice/value_gte error names the mismatch",
+            m.contains("value_gte") && m.contains("choice"),
+        );
+    }
+
+    // `option` reads `prob(key)` — a score's probabilities are ordinal, never "A".
+    let bad = node_with(
+        score_q.clone(),
+        "s",
+        json!([
+            {"when": {"option": "A", "gte": 0.5}, "label": "A"},
+            {"when": {"always": true}, "label": "B"}
+        ]),
+    );
+    h.check(
+        "validate: option on a score question rejected",
+        spec::from_spec(&bad).is_err(),
+    );
+
+    // `answer`/`answer_in` read `as_str()` — a noul answer is a number's text.
+    let bad = node_with(
+        noul_q.clone(),
+        "n",
+        json!([
+            {"when": {"answer_in": ["true"]}, "label": "A"},
+            {"when": {"always": true}, "label": "B"}
+        ]),
+    );
+    h.check(
+        "validate: answer_in on a noul question rejected",
+        spec::from_spec(&bad).is_err(),
+    );
+
+    // `gte`/`lt` outside an `option` block are never read at all.
+    let bad = node_with(
+        score_q.clone(),
+        "s",
+        json!([
+            {"when": {"gte": 0.5}, "label": "A"},
+            {"when": {"always": true}, "label": "B"}
+        ]),
+    );
+    h.check(
+        "validate: gte without option rejected",
+        spec::from_spec(&bad).is_err(),
+    );
+
+    // The correct idioms still pass: a noul answers to `option`+`gte` on
+    // "true"/"false" (the rag_triage shape), a score to `value_gte`/`value_lt`,
+    // and a choice to `answer_in`/`option`.
+    let good = node_with(
+        noul_q.clone(),
+        "n",
+        json!([
+            {"when": {"option": "false", "gte": 0.85}, "label": "EXCLUDE"},
+            {"when": {"option": "true", "gte": 0.85}, "label": "INCLUDE"},
+            {"when": {"always": true}, "label": "REVIEW"}
+        ]),
+    );
+    h.check(
+        "validate: option+gte on a noul question accepted",
+        spec::from_spec(&good).is_ok(),
+    );
+    let good = node_with(
+        score_q.clone(),
+        "s",
+        json!([
+            {"when": {"value_gte": 1.5}, "label": "A"},
+            {"when": {"value_lt": 0.5}, "label": "B"},
+            {"when": {"always": true}, "label": "C"}
+        ]),
+    );
+    h.check(
+        "validate: value_gte/value_lt on a score question accepted",
+        spec::from_spec(&good).is_ok(),
+    );
+    let good = node_with(
+        choice_q.clone(),
+        "c",
+        json!([
+            {"when": {"answer_in": ["A"]}, "label": "A"},
+            {"when": {"option": "B", "gte": 0.5}, "label": "B"},
+            {"when": {"always": true}, "label": "C"}
+        ]),
+    );
+    h.check(
+        "validate: answer_in/option on a choice question accepted",
+        spec::from_spec(&good).is_ok(),
+    );
+
+    // The scope is the leaf's own `question`, else the action's — a leaf naming a
+    // different question is checked against *that* question's type, not the
+    // action's. Here the action is a score but the leaf reads the choice question.
+    let cross = base_spec(
+        "a",
+        json!([node(
+            "a",
+            json!({
+                "s": {"type": "score", "instructions": "?", "criteria": ["lo", "hi"]},
+                "c": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}
+            }),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "threshold", "question": "s", "rules": json!([
+                {"when": {"question": "c", "value_gte": 0.5}, "label": "X"},
+                {"when": {"always": true}, "label": "Y"}
+            ])})
+        )]),
+    );
+    h.check(
+        "validate: a cross-question leaf is checked against its own question's type",
+        spec::from_spec(&cross).is_err(),
+    );
+}
