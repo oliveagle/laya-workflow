@@ -463,6 +463,19 @@ declared label so the list cannot rot into a hole. `outputs`/`label` are compute
 by one implementation (`bdd_mcp::{declared_outputs, decision_label}`), so
 `bdd_list`, `bdd_decide` and the gate cannot drift apart.
 
+The inventory also exposes each node's **decision topology**: every node carries
+`routes` (its edge's answer -> destination map) and `default`, so a multi-node
+graph reads as a DFA rather than a bag of nodes. This is what makes the
+multi-node return semantics legible: `outputs` is the union of the labels any
+node can *emit*, but a call returns only the label of the node where the walk
+stops — a node's label is returned exactly when emitting it does not route
+onward (no `routes` entry for that answer, and the walk then stops). The
+`bdd-list-routes` regression test holds the projection to reality two ways:
+every listed node's `routes`/`default` must equal its checked-in `edge`, and for
+every registered offline state the engine trace's `next` must equal what the
+exposed edge resolves to (the node `min_confidence` gate included) — a
+projection that disagreed with the engine fails.
+
 For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
 that already passes `bdd build`, with the authoring vocabulary as comments) →
@@ -470,10 +483,12 @@ extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
 emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
 --out dsl/<cat>`) → audit completeness with `bdd_catalog` → lift any legacy JSON
 workflow back into BDD with `bdd_import` → discover the callable corpus with
-`bdd_list` (each graph also reports its closed set of decision `outputs` — a
-ladder's labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, or a
-rubric node's `status` — the same projection `bdd_decide` returns as its `label`,
-so a caller knows every answer it can get back before running), and `bdd_decide`
+`bdd_list` (each node also reports `outputs` — the labels it can emit: a ladder's
+labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, a rubric node's
+`status` — plus `routes`/`default`, the answer -> destination map, so a caller
+sees both the decision vocabulary and the topology that decides which of it a
+run actually returns, the same projection `bdd_decide` reports as its `label`),
+and `bdd_decide`
 echoes that contract back —
 the declared `inputs` (every heuristic source field, every `${state.*}` a node
 interpolates, and the fields a kind reads directly) and the `missing_inputs` the

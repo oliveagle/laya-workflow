@@ -866,13 +866,16 @@ fn action_outputs(action: &Value, questions: Option<&Value>) -> Vec<String> {
     out
 }
 
-/// The declared decision labels a graph can return: the deduped union of every
+/// The declared decision labels a graph can emit: the deduped union of every
 /// node's [`action_outputs`], first-appearance order preserved (a threshold
 /// ladder keeps its priority order). The single source of truth for
 /// `bdd_list`'s `outputs` and the output-coverage gate, so the inventory and the
 /// gate can never disagree about what a graph claims to return.
 ///
-/// This is the *declared* set. A label here that no run can produce is a dead
+/// This is the *declared* set (for a single-node graph, identical to the set a
+/// call returns; a multi-node graph returns only the last-emitted label, so some
+/// members may be transit-only — see each node's `routes`). A label here that no
+/// run can produce is a dead
 /// rule or an undriven branch; `bdd_list`'s `outputs` is only trustworthy when
 /// the registered offline corpus actually produces every member (the gate that
 /// holds it to that lives in `test_bdd_output_coverage`).
@@ -889,6 +892,28 @@ pub fn declared_outputs(spec: &Value) -> Vec<String> {
         }
     }
     out
+}
+
+/// The routing a node exposes: its `edge.condition` map (answer → destination)
+/// and its `edge.default` (destination when no condition matches, or null). A
+/// pure projection of the spec's edge, so `bdd_list` can show the decision
+/// *topology* — an agent sees which node a label routes to instead of reading a
+/// multi-node graph as a bag of nodes with no structure. Together with `outputs`
+/// (the labels a node can emit) this makes the return semantics legible: a node's
+/// label is returned to the caller only when emitting it does not route onward
+/// (no `routes` entry for the answer, and the walk then stops).
+fn node_routes(node: &Value) -> (Value, Value) {
+    let edge = node
+        .get("edge")
+        .or_else(|| node.get("edges"))
+        .unwrap_or(&Value::Null);
+    let condition = edge
+        .get("condition")
+        .cloned()
+        .filter(|c| c.is_object())
+        .unwrap_or_else(|| json!({}));
+    let default = edge.get("default").cloned().unwrap_or(Value::Null);
+    (condition, default)
 }
 
 /// The decision label a run's `result` projects, in order: `label` (a threshold
@@ -1051,7 +1076,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -1104,10 +1129,13 @@ impl McpTool for ListTool {
                             let nm = n.get("name")?.as_str()?;
                             let node_outs =
                                         action_outputs(n.get("action").unwrap_or(&Value::Null), n.get("questions"));
+                            let (routes, default) = node_routes(n);
                             Some(json!({
                                 "name": nm,
                                 "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),
                                 "outputs": node_outs,
+                                "routes": routes,
+                                "default": default,
                             }))
                         })
                         .collect()

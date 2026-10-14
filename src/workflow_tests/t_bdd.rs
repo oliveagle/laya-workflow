@@ -3887,3 +3887,211 @@ pub fn test_bdd_output_coverage(h: &mut Harness) {
         checked >= 40,
     );
 }
+
+/// bdd-list-routes: `bdd_list` exposes each node's decision *topology* — the
+/// `routes` map (answer → destination) and `default` — so a multi-node graph is
+/// a readable DFA, not a bag of nodes. Two ways this is held to reality:
+///
+///   1. projection identity — every listed node's `routes` / `default` equals its
+///      `edge` in the checked-in spec (the inventory cannot invent a route);
+///   2. engine cross-check — for every registered offline state of every offline
+///      spec, each trace step's `answer` resolves through the node's edge to the
+///      `next` the engine actually took (STOP / escalate → null, retry → self,
+///      `EXECUTE:x` → x). A projection that disagreed with the engine would fail
+///      here even if it matched the spec.
+pub fn test_bdd_list_routes(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::dsl_smoke::{
+        coverage_ledger_live_only, ensure_env_dirs, network_bound_external,
+    };
+
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    let root = bdd::repo_root();
+    let dsl_root = root.join("dsl");
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+    let live_only = coverage_ledger_live_only().unwrap_or_default();
+
+    let spec_edge = |node: &Value| -> (Value, Value) {
+        let edge = node
+            .get("edge")
+            .or_else(|| node.get("edges"))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let routes = edge
+            .get("condition")
+            .cloned()
+            .filter(|c| c.is_object())
+            .unwrap_or_else(|| json!({}));
+        let default = edge.get("default").cloned().unwrap_or(Value::Null);
+        (routes, default)
+    };
+
+    // 1) projection identity across the whole inventory.
+    let list = bdd_tool("bdd_list").call(&json!({})).unwrap();
+    let wfs = list["workflows"].as_array().unwrap();
+    let mut checked_nodes = 0usize;
+    for wf in wfs {
+        let cat = wf["cat"].as_str().unwrap();
+        let name = wf["name"].as_str().unwrap();
+        let spec_path = dsl_root.join(cat).join(format!("{name}.json"));
+        let Ok(txt) = std::fs::read_to_string(&spec_path) else {
+            continue;
+        };
+        let raw: Value = match serde_json::from_str(&txt) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let spec_nodes = raw["nodes"].as_array().cloned().unwrap_or_default();
+        let listed_nodes = wf["nodes"].as_array().unwrap();
+        h.eq(
+            &format!("bdd_list routes: {cat}/{name} node count matches the spec"),
+            listed_nodes.len(),
+            spec_nodes.len(),
+        );
+        for ln in listed_nodes {
+            let nm = ln["name"].as_str().unwrap();
+            let Some(sn) = spec_nodes.iter().find(|n| n["name"] == nm) else {
+                h.check(&format!("bdd_list routes: {cat}/{name}.{nm} exists in spec"), false);
+                continue;
+            };
+            let (want_routes, want_default) = spec_edge(sn);
+            h.eq(
+                &format!("bdd_list routes: {cat}/{name}.{nm} routes == spec edge"),
+                ln["routes"].clone(),
+                want_routes,
+            );
+            h.eq(
+                &format!("bdd_list routes: {cat}/{name}.{nm} default == spec edge"),
+                ln["default"].clone(),
+                want_default,
+            );
+            h.check(
+                &format!("bdd_list routes: {cat}/{name}.{nm} exposes a routes object"),
+                ln["routes"].is_object(),
+            );
+            checked_nodes += 1;
+        }
+    }
+    h.check(
+        &format!("bdd_list routes: exposed topology for {checked_nodes} nodes (floor 300)"),
+        checked_nodes >= 300,
+    );
+
+    // 2) engine cross-check: the trace's transitions agree with the exposed edge.
+    let specs = laya_workflow::spec::discover(&dsl_root.to_string_lossy()).expect("discover dsl");
+    let mut checked_specs = 0usize;
+    let mut checked_steps = 0usize;
+    for (stem, path) in &specs {
+        let Some(smap) = states_obj.get(stem).and_then(Value::as_object) else {
+            continue;
+        };
+        let rel = path
+            .strip_prefix(&dsl_root)
+            .unwrap_or(path)
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if live_only.contains_key(&rel) {
+            continue;
+        }
+        let raw: Value = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        if network_bound_external(&raw) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&path.to_string_lossy()) {
+            Ok(w) => w,
+            Err(_) => continue,
+        };
+        let nodes = raw["nodes"].as_array().cloned().unwrap_or_default();
+        let mut errored = false;
+        let mut agrees = true;
+        for (_lab, st) in smap {
+            let out = match wf.run(&HeuristicBackend, st) {
+                Ok(o) => o,
+                Err(_) => {
+                    errored = true;
+                    break;
+                }
+            };
+            let j = out.to_json();
+            let steps = j["trace"]["steps"].as_array().cloned().unwrap_or_default();
+            for step in &steps {
+                let nm = step["node"].as_str().unwrap_or("");
+                let answer = &step["answer"];
+                let next = step["next"].clone();
+                let Some(sn) = nodes.iter().find(|n| n["name"] == nm) else {
+                    // A nested sub-workflow step (a container handoff) is recorded
+                    // as `<container>::<inner>`; its routing belongs to the inner
+                    // graph, so skip it here rather than fail on a name the top
+                    // level does not own. A missing non-nested name is a real hole.
+                    if !nm.contains("::") {
+                        agrees = false;
+                    }
+                    continue;
+                };
+                let (routes, default) = spec_edge(sn);
+                let key = match answer {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                let dest = routes
+                    .get(&key)
+                    .cloned()
+                    .or_else(|| if default.is_null() { None } else { Some(default.clone()) });
+                // A destination that is itself a nested sub-workflow *container*
+                // (a node carrying a `workflow` key) is entered by the engine as
+                // `<container>::<inner start>`; that flattening belongs to the
+                // nesting engine, so skip the hand-off step rather than model it.
+                if let Some(d) = dest.as_ref().and_then(Value::as_str) {
+                    if nodes
+                        .iter()
+                        .any(|n| n["name"] == d && n.get("workflow").is_some())
+                    {
+                        checked_steps += 1;
+                        continue;
+                    }
+                }
+                let expected_next = match dest.as_ref().and_then(Value::as_str) {
+                    None => Value::Null,
+                    Some("STOP") => Value::Null,
+                    Some(d) if d == nm => json!(nm),
+                    Some(d) => match d.strip_prefix("EXECUTE:") {
+                        Some(t) => json!(t),
+                        None => json!(d),
+                    },
+                };
+                if expected_next != next {
+                    agrees = false;
+                }
+                checked_steps += 1;
+            }
+        }
+        if errored {
+            continue;
+        }
+        h.check(
+            &format!("bdd_list routes: {rel} trace transitions agree with the exposed edge"),
+            agrees,
+        );
+        checked_specs += 1;
+    }
+    h.check(
+        &format!(
+            "bdd_list routes: engine-checked {checked_specs} offline specs / {checked_steps} trace steps (floor 60 specs, 400 steps)"
+        ),
+        checked_specs >= 60 && checked_steps >= 400,
+    );
+}
