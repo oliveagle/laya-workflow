@@ -2999,6 +2999,113 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
 }
 
 
+/// P89: the authoring diagnostics of `bdd build` must carry the **cause**, not
+/// just the line. Three fixes, end-to-end through the real CLI binary:
+///   1. a step-level error keeps its anyhow cause chain (a forgotten `@decision`
+///      says so instead of printing a bare step echo);
+///   2. a duplicate Scenario name is reported at the Scenario's own `line N:`
+///      (it is a node id, and every Scenario is one node);
+///   3. a mangled step keyword (`Givn`) suggests the `Given` keyword.
+/// All three are the same red an agent sees mid-authoring, so they are the
+/// difference between "fix the typo" and "stare at a bare line".
+pub fn test_bdd_cli_diagnostics(h: &mut Harness) {
+    let root = bdd::repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let dir = std::env::temp_dir().join(format!("laya-bdd-diag-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp diag dir");
+    let run = |name: &str, text: &str| -> String {
+        let f = dir.join(format!("{name}.feature"));
+        std::fs::write(&f, text).expect("write feature");
+        let out = std::process::Command::new(&bin)
+            .args([
+                "bdd",
+                "build",
+                &f.to_string_lossy(),
+                "--out",
+                &dir.join(format!("out-{name}")).to_string_lossy(),
+            ])
+            .current_dir(&root)
+            .output()
+            .expect("run bdd build");
+        format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+
+    // 1. A decision-vocabulary feature that forgot `@decision` must name the tag.
+    let no_tag = "\
+Feature: diag_no_tag
+  x
+
+  Scenario: classify
+    Given a choice question \"q\" asks \"Which team?\"
+      | answer | meaning |
+      | A      | first   |
+    When any other answer goes to \"STOP\"
+    Then keep the answer to \"q\"
+";
+    let out = run("diag_no_tag", no_tag);
+    h.check(
+        "p89: missing @decision names the tag, not just the step",
+        out.contains("@decision") && out.contains("only valid in a @decision feature"),
+    );
+    h.check(
+        "p89: missing @decision still carries the step line",
+        out.contains("line 5:"),
+    );
+
+    // 2. Duplicate Scenario name = duplicate node name, located at the Scenario.
+    let dup = "\
+@decision
+Feature: diag_dup
+  dup
+
+  Scenario: classify
+    Given a choice question \"q\" asks \"Which team?\"
+      | answer | meaning |
+      | A      | first   |
+    When any other answer goes to \"STOP\"
+    Then keep the answer to \"q\"
+
+  Scenario: classify
+    Given a score question \"s\" asks \"How big?\"
+      | level |
+      | low   |
+    When any other answer goes to \"STOP\"
+    Then label \"X\" when \"s\" is at least 1.0
+    And label \"Y\" otherwise
+";
+    let out = run("diag_dup", dup);
+    h.check(
+        "p89: duplicate node name is rejected with the scenario's line",
+        out.contains("line 12: duplicate node name \"classify\""),
+    );
+
+    // 3. A mangled step keyword suggests the keyword it meant.
+    let typo = "\
+@decision
+Feature: diag_typo
+  typo
+
+  Scenario: classify
+    Givn a choice question \"q\" asks \"Which team?\"
+      | answer | meaning |
+      | A      | first   |
+";
+    let out = run("diag_typo", typo);
+    h.check(
+        "p89: a mangled step keyword suggests the keyword",
+        out.contains("did you mean the `Given` keyword"),
+    );
+}
+
 /// `bdd_list` MCP tool: the callable inventory behind "use a BDD graph as a
 /// decision core" — every @decision workflow with the questions and state
 /// inputs an agent must know to call it. Also proves `bdd_decide {name}`

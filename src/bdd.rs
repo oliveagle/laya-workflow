@@ -102,6 +102,28 @@ fn step_re() -> &'static Regex {
     })
 }
 
+/// A line that failed [`step_re`] is usually a step whose *keyword* is mangled
+/// (`Givn`/`Thenn`/`Wen`). Point at the closest keyword so the author fixes the
+/// typo instead of re-reading "not a step" (P89 usability axis). Returns `""`
+/// when nothing is close enough to guess safely — never a false lead.
+fn keyword_typo_hint(line: &str) -> String {
+    const KEYWORDS: [&str; 5] = ["Given", "When", "Then", "And", "But"];
+    let trimmed = line.trim_start();
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+    // A step needs a keyword AND a body; a single bare word is not a typo'd step.
+    if words.len() < 2 {
+        return String::new();
+    }
+    let first = words[0].to_ascii_lowercase();
+    if KEYWORDS.iter().any(|k| k.to_ascii_lowercase() == first) {
+        return String::new();
+    }
+    match crate::spec::closest_match(&first, &KEYWORDS) {
+        Some(k) => format!(" (did you mean the `{k}` keyword?)"),
+        None => String::new(),
+    }
+}
+
 /// A tag with an optional parenthetical reason: `@expected_failure(reason)`.
 fn tag_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -507,7 +529,8 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
 
         let Some(caps) = step_re().captures(line) else {
             bail!(
-                "line {lineno}: not a step, table or section header: {stripped:?}"
+                "line {lineno}: not a step, table or section header: {stripped:?}{}",
+                keyword_typo_hint(stripped)
             );
         };
         let keyword = caps[1].to_string();
@@ -3072,8 +3095,21 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
         }
     }
 
+    // Each Scenario is one node, so its name is the node id. Catch duplicates
+    // HERE (where the Scenario's own line is known) rather than only later in
+    // `spec::validate`, so the author gets `line N:` in `bdd build` /
+    // `bdd_validate` instead of a bare "duplicate node name" (P89 usability axis).
+    let mut seen_nodes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for scenario in &feature.scenarios {
-        nodes.push(compile_decision_node(feature, scenario)?);
+        let node = compile_decision_node(feature, scenario)?;
+        let node_name = node["name"].as_str().unwrap_or("").to_string();
+        if !seen_nodes.insert(node_name.clone()) {
+            bail!(
+                "line {}: duplicate node name {node_name:?} — every Scenario is one node, so scenario names must be unique",
+                scenario.line
+            );
+        }
+        nodes.push(node);
     }
     if nodes.is_empty() {
         bail!("feature {:?} has no Scenario (a @decision feature needs at least one node)", feature.name);
@@ -3351,7 +3387,7 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
         let feature = match load(path) {
             Ok(f) => f,
             Err(e) => {
-                errors.push(format!("{}: {e}", rel_path(&path.to_string_lossy())));
+                errors.push(format!("{}: {e:#}", rel_path(&path.to_string_lossy())));
                 continue;
             }
         };
@@ -3361,7 +3397,7 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
         let config = match load_config(path) {
             Ok(c) => c,
             Err(e) => {
-                errors.push(format!("{}: {e}", rel_path(&path.to_string_lossy())));
+                errors.push(format!("{}: {e:#}", rel_path(&path.to_string_lossy())));
                 continue;
             }
         };
@@ -3376,7 +3412,7 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
                 Ok(s) => s,
                 Err(e) => {
                     errors.push(format!(
-                        "{}: {e}",
+                        "{}: {e:#}",
                         rel_path(&path.to_string_lossy())
                     ));
                     continue;
@@ -3440,7 +3476,7 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
                 Ok(s) => s,
                 Err(e) => {
                     errors.push(format!(
-                        "{} :: {}: {e}",
+                        "{} :: {}: {e:#}",
                         rel_path(&path.to_string_lossy()),
                         scenario.name
                     ));
@@ -3621,7 +3657,7 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
     if !errors.is_empty() {
         eprintln!("\nerrors:");
         for e in &errors {
-            eprintln!("  {e}");
+            eprintln!("  {e:#}");
         }
         return Ok(1);
     }
@@ -3646,14 +3682,14 @@ pub fn transpile_cli(
         let feature = match load(path) {
             Ok(f) => f,
             Err(e) => {
-                eprintln!("error: {fp}: {e}");
+                eprintln!("error: {fp}: {e:#}");
                 return Ok(1);
             }
         };
         let config = match load_config(path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("error: {fp}: {e}");
+                eprintln!("error: {fp}: {e:#}");
                 return Ok(1);
             }
         };
@@ -3676,7 +3712,7 @@ pub fn transpile_cli(
             let spec = match compile_decision(&feature, &config) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: {fp}: {e}");
+                    eprintln!("error: {fp}: {e:#}");
                     return Ok(1);
                 }
             };
@@ -3720,7 +3756,7 @@ pub fn transpile_cli(
             let spec = match compile_scenario(&feature, scenario, &config, cb) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("error: {fp}: {e}");
+                    eprintln!("error: {fp}: {e:#}");
                     return Ok(1);
                 }
             };
@@ -4061,7 +4097,7 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     let body = match scaffold_body_pattern(name, &cat, &primary_q, &desc, &pattern) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: {e:#}");
             return Ok(1);
         }
     };
@@ -4070,14 +4106,14 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     let feature = match parse(&body, "<scaffold>") {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("error: generated skeleton fails to parse: {e}");
+            eprintln!("error: generated skeleton fails to parse: {e:#}");
             return Ok(1);
         }
     };
     let spec = match compile_decision(&feature, &json!({})) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("error: generated skeleton fails to compile: {e}");
+            eprintln!("error: generated skeleton fails to compile: {e:#}");
             return Ok(1);
         }
     };
