@@ -1,0 +1,175 @@
+{
+  "name": "code_review_gate",
+  "_bdd": {
+    "feature": "code_review_gate",
+    "feature_path": "bdd/workflows/ole_eval/code_review_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed code-review issues as a two-node DFA, port of the\ndeterministic review gate (code/qwen_vm/app_scenarios/code_review_gate). The\nmodel proposes only typed issues (issue_type, file, hunk_id, line, reason,\nsuggestion); the diff/hunk existence, the token and AST evidence, the issue\nvalidity, the duplicates, the test impact, the severity and the final\nACCEPT / REVISE / REJECT decision are computed locally from fixed fixtures.\nThe gate never reads a repository and never runs code.\nThe engine's own verbs: a change is ACCEPTed, sent back for REVISEion, or\nREJECTed; every proposed issue is either accepted as locally evidenced or\nrecorded as a rejected proposal with the engine's own first cause.\nStates: proposal -> review. The parse node folds the balanced-JSON / fenced\nextraction and the proposal schema (exactly the key proposal, exactly the key\nissues, at most 12 typed issues, each exactly the six required fields). A\nproposal that fails parse never reaches the reviewer.\nFolding boundaries (documented, not computed in the DSL):\n- The envelope recovery, the duplicate-key rejection and the typed-issue schema\nfold into the `proposal` choice.\n- The fixed diff fixtures, the token evidence, the AST evidence, the local\nissue scan, the test-impact catalogue and the severity table are the\nauthority; the harness runs them and hands the DSL one answer per check.\n- The engine validates each proposed issue with an ordered early-return chain\n(file-in-diff, hunk-exists, line-in-hunk, line-changed, duplicate, local\nevidence); because a rejected proposal does not change the terminal verdict\nit is folded into the `gate` choice (the engine's own first cause over the\nproposals, in proposal order). A rejected issue is only observable when the\nchange itself is still taken.\n- The terminal verdict is computed over the authoritatively validated issue\nset (accepted proposals *plus* the locally missed issues) and folds into the\n`decision` choice. The label ladder mirrors the engine's REJECT-before-\nREVISE-before-ACCEPT order, and, when the change is taken, the first issue\nthe gate refused.\nEmitted labels: reject_proposal, reject, revise, accept, accept_issue_file_not_in_diff,\naccept_issue_hunk_not_found, accept_issue_line_not_in_hunk,\naccept_issue_line_not_changed, accept_issue_duplicate_issue,\naccept_issue_no_local_evidence.",
+  "start": "proposal",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "proposal",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one JSON object with exactly the key proposal, whose value has exactly the key issues (a list of at most 12 typed issues, each with exactly the keys issue_type, file, hunk_id, line, reason and suggestion)?",
+          "criteria": {
+            "parsed": "exactly one schema-valid typed review proposal",
+            "malformed": "no JSON object, a duplicate key, a wrong top-level shape, an unknown issue_type, an issue field set that is not exactly the six required keys, or an out-of-range field"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "parsed": "review"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "proposal_ok"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "review_id"
+        ]
+      }
+    },
+    {
+      "name": "review",
+      "primary_q": "decision",
+      "questions": {
+        "gate": {
+          "type": "choice",
+          "instructions": "Against the fixed diff and the local token/AST evidence, which single ordered check refuses the first proposed issue, if any?",
+          "criteria": {
+            "none": "no proposed issue is refused",
+            "file_not_in_diff": "the issue's file is not in the fixed diff",
+            "hunk_not_found": "the hunk_id does not exist for that file",
+            "line_not_in_hunk": "the line is not present in the hunk",
+            "line_not_changed": "the line is hunk context rather than a changed line",
+            "duplicate_issue": "an identical typed issue was already accepted",
+            "no_local_evidence": "the type and location match no token, AST or test evidence"
+          },
+          "heuristic": {
+            "answer_field": "ev_gate"
+          }
+        },
+        "decision": {
+          "type": "choice",
+          "instructions": "Over the authoritatively validated issue set (accepted proposals plus the locally missed issues), what is the terminal review verdict?",
+          "criteria": {
+            "reject": "a critical issue remains, so the change is rejected",
+            "revise": "a high or medium issue remains, so the change needs revision",
+            "accept": "no high, medium or critical validated issue remains"
+          },
+          "heuristic": {
+            "answer_field": "ev_decision"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "decision",
+        "rules": [
+          {
+            "when": {
+              "question": "decision",
+              "answer": "reject"
+            },
+            "label": "reject"
+          },
+          {
+            "when": {
+              "question": "decision",
+              "answer": "revise"
+            },
+            "label": "revise"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "file_not_in_diff"
+            },
+            "label": "accept_issue_file_not_in_diff"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "hunk_not_found"
+            },
+            "label": "accept_issue_hunk_not_found"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "line_not_in_hunk"
+            },
+            "label": "accept_issue_line_not_in_hunk"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "line_not_changed"
+            },
+            "label": "accept_issue_line_not_changed"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "duplicate_issue"
+            },
+            "label": "accept_issue_duplicate_issue"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "no_local_evidence"
+            },
+            "label": "accept_issue_no_local_evidence"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "review_id"
+        ]
+      }
+    }
+  ]
+}

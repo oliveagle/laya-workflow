@@ -6640,5 +6640,92 @@
       "ev_build": "ok",
       "ev_replay": "ledger_hash_chain_break"
     }
+  },
+  "code_review_gate": {
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "reject_proposal_unknown_issue_type": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "reject_proposal_missing_field": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "reject_proposal_oversized_list": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "reject_proposal_wrong_envelope": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "reject_critical": {
+      "ev_proposal": "parsed",
+      "ev_gate": "none",
+      "ev_decision": "reject"
+    },
+    "reject_missed_only": {
+      "ev_proposal": "parsed",
+      "ev_gate": "none",
+      "ev_decision": "reject"
+    },
+    "reject_precedence_over_gate": {
+      "ev_proposal": "parsed",
+      "ev_gate": "file_not_in_diff",
+      "ev_decision": "reject"
+    },
+    "revise_high_medium": {
+      "ev_proposal": "parsed",
+      "ev_gate": "none",
+      "ev_decision": "revise"
+    },
+    "revise_gate_precedence": {
+      "ev_proposal": "parsed",
+      "ev_gate": "no_local_evidence",
+      "ev_decision": "revise"
+    },
+    "accept_low_severity": {
+      "ev_proposal": "parsed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "accept_no_issue": {
+      "ev_proposal": "parsed",
+      "ev_gate": "none",
+      "ev_decision": "accept"
+    },
+    "accept_issue_file_not_in_diff": {
+      "ev_proposal": "parsed",
+      "ev_gate": "file_not_in_diff",
+      "ev_decision": "accept"
+    },
+    "accept_issue_hunk_not_found": {
+      "ev_proposal": "parsed",
+      "ev_gate": "hunk_not_found",
+      "ev_decision": "accept"
+    },
+    "accept_issue_line_not_in_hunk": {
+      "ev_proposal": "parsed",
+      "ev_gate": "line_not_in_hunk",
+      "ev_decision": "accept"
+    },
+    "accept_issue_no_local_evidence": {
+      "ev_proposal": "parsed",
+      "ev_gate": "no_local_evidence",
+      "ev_decision": "accept"
+    },
+    "accept_issue_duplicate_issue": {
+      "ev_proposal": "parsed",
+      "ev_gate": "duplicate_issue",
+      "ev_decision": "accept"
+    }
   }
 }

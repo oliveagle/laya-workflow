@@ -2868,5 +2868,174 @@
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "ledger_hash_chain_break"
     }
+  },
+  "code_review_gate": {
+    "reject_proposal_malformed": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "reject_proposal_unknown_issue_type": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "reject_proposal_missing_field": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "reject_proposal_oversized_list": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "reject_proposal_wrong_envelope": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "reject_critical": {
+      "result.label": "reject",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "reject"
+    },
+    "reject_missed_only": {
+      "result.label": "reject",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "reject"
+    },
+    "reject_precedence_over_gate": {
+      "result.label": "reject",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "reject"
+    },
+    "revise_high_medium": {
+      "result.label": "revise",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "revise"
+    },
+    "revise_gate_precedence": {
+      "result.label": "revise",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "revise"
+    },
+    "accept_low_severity": {
+      "result.label": "accept",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_no_issue": {
+      "result.label": "accept",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_issue_file_not_in_diff": {
+      "result.label": "accept_issue_file_not_in_diff",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_issue_hunk_not_found": {
+      "result.label": "accept_issue_hunk_not_found",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_issue_line_not_in_hunk": {
+      "result.label": "accept_issue_line_not_in_hunk",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_issue_no_local_evidence": {
+      "result.label": "accept_issue_no_local_evidence",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    },
+    "accept_issue_duplicate_issue": {
+      "result.label": "accept_issue_duplicate_issue",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "review",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "review",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "accept"
+    }
   }
 }
