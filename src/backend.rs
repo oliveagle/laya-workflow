@@ -242,6 +242,36 @@ impl Decide for AnswersBackend {
                 serde_json::to_string(&v.answers.keys().collect::<Vec<_>>()).unwrap_or_default(),
             ));
         }
+        // Fail closed on an answer the question does not accept. The engine would
+        // otherwise silently take the edge's `default` branch, so a typo would read
+        // as a deliberate "any other answer". Choice questions only (score/`noul`/
+        // boolean carry no criteria); `none` stays the DSL's fail-closed answer.
+        for q in &asked {
+            let Some(d) = v.answers.get(q) else { continue };
+            let qdef = questions.get(q.as_str());
+            let qtype = qdef
+                .and_then(|d| d.get("type"))
+                .and_then(Value::as_str)
+                .unwrap_or("choice");
+            if qtype != "choice" {
+                continue;
+            }
+            let Some(ans) = d.answer.as_str() else { continue };
+            if ans == "none" {
+                continue;
+            }
+            let Some(criteria) = qdef.and_then(|d| d.get("criteria")).and_then(Value::as_object)
+            else {
+                continue;
+            };
+            if !criteria.contains_key(ans) {
+                let mut allowed: Vec<&String> = criteria.keys().collect();
+                allowed.sort();
+                return Err(anyhow!(
+                    "answers[{i}] answers question {q:?} with {ans:?}, which is not one of its accepted answers {allowed:?} — the walk would otherwise silently take the default branch"
+                ));
+            }
+        }
         self.cursor.set(i + 1);
         Ok(v.clone())
     }

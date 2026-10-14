@@ -67,9 +67,15 @@
             "uncertain": "Insufficient evidence to choose a safe combined or separate representation."
           },
           "heuristic": {
-            "match_any": ["keep_separate", "merge", "promote", "uncertain"],
+            "field": "pair_0_representation",
+            "match_rules": {
+              "keep_separate": ["keep_separate"],
+              "merge": ["merge"],
+              "promote": ["promote"],
+              "uncertain": ["uncertain"]
+            },
             "p_hit": 0.9,
-            "p_miss": 0.1
+            "fallback": "uncertain"
           }
         }
       },

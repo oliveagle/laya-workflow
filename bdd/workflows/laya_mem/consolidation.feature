@@ -27,7 +27,12 @@ Feature: laya_mem_consolidation
       | merge  | Compatible accounts of the same fact or event can be combined without losing unique details. |
       | promote | Distinct repeated episodes explicitly support a stable general pattern suitable for semantic abstraction; prefer this over merge for repeated events. |
       | uncertain | Insufficient evidence to choose a safe combined or separate representation. |
-    And answer "B" when the text contains "keep_separate", "merge", "promote", "uncertain" with hit 0.9
+    And answer by rules on the field "pair_0_representation" with hit 0.9 and fallback "uncertain"
+      | label         | needles         |
+      | keep_separate | "keep_separate" |
+      | merge         | "merge"         |
+      | promote       | "promote"       |
+      | uncertain     | "uncertain"     |
     When any other answer goes to "STOP"
     Then label "CONTRADICTS" when "pair_0_contradiction" is at least 0.85
     And label "OBSOLETE" when "pair_0_obsolete" is at least 0.85

@@ -4337,6 +4337,19 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
         "answers: an entry missing an asked question is rejected, naming it",
         err.contains("answers[0]") && err.contains("event"),
     );
+
+    // (6) A choice outside the question's accepted answers fails loudly instead of
+    //     silently taking the edge's default branch.
+    let bad = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": [{"event": {"type": "choice", "choice": "logn", "confidence": 1.0},
+                         "risk": {"type": "choice", "choice": "low", "confidence": 1.0}}]}))
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "answers: an out-of-contract choice is rejected, naming it",
+        bad.contains("logn") && bad.contains("event") && bad.contains("default branch"),
+    );
 }
 
 
