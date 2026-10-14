@@ -1144,6 +1144,27 @@ impl Decide for HeuristicBackend {
                     _ => default_choice(qdef),
                 },
             };
+            // The handlers above are keyed by question id, but two specs may reuse an
+            // id with a different declared type (email_triage's `urgency` is a score,
+            // notify_macos' `urgency` is a choice). A handler that returns the wrong
+            // shape for the declared type would have the engine read it as the wrong
+            // thing (`Edge::resolve` stringifies a number, `as_f64()` reads a string as
+            // 0.0) — and `WorkflowNode::hold_in_contract` now fails closed on exactly
+            // that mismatch. So the heuristic must uphold the same contract: when the
+            // named handler's shape does not match the question's declared type, fall
+            // back to the type-generic default.
+            let (answer, probabilities, confidence) = match qtype {
+                "choice" if !answer.is_string() => default_choice(qdef),
+                "score" if !answer.is_number() => bscore(1.0),
+                "noul" if !answer.is_number() => {
+                    let p = 0.5;
+                    let mut m = Map::new();
+                    m.insert("false".to_string(), serde_json::json!(1.0 - p));
+                    m.insert("true".to_string(), serde_json::json!(p));
+                    (serde_json::json!(p), m, 0.5)
+                }
+                _ => (answer, probabilities, confidence),
+            };
             answers.insert(
                 qid.clone(),
                 Decision {

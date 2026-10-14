@@ -340,7 +340,8 @@ impl WorkflowNode {
 
     /// Hold **every** backend to the node's question contract (P112): a `choice`
     /// answer that is not one of its question's `criteria` keys (nor the DSL's
-    /// fail-closed `none`) would silently take the edge's `default` branch — the
+    /// fail-closed `none`) — or that is not an option-key string at all (a wrong-typed
+    /// `score`/`boolean`/`noul` value) — would silently take the edge's `default` branch — the
     /// same silent-`default` hole `AnswersBackend::accept` closes on the *caller*
     /// path, and P98/P110 audit on the offline heuristic. It must not depend on a
     /// server's optional `--gbnf-strict` constrained decoding (off by default), so
@@ -363,20 +364,33 @@ impl WorkflowNode {
             let Some(d) = verdict.answers.get(qid.as_str()) else {
                 continue;
             };
-            let Some(ans) = d.answer.as_str() else {
-                continue;
-            };
-            if ans == "none" {
-                continue;
-            }
             let Some(criteria) = qdef.get("criteria").and_then(Value::as_object) else {
                 continue;
             };
-            if criteria.is_empty() || criteria.contains_key(ans) {
+            if criteria.is_empty() {
                 continue;
             }
             let mut allowed: Vec<&String> = criteria.keys().collect();
             allowed.sort();
+            // A `choice` question's answer must be an option-key string. On the model
+            // path a non-string answer is exactly a wrong-typed answer: the response
+            // decoder puts a `score`/`boolean`/`noul` value in `answer`, so a number
+            // here means the backend did not send a `choice` answer at all (the same
+            // mismatch P111 rejects on the caller path by reading the declared type).
+            // Either way it cannot be matched against the criteria, so the walk would
+            // silently take the default branch — fail closed instead.
+            let ans = match d.answer.as_str() {
+                Some(s) => s,
+                None => {
+                    return Err(anyhow!(
+                        "node {}: the backend answered choice question {qid:?} with the non-string value {} — that value is not an option key of its accepted answers {allowed:?}, so the walk would otherwise silently take the edge's default branch",
+                        self.name, d.answer
+                    ));
+                }
+            };
+            if ans == "none" || criteria.contains_key(ans) {
+                continue;
+            }
             return Err(anyhow!(
                 "node {}: the backend answered question {qid:?} with {ans:?}, which is not one of its accepted answers {allowed:?} — refusing to silently take the edge's default branch",
                 self.name

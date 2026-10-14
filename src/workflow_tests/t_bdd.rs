@@ -5482,7 +5482,7 @@ pub fn test_bdd_platform_bound_skip(h: &mut Harness) {
 /// same hole `AnswersBackend::accept` closes on the caller path and P98/P110 audit
 /// on the heuristic, but guarded where it cannot be bypassed: in the engine.
 pub fn test_bdd_engine_contract(h: &mut Harness) {
-    use laya_workflow::backend::{choice, verdict, ScriptedBackend};
+    use laya_workflow::backend::{choice, score, verdict, ScriptedBackend};
     use laya_workflow::spec::{from_spec, load_file};
 
     // gate --"A"--> allow, anything else --> deny; both terminal nodes ask `ok`.
@@ -5533,6 +5533,23 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
             && e.contains("[\"A\", \"B\"]"),
     );
 
+    // A wrong-typed answer on the model path: the response decoder puts a `score` /
+    // `boolean` / `noul` value (a number) in `answer`, so a `choice` question answered
+    // with `type:"score"` is not a choice answer at all. P111 rejects that on the
+    // caller path by reading the declared type; the engine fails closed on the shape.
+    let typed = ScriptedBackend::new(vec![verdict(&[(
+        "verdict",
+        score(1.0, &[0.5, 0.5]),
+    )])]);
+    let te = wf.run(&typed, &json!({})).unwrap_err().to_string();
+    h.check(
+        &format!("engine-contract: a non-string (wrong-typed) answer to a choice question fails closed ({te})"),
+        te.contains("node gate")
+            && te.contains("\"verdict\"")
+            && te.contains("non-string value")
+            && te.contains("[\"A\", \"B\"]"),
+    );
+
     // `none` stays the DSL's fail-closed answer even when it is not a criteria key.
     let none = ScriptedBackend::new(vec![
         verdict(&[("verdict", choice("none", &[("A", 0.5), ("B", 0.5)]))]),
@@ -5561,5 +5578,31 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
     h.check(
         &format!("engine-contract: a model answer outside a dynamic question's materialised candidates fails closed ({de})"),
         de.contains("node select") && de.contains("candidate_99"),
+    );
+
+    // Regression (P113): the offline heuristic's named handler for `urgency` is a
+    // *score* rule (email_triage), but notify_macos declares the same id as a
+    // *choice* — and notify_macos is external-only, so the corpus audit that drives
+    // only state-carrying specs never saw it. The heuristic must answer the declared
+    // type (the engine guard now fails closed otherwise). A minimal replay of that
+    // node keeps the check self-contained (no capability/policy/env to resolve).
+    let nm_like = from_spec(&json!({
+        "name": "notify_like",
+        "dsl_version": 2,
+        "start": "announce",
+        "max_iterations": 2,
+        "nodes": [
+            {"name": "announce", "primary_q": "urgency",
+             "questions": {"urgency": {"type": "choice",
+                "criteria": {"A": "informational, no action needed", "B": "action needed soon"}}},
+             "edge": {"condition": {}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1}
+        ]
+    }))
+    .unwrap();
+    h.check(
+        "engine-contract: the heuristic answers a choice `urgency` (a reused score-handler id) with a string option key, in-contract",
+        matches!(nm_like.run(&laya_workflow::backend::HeuristicBackend, &json!({})),
+                 Ok(o) if o.final_action() == "stop"),
     );
 }
