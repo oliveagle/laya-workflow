@@ -794,6 +794,42 @@ fn validate_graph_semantics(
             }
         }
     }
+    // A dynamic question (`criteria.from_state`) materialises its options from a
+    // state *list* at decide time; every other key in its `criteria` is therefore
+    // a recognised control knob, not an answer. A mistyped knob (`id_keey`) would
+    // otherwise be silently ignored and the question would materialise with the
+    // default id key, hiding an authoring bug behind "it happens to work". So when
+    // `from_state` is present, the sibling keys must be exactly the known ones.
+    {
+        const DYN_KEYS: [&str; 4] = ["from_state", "id_key", "value_key", "none"];
+        for n in nodes {
+            let Some(qs) = n.questions.as_object() else { continue };
+            for (qid, q) in qs {
+                let Some(m) = q.get("criteria").and_then(Value::as_object) else {
+                    continue;
+                };
+                if !m.contains_key("from_state") {
+                    continue;
+                }
+                for k in m.keys() {
+                    if !DYN_KEYS.contains(&k.as_str()) {
+                        bail!(
+                            "node {}: question {qid:?} declares `criteria.from_state` but also carries the unrecognised key {k:?} — a dynamic question's only criteria keys are {DYN_KEYS:?}{}",
+                            n.name,
+                            suggest(k.as_str(), &DYN_KEYS)
+                        );
+                    }
+                }
+                if m.get("from_state").and_then(Value::as_str).map(str::is_empty) != Some(false)
+                {
+                    bail!(
+                        "node {}: question {qid:?} has `criteria.from_state` that is not a non-empty string (it must name the state list the options are materialised from)",
+                        n.name
+                    );
+                }
+            }
+        }
+    }
     // reachability: every non-start node must be reachable through static edges.
     // Routing is purely edge-driven (no dynamic goto), so an unreachable node is
     // dead code — it will never run, silently hiding misrouted decisions.

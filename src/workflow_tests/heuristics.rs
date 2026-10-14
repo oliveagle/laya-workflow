@@ -507,16 +507,40 @@ pub fn test_answer_field_authority(h: &mut Harness) {
         );
 
         // Dynamic criteria (`criteria.from_state`): the real options are
-        // materialised at decide time, so a state-supplied id that is not a
-        // literal criteria key is a valid pick (span_selection offline pick).
+        // materialised at decide time from a state list, so a state-supplied id
+        // that is not a literal criteria key is a valid pick — *when the state
+        // actually offers it*. The backend materialises the ids itself (P103), so
+        // an id the state does not offer fails closed to `none`, never silently.
         let q_dyn = json!({"bc": {"type": "choice", "instructions": "pick",
             "criteria": {"from_state": "candidates", "id_key": "id", "value_key": "value", "none": "nothing"},
             "heuristic": {"answer_field": "selected_id"}}});
-        let v_dyn = be.decide(&json!({"selected_id": "candidate_0"}), &q_dyn).unwrap();
+        let v_dyn = be
+            .decide(
+                &json!({"selected_id": "candidate_0",
+                        "candidates": [{"id": "candidate_0", "value": "a@b.com"},
+                                       {"id": "candidate_1", "value": "c@d.com"}]}),
+                &q_dyn,
+            )
+            .unwrap();
         h.eq(
-            "p41: dynamic-criteria answer_field accepts a state-supplied id",
+            "p41: dynamic-criteria answer_field accepts a state-supplied id the state offers",
             v_dyn.answer_value("bc").unwrap().as_str().unwrap_or(""),
             "candidate_0",
+        );
+        // The id is *not* in the state's candidate list: the offline heuristic must
+        // not trust it — that would silently take the option (and the edge's route
+        // branch) for a pick the candidate list never offered.
+        let v_dyn_bad = be
+            .decide(
+                &json!({"selected_id": "candidate_9",
+                        "candidates": [{"id": "candidate_0", "value": "a@b.com"}]}),
+                &q_dyn,
+            )
+            .unwrap();
+        h.eq(
+            "p41: dynamic-criteria id outside the state's candidates fails closed to none",
+            v_dyn_bad.answer_value("bc").unwrap().as_str().unwrap_or(""),
+            "none",
         );
         let v_dyn_none = be.decide(&json!({}), &q_dyn).unwrap();
         h.eq(

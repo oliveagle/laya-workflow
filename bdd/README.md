@@ -331,7 +331,12 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
 * **Given (questions, ≥1 per node)** — `a choice question "Q" asks "..."` with a
   `| answer | meaning |` table; `a score question "Q" asks "..."` with a
   `| level |` table; `a noul question "Q" asks "..."` with optional
-  `| truthy | ... |` / `| falsy | ... |` rows; `the sub workflow "NAME"` for a
+  `| truthy | ... |` / `| falsy | ... |` rows; a choice question whose options are
+  materialised from state at decide time writes `| from_state | <state list> |` in
+  place of answer rows (optionally `| id_key | ... |`, `| value_key | ... |`,
+  `| none | ... |`) — those four are the *only* keys allowed beside `from_state`,
+  so a typo is a compile error with a did-you-mean, not a silently ignored row;
+  `the sub workflow "NAME"` for a
   node that only references another workflow. A sub-workflow node can also hand
   control back to the caller when it terminates — add
   `And when the sub workflow completes continue at "DOWNSTREAM"` and the

@@ -1019,6 +1019,21 @@ Feature: s_combine
     Then combine "department" with signal "explicit_urgency" fallback "otrher" review "human_review" requiring 0.8 high 0.85 low 0.15"#,
             r#"fallback "otrher""#,
         ),
+        (
+            "dynamic criteria key",
+            r#"@decision
+Feature: s_dynkey
+  Scenario: select
+    Given a choice question "pick" asks "which candidate?"
+      | answer | meaning |
+      | from_state | candidates |
+      | id_keey | id |
+      | none | nothing |
+    And the answer comes from the field "selected_id"
+    When any other answer goes to "STOP"
+    Then allow up to 1 retries"#,
+            r#"a choice question "pick" asks"#,
+        ),
     ];
     for (what, src, snippet) in cases {
         let feature = bdd::parse(src, "<sug>").expect("suggestion feature parses");

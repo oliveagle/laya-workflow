@@ -453,17 +453,42 @@ impl Decide for HeuristicBackend {
                         .map(|o| o.keys().cloned().collect())
                         .unwrap_or_default();
                     let known = keys.iter().any(|k| k == chosen);
-                    // Dynamic-criteria questions (`criteria.from_state`) list their
-                    // real options at decide time from a state list (e.g. candidate
-                    // ids), so the literal criteria keys are only placeholders. Trust
-                    // any non-`none` id the state supplies — that is the offline analog
-                    // of "the model picked one of the materialised candidates".
-                    let dynamic = qdef
-                        .get("criteria")
-                        .and_then(|c| c.as_object())
-                        .map(|o| o.contains_key("from_state"))
-                        .unwrap_or(false);
-                    if known || (dynamic && chosen != "none") {
+                    // A `criteria.from_state` question's options do not live in the
+                    // literal criteria — they are materialised from a state list
+                    // (`from_state`, ids from `id_key`, default "id"). When the engine
+                    // asks (it expands the criteria first, so `keys` already holds the
+                    // candidate ids) `known` is the test. When a caller drives the
+                    // backend *directly* with the raw criteria, materialise the ids
+                    // here so a state-supplied id is accepted only when the state
+                    // actually offers it: an id outside the list — like a missing
+                    // field — fails closed to `none` at low confidence instead of
+                    // silently picking it (P41's documented contract, made strict; P103).
+                    let dyn_ids: Vec<String> =
+                        match qdef.pointer("/criteria/from_state").and_then(Value::as_str) {
+                            Some(src) => {
+                                let id_key = qdef
+                                    .pointer("/criteria/id_key")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("id");
+                                state
+                                    .get(src)
+                                    .and_then(Value::as_array)
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .enumerate()
+                                            .map(|(i, it)| {
+                                                it.get(id_key)
+                                                    .and_then(Value::as_str)
+                                                    .map(str::to_string)
+                                                    .unwrap_or_else(|| format!("candidate_{i}"))
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default()
+                            }
+                            None => Vec::new(),
+                        };
+                    if known || dyn_ids.iter().any(|i| i == chosen) {
                         let mut m = Map::new();
                         for k in &keys {
                             m.insert(k.clone(), serde_json::json!(if k == chosen { 0.92 } else { 0.02 }));
