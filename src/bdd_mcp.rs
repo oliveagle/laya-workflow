@@ -625,12 +625,56 @@ fn spec_node_contract(spec: &Value, node: &str) -> Value {
         .unwrap_or_else(|| Value::Array(Vec::new()))
 }
 
+/// P106: for a node's dynamic (`criteria.from_state`) questions, materialise the
+/// options the engine would offer given the accumulated `state` — `{qid: {id:
+/// meaning}}` — so a step-wise caller can answer a dynamic question from the
+/// reply alone (its contract `answers` is empty, the candidate ids live in
+/// `state[from_state]`). An empty object when the node has no dynamic question
+/// (the common case), so the field is cheap and never misleading. Mirrors
+/// `workflow::expand_criteria_from_state`, which the engine itself uses.
+fn pending_options(spec: &Value, node: &str, state: &Value) -> Value {
+    let node_q = spec
+        .get("nodes")
+        .and_then(Value::as_array)
+        .and_then(|ns| {
+            ns.iter()
+                .find(|n| n.get("name").and_then(Value::as_str) == Some(node))
+        })
+        .and_then(|n| n.get("questions"))
+        .cloned();
+    let Some(node_q) = node_q else {
+        return json!({});
+    };
+    let dynamic: Vec<String> = node_q
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter(|(_, q)| q.pointer("/criteria/from_state").is_some())
+                .map(|(k, _)| k.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if dynamic.is_empty() {
+        return json!({});
+    }
+    let Ok(resolved) = crate::workflow::expand_criteria_from_state(state, &node_q) else {
+        return json!({});
+    };
+    let mut out = serde_json::Map::new();
+    for qid in dynamic {
+        if let Some(c) = resolved.get(qid.as_str()).and_then(|q| q.get("criteria")).cloned() {
+            out.insert(qid, c);
+        }
+    }
+    Value::Object(out)
+}
+
 impl McpTool for DecideTool {
     fn name(&self) -> &str {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state, primary, satisfied_by}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts (`primary` marks the node's `primary_q`, and its `satisfied_by` maps answer -> destination node) — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed)."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, pending_options, state_so_far, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state, primary, satisfied_by}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts (`primary` marks the node's `primary_q`, and its `satisfied_by` maps answer -> destination node) — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed). `pending_options` materialises the waiting node's dynamic (`criteria.from_state`) questions from the accumulated state as {qid: {id: meaning}} (empty `{}` when none), and `state_so_far` is that accumulated state (the input state plus each completed node's merged payload) - together they let a caller answer a dynamic question (whose contract `answers` is empty) from the reply alone."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -642,7 +686,7 @@ impl McpTool for DecideTool {
                 "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
                 "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
                 "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."},
-                "answers": {"type": ["array", "object"], "description": "Drive the graph with your own answers instead of the offline heuristic. Two shapes: (a) an ARRAY of one {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} object per node the walk visits, consumed in visit order; or (b) an OBJECT keyed by node name, {\"<node>\": {<qid>: <answer>}}, whose entry for a node is reused on every visit to it — a per-node policy you state once instead of replaying the visit sequence (handy for self-loop / retry graphs). Answers are in the same shape laya-tch returns. Pass [] (or {}) to start a step-wise walk: the reply then names the node the walk is waiting on (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is that node's own questions, each with the answers it accepts (`{id,type,answers,from_state,primary,satisfied_by}`, the same shape `bdd_list` reports) — and you append one answer (array) or add one keyed entry (object) per reply until ok:true."}
+                "answers": {"type": ["array", "object"], "description": "Drive the graph with your own answers instead of the offline heuristic. Two shapes: (a) an ARRAY of one {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} object per node the walk visits, consumed in visit order; or (b) an OBJECT keyed by node name, {\"<node>\": {<qid>: <answer>}}, whose entry for a node is reused on every visit to it — a per-node policy you state once instead of replaying the visit sequence (handy for self-loop / retry graphs). Answers are in the same shape laya-tch returns. Pass [] (or {}) to start a step-wise walk: the reply then names the node the walk is waiting on (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is that node's own questions, each with the answers it accepts (`{id,type,answers,from_state,primary,satisfied_by}`, the same shape `bdd_list` reports), `pending_options` holds the waiting node's dynamic-question options materialised from the accumulated `state_so_far`, and you append one answer (array) or add one keyed entry (object) per reply until ok:true."}
             }
         })
     }
@@ -800,6 +844,11 @@ impl McpTool for DecideTool {
                     .map_err(|e| anyhow!("bdd_decide: {e:#}"))?;
                 let mut steps: Vec<Value> = Vec::new();
                 let mut at_node = wf.start.clone();
+                // The engine keeps its own copy of the state; mirror its payload
+                // merge (`merge_payload`) after each completed node so that, when
+                // the walk stalls on a dynamic question, we can hand the caller the
+                // accumulated state and materialise that question's options.
+                let mut acc_state = state.clone();
                 let res = wf.run_with_progress(&be, &state, &mut |r: &crate::workflow::NodeResult| {
                     steps.push(json!({
                         "node": r.node_name,
@@ -808,16 +857,27 @@ impl McpTool for DecideTool {
                         "confidence": (r.confidence * 10000.0).round() / 10000.0,
                     }));
                     at_node = r.next_node.clone().unwrap_or_default();
+                    crate::workflow::merge_payload(&mut acc_state, &r.action_result);
                 });
                 match res {
                     Ok(o) => (o, "answers"),
                     Err(e) if be.exhausted() => {
+                        // P106: a dynamic (`criteria.from_state`) question carries an
+                        // empty `answers` list in the contract - its options are
+                        // materialised from the state at decide time - so a step-wise
+                        // caller could not answer it from the reply alone (the reply
+                        // named `from_state` but not the candidates). Hand back the
+                        // accumulated state and the waiting node's materialised
+                        // options, so the walk closes from the reply.
+                        let pending_options = pending_options(&spec_value, &at_node, &acc_state);
                         return Ok(json!({
                             "ok": false,
                             "backend": "answers",
                             "needs_answer": true,
                             "at_node": at_node,
                             "ask": spec_node_contract(&spec_value, &at_node),
+                            "pending_options": pending_options,
+                            "state_so_far": acc_state,
                             "steps_so_far": steps,
                             "message": format!("{e:#}"),
                         }));

@@ -4627,6 +4627,52 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
         .unwrap();
     h.eq("answers[keyed]: {} starts a step-wise walk", keyed_start["needs_answer"].clone(), json!(true));
     h.eq("answers[keyed]: {} waits at the start node", keyed_start["at_node"].clone(), json!("unauthenticated"));
+
+    // (12) P106: a dynamic (`criteria.from_state`) question carries an empty
+    //      `answers` contract, so driving it step-wise needs the materialised
+    //      options. The reply now carries `pending_options` (the waiting node's
+    //      dynamic options built from the accumulated state) and `state_so_far`,
+    //      so the walk closes from the reply alone.
+    let ss = "dsl/capabilities/span_selection.json";
+    let ss_state = json!({"text": "Please bill the invoice to billing@acme.com thanks."});
+    let ss1 = t
+        .call(&json!({"spec_path": ss, "state": ss_state, "answers": []}))
+        .unwrap();
+    h.check(
+        "answers[dynamic]: the start node has no dynamic question (pending_options empty)",
+        ss1["pending_options"] == json!({}),
+    );
+    let ss2 = t
+        .call(&json!({"spec_path": ss, "state": ss_state,
+            "answers": [{"has_text": {"type": "choice", "choice": "B", "confidence": 1.0}}]}))
+        .unwrap();
+    h.eq("answers[dynamic]: the walk stalls at the dynamic node", ss2["at_node"].clone(), json!("select"));
+    let opts = ss2["pending_options"]["billing_contact"].clone();
+    h.check(
+        "answers[dynamic]: pending_options materialises the dynamic question's options",
+        opts["candidate_0"].as_str().map(|s| s.contains("billing@acme.com")).unwrap_or(false)
+            && opts.get("none").is_some(),
+    );
+    h.check(
+        "answers[dynamic]: state_so_far carries the upstream candidates the options came from",
+        ss2["state_so_far"]["candidates"]
+            .as_array()
+            .map(|a| a.iter().any(|c| c["id"] == "candidate_0"))
+            .unwrap_or(false),
+    );
+    // Answer the dynamic question with an id taken straight from pending_options.
+    let ss3 = t
+        .call(&json!({"spec_path": ss, "state": ss_state, "answers": [
+            {"has_text": {"type": "choice", "choice": "B", "confidence": 1.0}},
+            {"billing_contact": {"type": "choice", "choice": "candidate_0", "confidence": 0.95}},
+            {"ok": {"type": "choice", "choice": "A", "confidence": 1.0}},
+        ]}))
+        .unwrap();
+    h.eq("answers[dynamic]: the full walk driven from the reply completes", ss3["ok"].clone(), json!(true));
+    h.check(
+        "answers[dynamic]: the picked id re-slices the real value from the candidate",
+        ss3["result"]["selected"]["value"] == json!("billing@acme.com"),
+    );
 }
 
 

@@ -426,7 +426,7 @@ fn r4(x: f64) -> f64 {
 
 /// Merge a node's app-level payload into the workflow state (top-level keys),
 /// mirroring the Python `on_action` / `action_result` handling.
-fn merge_payload(state: &mut Value, payload: &Option<Value>) {
+pub fn merge_payload(state: &mut Value, payload: &Option<Value>) {
     if let (Some(obj), Some(p)) = (
         state.as_object_mut(),
         payload.as_ref().and_then(|v| v.as_object()),
