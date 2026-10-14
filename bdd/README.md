@@ -453,10 +453,11 @@ that already passes `bdd build`, with the authoring vocabulary as comments) →
 extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
 emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
 --out dsl/<cat>`) → audit completeness with `bdd_catalog` → lift any legacy JSON
-workflow back into BDD with `bdd_import` → run a finished graph against a state
-with `bdd_decide` → run `bdd round-trip` + `check.sh` → commit. The whole loop —
-intent → skeleton → validate → emit spec → audit → lift a legacy spec → run a
-decision — runs over MCP without shelling out.
+workflow back into BDD with `bdd_import` → discover the callable corpus with
+`bdd_list` and run one against a state with `bdd_decide` → run `bdd round-trip` +
+`check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →
+audit → lift a legacy spec → list the corpus → run a decision — runs over MCP
+without shelling out.
 The same greenfield start is available on the CLI as
 `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The starter is the
 canonical 2-node graph (choice → score → STOP, with threshold labels and a

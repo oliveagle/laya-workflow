@@ -2918,3 +2918,53 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
         t.call(&json!({"feature_path": "bdd/workflows/guards/agent_permission_gate.feature"})).is_err(),
     );
 }
+
+
+/// `bdd_list` MCP tool: the callable inventory behind "use a BDD graph as a
+/// decision core" — every @decision workflow with the questions and state
+/// inputs an agent must know to call it. Also proves `bdd_decide {name}`
+/// resolves a port name through the same corpus.
+pub fn test_bdd_mcp_list(h: &mut Harness) {
+    let t = bdd_tool("bdd_list");
+    let all = t.call(&json!({})).unwrap();
+    let total = all["count"].as_u64().unwrap();
+    h.check("bdd_list: lists the whole corpus", total >= 160);
+    let per_cat = t.call(&json!({"cat": "guards"})).unwrap();
+    h.check(
+        "bdd_list: cat filter narrows",
+        per_cat["count"].as_u64().unwrap() < total,
+    );
+    let one = t.call(&json!({"name": "agent_permission_gate"})).unwrap();
+    h.eq("bdd_list: name filter is exact", one["count"].as_u64().unwrap(), 1);
+    let wf = &one["workflows"][0];
+    h.eq("bdd_list: cat", wf["cat"].clone(), json!("guards"));
+    h.eq("bdd_list: start", wf["start"].clone(), json!("unauthenticated"));
+    h.eq("bdd_list: node_count", wf["node_count"].as_u64().unwrap(), 5);
+    let inputs = wf["inputs"].as_array().unwrap();
+    h.check(
+        "bdd_list: inputs carry the ev_ state fields",
+        inputs.iter().any(|v| v == "ev_risk") && inputs.iter().any(|v| v == "ev_unauthenticated"),
+    );
+    let qids: Vec<String> = wf["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|q| q["id"].as_str().map(str::to_string))
+        .collect();
+    h.check(
+        "bdd_list: questions include event + risk",
+        qids.contains(&"event".to_string()) && qids.contains(&"risk".to_string()),
+    );
+    // bdd_decide resolves the same port name through the corpus.
+    let d = bdd_tool("bdd_decide")
+        .call(&json!({"name": "agent_permission_gate", "state": {"ev_unauthenticated": "halt", "ev_risk": "high"}}))
+        .unwrap();
+    h.eq("bdd_decide(name): label BLOCK", d["label"].clone(), json!("BLOCK"));
+    // An unknown port name errors cleanly instead of panicking.
+    h.check(
+        "bdd_decide(name): unknown name errors",
+        bdd_tool("bdd_decide")
+            .call(&json!({"name": "no_such_workflow_xyz", "state": {}}))
+            .is_err(),
+    );
+}

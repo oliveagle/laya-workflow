@@ -19,7 +19,9 @@
 //! *any* known workflow into BDD in-process, not just author a new one.
 //! `bdd_decide` runs a finished `@decision` graph against a state and returns
 //! the verdict + trace, so the graph is a decision an agent can *call*, not only
-//! a product it writes.
+//! a product it writes. `bdd_list` is the discovery half: the callable inventory
+//! of the corpus (each workflow's questions and the state fields to feed it), so
+//! an agent can find the right graph before it calls it.
 
 use std::sync::Arc;
 
@@ -44,6 +46,7 @@ impl McpToolSet for BddTools {
             Arc::new(CatalogTool),
             Arc::new(ImportTool),
             Arc::new(DecideTool),
+            Arc::new(ListTool),
         ]
     }
 }
@@ -605,6 +608,7 @@ impl McpTool for DecideTool {
                 "feature_text": {"type": "string", "description": "The .feature source text to compile and run. Provide this, feature_path, or spec_path."},
                 "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature decision workflow, e.g. bdd/workflows/guards/agent_permission_gate.feature."},
                 "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
+                "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
                 "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."}
             }
         })
@@ -634,6 +638,26 @@ impl McpTool for DecideTool {
             };
             crate::spec::load_file(&path.to_string_lossy())
                 .map_err(|e| anyhow!("bdd_decide: cannot load spec {rel}: {e:#}"))?
+        } else if let Some(name) = args.get("name").and_then(Value::as_str) {
+            // Resolve a workflow by its port name across the repo dsl tree, so
+            // `bdd_list` -> `bdd_decide {name}` composes without a path.
+            let dsl = bdd::repo_root().join("dsl");
+            let hits: Vec<std::path::PathBuf> = crate::spec::discover(&dsl.to_string_lossy())
+                .map_err(|e| anyhow!("bdd_decide: scanning dsl/: {e:#}"))?
+                .into_iter()
+                .filter(|(stem, _)| stem == name)
+                .map(|(_, path)| path)
+                .collect();
+            match hits.len() {
+                0 => return Err(anyhow!("bdd_decide: no decision spec named {name:?} under dsl/")),
+                1 => crate::spec::load_file(&hits[0].to_string_lossy())
+                    .map_err(|e| anyhow!("bdd_decide: cannot load {:?}: {e:#}", hits[0]))?,
+                n => {
+                    return Err(anyhow!(
+                        "bdd_decide: {name:?} is ambiguous ({n} specs share that name); pass spec_path instead"
+                    ))
+                }
+            }
         } else {
             let (text, src_name) = match args.get("feature_text").and_then(Value::as_str) {
                 Some(t) => (t.to_string(), "<mcp>".to_string()),
@@ -690,6 +714,144 @@ impl McpTool for DecideTool {
             "trace": j.get("trace").cloned().unwrap_or(Value::Null),
             "result": j.get("result").cloned().unwrap_or(Value::Null),
             "iterations": j.get("iterations").cloned().unwrap_or(Value::Null),
+        }))
+    }
+}
+
+
+/// `bdd_list`: the callable inventory of the BDD decision corpus — every
+/// `@decision` workflow with the questions it asks (and the state field each
+/// heuristic answer reads) and the nodes it walks, so an agent can pick the
+/// right workflow and know what to feed `bdd_decide`. This is the discovery
+/// half of "use a BDD graph as a decision core": you cannot call what you
+/// cannot find.
+struct ListTool;
+
+impl McpTool for ListTool {
+    fn name(&self) -> &str {
+        "bdd_list"
+    }
+    fn description(&self) -> &str {
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, nodes, questions, inputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`. Filter with cat and/or name. The inventory behind 'use a BDD graph as a decision core'."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "cat": {"type": "string", "description": "Only list workflows in this category (e.g. guards, ole_eval, routing)."},
+                "name": {"type": "string", "description": "Only list the workflow whose port name matches this exactly."}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let cat_filter = args.get("cat").and_then(Value::as_str);
+        let name_filter = args.get("name").and_then(Value::as_str);
+        let dsl = bdd::repo_root().join("dsl");
+        let mut workflows: Vec<Value> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&dsl) {
+            let mut cats: Vec<_> = rd.flatten().collect();
+            cats.sort_by_key(|e| e.file_name());
+            for e in cats {
+                if !e.path().is_dir() {
+                    continue;
+                }
+                let cat = e.file_name().to_string_lossy().into_owned();
+                if cat_filter.map(|f| f != cat).unwrap_or(false) {
+                    continue;
+                }
+                let mut files: Vec<_> = std::fs::read_dir(e.path())
+                    .map(|r| r.flatten().collect())
+                    .unwrap_or_default();
+                files.sort_by_key(|x| x.file_name());
+                for fe in files {
+                    let p = fe.path();
+                    if p.extension().and_then(|x| x.to_str()) != Some("json") {
+                        continue;
+                    }
+                    let fname = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    if fname.ends_with(".config.json") {
+                        continue;
+                    }
+                    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                    if name_filter.map(|f| f != stem).unwrap_or(false) {
+                        continue;
+                    }
+                    let Ok(txt) = std::fs::read_to_string(&p) else { continue };
+                    let Ok(spec) = serde_json::from_str::<Value>(&txt) else { continue };
+                    if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
+                        continue;
+                    }
+                    let nodes: Vec<Value> = spec["nodes"]
+                        .as_array()
+                        .map(|ns| {
+                            ns.iter()
+                                .filter_map(|n| {
+                                    let nm = n.get("name")?.as_str()?;
+                                    Some(json!({
+                                        "name": nm,
+                                        "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),
+                                    }))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // Questions deduped by id (first wins, since a shared id
+                    // means the same question), plus the state fields a
+                    // deterministic call reads.
+                    let mut qmap: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+                    let mut inputs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+                    if let Some(ns) = spec["nodes"].as_array() {
+                        for n in ns {
+                            if let Some(qs) = n.get("questions").and_then(Value::as_object) {
+                                for (qid, q) in qs {
+                                    let af = q.pointer("/heuristic/answer_field").and_then(Value::as_str);
+                                    if let Some(a) = af {
+                                        inputs.insert(a.to_string());
+                                    }
+                                    qmap.entry(qid.clone()).or_insert_with(|| {
+                                        let mut e = serde_json::Map::new();
+                                        if let Some(t) = q.get("type").and_then(Value::as_str) {
+                                            e.insert("type".into(), json!(t));
+                                        }
+                                        if let Some(a) = af {
+                                            e.insert("answer_field".into(), json!(a));
+                                        }
+                                        Value::Object(e)
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    let questions: Vec<Value> = qmap
+                        .into_iter()
+                        .map(|(id, v)| {
+                            let mut o = serde_json::Map::new();
+                            o.insert("id".into(), json!(id));
+                            if let Value::Object(m) = v {
+                                for (k, val) in m {
+                                    o.insert(k, val);
+                                }
+                            }
+                            Value::Object(o)
+                        })
+                        .collect();
+                    workflows.push(json!({
+                        "cat": cat,
+                        "name": stem,
+                        "spec_name": spec.get("name").cloned().unwrap_or(Value::Null),
+                        "description": spec.get("description").cloned().unwrap_or(Value::Null),
+                        "start": spec.get("start").cloned().unwrap_or(Value::Null),
+                        "node_count": nodes.len(),
+                        "nodes": nodes,
+                        "questions": questions,
+                        "inputs": inputs.into_iter().collect::<Vec<_>>(),
+                    }));
+                }
+            }
+        }
+        Ok(json!({
+            "count": workflows.len(),
+            "workflows": workflows,
         }))
     }
 }
