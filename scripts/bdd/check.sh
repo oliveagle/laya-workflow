@@ -199,6 +199,20 @@ if ! "$BIN" bdd import-check > "$out/import.log" 2> "$out/import.err"; then
 fi
 grep -E "^bdd import:" "$out/import.log" || true
 
+# The corpus-completeness gate: every checked-in `.feature` under bdd/ compiles,
+# and every one is in a gated tree. `bdd/workflows/examples/` - the two features
+# docs/bdd_quickstart.md tells a new author to copy - is read by NO other gate,
+# so before this a vocabulary change could break a documented example while
+# every check stayed green. A `.feature` dropped in a directory no gate compiles
+# is named here instead of shipping unverified. Needs no Chrome, no network.
+if ! "$BIN" bdd features-check > "$out/features.log" 2> "$out/features.err"; then
+  echo "bdd check: a checked-in feature is unverified:" >&2
+  cat "$out/features.err" >&2
+  cat "$out/features.log" >&2
+  exit 1
+fi
+grep -E "^bdd features-check:" "$out/features.log" || true
+
 # The behavioural smoke gate: every spec under dsl/ must validate, and where a
 # labelled sample state is registered (bench/dsl_smoke_states.json) it must
 # route/decide to the expected label (bench/dsl_smoke_expect.json) through the

@@ -6617,3 +6617,71 @@ pub fn test_dsl_smoke_cwd_independent(h: &mut Harness) {
     );
     let _ = std::fs::remove_dir_all(&cwd);
 }
+
+/// `bdd features-check` is the corpus-completeness gate: every checked-in
+/// `.feature` compiles, and every one sits in a gate bucket. It was added
+/// because `bdd/workflows/examples/` - the two features `docs/bdd_quickstart.md`
+/// tells a new author to copy - was read by *no* gate, so a documented example
+/// could rot (a vocabulary change drops a step) while every check stayed green.
+/// This section pins the live corpus (all compile, the examples are counted) and
+/// the bucket classifier (a path no gate compiles has no bucket, so the CLI
+/// names it instead of letting it ship unverified).
+pub fn test_bdd_features_check(h: &mut Harness) {
+    use laya_workflow::bdd::{feature_bucket, features_check_impl, repo_root, Feature, Scenario, Step};
+
+    let root = repo_root();
+    let (total, compiled, buckets, _verdicts, problems) = features_check_impl(&root).unwrap();
+    h.check(
+        &format!(
+            "bdd features-check: the live corpus compiles ({compiled}/{total}, {} problem(s))",
+            problems.len()
+        ),
+        problems.is_empty() && total == compiled && total >= 200,
+    );
+    for p in &problems {
+        h.check(&format!("bdd features-check: live problem — {p}"), false);
+    }
+    // The quickstart examples are the whole point of the gate.
+    let ex = buckets.get("examples").copied().unwrap_or(0);
+    h.check(
+        &format!("bdd features-check: the quickstart examples are counted (examples={ex})"),
+        ex >= 2,
+    );
+    h.check(
+        "bdd features-check: the browser/decision/features/tasks trees are counted",
+        buckets.get("browser").copied().unwrap_or(0) >= 25
+            && buckets.get("decision").copied().unwrap_or(0) >= 100
+            && buckets.get("features").copied().unwrap_or(0) >= 7
+            && buckets.get("tasks").copied().unwrap_or(0) >= 2,
+    );
+
+    // The classifier. A directory no gate compiles has no bucket, so the CLI
+    // names it rather than letting it ship unverified.
+    let feat = |tags: &[&str]| Feature {
+        name: "x".to_string(),
+        description: String::new(),
+        background: Vec::<Step>::new(),
+        scenarios: vec![Scenario {
+            name: "s".to_string(),
+            steps: Vec::new(),
+            tags: Vec::new(),
+            line: 1,
+            outline: false,
+            examples: Vec::new(),
+        }],
+        tags: tags.iter().map(|s| s.to_string()).collect(),
+        path: String::new(),
+    };
+    h.check(
+        "bdd features-check: an ungated directory has no bucket",
+        feature_bucket("bdd/workflows/tmp_ungated/probe.feature", &feat(&[])).is_none(),
+    );
+    h.check(
+        "bdd features-check: a decision feature has a bucket",
+        feature_bucket("bdd/workflows/whatever/x.feature", &feat(&["decision"])) == Some("decision"),
+    );
+    h.check(
+        "bdd features-check: the examples bucket is by path",
+        feature_bucket("bdd/workflows/examples/login_smoke.feature", &feat(&[])) == Some("examples"),
+    );
+}

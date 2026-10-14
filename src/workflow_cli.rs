@@ -604,6 +604,14 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Corpus-completeness gate: every checked-in `.feature` compiles, and every
+    /// one is covered by a named gate bucket - so no document (including the
+    /// quickstart examples) ships unverified.
+    FeaturesCheck {
+        /// Write the per-feature verdicts as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Quantify BDD authoring vs hand-written JSON DSL on the live corpus.
     Compare {
         /// Write the comparison as JSON here.
@@ -2616,6 +2624,9 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             force: *force,
         })?,
         BddCmd::ImportCheck { json } => bdd::import_check(&bdd::ImportCheckOptions {
+            json: json.clone(),
+        })?,
+        BddCmd::FeaturesCheck { json } => bdd::features_check(&bdd::FeaturesCheckOptions {
             json: json.clone(),
         })?,
         BddCmd::Compare { json, cases } => bdd::compare(&bdd::CompareOptions {

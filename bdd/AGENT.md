@@ -124,6 +124,8 @@ laya-workflow bdd run --profile production --base-url <real>
 - `laya-workflow bdd port-check [--pin <seal>] [--sources <dir>]` — 跨仓转换闭合性（每个上游 scenario 都有 BDD 端口、每个端口都有上游来源）。上游语料在另一个 repo，故来源**名集**封存在 `bench/bdd/port_pins/<cat>.json`（check-in 的是「只有名、`fingerprint` 留空」的 seal，不引用他仓任何字节或其哈希）：`--pin` 无需第二份 checkout 即可证明闭合，`check.sh` 默认就跑这一半；`--sources` 指向活的 ole-eval `code/qwen_vm/app_scenarios` 时把 seal 也拉上审判席（活名集必须与 seal 相同、seal 里带指纹的项必须仍匹配），`LAYA_OLE_EVAL_SOURCES` 设了才跑；`--write-pin` 是本地重新封存（审阅后的动作，不是门禁）
 - `laya-workflow bdd import <spec.json> [--out <f.feature> | --into <cat>]` / `laya-workflow bdd import --dir <DIR> [--out <dir> | --into <cat>] [--json <f>] [--force]` — 正向搬运：把已有 workflow spec 转成 `@decision` `.feature`（transpile 的逆）。单文件默认打 stdout；`--into` 归入本仓 `bdd/workflows/<cat>/` 并把 spec 抄进 `dsl/<cat>/`（`name` 钉成端口名，保证落仓即过 `round-trip`/`import-check`）。`--dir` 递归批量：只收「解析成功且 `nodes` 非空」的 json，按名跳过 `*.config.json`、其余非 workflow json 记为 skipped，**一个都没命中即报错**（绝不 false-green）；每个 feature 落盘前先验证「重新解析 + 重新编译 == 原 spec（`same_graph`）」；目标已存在默认报冲突（`--force` 覆盖）。`bdd import-check` 门禁证明每个已入库 spec 都能被 import 出的 feature 编译回同一张图（`check.sh` 真跑）
 
+- `laya-workflow bdd features-check` — 语料完备性门禁：`bdd/` 下**每一个** checked-in `.feature` 都必须能编译，且必须落在某个已登记的门禁桶里（`features` / `browser` / `decision` / `tasks` / `examples`；`bdd/features/setup/` 是 `include:` 进来的步骤清单，不是 feature，跳过）。起因：`bdd/workflows/examples/`（`docs/bdd_quickstart.md` 让新作者照抄的两个 feature，如 `bdd/workflows/examples/login_smoke.feature`）此前**没有任何门禁读它** —— 一次词汇表改动就能让一个「文档里的例子」悄悄坏掉，而所有检查依旧全绿。这个门禁把它们一起编译（用的就是 `bdd build` 的编译器），并把任何「落在没人编译的目录里」的 `.feature` **点名**，而不是让它未经校验地入库。`check.sh` 真跑
+
 ## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
 
 > 这是把 **agentic 决策 workflow** 变成 BDD 的主路径（也是把 `dsl/<cat>/<name>.json`

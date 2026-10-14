@@ -8893,6 +8893,183 @@ pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
     Ok(0)
 }
 
+/// Options for `bdd features-check`.
+pub struct FeaturesCheckOptions {
+    /// Write the per-feature verdicts as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for FeaturesCheckOptions {
+    fn default() -> Self {
+        Self { json: None }
+    }
+}
+
+/// The corpus-completeness gate: **every checked-in `.feature` compiles, and
+/// every one is covered by a named gate bucket.**
+///
+/// The big gates each compile their own tree - `check.sh` builds
+/// `bdd/features/*.feature` and every `@decision` feature, `bdd compare` the
+/// `bdd/workflows/browser/` corpus, `bdd score` the authoring tasks - and until
+/// this gate existed *nothing* compiled `bdd/workflows/examples/`, the two
+/// features `docs/bdd_quickstart.md` tells a new author to copy. A vocabulary
+/// change could break a documented example while every gate stayed green. So
+/// this walks the whole `bdd/` tree (minus `bdd/features/setup/`, the
+/// `include:`-ed step lists with no `Feature:` header), compiles each with the
+/// same compiler `bdd build` uses, and refuses a feature that is in no known
+/// bucket - a `.feature` dropped in a directory no gate reads is *named* here
+/// rather than silently shipping unverified.
+pub fn features_check(o: &FeaturesCheckOptions) -> Result<i32> {
+    let root = repo_root();
+    let (total, compiled, buckets, verdicts, problems) = features_check_impl(&root)?;
+    if let Some(p) = &o.json {
+        let out = root.join(p);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&verdicts)?)?;
+    }
+    let bucket_str = buckets
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!("bdd features-check: {compiled}/{total} checked-in features compile ({bucket_str})");
+    for p in &problems {
+        println!("  {p}");
+    }
+    if !problems.is_empty() {
+        eprintln!(
+            "bdd features-check: FAIL - {} problem(s) over {} feature(s)",
+            problems.len(),
+            total
+        );
+        return Ok(1);
+    }
+    Ok(0)
+}
+
+/// The gate tree a checked-in `.feature` belongs to, or `None` if no gate
+/// compiles it. Path first (an `@decision` feature under `workflows/browser/`
+/// is a browser case), tag last.
+pub fn feature_bucket(rel: &str, feature: &Feature) -> Option<&'static str> {
+    if rel.starts_with("bdd/features/") {
+        Some("features")
+    } else if rel.starts_with("bdd/workflows/browser/") {
+        Some("browser")
+    } else if rel.starts_with("bdd/workflows/tasks/") {
+        Some("tasks")
+    } else if rel.starts_with("bdd/workflows/examples/") {
+        Some("examples")
+    } else if has_tag(&feature.tags, "decision") {
+        Some("decision")
+    } else {
+        None
+    }
+}
+
+/// The testable core of [`features_check`]: `(total, compiled, buckets,
+/// verdicts, problems)`. Split out so a regression can assert on the counts and
+/// the bucket map without parsing the printed line.
+pub fn features_check_impl(
+    root: &std::path::Path,
+) -> Result<(
+    usize,
+    usize,
+    std::collections::BTreeMap<&'static str, usize>,
+    Vec<Value>,
+    Vec<String>,
+)> {
+    let bdd = root.join("bdd");
+    // Guarantee the scratch dirs the specs reference (`${env.LAYA_*}`) resolve,
+    // exactly as `bdd build` / `round-trip` do.
+    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in env_map {
+            std::env::set_var(k, v);
+        }
+        let _ = crate::capability::secret::init(None);
+    }
+    let wrapper = default_chrome_wrapper();
+
+    let mut all: Vec<PathBuf> = Vec::new();
+    if bdd.is_dir() {
+        walk_features(&bdd, &mut all);
+    }
+    all.sort();
+
+    let mut total = 0usize;
+    let mut compiled = 0usize;
+    let mut buckets: std::collections::BTreeMap<&'static str, usize> = std::collections::BTreeMap::new();
+    let mut problems: Vec<String> = Vec::new();
+    let mut verdicts: Vec<Value> = Vec::new();
+    for f in &all {
+        let rel = f.strip_prefix(root).unwrap_or(f).to_string_lossy().into_owned();
+        let rel = rel.trim_start_matches('/').to_string();
+        // `bdd/features/setup/*.feature` are the step lists pulled in with
+        // `include:` - a flat list with no `Feature:` header, not a feature.
+        if rel.starts_with("bdd/features/setup/") {
+            continue;
+        }
+        total += 1;
+        let text =
+            std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
+        let feature = match parse(&text, &f.to_string_lossy()) {
+            Ok(fe) => fe,
+            Err(e) => {
+                problems.push(format!("{rel}: parse failed: {e:#}"));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("parse: {e:#}")}));
+                continue;
+            }
+        };
+        match feature_bucket(&rel, &feature) {
+            Some(b) => *buckets.entry(b).or_insert(0) += 1,
+            None => problems.push(format!(
+                "{rel}: not covered by any gate bucket (add it to a gated tree, or to feature_bucket)"
+            )),
+        }
+        let config = load_config(f).unwrap_or_else(|_| json!({}));
+        let reason = if has_tag(&feature.tags, "decision") {
+            match compile_decision(&feature, &config) {
+                Ok(spec) => crate::spec::from_spec_with_dir(&spec, None, None)
+                    .err()
+                    .map(|e| format!("generated spec fails validate: {e:#}")),
+                Err(e) => Some(format!("compile failed: {e:#}")),
+            }
+        } else {
+            let mut reason = None;
+            for sc in &feature.scenarios {
+                match compile_scenario(&feature, sc, &config, &wrapper) {
+                    Ok(spec) => {
+                        let payload = public_spec(&spec);
+                        let empty_nodes = spec
+                            .get("nodes")
+                            .and_then(Value::as_array)
+                            .map(|a| a.is_empty())
+                            .unwrap_or(true);
+                        if empty_nodes || payload.get("start").is_none() {
+                            reason = Some(format!("scenario {:?} compiled to an empty spec", sc.name));
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        reason = Some(format!("scenario {:?} compile failed: {e:#}", sc.name));
+                        break;
+                    }
+                }
+            }
+            reason
+        };
+        if let Some(r) = reason {
+            problems.push(format!("{rel}: {r}"));
+            verdicts.push(json!({"feature": rel, "ok": false, "reason": r}));
+        } else {
+            compiled += 1;
+            verdicts.push(json!({"feature": rel, "ok": true}));
+        }
+    }
+    Ok((total, compiled, buckets, verdicts, problems))
+}
+
 pub struct RoundTripOptions {
     /// Write the per-feature verdicts as JSON here.
     pub json: Option<String>,
