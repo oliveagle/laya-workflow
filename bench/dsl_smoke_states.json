@@ -62,6 +62,9 @@
   "refund_policy.v1": {
     "large": {
       "text": "We were billed twice for March, a large recurring charge. Please refund it."
+    },
+    "small": {
+      "text": "Please refund a single duplicate charge of 12 dollars for a small coffee order."
     }
   },
   "refund_policy.v2": {
@@ -70,6 +73,9 @@
     },
     "plain": {
       "text": "We were billed twice for a single invoice, please refund it."
+    },
+    "escalate": {
+      "text": "We were billed twice for a large recurring enterprise charge, please refund."
     }
   },
   "refund_with_external_checks": {
@@ -216,6 +222,9 @@
     },
     "review": {
       "text": "new_device_payment repeated_failures risk 55"
+    },
+    "challenge": {
+      "text": "repeated_failures observed for this session"
     }
   },
   "aml_screener": {
@@ -765,6 +774,26 @@
         }
       ],
       "share_entity": "no"
+    },
+    "causal_in": {
+      "new_memory": {
+        "content": "The outage caused the refund backlog.",
+        "entities": [
+          "outage"
+        ]
+      },
+      "candidates": [
+        {
+          "content": "The backlog was caused by the outage.",
+          "entities": [
+            "refund"
+          ]
+        }
+      ],
+      "pair_0_caused_by_status": "caused_by",
+      "pair_0_causes_status": "no",
+      "pair_0_semantic_status": "none",
+      "share_entity": "no"
     }
   },
   "routing": {
@@ -807,6 +836,14 @@
         "contradiction"
       ],
       "evidence_status": "contradiction"
+    },
+    "missing": {
+      "query": "When did Alice join?",
+      "evidence": [
+        "Alice prefers concise explanations."
+      ],
+      "evidence_status": "sufficient",
+      "missing_evidence": "missing"
     }
   },
   "retrieve_loop": {
@@ -6960,6 +6997,16 @@
       "subject": "Office closed Monday",
       "body": "Reminder office closed Monday. No action needed.",
       "from": "mgr@acme.com"
+    },
+    "reply_queue": {
+      "subject": "Question about pricing",
+      "body": "Could you please send the enterprise pricing? No rush.",
+      "from": "x@y.com"
+    },
+    "reply_today": {
+      "subject": "Deadline question",
+      "body": "We need this before sprint end, please advise.",
+      "from": "x@y.com"
     }
   },
   "draft_scorer": {

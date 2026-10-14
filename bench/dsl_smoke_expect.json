@@ -231,12 +231,14 @@
     "entity": "LINK_ENTITY",
     "semantic": "LINK_SEMANTIC",
     "causes": "LINK_CAUSAL_OUT",
-    "none": "LINK_NONE"
+    "none": "LINK_NONE",
+    "causal_in": "LINK_CAUSAL_IN"
   },
   "stopping": {
     "sufficient": "STOP_EVIDENCE_OK",
     "insufficient": "CONTINUE_EVIDENCE_INSUFFICIENT",
-    "contradiction": "CONTINUE_CONTRADICTION"
+    "contradiction": "CONTINUE_CONTRADICTION",
+    "missing": "CONTINUE_MISSING"
   },
   "retrieve_loop": {
     "sufficient": {
@@ -379,7 +381,8 @@
   "adaptive_risk_control": {
     "deny": "DENY",
     "allow": "ALLOW",
-    "review": "REVIEW"
+    "review": "REVIEW",
+    "challenge": "CHALLENGE"
   },
   "aml_screener": {
     "block": "BLOCK",
@@ -436,11 +439,13 @@
     }
   },
   "refund_policy.v1": {
-    "large": "V1_ESCALATE"
+    "large": "V1_ESCALATE",
+    "small": "V1_AUTO_APPROVE"
   },
   "refund_policy.v2": {
     "suspicious": "V2_MANUAL_REVIEW",
-    "plain": "V2_AUTO_APPROVE"
+    "plain": "V2_AUTO_APPROVE",
+    "escalate": "V2_ESCALATE"
   },
   "refund_with_external_checks": {
     "high_risk": {
@@ -3157,7 +3162,9 @@
     "outage": "PAGER_ONCALL",
     "spam": "TRASH",
     "phishing": "QUARANTINE",
-    "fyi": "FYI_ONLY"
+    "fyi": "FYI_ONLY",
+    "reply_queue": "REPLY_QUEUE",
+    "reply_today": "REPLY_TODAY"
   },
   "draft_scorer": {
     "ooo_team": "send_now",

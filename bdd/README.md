@@ -449,6 +449,20 @@ tree. `dsl smoke` fails on any violation and otherwise prints
 hierarchical`; the `bdd-json-isolation` regression test drives each of the five
 violations and proves it is caught.
 
+The **declared output set is held to reality** the same way. For an offline
+single-node graph `bdd_list`'s `outputs` is the graph's *full* output set (there
+is no later node whose terminal label could hide a member), so the
+`bdd-output-coverage` regression test runs every registered state and requires
+each declared label to be produced by at least one — a label no run can return
+(a dead rule, an undriven branch) fails the gate instead of sitting in the
+inventory. Two labels are allow-listed because the *offline* keyword heuristic
+cannot reach them while a real model can (a rubric's `human_review` needs a
+dimension below its confidence floor; a moderation gate's `WARN` needs a high
+severity with a safe category), and each entry is asserted to still be a
+declared label so the list cannot rot into a hole. `outputs`/`label` are computed
+by one implementation (`bdd_mcp::{declared_outputs, decision_label}`), so
+`bdd_list`, `bdd_decide` and the gate cannot drift apart.
+
 For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
 that already passes `bdd build`, with the authoring vocabulary as comments) →

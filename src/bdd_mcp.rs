@@ -772,14 +772,7 @@ impl McpTool for DecideTool {
         // combine: the choice answer or its review_label), `status` (a rubric:
         // scored / human_review). Only then fall back to the terminal verb
         // (`trace.final_action`, typically "stop"), which carries no decision.
-        let label = j
-            .pointer("/result/label")
-            .and_then(Value::as_str)
-            .or_else(|| j.pointer("/result/gate_action").and_then(Value::as_str))
-            .or_else(|| j.pointer("/result/route").and_then(Value::as_str))
-            .or_else(|| j.pointer("/result/status").and_then(Value::as_str))
-            .unwrap_or_else(|| out.final_action())
-            .to_string();
+        let label = decision_label(j.get("result").unwrap_or(&Value::Null), out.final_action());
         Ok(json!({
             "ok": true,
             "label": label,
@@ -871,6 +864,48 @@ fn action_outputs(action: &Value, questions: Option<&Value>) -> Vec<String> {
         _ => {}
     }
     out
+}
+
+/// The declared decision labels a graph can return: the deduped union of every
+/// node's [`action_outputs`], first-appearance order preserved (a threshold
+/// ladder keeps its priority order). The single source of truth for
+/// `bdd_list`'s `outputs` and the output-coverage gate, so the inventory and the
+/// gate can never disagree about what a graph claims to return.
+///
+/// This is the *declared* set. A label here that no run can produce is a dead
+/// rule or an undriven branch; `bdd_list`'s `outputs` is only trustworthy when
+/// the registered offline corpus actually produces every member (the gate that
+/// holds it to that lives in `test_bdd_output_coverage`).
+pub fn declared_outputs(spec: &Value) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(ns) = spec.get("nodes").and_then(Value::as_array) {
+        for n in ns {
+            let node_outs = action_outputs(n.get("action").unwrap_or(&Value::Null), n.get("questions"));
+            for o in node_outs {
+                if !out.iter().any(|x| x == &o) {
+                    out.push(o);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The decision label a run's `result` projects, in order: `label` (a threshold
+/// ladder), `gate_action` (a gate), `route` (a combine: the choice answer or its
+/// review label), then `status` (a rubric: `scored` / `human_review`). Only when
+/// the graph projects no decision at all does it fall back to `final_action`
+/// (the terminal verb, typically `stop`, which carries no decision). Shared by
+/// `bdd_decide` and the output-coverage gate so both read a trace the same way.
+pub fn decision_label(result: &Value, final_action: &str) -> String {
+    result
+        .pointer("/label")
+        .and_then(Value::as_str)
+        .or_else(|| result.pointer("/gate_action").and_then(Value::as_str))
+        .or_else(|| result.pointer("/route").and_then(Value::as_str))
+        .or_else(|| result.pointer("/status").and_then(Value::as_str))
+        .unwrap_or(final_action)
+        .to_string()
 }
 
 /// Recursively collect `(cat, path)` for every decision spec under `root` (the
@@ -1060,7 +1095,7 @@ impl McpTool for ListTool {
             // multi-node graph's terminal label is the last node's, visible in the
             // `trace`). Deduped, first-appearance order so a node keeps its
             // ladder's priority order.
-            let mut outputs: Vec<String> = Vec::new();
+            let outputs: Vec<String> = declared_outputs(&spec);
             let nodes: Vec<Value> = spec["nodes"]
                 .as_array()
                 .map(|ns| {
@@ -1069,11 +1104,6 @@ impl McpTool for ListTool {
                             let nm = n.get("name")?.as_str()?;
                             let node_outs =
                                         action_outputs(n.get("action").unwrap_or(&Value::Null), n.get("questions"));
-                            for o in &node_outs {
-                                if !outputs.iter().any(|x| x == o) {
-                                    outputs.push(o.clone());
-                                }
-                            }
                             Some(json!({
                                 "name": nm,
                                 "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),

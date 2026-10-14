@@ -3732,3 +3732,158 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
             && text.contains("call the capability"),
     );
 }
+
+/// P91: the declared output set must be real.
+///
+/// For every offline **single-node** `@decision` graph, `bdd_list`'s `outputs`
+/// is the graph's *full* output set — there is no later node whose terminal
+/// label could hide a member. So every declared label must be produced by at
+/// least one registered smoke state; a declared-but-never-produced label is a
+/// dead rule or an undriven branch, and an agent that plans against it (writes a
+/// handler for a label the graph never returns) is being misled.
+///
+/// Two labels are allow-listed because the *offline* keyword heuristic cannot
+/// reach them while a real model can; each entry carries its reason and is
+/// asserted to still be a declared label, so the list cannot rot into a hole.
+pub fn test_bdd_output_coverage(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::bdd_mcp::{declared_outputs, decision_label};
+    use laya_workflow::dsl_smoke::{
+        coverage_ledger_live_only, ensure_env_dirs, network_bound_external,
+    };
+    use std::collections::{BTreeMap, BTreeSet};
+
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    let root = bdd::repo_root();
+    let dsl_root = root.join("dsl");
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+    let live_only = coverage_ledger_live_only().unwrap_or_default();
+
+    // (stem, label, why the offline heuristic cannot produce it)
+    let allowed: &[(&str, &str, &str)] = &[
+        (
+            "quality_rubric",
+            "human_review",
+            "the rubric withholds the composite only when a dimension's answer confidence falls below the 0.8 floor; the offline keyword heuristic answers every hint (hit or miss) at a fixed confidence at or above the floor, so offline it always scores — a real model reaches human_review",
+        ),
+        (
+            "content_policy_gate",
+            "WARN",
+            "every WARN antecedent (a severity of 1.5+, or a non-safe category) is only reachable through the same keywords that trip a BLOCK rule, and BLOCK is evaluated first, so the offline probe always blocks or approves; a real model can read a high severity with a safe category",
+        ),
+    ];
+    let mut allow_seen: BTreeMap<String, bool> = allowed
+        .iter()
+        .map(|(s, l, _)| (format!("{s}:{l}"), false))
+        .collect();
+
+    let specs =
+        laya_workflow::spec::discover(&dsl_root.to_string_lossy()).expect("discover dsl specs");
+    let mut checked = 0usize;
+    let mut declared_seen: BTreeSet<String> = BTreeSet::new();
+    for (stem, path) in &specs {
+        let Some(smap) = states_obj.get(stem).and_then(Value::as_object) else {
+            continue;
+        };
+        let rel = path
+            .strip_prefix(&dsl_root)
+            .unwrap_or(path)
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if live_only.contains_key(&rel) {
+            continue;
+        }
+        let raw: Value = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        // Single node only: a multi-node graph's terminal label is its last
+        // node's and its earlier nodes' outputs surface through the trace, so
+        // `outputs` there is not a pure "produced by a run" set.
+        if raw
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(|n| n.len())
+            .unwrap_or(0)
+            != 1
+        {
+            continue;
+        }
+        if network_bound_external(&raw) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&path.to_string_lossy()) {
+            Ok(w) => w,
+            Err(e) => {
+                h.check(&format!("bdd: output coverage {stem} loads ({e})"), false);
+                continue;
+            }
+        };
+        let mut produced: BTreeSet<String> = BTreeSet::new();
+        let mut errored = false;
+        for (_lab, st) in smap {
+            match wf.run(&HeuristicBackend, st) {
+                Ok(out) => {
+                    let j = out.to_json();
+                    produced.insert(decision_label(
+                        j.get("result").unwrap_or(&Value::Null),
+                        out.final_action(),
+                    ));
+                }
+                Err(_) => errored = true,
+            }
+        }
+        if errored {
+            // A state the offline heuristic cannot drive is the integration
+            // run's job; skip rather than report a coverage hole.
+            continue;
+        }
+        checked += 1;
+        for label in declared_outputs(&raw) {
+            declared_seen.insert(format!("{stem}:{label}"));
+            if produced.contains(&label) {
+                continue;
+            }
+            let key = format!("{stem}:{label}");
+            if let Some(hit) = allow_seen.get_mut(&key) {
+                *hit = true;
+                continue;
+            }
+            h.check(
+                &format!(
+                    "bdd: output coverage — {stem} declares {label} but no registered state produces it"
+                ),
+                false,
+            );
+        }
+    }
+    // Each allow-listed label must still be declared by its spec, else the entry
+    // is stale and hides a hole.
+    for (key, hit) in &allow_seen {
+        h.check(
+            &format!("bdd: allow-listed output {key} is still a declared label"),
+            *hit && declared_seen.contains(key),
+        );
+        h.check(
+            &format!("bdd: allow-listed output {key} has a stated reason"),
+            allowed
+                .iter()
+                .any(|(s, l, why)| key == &format!("{s}:{l}") && why.len() > 40),
+        );
+    }
+    h.check(
+        &format!("bdd: output coverage checked {checked} single-node offline specs (floor 40)"),
+        checked >= 40,
+    );
+}
