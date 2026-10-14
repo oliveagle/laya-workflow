@@ -5175,10 +5175,16 @@ fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     let root = repo_root();
     let plugin_path = root.join("plugins").join("bdd").join("main.rhai");
     let table_path = root.join("bench").join("bdd").join("args_probes.json");
-    let table: Value = serde_json::from_str(
-        &std::fs::read_to_string(&table_path)
-            .with_context(|| format!("cannot read {}", table_path.display()))?,
-    )?;
+    // A release binary has no repo checkout next to it — `repo_root()` is the
+    // *build* machine's path (e.g. `D:\a\laya-workflow\laya-workflow` on the
+    // Windows CI), which does not exist where the exe is unpacked. Same
+    // disk-first-else-embedded pattern as `plugin_src()`: the table ships
+    // inside the binary, so the gate always has its ground truth.
+    let table: Value = serde_json::from_str(&match std::fs::read_to_string(&table_path) {
+        Ok(s) => s,
+        Err(_) => include_str!("../bench/bdd/args_probes.json").to_string(),
+    })
+    .with_context(|| format!("cannot read args probes table ({})", table_path.display()))?;
 
     // Every `throw` in the plugin, one line each, comments stripped.
     let src = plugin_src().map_err(|e| {
