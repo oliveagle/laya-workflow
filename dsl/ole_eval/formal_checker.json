@@ -1,0 +1,205 @@
+{
+  "name": "formal_checker",
+  "_bdd": {
+    "feature": "formal_checker",
+    "feature_path": "bdd/workflows/ole_eval/formal_checker.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed regular expressions as a two-node DFA, port of the\nbounded Thompson-NFA-to-DFA formal checker (code/qwen_vm/app_scenarios/\nformal_checker). The model proposes only a fixture object; the parser, the\nNFA/DFA construction and the subset-construction match are the authority, and\nthe accept / reject verdict plus the engine's own first cause are computed\nlocally. No Python `re` evaluation and no backtracking are used.\nThe engine's own verbs: every regex, input, automaton and transition budget is\nbounded before execution starts; a proposal is accepted when the pattern\ncompiles and every candidate input is classified exactly as the proposal\nclaims, otherwise it is rejected with the engine's first cause (a regex error\nwith a precise source position, or a self-inconsistent classification).\nStates: proposal -> verify. The parse node folds the balanced-JSON / fenced\nextraction and the fixture schema (exactly the keys regex, accepted and\nrejected; a string pattern; arrays of candidate strings; at most 12\ncandidates). A proposal that fails parse never reaches the verifier.\nFolding boundaries (documented, not computed in the DSL):\n- The envelope recovery and the fixture schema fold into the `proposal` choice.\n- The bounded regex subset (anchors only at the ends, code-point character\nclasses, the predefined escape classes, the operator set, the depth / length\ncaps), the Thompson NFA and the lazy subset-construction DFA are the\nauthority; the harness runs them and hands the DSL one answer per check. The\nengine raises on the first error, so the reject ladder mirrors the engine's\nown raise order (the parse-time syntax errors and caps first, then the NFA\ncap, then the lazy DFA cap, then the per-input length and transition caps).\n- A regex error and a self-inconsistent classification are folded into the one\n`check` answer the verifier routes on; `mismatch` is the no-error-but-wrong\ncase, an error code is the engine's first raised cause.\nEmitted labels: reject_proposal, reject_regex_too_long, reject_nesting_exceeded,\nreject_unexpected_char, reject_anchor_position, reject_group, reject_charclass,\nreject_quantifier, reject_escape, reject_nfa_limit, reject_dfa_limit,\nreject_input_too_long, reject_transition_limit, reject_mismatch, accept.",
+  "start": "proposal",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "proposal",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Did the model response yield exactly one balanced JSON object with exactly the keys regex, accepted and rejected (a string pattern, two arrays of candidate strings, at most 12 candidates)?",
+          "criteria": {
+            "parsed": "exactly one schema-valid fixture object",
+            "malformed": "no balanced object, wrong key set, wrong types, a non-string candidate, or more than 12 candidates"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "parsed": "verify"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "proposal_ok"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    },
+    {
+      "name": "verify",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "What is the deterministic checker's first cause for this fixture (compile the bounded regex, then classify every candidate input)?",
+          "criteria": {
+            "consistent": "the regex compiled and every candidate classified exactly as the proposal claims",
+            "mismatch": "the regex compiled but at least one candidate's deterministic result differs from the claim",
+            "regex_too_long": "the pattern exceeds 192 characters",
+            "nesting_exceeded": "the pattern nests deeper than 48",
+            "unexpected_char": "an unexpected character, or an unexpected end of the pattern",
+            "anchor_position": "the start or end anchor is misplaced ('$' anywhere but the end)",
+            "group": "an opening parenthesis is never closed",
+            "charclass": "an unterminated or empty character class, an out-of-order range, or an unmatched closing bracket",
+            "quantifier": "a nested or repeated quantifier, a quantifier with no preceding atom, or a quantifier over a nullable expression",
+            "escape": "an unsupported escape sequence",
+            "nfa_limit": "the Thompson NFA exceeds 128 states",
+            "dfa_limit": "the subset-construction DFA exceeds 512 states",
+            "input_too_long": "an input exceeds 2048 characters",
+            "transition_limit": "matching exceeds 4096 transitions"
+          },
+          "heuristic": {
+            "answer_field": "ev_check"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "regex_too_long"
+            },
+            "label": "reject_regex_too_long"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "nesting_exceeded"
+            },
+            "label": "reject_nesting_exceeded"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "unexpected_char"
+            },
+            "label": "reject_unexpected_char"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "anchor_position"
+            },
+            "label": "reject_anchor_position"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "group"
+            },
+            "label": "reject_group"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "charclass"
+            },
+            "label": "reject_charclass"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "quantifier"
+            },
+            "label": "reject_quantifier"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "escape"
+            },
+            "label": "reject_escape"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "nfa_limit"
+            },
+            "label": "reject_nfa_limit"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "dfa_limit"
+            },
+            "label": "reject_dfa_limit"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "input_too_long"
+            },
+            "label": "reject_input_too_long"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "transition_limit"
+            },
+            "label": "reject_transition_limit"
+          },
+          {
+            "when": {
+              "question": "check",
+              "answer": "consistent"
+            },
+            "label": "accept"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "reject_mismatch"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "request_id"
+        ]
+      }
+    }
+  ]
+}

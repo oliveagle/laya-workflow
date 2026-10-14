@@ -6417,5 +6417,70 @@
       "ev_contract": "loop",
       "ev_execution": "pass"
     }
+  },
+  "formal_checker": {
+    "accept_consistent": {
+      "ev_proposal": "parsed",
+      "ev_check": "consistent"
+    },
+    "reject_mismatch": {
+      "ev_proposal": "parsed",
+      "ev_check": "mismatch"
+    },
+    "reject_regex_too_long": {
+      "ev_proposal": "parsed",
+      "ev_check": "regex_too_long"
+    },
+    "reject_nesting_exceeded": {
+      "ev_proposal": "parsed",
+      "ev_check": "nesting_exceeded"
+    },
+    "reject_unexpected_char": {
+      "ev_proposal": "parsed",
+      "ev_check": "unexpected_char"
+    },
+    "reject_anchor_position": {
+      "ev_proposal": "parsed",
+      "ev_check": "anchor_position"
+    },
+    "reject_group": {
+      "ev_proposal": "parsed",
+      "ev_check": "group"
+    },
+    "reject_charclass": {
+      "ev_proposal": "parsed",
+      "ev_check": "charclass"
+    },
+    "reject_quantifier": {
+      "ev_proposal": "parsed",
+      "ev_check": "quantifier"
+    },
+    "reject_escape": {
+      "ev_proposal": "parsed",
+      "ev_check": "escape"
+    },
+    "reject_nfa_limit": {
+      "ev_proposal": "parsed",
+      "ev_check": "nfa_limit"
+    },
+    "reject_dfa_limit": {
+      "ev_proposal": "parsed",
+      "ev_check": "dfa_limit"
+    },
+    "reject_input_too_long": {
+      "ev_proposal": "parsed",
+      "ev_check": "input_too_long"
+    },
+    "reject_transition_limit": {
+      "ev_proposal": "parsed",
+      "ev_check": "transition_limit"
+    },
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed"
+    },
+    "precedence_proposal_before_check": {
+      "ev_proposal": "malformed",
+      "ev_check": "consistent"
+    }
   }
 }

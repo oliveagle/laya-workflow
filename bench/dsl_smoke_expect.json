@@ -2249,5 +2249,175 @@
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "loop"
     }
+  },
+  "formal_checker": {
+    "accept_consistent": {
+      "result.label": "accept",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "consistent"
+    },
+    "reject_mismatch": {
+      "result.label": "reject_mismatch",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "mismatch"
+    },
+    "reject_regex_too_long": {
+      "result.label": "reject_regex_too_long",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "regex_too_long"
+    },
+    "reject_nesting_exceeded": {
+      "result.label": "reject_nesting_exceeded",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "nesting_exceeded"
+    },
+    "reject_unexpected_char": {
+      "result.label": "reject_unexpected_char",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "unexpected_char"
+    },
+    "reject_anchor_position": {
+      "result.label": "reject_anchor_position",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "anchor_position"
+    },
+    "reject_group": {
+      "result.label": "reject_group",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "group"
+    },
+    "reject_charclass": {
+      "result.label": "reject_charclass",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "charclass"
+    },
+    "reject_quantifier": {
+      "result.label": "reject_quantifier",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "quantifier"
+    },
+    "reject_escape": {
+      "result.label": "reject_escape",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "escape"
+    },
+    "reject_nfa_limit": {
+      "result.label": "reject_nfa_limit",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "nfa_limit"
+    },
+    "reject_dfa_limit": {
+      "result.label": "reject_dfa_limit",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "dfa_limit"
+    },
+    "reject_input_too_long": {
+      "result.label": "reject_input_too_long",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "input_too_long"
+    },
+    "reject_transition_limit": {
+      "result.label": "reject_transition_limit",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.next": "verify",
+      "trace.steps.0.answer": "parsed",
+      "trace.steps.1.node": "verify",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "transition_limit"
+    },
+    "reject_proposal_malformed": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    },
+    "precedence_proposal_before_check": {
+      "result.label": "reject_proposal",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "proposal",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "malformed"
+    }
   }
 }
