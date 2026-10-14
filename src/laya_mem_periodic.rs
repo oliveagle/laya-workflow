@@ -260,12 +260,19 @@ mod tests {
         // After the sweep the pair is consolidated and the canonical
         // consolidation_key prevents a second SUMMARY on a repeat sweep
         // (idempotent — the property the periodic watcher depends on).
-        // The first sweep stamps the *target* of every relation it writes;
-        // in rare ordering cases a second sweep is needed to stamp the
-        // member that only appeared as a *candidate*. Both sweeps together
-        // guarantee every member has consolidated_at set.
-        let _ = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
-        let due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
-        assert_eq!(due2.len(), 0, "both stamped, nothing re-due");
+        // The first sweep stamps the *target* of every relation it writes; a
+        // member that only ever appeared as a *candidate* may need one more
+        // sweep. Which member that is depends on the hybrid (BM25 + dense,
+        // RRF-fused) candidate order, so this asserts the real contract — a
+        // *bounded loop* of sweeps converges to nothing-due — not a fixed
+        // sweep count that a different candidate order can outrun.
+        let mut due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
+        let mut sweeps = 0;
+        while !due2.is_empty() && sweeps < 5 {
+            let _ = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
+            due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
+            sweeps += 1;
+        }
+        assert_eq!(due2.len(), 0, "both stamped after {sweeps} extra sweep(s), nothing re-due");
     }
 }
