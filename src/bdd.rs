@@ -2000,12 +2000,18 @@ pub fn compile_scenario(
 
     let mut nodes: Vec<Value> = Vec::new();
     let mut keep: Vec<String> = Vec::new();
+    // `has_page` tracks *now* (a release clears it); `had_page` tracks *ever*.
+    // The browser handle is bound on `had_page`: a scenario that opens a page,
+    // asserts on it, then releases it still needed the browser for that assert,
+    // so `has_page` going false at the release must not strip the handle.
     let mut has_page = false;
+    let mut had_page = false;
 
     for st in &merged {
         let compiled = compile_step(st, has_page)
             .with_context(|| format!("line {}: {}", st.line, st.text))?;
         has_page = compiled.1;
+        had_page |= has_page;
         let idx = nodes.len();
         // Nodes are named by position so edge targets are predictable:
         // s0 -> s1 -> ... -> sN(done) -> STOP.
@@ -2067,14 +2073,16 @@ pub fn compile_scenario(
     // A scenario that never opens a page (pure `I run the command` + state/exec
     // assertions) must not drag a browser along: the plugin host brings up
     // `browser` *before* any op, so even a page-free assert would launch (or
-    // worse, fail to find) Chrome. Only bind the browser when a page is opened.
+    // worse, fail to find) Chrome. Bind the browser when a page is opened at
+    // *any* point (`had_page`) - a scenario that releases its page still used
+    // the browser on the steps before the release.
     let mut capabilities = Map::new();
     capabilities.insert("chrome".into(), chrome);
     let mut bdd_cap = Map::new();
     bdd_cap.insert("kind".into(), json!("plugin"));
     bdd_cap.insert("plugin".into(), json!("bdd"));
     bdd_cap.insert("timeout_ms".into(), json!(60000));
-    if has_page {
+    if had_page {
         bdd_cap.insert("browser".into(), json!("chrome"));
     }
     capabilities.insert("bdd".into(), Value::Object(bdd_cap));

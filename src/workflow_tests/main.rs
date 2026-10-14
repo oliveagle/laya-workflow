@@ -156,6 +156,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),
         ("bdd-decision-e2e-output-assert", t_bdd::test_bdd_decision_e2e_output_assert),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
+        ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
         ("span-selection", capabilities::test_span_selection),

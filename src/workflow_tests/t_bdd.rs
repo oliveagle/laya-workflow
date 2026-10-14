@@ -2265,3 +2265,47 @@ pub fn test_bdd_json_isolation(h: &mut Harness) {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A scenario that opens a page, asserts on it, then *releases* it must still
+/// declare the `browser` handle in its generated spec. The release clears the
+/// compiler's "a page is open now" flag, but the assert before it needed a live
+/// browser, so keying the binding on the *final* state would strip the handle
+/// and the plugin would die at run time with "this plugin has no browser
+/// handle". `bdd/features/release.feature` is exactly this shape.
+pub fn test_bdd_browser_binding(h: &mut Harness) {
+    let open_assert_release = r##"
+Feature: releasing a page
+  Background:
+    Given the browser is ready
+    Given I am on "http://example.test/index.html"
+
+  Scenario: releasing closes the tab the scenario was using
+    Then the element "#heading" is visible
+    When I release the page
+"##;
+    let f = bdd::parse(open_assert_release, "<test>").expect("parse browser feature");
+    let spec = bdd::compile_scenario(&f, &f.scenarios[0], &json!({}), "chrome-headless.sh")
+        .expect("compile open -> assert -> release scenario");
+    h.eq(
+        "bdd: open -> assert -> release still binds the browser handle",
+        spec["capabilities"]["bdd"]["browser"].clone(),
+        json!("chrome"),
+    );
+
+    // Negative control: a page-free exec scenario must NOT drag a browser along.
+    // The plugin host brings up `browser` before any op, so a stray binding would
+    // launch (or fail to find) Chrome for a scenario that never needs it.
+    let exec_only = r##"
+Feature: exec only
+  Scenario: run and check
+    When I run the command "true"
+    Then the exit code is 0
+"##;
+    let f2 = bdd::parse(exec_only, "<test>").expect("parse exec feature");
+    let spec2 = bdd::compile_scenario(&f2, &f2.scenarios[0], &json!({}), "chrome-headless.sh")
+        .expect("compile exec-only scenario");
+    h.check(
+        "bdd: a page-free scenario declares no browser handle",
+        spec2["capabilities"]["bdd"].get("browser").is_none(),
+    );
+}
