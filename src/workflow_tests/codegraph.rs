@@ -231,19 +231,28 @@ fn test_specs(h: &mut Harness) {
     h.eq("routing: multi_hop yes → 0.85", s["multi_hop_need"].as_f64().unwrap(), 0.85);
     h.eq("routing: recency low → 0.1", s["recency_importance"].as_f64().unwrap(), 0.1);
 
-    // routing: missing field falls back to whole-state substring (documented)
+    // routing: a hint the state does not carry is a clean miss (P126). Before
+    // P126 a `field` that was declared but absent fell back to matching the
+    // whole serialised state, so the one "high" in the envelope scored *every*
+    // noul at its p_hit — and `bench/dsl_smoke_expect.json` had pinned that
+    // artefact. Absent means absent.
     let r = run_spec(&spec_dir, "routing_codegraph", &json!({
         "query": "auth", "route_semantic": "high",
     }));
     let s = &r["result"];
-    // Without the other five, "high" / "yes" needles leak from the serialised state.
-    let leaky = s["temporal"].as_f64().unwrap_or(0.0) > 0.5;
-    h.check("routing: missing hints leak (documented pitfall)", leaky);
+    h.eq("routing: the one hint the state sets still hits (P126)", s["semantic"].as_f64().unwrap(), 0.85);
+    h.eq("routing: a hint the state omits stays a miss (P126)", s["temporal"].as_f64().unwrap(), 0.1);
+    h.eq("routing: ... and so does every other omitted hint (P126)", s["multi_hop_need"].as_f64().unwrap(), 0.1);
 
     // stopping: each branch fires
     for (name, state, want) in [
         ("sufficient", json!({"query":"q","evidence":["a"],"evidence_status":"sufficient"}), "STOP_EVIDENCE_OK"),
-        ("contradiction", json!({"query":"q","evidence":["a"],"evidence_status":"contradiction"}), "CONTINUE_CONTRADICTION"),
+        ("contradiction", json!({"query":"q","evidence":["a"],"evidence_status":"contradiction","contradiction":"true"}), "CONTINUE_CONTRADICTION"),
+        // P126: `evidence_status: "contradiction"` is prose, not the signal this
+        // spec reads (`heuristic.field: "contradiction"`). It used to fire only
+        // because the old backend matched the whole envelope — i.e. the word
+        // "contradiction" in the state scored the contradiction noul as a hit.
+        ("contradiction word without the field (P126)", json!({"query":"q","evidence":["a"],"evidence_status":"contradiction"}), "CONTINUE_EVIDENCE_INSUFFICIENT"),
         ("insufficient", json!({"query":"q","evidence":["a"],"evidence_status":"insufficient"}), "CONTINUE_EVIDENCE_INSUFFICIENT"),
         ("missing flag", json!({"query":"q","evidence":["a"],"missing_evidence":"missing"}), "CONTINUE_MISSING"),
         ("empty evidence", json!({"query":"q","evidence":[]}), "CONTINUE_EVIDENCE_INSUFFICIENT"),
@@ -334,7 +343,7 @@ fn test_mcp_tools(h: &mut Harness) {
     let t = tool(&set, "codegraph_stop");
     for (name, args, want) in [
         ("sufficient", json!({"query":"q","evidence":["a"],"evidence_status":"sufficient"}), "STOP_EVIDENCE_OK"),
-        ("contradiction", json!({"query":"q","evidence":["a"],"evidence_status":"contradiction"}), "CONTINUE_CONTRADICTION"),
+        ("contradiction", json!({"query":"q","evidence":["a"],"evidence_status":"contradiction","contradiction":"true"}), "CONTINUE_CONTRADICTION"),
         ("insufficient", json!({"query":"q","evidence":["a"],"evidence_status":"insufficient"}), "CONTINUE_MISSING"),
         ("missing", json!({"query":"q","evidence":["a"],"missing_evidence":true}), "CONTINUE_MISSING"),
     ] {
@@ -686,7 +695,7 @@ fn test_extended(h: &mut Harness) {
     for k in all_keys { h.eq(&format!("routing: all-yes / {k} → 0.85"), r["result"][k].as_f64().unwrap(), 0.85); }
     let r = run_spec(&spec_dir, "routing_codegraph", &json!({"query":"x","route_semantic":"high"}));
     let leaked = all_keys.iter().filter(|k| **k != "semantic" && r["result"][**k].as_f64().unwrap_or(0.0) > 0.5).count();
-    h.check("routing: 1 explicit field leaks to ≥1 other", leaked >= 1);
+    h.check("routing: 1 explicit field leaks to 0 others (P126)", leaked == 0);
 
     // ───── stopping permutations ─────
     let mut stop_case = |name: &str, state: &Value, want: &str| {

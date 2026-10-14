@@ -330,6 +330,13 @@
       "trace.steps.1.node": "severity_probe",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": 0.5
+    },
+    "minor": {
+      "result.category": "other",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "classify",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "other"
     }
   },
   "intake_pipeline_nested": {
@@ -771,11 +778,11 @@
   "routing_codegraph": {
     "semantic_high": {
       "result.semantic": 0.85,
-      "result.temporal": 0.85,
-      "result.causal": 0.85,
-      "result.entity": 0.85,
-      "result.multi_hop_need": 0.85,
-      "result.recency_importance": 0.85
+      "result.temporal": 0.1,
+      "result.causal": 0.1,
+      "result.entity": 0.1,
+      "result.multi_hop_need": 0.1,
+      "result.recency_importance": 0.1
     }
   },
   "traversal_codegraph": {
@@ -3191,6 +3198,100 @@
       "trace.steps.1.node": "triage::triage",
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "billing"
+    }
+  },
+  "routing": {
+    "semantic": {
+      "result.semantic": 0.85,
+      "result.temporal": 0.1,
+      "result.causal": 0.1,
+      "result.entity": 0.1,
+      "result.multi_hop_need": 0.1,
+      "result.recency_importance": 0.1,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.85
+    },
+    "temporal": {
+      "result.semantic": 0.1,
+      "result.temporal": 0.85,
+      "result.causal": 0.1,
+      "result.entity": 0.1,
+      "result.multi_hop_need": 0.1,
+      "result.recency_importance": 0.1,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.1
+    },
+    "causal": {
+      "result.semantic": 0.1,
+      "result.temporal": 0.1,
+      "result.causal": 0.85,
+      "result.entity": 0.1,
+      "result.multi_hop_need": 0.1,
+      "result.recency_importance": 0.1,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.1
+    },
+    "entity": {
+      "result.semantic": 0.1,
+      "result.temporal": 0.1,
+      "result.causal": 0.1,
+      "result.entity": 0.85,
+      "result.multi_hop_need": 0.1,
+      "result.recency_importance": 0.1,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.1
+    }
+  },
+  "traversal": {
+    "relevant": {
+      "result.cand_0_relevance": 0.9,
+      "result.cand_0_relation_usefulness": 0.85,
+      "result.cand_0_new_information": 0.85,
+      "result.cand_0_supports_current_evidence": 0.85,
+      "result.cand_1_relevance": 0.9,
+      "result.cand_1_relation_usefulness": 0.15,
+      "result.cand_1_new_information": 0.85,
+      "result.cand_1_supports_current_evidence": 0.15,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "traverse",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.9
+    },
+    "irrelevant": {
+      "result.cand_0_relevance": 0.1,
+      "result.cand_0_relation_usefulness": 0.15,
+      "result.cand_0_new_information": 0.15,
+      "result.cand_0_supports_current_evidence": 0.15,
+      "result.cand_1_relevance": 0.1,
+      "result.cand_1_relation_usefulness": 0.15,
+      "result.cand_1_new_information": 0.15,
+      "result.cand_1_supports_current_evidence": 0.15,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "traverse",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.1
+    },
+    "mixed": {
+      "result.cand_0_relevance": 0.9,
+      "result.cand_0_relation_usefulness": 0.85,
+      "result.cand_0_new_information": 0.15,
+      "result.cand_0_supports_current_evidence": 0.85,
+      "result.cand_1_relevance": 0.1,
+      "result.cand_1_relation_usefulness": 0.15,
+      "result.cand_1_new_information": 0.15,
+      "result.cand_1_supports_current_evidence": 0.15,
+      "trace.step_count": 1,
+      "trace.steps.0.node": "traverse",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": 0.9
     }
   }
 }

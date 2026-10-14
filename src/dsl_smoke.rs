@@ -116,6 +116,38 @@ pub fn missing_trace_pins(want: &Value, step_count: usize) -> Vec<String> {
     missing
 }
 
+/// P126: the *coverage* half of the decision-trace gate. `missing_trace_pins`
+/// above proves a multi-node state pins its whole path — but only for states
+/// whose expect entry **exists**. A single-node state with no expect entry was
+/// silently passed over: the `if let Some(want)` block that runs `check_expect`
+/// simply did not execute, so the state ran, and nothing about it was asserted.
+/// Measured before this: `routing` (4 states), `traversal` (3) and one
+/// `support_ticket_router` label ran 8 states against nothing while the gate
+/// printed `163/163 specs OK` — a gate that names a state but asserts nothing
+/// about it is a comment, not a check.
+///
+/// A state that ran is *covered* when its expect entry is a non-empty label
+/// string or a non-empty object of dotted paths. Multi-node states are left to
+/// `missing_trace_pins`, which already fails them harder (every path key is
+/// required, `Null` included), so one hole is never named twice.
+/// Returns the one-line failure message (None when the state is covered).
+pub fn uncovered_state(stem: &str, label: &str, want: Option<&Value>, steps: usize) -> Option<String> {
+    if steps > 1 {
+        return None;
+    }
+    let covered = match want {
+        Some(Value::String(s)) => !s.trim().is_empty(),
+        Some(Value::Object(o)) => !o.is_empty(),
+        _ => false,
+    };
+    if covered {
+        return None;
+    }
+    Some(format!(
+        "{stem}:{label}: the state ran {steps} node(s) and pins nothing — the labelled state is asserted against nothing; give it an expect entry (a label string, or an object of dotted `result.*` paths)"
+    ))
+}
+
 pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec<String> {
     let res = out.to_json();
     let mut problems = Vec::new();
@@ -885,7 +917,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             // gate and the P38 regression test can never silently disagree
             // (a state whose expect entry is missing used to be skipped).
             if steps.len() > 1 {
-                let want_v = want.unwrap_or(Value::Null);
+                let want_v = want.clone().unwrap_or(Value::Null);
                 let missing = missing_trace_pins(&want_v, steps.len());
                 if !missing.is_empty() {
                     fails += 1;
@@ -895,6 +927,11 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                         missing.join(", ")
                     );
                 }
+            }
+            // P126: the coverage half — did this state assert anything at all?
+            if let Some(msg) = uncovered_state(&stem, label, want.as_ref(), steps.len()) {
+                fails += 1;
+                eprintln!("       [FAIL] {msg}");
             }
         }
     }

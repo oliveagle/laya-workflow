@@ -992,7 +992,10 @@ impl Decide for HeuristicBackend {
                 // multi-class routing: `heuristic.match_rules` maps each
                 // choice option to a list of trigger tokens; the first option
                 // whose tokens appear in the field/text wins (option at p_hit,
-                // the rest at p_miss). No hit at all fails safe to the option
+                // the rest at p_miss). A `field` declared but absent from the
+                // state is an empty match space (same P126 rule as `match_any`
+                // below), so a missing hint can never be satisfied by a token
+                // that happens to sit elsewhere in the state. No hit at all fails safe to the option
                 // named by `fallback` (default "other"), mirroring awesome-jev's
                 // support-routing "choose other if unclear". This is the
                 // declarative offline analog of a named per-question handler:
@@ -1003,13 +1006,15 @@ impl Decide for HeuristicBackend {
                     let p_hit = h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9);
                     let p_miss = h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.02);
                     let fallback = h.get("fallback").and_then(|x| x.as_str()).unwrap_or("other");
-                    let target_text: String = h.get("field").and_then(|f| f.as_str())
-                        .and_then(|k| state.get(k))
-                        .map(|v| match v {
+                    let target_text: String = match h.get("field").and_then(|f| f.as_str()) {
+                        // `field` declared but absent from the state: a clean miss
+                        // (empty needle space), never the whole envelope.
+                        Some(k) => state.get(k).map(|v| match v {
                             Value::String(sv) => sv.clone(),
                             other => other.to_string(),
-                        })
-                        .unwrap_or_else(|| text.clone());
+                        }).unwrap_or_default(),
+                        None => text.clone(),
+                    };
                     let mut pick: Option<String> = None;
                     for (opt, toks_v) in &rules {
                         let toks: Vec<&str> = toks_v
@@ -1047,16 +1052,25 @@ impl Decide for HeuristicBackend {
                     // letting a spec port a shell `grep -E` rule verbatim.
                     // `heuristic.field` narrows matching to one state key (e.g.
                     // {"field":"message"} so a regex checks the message value
-                    // itself, not the serialised JSON envelope). Field-missing is
-                    // treated as no-hit rather than an error so probes that cannot
-                    // populate a field still yield a clean miss.
-                    let target_text: String = h.get("field").and_then(|f| f.as_str())
-                        .and_then(|k| state.get(k))
-                        .map(|v| match v {
+                    // itself, not the serialised JSON envelope). With `field`
+                    // **declared but absent** from the state the match space is
+                    // empty: a clean miss, never a match. Only a question that
+                    // declares no `field` at all matches the whole serialised
+                    // state. P126 — the absent-field case used to fall back to
+                    // the envelope, which silently cross-fired: a state that set
+                    // only `route_semantic: "high"` scored *every* routing noul
+                    // at its `p_hit` (the token "high" was somewhere in the
+                    // JSON), and the smoke gate's own expect table had pinned
+                    // that artefact. Absent means absent.
+                    let target_text: String = match h.get("field").and_then(|f| f.as_str()) {
+                        // `field` declared but absent from the state: a clean miss
+                        // (empty needle space), never the whole envelope.
+                        Some(k) => state.get(k).map(|v| match v {
                             Value::String(sv) => sv.clone(),
                             other => other.to_string(),
-                        })
-                        .unwrap_or_else(|| text.clone());
+                        }).unwrap_or_default(),
+                        None => text.clone(),
+                    };
                     let mut hit = false;
                     if let Some(any) = h.get("match_any").and_then(|a| a.as_array()) {
                         let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();

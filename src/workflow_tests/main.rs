@@ -145,6 +145,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-smoke-trace-path-floor", t_bdd::test_bdd_smoke_trace_path_floor),
         ("bdd-smoke-offline-external-skip", t_bdd::test_bdd_smoke_offline_external_skip),
         ("bdd-smoke-branch-coverage", t_bdd::test_bdd_smoke_branch_coverage),
+        ("dsl-smoke-unasserted-state", t_bdd::test_dsl_smoke_unasserted_state),
         ("bdd-coverage-ledger", t_bdd::test_bdd_dsl_coverage_ledger),
         ("bdd-list-routes", t_bdd::test_bdd_list_routes),
         ("bdd-label-accounted", t_bdd::test_bdd_label_accounted),

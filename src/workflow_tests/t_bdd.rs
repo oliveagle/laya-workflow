@@ -1573,6 +1573,157 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
     h.check("bdd: multi-node trace states > 0", multi_states > 0);
 }
 
+/// P126: the *coverage* half of the decision-state gate. `missing_trace_pins`
+/// only ever judges a state whose expect entry **exists**; a state whose entry
+/// is missing (or `{}`) ran and was asserted against nothing, and the gate
+/// stayed green because `check_expect` was never reached. Measured before this
+/// test existed: `routing` (4 states), `traversal` (3) and one
+/// `support_ticket_router` label ran 8 states against nothing, and the only
+/// thing the corpus pinned about the first two was their *existence*.
+///
+/// This walks the real corpus exactly like `dsl smoke` (same env bootstrap, same
+/// offline-external / platform skip) and requires `uncovered_state` to come back
+/// empty, so the regression and the gate cannot silently disagree; it then
+/// re-runs the pure rule on synthetic inputs, including the load-bearing
+/// negative — drop a real state's expect entry and it must be named.
+pub fn test_dsl_smoke_unasserted_state(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::dsl_smoke::{
+        ensure_env_dirs, network_bound_external, platform_bound_here, uncovered_state,
+    };
+    let root = bdd::repo_root();
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+    let states_obj = load("bench/dsl_smoke_states.json");
+    let expect_obj = load("bench/dsl_smoke_expect.json");
+    let states_obj = states_obj.as_object().unwrap();
+    let expect_obj = expect_obj.as_object().unwrap();
+    let want_of = |stem: &str, label: &str| -> Option<Value> {
+        expect_obj.get(stem)?.as_object()?.get(label).cloned()
+    };
+
+    // The pure rule, on synthetic inputs.
+    h.check(
+        "dsl-smoke: a label string covers its state",
+        uncovered_state("s", "l", Some(&json!("PASS")), 1).is_none(),
+    );
+    h.check(
+        "dsl-smoke: a dotted-path object covers its state",
+        uncovered_state("s", "l", Some(&json!({"result.x": 1})), 1).is_none(),
+    );
+    h.check(
+        "dsl-smoke: an empty object is still uncovered",
+        uncovered_state("s", "l", Some(&json!({})), 1).is_some(),
+    );
+    h.check(
+        "dsl-smoke: a missing expect entry is uncovered",
+        uncovered_state("s", "l", None, 1).is_some(),
+    );
+    h.check(
+        "dsl-smoke: a blank label is uncovered",
+        uncovered_state("s", "l", Some(&json!("  ")), 1).is_some(),
+    );
+    h.check(
+        "dsl-smoke: a multi-node state is left to missing_trace_pins",
+        uncovered_state("s", "l", None, 3).is_none(),
+    );
+
+    // The corpus walk, mirroring `dsl smoke`.
+    let dsl_root = root.join("dsl");
+    let mut specs = Vec::new();
+    let mut stack = vec![dsl_root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("json")
+                && !p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+            {
+                specs.push(p);
+            }
+        }
+    }
+    specs.sort();
+    let mut ran = 0usize;
+    let mut single = 0usize;
+    let mut holes: Vec<String> = Vec::new();
+    for spec in &specs {
+        let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let Some(smap) = states_obj.get(&stem).and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let raw_spec: Value = std::fs::read_to_string(spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        if network_bound_external(&raw_spec) || platform_bound_here(&raw_spec) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
+            Ok(w) => w,
+            Err(_) => continue,
+        };
+        for (label, st) in smap {
+            let Ok(out) = wf.run(&HeuristicBackend, st) else {
+                continue;
+            };
+            let steps = out
+                .to_json()
+                .pointer("/trace/steps")
+                .and_then(Value::as_array)
+                .map(|a| a.len())
+                .unwrap_or(0);
+            ran += 1;
+            if steps == 1 {
+                single += 1;
+            }
+            let want = want_of(&stem, label);
+            if let Some(m) = uncovered_state(&stem, label, want.as_ref(), steps) {
+                holes.push(m);
+            }
+        }
+    }
+    h.check(
+        &format!("dsl-smoke: {ran} labelled states ran and every one asserts something"),
+        holes.is_empty(),
+    );
+    for m in &holes {
+        h.check(&format!("dsl-smoke: uncovered state — {m}"), false);
+    }
+    h.check("dsl-smoke: the coverage walk ran states", ran > 0);
+    // The hole P126 closed is exactly the single-node one; floor it so the walk
+    // cannot quietly stop visiting them.
+    h.check(
+        &format!("dsl-smoke: single-node states are pinned too (saw {single})"),
+        single >= 8,
+    );
+
+    // Load-bearing negative: a real state is covered, and is *named* the moment
+    // its entry disappears.
+    let (stem, label) = ("traversal", "relevant");
+    h.check(
+        "dsl-smoke: negative — dropping a real expect entry is named",
+        uncovered_state(stem, label, None, 1)
+            .map(|m| m.contains(stem) && m.contains(label))
+            .unwrap_or(false),
+    );
+    h.check(
+        "dsl-smoke: negative — the same state is covered when its entry is present",
+        uncovered_state(stem, label, want_of(stem, label).as_ref(), 1).is_none(),
+    );
+}
+
 /// P33 offline-external skip: a spec that is network-bound to an external
 /// (non-local) host must be classified so the offline smoke skips its states
 /// (validate-only) instead of performing real internet I/O. Before this, the
@@ -2355,14 +2506,37 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     let any = |ps: &[String], needle: &str| ps.iter().any(|p| p.contains(needle));
 
     // Negative 1: AGENT.md's expect-table count drifts from the table it quotes.
-    let drifted_agent = agent.replace(
-        "**125** 个 spec / **980** 个 state",
-        "**124** 个 spec / **978** 个 state",
+    // Both the planted drift and the number the gate is expected to quote are
+    // derived from what the doc says *today*, so growing the corpus cannot
+    // silently neuter this negative — it was hard-coded at `125 / 980` and the
+    // corpus has since grown past it (P126).
+    let table_count_re =
+        regex_lite::Regex::new(r"\*\*(\d+)\*\* 个 spec / \*\*(\d+)\*\* 个 state").unwrap();
+    let caps = table_count_re
+        .captures(&agent)
+        .expect("AGENT.md quotes the expect-table counts");
+    let (cur_specs, cur_states) = (caps[1].to_string(), caps[2].to_string());
+    let stale_specs = (cur_specs.parse::<u64>().unwrap() - 1).to_string();
+    let stale_states = (cur_states.parse::<u64>().unwrap() - 1).to_string();
+    let drifted_agent = table_count_re
+        .replace(
+            &agent,
+            format!("**{stale_specs}** 个 spec / **{stale_states}** 个 state"),
+        )
+        .into_owned();
+    h.check(
+        "bdd doc-check: the negative plants a real drift (anchor is live)",
+        drifted_agent != agent,
     );
     let p = problems_of(&readme, &drifted_agent);
     h.check(
         "bdd doc-check: a stale AGENT.md table count is named with both numbers",
-        any(&p, "bdd/AGENT.md says [124, 978] where the truth is [125, 980]"),
+        any(
+            &p,
+            &format!(
+                "bdd/AGENT.md says [{stale_specs}, {stale_states}] where the truth is [{cur_specs}, {cur_states}]"
+            ),
+        ),
     );
 
     // Negative 2: AGENT.md's ledger total drifts.

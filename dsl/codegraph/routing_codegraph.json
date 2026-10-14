@@ -1,7 +1,7 @@
 {
   "name": "codegraph_routing",
   "dsl_version": 2,
-  "description": "Laya codegraph read-side query routing. Fork of laya_mem routing.json with code-specific question wording: 6 noul judgments allocate per-view retrieval budget over the code graph (semantic FTS / call-chain / entity lookup / recent files / multi-hop / recency). Single node, copy_keys: returns the 6 raw 0..1 scores; caller applies largest-remainder to turn them into a per-view budget. The offline heuristic backend reads 6 state hints (route_semantic, route_temporal, route_causal, route_entity, route_multi_hop_need, route_recency) — the caller MUST set all six explicitly; a missing hint falls back to substring-matching the whole serialised state and can cross-fire on other questions.",
+  "description": "Laya codegraph read-side query routing. Fork of laya_mem routing.json with code-specific question wording: 6 noul judgments allocate per-view retrieval budget over the code graph (semantic FTS / call-chain / entity lookup / recent files / multi-hop / recency). Single node, copy_keys: returns the 6 raw 0..1 scores; caller applies largest-remainder to turn them into a per-view budget. The offline heuristic backend reads 6 state hints (route_semantic, route_temporal, route_causal, route_entity, route_multi_hop_need, route_recency) — the caller MUST set all six explicitly; a hint field that is absent from the state is a clean miss (P126), so a missing hint cannot be satisfied by a token that happens to sit elsewhere in the state.",
   "start": "route",
   "max_iterations": 3,
   "nodes": [

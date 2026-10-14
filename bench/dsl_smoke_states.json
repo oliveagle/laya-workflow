@@ -835,7 +835,8 @@
         "Alice prefers long.",
         "contradiction"
       ],
-      "evidence_status": "contradiction"
+      "evidence_status": "contradiction",
+      "contradiction": "true"
     },
     "missing": {
       "query": "When did Alice join?",
@@ -995,12 +996,12 @@
   },
   "routing_codegraph": {
     "semantic_high": {
-      "semantic": "high",
-      "temporal": "low",
-      "causal": "low",
-      "entity": "low",
-      "multi_hop_need": "no",
-      "recency_importance": "no"
+      "route_semantic": "high",
+      "route_temporal": "low",
+      "route_causal": "low",
+      "route_entity": "low",
+      "route_multi_hop_need": "no",
+      "route_recency": "no"
     }
   },
   "traversal_codegraph": {
