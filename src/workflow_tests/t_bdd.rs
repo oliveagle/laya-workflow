@@ -5786,6 +5786,49 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
             h.check(&format!("engine-contract: shape violation: {b}"), false);
         }
     }
+
+    // P118: the engine also holds every backend to the node's question *set*. A
+    // backend that leaves a question the node asked unanswered used to be
+    // tolerated (`hold_in_contract` `continue`d); the walk then read the missing
+    // answer as "no match" (`rule_matches_multi`'s `None => false`), so a `label
+    // ... when {question: q}` rule silently took a branch the backend never chose.
+    // The caller path already fails closed on a missing answer (P96); now so does
+    // the engine, for every backend — including the served System One.
+    let two_q = from_spec(&json!({
+        "name": "two_q",
+        "dsl_version": 2,
+        "start": "ask",
+        "max_iterations": 2,
+        "nodes": [
+            {"name": "ask", "primary_q": "category",
+             "questions": {
+                "category": {"type": "choice", "criteria": {"billing": "bills", "other": "else"}},
+                "urgency": {"type": "score"}},
+             "edge": {"condition": {"billing": "STOP"}, "default": "STOP"},
+             "min_confidence": 0.0, "max_retries": 1}
+        ]
+    }))
+    .unwrap();
+    let partial = ScriptedBackend::new(vec![verdict(&[(
+        "category",
+        choice("billing", &[("billing", 0.9), ("other", 0.1)]),
+    )])]);
+    let pe = match two_q.run(&partial, &json!({})) {
+        Ok(_) => "NO ERROR — a missing answer was silently accepted".to_string(),
+        Err(e) => e.to_string(),
+    };
+    h.check(
+        &format!("engine-contract: a backend that leaves a node question unanswered fails closed ({pe})"),
+        pe.contains("node ask") && pe.contains("\"urgency\"") && pe.contains("unanswered"),
+    );
+    let full = ScriptedBackend::new(vec![verdict(&[
+        ("category", choice("billing", &[("billing", 0.9), ("other", 0.1)])),
+        ("urgency", score(2.0, &[0.1, 0.2, 0.9])),
+    ])]);
+    h.check(
+        "engine-contract: answering every question the node asks still walks (billing -> STOP)",
+        matches!(two_q.run(&full, &json!({})), Ok(o) if o.final_action() == "stop"),
+    );
 }
 
 /// `bdd run --cdp <url>`: attach to an existing browser instead of launching

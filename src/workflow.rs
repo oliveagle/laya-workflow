@@ -362,7 +362,19 @@ impl WorkflowNode {
                 .and_then(Value::as_str)
                 .unwrap_or("choice");
             let Some(d) = verdict.answers.get(qid.as_str()) else {
-                continue;
+                // P118: the node asked every question in `questions`; a backend
+                // that leaves one unanswered is not held to that contract the way
+                // the caller path is (`AnswersBackend::accept` rejects a missing
+                // answer, P96). The engine reads a missing answer as "no match"
+                // (`rule_matches_multi`'s `None => false`, `Decision::as_f64`'s
+                // 0.0), so a `label ... when {question: q}` rule would silently
+                // take a different branch than the backend meant. Fail closed.
+                let mut answered: Vec<&String> = verdict.answers.keys().collect();
+                answered.sort();
+                return Err(anyhow!(
+                    "node {}: the backend left question {qid:?} unanswered (it answered {answered:?}) — the engine reads a missing answer as no match, so a rule on it would silently take a branch the backend never chose",
+                    self.name
+                ));
             };
             // `score`/`noul` answers are numbers the engine reads with `as_f64()`
             // (`Decision::as_f64` yields 0.0 for anything that is not a number). A

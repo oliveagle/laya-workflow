@@ -348,10 +348,10 @@ pub fn test_optimizer(h: &mut Harness) {
 
     // LayaOptimizerLoop: Laya says "stop" on the first check -> 1 step then stop
     let mut loop_ = optimizer::LayaOptimizerLoop::new(vec!["s1".into(), "s2".into()], true, 10);
-    let stop_be = ScriptedBackend::new(vec![verdict(&[(
-        "should_continue",
-        choice("stop", &[("stop", 0.9), ("continue", 0.1)]),
-    )])]);
+    let stop_be = ScriptedBackend::new(vec![verdict(&[
+        ("should_continue", choice("stop", &[("stop", 0.9), ("continue", 0.1)])),
+        ("confidence_assessment", score(0.8, &[0.1, 0.3, 0.6])),
+    ])]);
     let propose = |_p: &str| "{\"delta_params\": {\"k\": 2}}".to_string();
     let eval = |params: &Value| {
         let k = params.get("k").and_then(|v| v.as_f64()).unwrap_or(1.0);
@@ -376,10 +376,10 @@ pub fn test_optimizer(h: &mut Harness) {
 
     // LayaOptimizerLoop: always continue -> climbs toward k=5
     let mut loop2 = optimizer::LayaOptimizerLoop::new(vec!["s1".into()], true, 3);
-    let go_be = ScriptedBackend::new(vec![verdict(&[(
-        "should_continue",
-        choice("continue", &[("stop", 0.1), ("continue", 0.9)]),
-    )])]);
+    let go_be = ScriptedBackend::new(vec![verdict(&[
+        ("should_continue", choice("continue", &[("stop", 0.1), ("continue", 0.9)])),
+        ("confidence_assessment", score(0.8, &[0.1, 0.3, 0.6])),
+    ])]);
     let propose2 = || "{\"delta_params\": {\"k\": 5}}".to_string();
     let r2 = loop2.run(&go_be, &|_p| propose2(), &eval).unwrap();
     h.check(
@@ -401,10 +401,10 @@ pub fn test_optimizer(h: &mut Harness) {
 
     // LayaOptimizerLoop: goal judged by maximize/minimize direction (minimize)
     let mut loop3 = optimizer::LayaOptimizerLoop::new(vec!["s1".into()], false, 1);
-    let go_be3 = ScriptedBackend::new(vec![verdict(&[(
-        "should_continue",
-        choice("continue", &[("stop", 0.1), ("continue", 0.9)]),
-    )])]);
+    let go_be3 = ScriptedBackend::new(vec![verdict(&[
+        ("should_continue", choice("continue", &[("stop", 0.1), ("continue", 0.9)])),
+        ("confidence_assessment", score(0.8, &[0.1, 0.3, 0.6])),
+    ])]);
     let eval_min = |params: &Value| {
         let k = params.get("k").and_then(|v| v.as_f64()).unwrap_or(0.0);
         Ok((k - 1.0).abs())
@@ -425,10 +425,10 @@ pub fn test_optimizer(h: &mut Harness) {
     let dir = format!("{}/laya_wf_loop_test", std::env::temp_dir().display());
     let _ = std::fs::remove_dir_all(&dir);
     let rl = optimizer::ResilientLoop::new("t1", &dir);
-    let stop_be = ScriptedBackend::new(vec![verdict(&[(
-        "should_continue",
-        choice("stop", &[("stop", 0.95), ("continue", 0.05)]),
-    )])]);
+    let stop_be = ScriptedBackend::new(vec![verdict(&[
+        ("should_continue", choice("stop", &[("stop", 0.95), ("continue", 0.05)])),
+        ("confidence_assessment", score(0.8, &[0.1, 0.3, 0.6])),
+    ])]);
     let step = |s: &Value| {
         let n = s.get("n").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
         Ok(json!({"n": n, "score": -(n as f64)}))
@@ -456,10 +456,10 @@ pub fn test_optimizer(h: &mut Harness) {
     );
     let out2 = optimizer::ResilientLoop::new("t1", &dir)
         .run(
-            &ScriptedBackend::new(vec![verdict(&[(
-                "should_continue",
-                choice("continue", &[("stop", 0.05), ("continue", 0.95)]),
-            )])]),
+            &ScriptedBackend::new(vec![verdict(&[
+                ("should_continue", choice("continue", &[("stop", 0.05), ("continue", 0.95)])),
+                ("confidence_assessment", score(0.8, &[0.1, 0.3, 0.6])),
+            ])]),
             &json!({"n": 0, "score": 0.0}),
             step,
             2,
