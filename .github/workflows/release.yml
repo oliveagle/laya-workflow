@@ -75,3 +75,8 @@ jobs:
         with:
           files: dist/*.tar.gz
           generate_release_notes: true
+          # An `-rc.N` tag is a release candidate, not the release: mark it so.
+          # A prerelease cannot become "latest", so `update`'s /releases/latest
+          # keeps pointing at the last formal version and no one is auto-upgraded
+          # onto an rc.
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
