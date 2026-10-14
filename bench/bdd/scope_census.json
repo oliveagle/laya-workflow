@@ -1,0 +1,36 @@
+{
+  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* of workflows (a directory in another repo) and how this repo's BDD corpus accounts for every workflow inside it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy). `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream workflow cannot be silently skipped).",
+  "universes": [
+    {
+      "id": "ole_eval_app_scenarios",
+      "upstream": "code/qwen_vm/app_scenarios",
+      "kind": "decision-guards (deterministic LLM-proposal guards)",
+      "ported_all": true,
+      "port": {
+        "cat": "ole_eval",
+        "pin": "bench/bdd/port_pins/ole_eval.json"
+      },
+      "note": "66 deterministic guard scenarios, every one a @decision graph under bdd/workflows/ole_eval/ with its dsl/ole_eval/ spec; the closure is proven by `bdd port-check --cat ole_eval --pin bench/bdd/port_pins/ole_eval.json`."
+    },
+    {
+      "id": "self_evolving_workflows",
+      "upstream": "code/qwen_vm/self_evolving/workflows",
+      "kind": "mixed (one decision state-machine + a family of optimizer search-spaces)",
+      "ported": {
+        "agent_permission": "bdd/workflows/guards/agent_permission_gate.feature"
+      },
+      "search_space": {
+        "anomaly_detection": "optimizer search-space over (window, z_threshold, method, fill); eval_fn scores against ground truth, there is no deterministic policy to encode",
+        "c_program_runner": "search-space over (program, input_value) where program is a compiled C/WASM artifact; the correct pick is data-dependent",
+        "data_cleaning": "search-space over (program, input_offset) choosing a per-column C cleaning program; the program is discovered, not ruled",
+        "data_cleaning_columnar": "column-level variant of data_cleaning; same search-space shape",
+        "data_cleaning_multistep": "multi-step (12 cols x 2 steps) variant of data_cleaning; same search-space shape",
+        "data_cleaning_real": "real-CSV variant with an LLM proposer; the proposer is the (learned) policy, so there is no fixed decision graph",
+        "label_stability": "optimizer search-space over (window, similarity_threshold, consensus); no deterministic policy",
+        "outlier_detect": "optimizer search-space over (window, threshold, fill); no deterministic policy",
+        "wasm_action_picker": "search-space over (action, window, threshold, low, high); the action is looked up in a shared registry and the correct pick is data-dependent"
+      },
+      "note": "`agent_permission` is a permission state-machine + calibrated risk gate, so it IS a decision graph and was ported (P79). The other nine are parameter search-spaces for the LLM-as-optimizer loop; porting them would mean inventing a policy, so they are named here, with reasons, rather than forced into the decision vocabulary."
+    }
+  ]
+}

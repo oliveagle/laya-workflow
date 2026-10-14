@@ -242,6 +242,29 @@ else
   echo "port check: closed against the seal (set LAYA_OLE_EVAL_SOURCES=<ole-eval code/qwen_vm/app_scenarios> to also put the seal on trial against a live checkout)"
 fi
 
+# The scope census (bench/bdd/scope_census.json): the bounded form of "convert
+# every known workflow". Each upstream workflow universe in the sibling ole-eval
+# repo is either ported in full (proven above by `bdd port-check`) or named with a
+# reason, so no universe can be quietly skipped. Offline this judges the census on
+# its own; point LAYA_OLE_EVAL_ROOT at an ole-eval *checkout root* to also require
+# that the census names exactly the live upstream workflows - a new one nobody
+# ported then fails here rather than going unnoticed.
+if ! "$BIN" bdd scope-check > "$out/scope.log" 2>&1; then
+  echo "bdd check: the scope census is not green:" >&2
+  tail -40 "$out/scope.log" | sed 's/^/  /' >&2
+  exit 1
+fi
+if [ -n "${LAYA_OLE_EVAL_ROOT:-}" ]; then
+  if ! "$BIN" bdd scope-check --sources "$LAYA_OLE_EVAL_ROOT" > "$out/scope_live.log" 2>&1; then
+    echo "bdd check: the scope census does not match the live checkout:" >&2
+    tail -40 "$out/scope_live.log" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  echo "scope check: the census matches the live checkout"
+else
+  echo "scope check: every upstream universe accounted for offline (set LAYA_OLE_EVAL_ROOT=<ole-eval checkout> to match the live upstream workflows)"
+fi
+
 # The browser run: the bdd/features scenarios and the hand-written probes
 # actually drive a real headless Chrome over CDP. `bdd run` skips cleanly when
 # no browser is present, so this stage is green on a browserless box; it fails

@@ -559,6 +559,20 @@ enum BddCmd {
         #[arg(long)]
         write_pin: Option<String>,
     },
+    /// Audit the scope census: every known upstream workflow is accounted for -
+    /// ported (as a `@decision` graph), or named as an optimizer search-space
+    /// with a reason. Reads `bench/bdd/scope_census.json`; `--sources <ole-eval
+    /// root>` makes the census match the live `.py` files, so a new upstream
+    /// workflow cannot be silently skipped.
+    ScopeCheck {
+        /// An ole-eval (or similar) checkout root; the census `upstream` paths
+        /// are resolved under it. Omit to judge the census on its own.
+        #[arg(long)]
+        sources: Option<String>,
+        /// Write the report as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Import: turn an existing workflow spec (a `.json`) back into a
     /// `@decision` `.feature` that compiles to the very same graph — the
     /// inverse of `transpile`; the tool that lifts any known workflow into BDD.
@@ -2581,6 +2595,10 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             json: json.clone(),
             pin: pin.clone().map(std::path::PathBuf::from),
             write_pin: write_pin.clone().map(std::path::PathBuf::from),
+        })?,
+        BddCmd::ScopeCheck { sources, json } => bdd::scope_check(&bdd::ScopeCheckOptions {
+            sources: sources.clone(),
+            json: json.clone(),
         })?,
         BddCmd::Import {
             spec,

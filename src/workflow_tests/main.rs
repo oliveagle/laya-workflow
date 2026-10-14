@@ -153,6 +153,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-cdp-attach", t_bdd::test_bdd_cdp_attach),
         ("bdd-json-isolation", t_bdd::test_bdd_json_isolation),
         ("bdd-doc-check", t_bdd::test_bdd_doc_check),
+        ("bdd-scope-census", t_bdd::test_bdd_scope_census),
         ("bdd-table-pipe-escape", t_bdd::test_bdd_table_pipe_escape),
         ("bdd-mcp-validate-ok", t_bdd::test_bdd_mcp_validate_ok),
         ("bdd-mcp-validate-err", t_bdd::test_bdd_mcp_validate_err),

@@ -2421,6 +2421,120 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     );
 }
 
+/// The scope census (P124): "convert all known workflows to BDD" is only a
+/// checkable claim if the workflows that are *not* decision graphs are named,
+/// with reasons, next to the ones that are. `bdd scope-check` reads
+/// `bench/bdd/scope_census.json` and, with a checkout, makes it match the live
+/// `.py` files. Driven here as a pure function so every negative runs.
+pub fn test_bdd_scope_census(h: &mut Harness) {
+    use laya_workflow::bdd::{repo_root, scope_check_impl};
+
+    let root = repo_root();
+    let census = std::fs::read_to_string(root.join("bench/bdd/scope_census.json")).unwrap();
+
+    // Positive: the checked-in census is green on its own.
+    let (counts, problems) = scope_check_impl(&root, &census, None).unwrap();
+    h.check(
+        &format!(
+            "bdd scope-check: the checked-in census is green ({} universe(s), {} ported + {} \
+             search-space)",
+            counts.universes, counts.ported, counts.search_space
+        ),
+        problems.is_empty(),
+    );
+    h.eq("bdd scope-check: reads both universes", counts.universes, 2);
+    h.eq(
+        "bdd scope-check: 9 self_evolving workflows named as search-spaces",
+        counts.search_space,
+        9,
+    );
+    h.eq(
+        "bdd scope-check: 1 explicit port (agent_permission)",
+        counts.ported,
+        1,
+    );
+    h.eq(
+        "bdd scope-check: 1 universe ported in full (ole_eval)",
+        counts.ported_all,
+        1,
+    );
+
+    let probs_of = |c: &str| {
+        scope_check_impl(&root, c, None)
+            .map(|(_, p)| p)
+            .unwrap_or_default()
+    };
+    let any = |ps: &[String], needle: &str| ps.iter().any(|p| p.contains(needle));
+
+    // Negative 1: a `ported` entry whose feature does not exist is named.
+    let ghost = census.replace(
+        "bdd/workflows/guards/agent_permission_gate.feature",
+        "bdd/workflows/guards/ghost_permission_gate.feature",
+    );
+    h.check(
+        "bdd scope-check: a ported entry with no feature is named (P124)",
+        any(
+            &probs_of(&ghost),
+            "ghost_permission_gate.feature, but that file does not exist",
+        ),
+    );
+
+    // Negative 2: a search-space with no reason is a silent skip.
+    let no_reason = census.replace(
+        "\"outlier_detect\": \"optimizer search-space over (window, threshold, fill); no deterministic policy\"",
+        "\"outlier_detect\": \"\"",
+    );
+    h.check(
+        "bdd scope-check: a search-space entry with no reason is named",
+        any(
+            &probs_of(&no_reason),
+            "search_space[\"outlier_detect\"] needs a non-empty reason",
+        ),
+    );
+
+    // Negative 3 (the real failure): against a checkout, an upstream workflow the
+    // census never mentions must be caught. Build a temp root that holds exactly
+    // the 10 self_evolving names, prove it is green, then add an 11th.
+    let tag = std::process::id();
+    let base = std::env::temp_dir().join(format!("laya-scope-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    let se = base.join("code/qwen_vm/self_evolving/workflows");
+    std::fs::create_dir_all(&se).unwrap();
+    for n in [
+        "agent_permission",
+        "anomaly_detection",
+        "c_program_runner",
+        "data_cleaning",
+        "data_cleaning_columnar",
+        "data_cleaning_multistep",
+        "data_cleaning_real",
+        "label_stability",
+        "outlier_detect",
+        "wasm_action_picker",
+    ] {
+        std::fs::write(se.join(format!("{n}.py")), "pass\n").unwrap();
+    }
+    std::fs::write(se.join("__init__.py"), "\n").unwrap();
+    std::fs::create_dir_all(base.join("code/qwen_vm/app_scenarios")).unwrap();
+
+    let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: the census matches a checkout holding exactly its names",
+        clean.is_empty(),
+    );
+
+    std::fs::write(se.join("brand_new_workflow.py"), "pass\n").unwrap();
+    let (_, drifted) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a new upstream workflow not in the census is named (the real failure)",
+        any(
+            &drifted,
+            "code/qwen_vm/self_evolving/workflows/brand_new_workflow.py is not in the census",
+        ),
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A scenario that opens a page, asserts on it, then *releases* it must still
 /// declare the `browser` handle in its generated spec. The release clears the
 /// compiler's "a page is open now" flag, but the assert before it needed a live

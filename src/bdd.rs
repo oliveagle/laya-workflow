@@ -9437,6 +9437,223 @@ pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
     Ok(1)
 }
 
+// ── scope census: "convert all known workflows" as a bounded, checkable claim ──
+
+/// How many upstream workflows a scope census accounts for.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ScopeCounts {
+    pub universes: usize,
+    /// Upstream names with an explicit BDD port (`ported`).
+    pub ported: usize,
+    /// Upstream names deliberately not ported, each with a reason (`search_space`).
+    pub search_space: usize,
+    /// Universes declared `ported_all` (a full conversion proven by `bdd port-check`).
+    pub ported_all: usize,
+    /// Live upstream workflow files enumerated (only with `--sources`).
+    pub sources: usize,
+}
+
+pub struct ScopeCheckOptions {
+    /// An ole-eval (or similar) checkout root; the census `upstream` paths are
+    /// resolved under it. Optional: offline the census is judged on its own, and
+    /// with it every listed name must match the live `.py` set.
+    pub sources: Option<String>,
+    /// Write the report as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for ScopeCheckOptions {
+    fn default() -> Self {
+        Self { sources: None, json: None }
+    }
+}
+
+/// The census gate as a pure function of the census text (plus an optional live
+/// checkout), so a regression can hand in a mutated census and watch this same
+/// code report it. A *universe* is an upstream directory of workflows; every
+/// workflow in it is either `ported` (with the BDD feature that is its
+/// decision-graph port) or `search_space` (deliberately not ported, with the
+/// reason). A name that is neither, once `--sources` is given, is an upstream
+/// workflow nobody accounted for - exactly the failure "convert all known
+/// workflows" must not have.
+pub fn scope_check_impl(
+    root: &Path,
+    census: &str,
+    sources: Option<&Path>,
+) -> Result<(ScopeCounts, Vec<String>)> {
+    let v: Value = serde_json::from_str(census).with_context(|| "parsing the scope census")?;
+    let universes = v
+        .get("universes")
+        .and_then(Value::as_array)
+        .with_context(|| "scope census: `universes` must be an array")?;
+    let mut counts = ScopeCounts::default();
+    let mut problems: Vec<String> = Vec::new();
+    for u in universes {
+        let id = u.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
+        let Some(upstream) = u.get("upstream").and_then(Value::as_str) else {
+            problems.push(format!(
+                "{id}: `upstream` is required (the repo-relative directory of workflows)"
+            ));
+            continue;
+        };
+        counts.universes += 1;
+        let ported = u.get("ported").and_then(Value::as_object);
+        let search = u.get("search_space").and_then(Value::as_object);
+        let ported_all = u.get("ported_all").and_then(Value::as_bool).unwrap_or(false);
+        if ported_all {
+            counts.ported_all += 1;
+        } else if ported.is_none() && search.is_none() {
+            problems.push(format!(
+                "{id}: a universe must carry `ported`, `search_space`, or `ported_all` - \
+                 silence is not a disposition"
+            ));
+            continue;
+        }
+
+        if let Some(p) = ported {
+            for (name, feat) in p {
+                if let Some(feat) = feat.as_str() {
+                    counts.ported += 1;
+                    match std::fs::read_to_string(root.join(feat)) {
+                        Err(_) => problems.push(format!(
+                            "{id}: {name} is ported to {feat}, but that file does not exist"
+                        )),
+                        Ok(txt) if !txt.lines().any(|l| l.starts_with("@decision")) => {
+                            problems.push(format!(
+                                "{id}: {name} is ported to {feat}, but that feature is not a \
+                                 @decision workflow"
+                            ))
+                        }
+                        Ok(_) => {}
+                    }
+                } else {
+                    problems
+                        .push(format!("{id}: ported[{name:?}] must be a feature path string"));
+                }
+                if search.map_or(false, |s| s.contains_key(name)) {
+                    problems.push(format!(
+                        "{id}: {name} is listed both as ported and as a search-space - pick one"
+                    ));
+                }
+            }
+        }
+        if let Some(s) = search {
+            for (name, reason) in s {
+                counts.search_space += 1;
+                if reason.as_str().map(|r| r.trim().is_empty()).unwrap_or(true) {
+                    problems.push(format!(
+                        "{id}: search_space[{name:?}] needs a non-empty reason - a workflow is \
+                         never quietly skipped"
+                    ));
+                }
+            }
+        }
+
+        if let Some(src) = sources {
+            let dir = src.join(upstream);
+            if !dir.is_dir() {
+                problems.push(format!(
+                    "{id}: --sources has no {upstream} under {}",
+                    src.display()
+                ));
+            } else {
+                let mut live: BTreeSet<String> = BTreeSet::new();
+                for e in std::fs::read_dir(&dir)?.flatten() {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    if let Some(stem) = n.strip_suffix(".py") {
+                        if !stem.is_empty() && stem != "__init__" {
+                            live.insert(stem.to_string());
+                        }
+                    }
+                }
+                if ported_all {
+                    // A fully-ported universe is checked name-by-name by
+                    // `bdd port-check`; here it only contributes to the count.
+                    counts.sources += live.len();
+                } else {
+                    let mut listed: BTreeSet<String> = BTreeSet::new();
+                    if let Some(p) = ported {
+                        listed.extend(p.keys().cloned());
+                    }
+                    if let Some(s) = search {
+                        listed.extend(s.keys().cloned());
+                    }
+                    counts.sources += listed.len();
+                    for n in live.difference(&listed) {
+                        problems.push(format!(
+                            "{id}: the upstream {upstream}/{n}.py is not in the census - port it, \
+                             or list it (with a reason) as a search-space"
+                        ));
+                    }
+                    for n in listed.difference(&live) {
+                        problems.push(format!(
+                            "{id}: the census lists {n} but {upstream} has no {n}.py - the census \
+                             outlived its source"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    problems.sort();
+    problems.dedup();
+    Ok((counts, problems))
+}
+
+pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
+    let root = repo_root();
+    let census = std::fs::read_to_string(root.join("bench").join("bdd").join("scope_census.json"))
+        .with_context(|| "reading bench/bdd/scope_census.json")?;
+    let sources: Option<PathBuf> = o.sources.as_ref().map(PathBuf::from);
+    if let Some(s) = &sources {
+        if !s.is_dir() {
+            bail!("--sources {} is not a directory", s.display());
+        }
+    }
+    let (counts, problems) = scope_check_impl(&root, &census, sources.as_deref())?;
+    if let Some(path) = &o.json {
+        let report = json!({
+            "sources_root": o.sources.clone().unwrap_or_default(),
+            "counts": {
+                "universes": counts.universes,
+                "ported": counts.ported,
+                "search_space": counts.search_space,
+                "ported_all": counts.ported_all,
+                "sources": counts.sources
+            },
+            "problems": problems.clone(),
+        });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&report)?))?;
+    }
+    for p in &problems {
+        eprintln!("bdd scope-check: {p}");
+    }
+    if !problems.is_empty() {
+        eprintln!("bdd scope-check: {} problem(s)", problems.len());
+        return Ok(1);
+    }
+    println!(
+        "bdd scope-check: {} upstream universe(s) accounted for - {} ported in full (proven by \
+         `bdd port-check`), {} workflow(s) named ({} ported + {} search-space){}",
+        counts.universes,
+        counts.ported_all,
+        counts.ported + counts.search_space,
+        counts.ported,
+        counts.search_space,
+        if sources.is_some() {
+            " - the census matches the live checkout"
+        } else {
+            " (offline; pass --sources <ole-eval root> to match the live checkout)"
+        }
+    );
+    Ok(0)
+}
+
 /// Round-trip gate: the README cites its line, so the doc gate needs it without
 /// the printing — the same `(rc, Some(success line))` shape `check_vocabulary_impl`
 /// uses, so a gate's number is never compared against a copy of itself.

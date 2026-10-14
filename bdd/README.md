@@ -805,7 +805,14 @@ sealed under `bench/bdd/port_pins/<cat>.json` and the gate runs against that sea
 (with no second checkout, a normal `check.sh` proves the closure); pointing
 `LAYA_OLE_EVAL_SOURCES` at a live upstream checkout turns the run into a trial of
 the seal as well — the live names must equal the seal's, and any fingerprint the
-seal carries must still match the source. The browser stage is
+seal carries must still match the source. A third gate, `laya-workflow bdd
+scope-check`, bounds the wider claim "every known workflow is in BDD":
+`bench/bdd/scope_census.json` names each upstream workflow *universe* and how
+this corpus accounts for every workflow in it — either ported (proven by `bdd
+port-check`) or explicitly a parameter search-space, with the reason it is not a
+decision graph. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
+census must name exactly the live upstream workflows, so a new one nobody ported
+fails the gate instead of going unnoticed. The browser stage is
 **skip-not-fail**: `bdd run` prints a `skipped`
 line and exits 0 where no browser is installed, so the file stays green on a
 browserless CI runner, but a broken scenario fails wherever a browser exists.
