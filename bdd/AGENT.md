@@ -122,6 +122,7 @@ laya-workflow bdd run --profile production --base-url <real>
 - `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
 - `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
 - `laya-workflow bdd port-check --sources <dir>` — 跨仓转换闭合性（每个上游 scenario 都有 BDD 端口、每个端口都有上游来源）；`LAYA_OLE_EVAL_SOURCES` 指向 ole-eval `code/qwen_vm/app_scenarios` 时由 `check.sh` 真跑（未设则跳过）
+- `laya-workflow bdd import <spec.json> [--out <f.feature>]` — 反向：把已有 workflow spec 转回 `@decision` `.feature`（transpile 的逆）；`bdd import-check` 门禁证明每个已入库 spec 都能被 import 出的 feature 重新编译回同一张图（`check.sh` 真跑）
 
 ## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
 

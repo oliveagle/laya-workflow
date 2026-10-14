@@ -6638,6 +6638,1007 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
 //     default (0.9/0.1/0.5/0.6)                == absent
 //   * `description` / `convergence_*`          == not compared (prose / tuning)
 
+
+// ── bdd import: a spec → a `.feature` that compiles back to it ──────────────
+//
+// `bdd transpile` compiles a `.feature` into a spec and `bdd round-trip` proves
+// a checked-in pair agrees. `bdd import` is the other direction: given a spec -
+// from this repo or from another (a legacy workflow that was never written in
+// BDD) - emit a `@decision` `.feature` that compiles back to the very same
+// graph. `bdd import-check` holds that exactly for every checked-in spec, which
+// proves the BDD surface is at least as expressive as the JSON DSL, and is the
+// tool that lifts any known workflow into BDD mode.
+
+/// A Gherkin table cell must not hold a raw `|` (it splits the row); escape it
+/// the way `cells()` un-escapes it.
+fn imp_cell(s: &str) -> String {
+    s.replace('|', "\\|")
+}
+
+/// `"..."` with exactly the escapes `quoted_tokens_escaped` reads back.
+fn imp_q(s: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Every imported fragment must land on one Gherkin line.
+fn imp_line(what: &str, s: &str) -> Result<()> {
+    if s.contains('\n') || s.contains('\r') {
+        bail!("cannot import: {what} contains a newline, which has no Gherkin spelling: {s:?}");
+    }
+    Ok(())
+}
+
+/// A value that goes inside `"..."` where the step grammar uses `[^"]+`.
+fn imp_tok(what: &str, s: &str) -> Result<()> {
+    imp_line(what, s)?;
+    if s.contains('"') {
+        bail!("cannot import: {what} contains a double quote: {s:?}");
+    }
+    Ok(())
+}
+
+fn imp_str<'a>(what: &str, v: Option<&'a Value>) -> Result<&'a str> {
+    match v.and_then(Value::as_str) {
+        Some(s) => {
+            imp_line(what, s)?;
+            Ok(s)
+        }
+        None => bail!(
+            "cannot import: {what} must be a string, got {}",
+            v.map(Value::to_string).unwrap_or_else(|| "nothing".to_string())
+        ),
+    }
+}
+
+/// Render a float so the step regexes (`\d+(?:\.\d+)?`) read it back.
+fn imp_num(v: f64) -> Result<String> {
+    let s = format!("{v}");
+    if s.contains('e') || s.contains('E') {
+        bail!("cannot import: {v} needs scientific notation, which the step grammar does not accept");
+    }
+    Ok(s)
+}
+
+fn imp_f64(what: &str, v: Option<&Value>) -> Result<f64> {
+    v.and_then(Value::as_f64).ok_or_else(|| {
+        anyhow!(
+            "cannot import: {what} must be a number, got {}",
+            v.map(Value::to_string).unwrap_or_else(|| "nothing".to_string())
+        )
+    })
+}
+
+/// A quoted token list, `"a" "b"`, exactly as `quoted_tokens` reads it back.
+/// `quoted_tokens` cannot carry a `"` inside a token, so refuse one.
+fn imp_tokens(what: &str, xs: &[Value]) -> Result<String> {
+    let mut toks = Vec::new();
+    for x in xs {
+        let s = imp_str(what, Some(x))?;
+        imp_tok(what, s)?;
+        toks.push(imp_q(s));
+    }
+    Ok(toks.join(" "))
+}
+
+/// Like [`imp_tokens`] but for the places the compiler reads back with
+/// `quoted_tokens_escaped`, where a token *may* contain a `"` (written `\"`).
+fn imp_tokens_esc(what: &str, xs: &[Value]) -> Result<String> {
+    let mut toks = Vec::new();
+    for x in xs {
+        let s = imp_str(what, Some(x))?;
+        imp_line(what, s)?;
+        toks.push(imp_q(s));
+    }
+    Ok(toks.join(" "))
+}
+
+/// The steps of one Scenario, grouped so the emitter can spell the first step
+/// of each group with its real keyword and every later one with `And` (which
+/// the parser makes inherit the group's kind). A step is its body line plus any
+/// table rows that attach to it.
+#[derive(Default)]
+struct ImpSteps {
+    given: Vec<(String, Vec<String>)>,
+    when: Vec<(String, Vec<String>)>,
+    then: Vec<(String, Vec<String>)>,
+}
+
+impl ImpSteps {
+    fn push(&mut self, kind: &str, body: String, table: Vec<String>) {
+        match kind {
+            "given" => self.given.push((body, table)),
+            "when" => self.when.push((body, table)),
+            _ => self.then.push((body, table)),
+        }
+    }
+
+    fn render(&self) -> String {
+        let mut out = String::new();
+        for (kw, group) in [("Given", &self.given), ("When", &self.when), ("Then", &self.then)] {
+            for (i, (body, table)) in group.iter().enumerate() {
+                let keyword = if i == 0 { kw } else { "And" };
+                out.push_str(&format!("    {keyword} {body}\n"));
+                for row in table {
+                    out.push_str(&format!("      {row}\n"));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// One `a <type> question ...` plus the heuristic step that configures it.
+fn imp_question(st: &mut ImpSteps, qname: &str, q: &Map<String, Value>) -> Result<()> {
+    imp_tok("question name", qname)?;
+    let qtype = q.get("type").and_then(Value::as_str).unwrap_or("choice");
+    let instr = q.get("instructions").and_then(Value::as_str).unwrap_or("");
+    imp_line("question instructions", instr)?;
+    match qtype {
+        "choice" => {
+            let criteria = q.get("criteria").and_then(Value::as_object).ok_or_else(|| {
+                anyhow!("cannot import: choice question {qname:?} has no criteria object")
+            })?;
+            let mut table = vec!["| answer | meaning |".to_string()];
+            for (k, v) in criteria {
+                imp_line("choice option", k)?;
+                let meaning = imp_str("choice meaning", Some(v))?;
+                table.push(format!("| {} | {} |", imp_cell(k), imp_cell(meaning)));
+            }
+            st.push("given", format!("a choice question \"{qname}\" asks \"{instr}\""), table);
+        }
+        "score" => {
+            let levels = q.get("criteria").and_then(Value::as_array).ok_or_else(|| {
+                anyhow!("cannot import: score question {qname:?} has no criteria array")
+            })?;
+            let mut table = vec!["| level |".to_string()];
+            for lv in levels {
+                let s = imp_str("score level", Some(lv))?;
+                table.push(format!("| {} |", imp_cell(s)));
+            }
+            st.push("given", format!("a score question \"{qname}\" asks \"{instr}\""), table);
+        }
+        "noul" => {
+            let mut table = Vec::new();
+            for key in ["truthy", "falsy"] {
+                if let Some(v) = q.get(key) {
+                    let v = imp_str("noul text", Some(v))?;
+                    table.push(format!("| {key} | {} |", imp_cell(v)));
+                }
+            }
+            st.push("given", format!("a noul question \"{qname}\" asks \"{instr}\""), table);
+        }
+        other => bail!("cannot import: question {qname:?} has unsupported type {other:?}"),
+    }
+    if let Some(h) = q.get("heuristic") {
+        if !h.is_object() {
+            bail!("cannot import: question {qname:?} heuristic is not an object");
+        }
+        // Fill the defaults the engine applies when a key is absent (the same
+        // normalisation the round-trip comparison uses), so the emitted step
+        // spells out exactly the probabilities the compiled spec will carry.
+        let h = rt_norm_heuristic(h);
+        let h = h.as_object().expect("rt_norm_heuristic always returns an object");
+        imp_heuristic(st, qname, h)?;
+    }
+    Ok(())
+}
+
+/// The heuristic step that attaches to the question just emitted.
+fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Result<()> {
+    let s = |k: &str| h.get(k).and_then(Value::as_str);
+    let has = |k: &str| h.contains_key(k);
+    if let Some(f) = s("answer_field") {
+        imp_tok("heuristic.answer_field", f)?;
+        st.push("given", format!("the answer comes from the field \"{f}\""), vec![]);
+        return Ok(());
+    }
+    if let Some(a) = s("answer") {
+        imp_tok("heuristic.answer", a)?;
+        st.push("given", format!("the answer is always \"{a}\""), vec![]);
+        return Ok(());
+    }
+    if let Some(field) = s("extract_numeric") {
+        imp_tok("heuristic.extract_numeric", field)?;
+        let miss = imp_f64("heuristic.score_miss", h.get("score_miss"))?;
+        st.push(
+            "given",
+            format!(
+                "score \"{qname}\" from the numeric field \"{field}\" with miss {}",
+                imp_num(miss)?
+            ),
+            vec![],
+        );
+        return Ok(());
+    }
+    if has("match_rules") {
+        let field = s("field")
+            .ok_or_else(|| anyhow!("cannot import: match_rules heuristic needs a field"))?;
+        imp_tok("heuristic.field", field)?;
+        let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
+        let rules = h
+            .get("match_rules")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("cannot import: match_rules is not an object"))?;
+        let body = match s("fallback") {
+            Some(fb) => format!(
+                "answer by rules on the field \"{field}\" with hit {} and fallback \"{fb}\"",
+                imp_num(hit)?
+            ),
+            None => format!(
+                "answer by rules on the field \"{field}\" with hit {}",
+                imp_num(hit)?
+            ),
+        };
+        let mut table = vec!["| label | needles |".to_string()];
+        for (label, needles) in rules {
+            imp_line("match_rules label", label)?;
+            let needles = needles
+                .as_array()
+                .ok_or_else(|| anyhow!("cannot import: match_rules[{label}] is not an array"))?;
+            let toks = imp_tokens_esc("match_rules needle", needles)?;
+            table.push(format!("| {} | {} |", imp_cell(label), imp_cell(&toks)));
+        }
+        st.push("given", body, table);
+        return Ok(());
+    }
+    let any = h.get("match_any").and_then(Value::as_array);
+    let mid_any = h.get("match_mid_any").and_then(Value::as_array);
+    let field = s("field");
+    if has("score_hit") && has("score_mid") && has("score_miss") {
+        let (any, mid_any) = match (any, mid_any) {
+            (Some(a), Some(m)) => (a, m),
+            _ => bail!("cannot import: score-bands heuristic needs match_any and match_mid_any"),
+        };
+        if any.len() != 1 || mid_any.len() != 1 {
+            bail!("cannot import: score-bands heuristic needs exactly one high and one mid needle");
+        }
+        let field = field.ok_or_else(|| anyhow!("cannot import: score-bands heuristic needs a field"))?;
+        imp_tok("heuristic.field", field)?;
+        let high = imp_str("heuristic.match_any[0]", Some(&any[0]))?;
+        let mid = imp_str("heuristic.match_mid_any[0]", Some(&mid_any[0]))?;
+        imp_tok("heuristic.match_any[0]", high)?;
+        imp_tok("heuristic.match_mid_any[0]", mid)?;
+        let hit = imp_f64("heuristic.score_hit", h.get("score_hit"))?;
+        let midv = imp_f64("heuristic.score_mid", h.get("score_mid"))?;
+        let miss = imp_f64("heuristic.score_miss", h.get("score_miss"))?;
+        st.push(
+            "given",
+            format!(
+                "score \"{qname}\" when the field \"{field}\" contains \"{high}\" scoring {} and \"{mid}\" scoring {} miss {}",
+                imp_num(hit)?,
+                imp_num(midv)?,
+                imp_num(miss)?
+            ),
+            vec![],
+        );
+        return Ok(());
+    }
+    if let Some(any) = any {
+        let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
+        let miss = imp_f64("heuristic.p_miss", h.get("p_miss"))?;
+        let needles = imp_tokens("heuristic.match_any[]", any)?;
+        if needles.is_empty() {
+            bail!("cannot import: match_any heuristic has no needles");
+        }
+        let body = match field {
+            Some(f) => {
+                imp_tok("heuristic.field", f)?;
+                format!(
+                    "answer \"{qname}\" when the field \"{f}\" contains {needles} with hit {} and miss {}",
+                    imp_num(hit)?,
+                    imp_num(miss)?
+                )
+            }
+            None => format!(
+                "answer \"{qname}\" when the text contains {needles} with hit {} and miss {}",
+                imp_num(hit)?,
+                imp_num(miss)?
+            ),
+        };
+        st.push("given", body, vec![]);
+        if let Some(mid_any) = mid_any {
+            let f = field
+                .ok_or_else(|| anyhow!("cannot import: match_mid_any heuristic needs a field"))?;
+            let mid = imp_f64("heuristic.p_mid", h.get("p_mid"))?;
+            let needles = imp_tokens("heuristic.match_mid_any[]", mid_any)?;
+            st.push(
+                "given",
+                format!(
+                    "answer \"{qname}\" with mid {} when the field \"{f}\" contains {needles}",
+                    imp_num(mid)?
+                ),
+                vec![],
+            );
+        }
+        return Ok(());
+    }
+    if let Some(patterns) = h.get("match_regex").and_then(Value::as_array) {
+        let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
+        let miss = imp_f64("heuristic.p_miss", h.get("p_miss"))?;
+        let pats = imp_tokens_esc("heuristic.match_regex[]", patterns)?;
+        if pats.is_empty() {
+            bail!("cannot import: match_regex heuristic has no patterns");
+        }
+        let body = match field {
+            Some(f) => {
+                imp_tok("heuristic.field", f)?;
+                format!(
+                    "answer \"{qname}\" when the field \"{f}\" matches {pats} with hit {} and miss {}",
+                    imp_num(hit)?,
+                    imp_num(miss)?
+                )
+            }
+            None => format!(
+                "answer \"{qname}\" when the text matches {pats} with hit {} and miss {}",
+                imp_num(hit)?,
+                imp_num(miss)?
+            ),
+        };
+        st.push("given", body, vec![]);
+        return Ok(());
+    }
+    bail!(
+        "cannot import: unsupported heuristic keys {:?} on question {qname:?}",
+        h.keys().collect::<Vec<_>>()
+    )
+}
+
+/// One `label ...` rule of a threshold action.
+fn imp_rule(st: &mut ImpSteps, q_fallback: &str, rule: &Value) -> Result<()> {
+    let label = imp_str("threshold rule label", rule.get("label"))?;
+    imp_tok("threshold rule label", label)?;
+    let when = rule
+        .get("when")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("cannot import: threshold rule has no `when` object"))?;
+    let q = when.get("question").and_then(Value::as_str);
+    if when.get("always").and_then(Value::as_bool) == Some(true) {
+        st.push("then", format!("label \"{label}\" otherwise"), vec![]);
+        return Ok(());
+    }
+    if let Some(list) = when.get("answer_in").and_then(Value::as_array) {
+        let qq = q.ok_or_else(|| anyhow!("cannot import: `answer_in` rule needs a question"))?;
+        imp_tok("answer_in question", qq)?;
+        let toks = imp_tokens("answer_in", list)?;
+        st.push(
+            "then",
+            format!("label \"{label}\" when the answer to \"{qq}\" is one of {toks}"),
+            vec![],
+        );
+        return Ok(());
+    }
+    if let Some(a) = when.get("answer").and_then(Value::as_str) {
+        imp_tok("answer", a)?;
+        if let Some(c) = when.get("value_gte") {
+            let c = imp_num(imp_f64("value_gte", Some(c))?)?;
+            let body = match q {
+                Some(qq) => {
+                    imp_tok("answer question", qq)?;
+                    format!("label \"{label}\" when the answer to \"{qq}\" is \"{a}\" with at least {c} confidence")
+                }
+                None => format!("label \"{label}\" when the answer is \"{a}\" with at least {c} confidence"),
+            };
+            st.push("then", body, vec![]);
+            return Ok(());
+        }
+        let body = match q {
+            Some(qq) => {
+                imp_tok("answer question", qq)?;
+                format!("label \"{label}\" when the answer to \"{qq}\" is \"{a}\"")
+            }
+            None => format!("label \"{label}\" when the answer is \"{a}\""),
+        };
+        st.push("then", body, vec![]);
+        return Ok(());
+    }
+    if let Some(opt) = when.get("option").and_then(Value::as_str) {
+        imp_tok("option", opt)?;
+        let c = imp_num(imp_f64("gte", when.get("gte"))?)?;
+        let body = match q {
+            Some(qq) => {
+                imp_tok("option question", qq)?;
+                format!("label \"{label}\" when the answer to \"{qq}\" is \"{opt}\" with at least {c} confidence")
+            }
+            None => format!("label \"{label}\" when the answer is \"{opt}\" with at least {c} confidence"),
+        };
+        st.push("then", body, vec![]);
+        return Ok(());
+    }
+    if let Some(v) = when.get("value_gte") {
+        // A rule may omit `question`; the compiler fills the action's own
+        // question in, which the round-trip normaliser folds away again - so
+        // spell it out with the action's question to recover the same shape.
+        let qq = q.unwrap_or(q_fallback);
+        imp_tok("value_gte question", qq)?;
+        let v = imp_num(imp_f64("value_gte", Some(v))?)?;
+        st.push("then", format!("label \"{label}\" when \"{qq}\" is at least {v}"), vec![]);
+        return Ok(());
+    }
+    if let Some(v) = when.get("value_lt") {
+        let qq = q.unwrap_or(q_fallback);
+        imp_tok("value_lt question", qq)?;
+        let v = imp_num(imp_f64("value_lt", Some(v))?)?;
+        st.push("then", format!("label \"{label}\" when \"{qq}\" is below {v}"), vec![]);
+        return Ok(());
+    }
+    bail!("cannot import: threshold rule with unsupported `when`: {when:?}")
+}
+
+/// The `Then` steps that rebuild a node's action.
+fn imp_action(st: &mut ImpSteps, primary_q: &str, a: &Value) -> Result<()> {
+    let o = a
+        .as_object()
+        .ok_or_else(|| anyhow!("cannot import: node action is not an object"))?;
+    let kind = o
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("cannot import: node action has no kind"))?;
+    match kind {
+        "threshold" => {
+            let aq = o.get("question").and_then(Value::as_str).unwrap_or(primary_q);
+            if aq != primary_q {
+                imp_tok("action question", aq)?;
+                st.push("then", format!("the action reads the question \"{aq}\""), vec![]);
+            }
+            let rules = o
+                .get("rules")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("cannot import: threshold action has no rules array"))?;
+            for r in rules {
+                imp_rule(st, aq, r)?;
+            }
+        }
+        "gate" => {
+            let q = imp_str("gate.question", o.get("question"))?;
+            let opt = imp_str("gate.option", o.get("option"))?;
+            imp_tok("gate.question", q)?;
+            imp_tok("gate.option", opt)?;
+            let b = imp_num(imp_f64("gate.block_at", o.get("block_at"))?)?;
+            let al = imp_num(imp_f64("gate.allow_at", o.get("allow_at"))?)?;
+            st.push("then", format!("gate \"{q}\" on option \"{opt}\" with block {b} allow {al}"), vec![]);
+        }
+        "merge_open_probs" => {
+            let q = imp_str("merge_open_probs.question", o.get("question"))?;
+            imp_tok("merge_open_probs.question", q)?;
+            st.push("then", format!("merge open probabilities on \"{q}\""), vec![]);
+        }
+        "combine" => {
+            let choice = imp_str("combine.choice", o.get("choice"))?;
+            let signal = imp_str("combine.signal", o.get("signal"))?;
+            let fallback = imp_str("combine.fallback", o.get("fallback"))?;
+            let review = imp_str("combine.review_label", o.get("review_label"))?;
+            for (w, v) in [
+                ("combine.choice", choice),
+                ("combine.signal", signal),
+                ("combine.fallback", fallback),
+                ("combine.review_label", review),
+            ] {
+                imp_tok(w, v)?;
+            }
+            let min = imp_num(imp_f64("combine.min_confidence", o.get("min_confidence"))?)?;
+            let high = imp_num(imp_f64("combine.high_threshold", o.get("high_threshold"))?)?;
+            let low = imp_num(imp_f64("combine.low_threshold", o.get("low_threshold"))?)?;
+            st.push(
+                "then",
+                format!("combine \"{choice}\" with signal \"{signal}\" fallback \"{fallback}\" review \"{review}\" requiring {min} high {high} low {low}"),
+                vec![],
+            );
+        }
+        "rubric" => {
+            let dims = o.get("dimensions").and_then(Value::as_array).ok_or_else(|| {
+                anyhow!("cannot import: rubric action has no dimensions array")
+            })?;
+            if dims.len() != 2 {
+                bail!("cannot import: rubric action needs exactly two dimensions, got {}", dims.len());
+            }
+            let d0 = dims[0].as_object().ok_or_else(|| anyhow!("cannot import: rubric dimension 0 is not an object"))?;
+            let d1 = dims[1].as_object().ok_or_else(|| anyhow!("cannot import: rubric dimension 1 is not an object"))?;
+            let q1 = imp_str("rubric.dimensions[0].question", d0.get("question"))?;
+            let q2 = imp_str("rubric.dimensions[1].question", d1.get("question"))?;
+            imp_tok("rubric.dimensions[0].question", q1)?;
+            imp_tok("rubric.dimensions[1].question", q2)?;
+            let l1 = imp_num(imp_f64("rubric.dimensions[0].levels", d0.get("levels"))?)?;
+            let l2 = imp_num(imp_f64("rubric.dimensions[1].levels", d1.get("levels"))?)?;
+            let w1 = imp_num(imp_f64("rubric.dimensions[0].weight", d0.get("weight"))?)?;
+            let w2 = imp_num(imp_f64("rubric.dimensions[1].weight", d1.get("weight"))?)?;
+            let min = imp_num(imp_f64("rubric.min_confidence", o.get("min_confidence"))?)?;
+            st.push(
+                "then",
+                format!("rubric \"{q1}\" at {l1} levels weight {w1} and \"{q2}\" at {l2} levels weight {w2} requiring {min}"),
+                vec![],
+            );
+        }
+        "ui_proposal" => {
+            let op = imp_str("ui_proposal.operation", o.get("operation"))?;
+            let f = imp_str("ui_proposal.field", o.get("field"))?;
+            let amt = imp_str("ui_proposal.amount", o.get("amount"))?;
+            let surface = imp_str("ui_proposal.surface", o.get("surface"))?;
+            let hash = imp_str("ui_proposal.snapshot_hash", o.get("snapshot_hash"))?;
+            for (w, v) in [
+                ("ui_proposal.operation", op),
+                ("ui_proposal.field", f),
+                ("ui_proposal.amount", amt),
+                ("ui_proposal.surface", surface),
+                ("ui_proposal.snapshot_hash", hash),
+            ] {
+                imp_tok(w, v)?;
+            }
+            let min = imp_num(imp_f64(
+                "ui_proposal.min_confidence",
+                o.get("min_confidence"),
+            )?)?;
+            let body = match o.get("value_key").and_then(Value::as_str) {
+                Some(vk) => {
+                    imp_tok("ui_proposal.value_key", vk)?;
+                    format!("prepare a UI proposal from operation \"{op}\" field \"{f}\" amount \"{amt}\" surface \"{surface}\" hash \"{hash}\" requiring {min} value \"{vk}\"")
+                }
+                None => format!("prepare a UI proposal from operation \"{op}\" field \"{f}\" amount \"{amt}\" surface \"{surface}\" hash \"{hash}\" requiring {min}"),
+            };
+            st.push("then", body, vec![]);
+        }
+        "copy_keys" => {
+            let keys = o
+                .get("keys")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("cannot import: copy_keys action has no keys array"))?;
+            for k in keys {
+                let k = imp_str("copy_keys[]", Some(k))?;
+                st.push("then", format!("keep the answer to \"{k}\""), vec![]);
+            }
+        }
+        "call" => {
+            let cap = imp_str("call.capability", o.get("capability"))?;
+            imp_tok("call.capability", cap)?;
+            let mut rows: Vec<(String, String)> = Vec::new();
+            if let Some(with) = o.get("with").and_then(Value::as_object) {
+                for (k, v) in with {
+                    rows.push((format!("with.{k}"), serde_json::to_string(v)?));
+                }
+            }
+            if let Some(project) = o.get("project").and_then(Value::as_object) {
+                for (k, v) in project {
+                    rows.push((format!("project.{k}"), serde_json::to_string(v)?));
+                }
+            }
+            if let Some(chain) = o.get("chain").and_then(Value::as_array) {
+                for e in chain {
+                    let e = e
+                        .as_object()
+                        .ok_or_else(|| anyhow!("cannot import: call chain entry is not an object"))?;
+                    let asname = imp_str("call.chain[].as", e.get("as"))?;
+                    imp_line("call.chain[].as", asname)?;
+                    if asname.contains('.') {
+                        bail!("cannot import: call chain alias {asname:?} must not contain a dot");
+                    }
+                    let subcap = imp_str("call.chain[].capability", e.get("capability"))?;
+                    rows.push((format!("chain.{asname}.capability"), serde_json::to_string(&json!(subcap))?));
+                    if let Some(with) = e.get("with").and_then(Value::as_object) {
+                        for (k, v) in with {
+                            rows.push((format!("chain.{asname}.with.{k}"), serde_json::to_string(v)?));
+                        }
+                    }
+                    if let Some(project) = e.get("project").and_then(Value::as_object) {
+                        for (k, v) in project {
+                            rows.push((format!("chain.{asname}.project.{k}"), serde_json::to_string(v)?));
+                        }
+                    }
+                }
+            }
+            let table = rows
+                .into_iter()
+                .map(|(k, v)| format!("| {} | {} |", imp_cell(&k), imp_cell(&v)))
+                .collect();
+            st.push("then", format!("call the capability \"{cap}\""), table);
+        }
+        other => bail!("cannot import: node action kind {other:?} has no BDD spelling"),
+    }
+    Ok(())
+}
+
+/// One `Scenario:` - a decision node. The primary-question override is emitted
+/// only when the first question's name would not already be it.
+fn imp_node(out: &mut String, node: &Value) -> Result<()> {
+    let o = node
+        .as_object()
+        .ok_or_else(|| anyhow!("cannot import: a node is not an object"))?;
+    let name = imp_str("node name", o.get("name"))?;
+    imp_tok("node name", name)?;
+    if slugify(name) != name {
+        bail!("cannot import: node name {name:?} is not a slug (Scenario names are slugified)");
+    }
+    out.push_str(&format!("\n  Scenario: {name}\n"));
+
+    if let Some(wf) = o.get("workflow") {
+        let wf = imp_str("node.workflow", Some(wf))?;
+        imp_tok("node.workflow", wf)?;
+        out.push_str(&format!("    Given the sub workflow \"{wf}\"\n"));
+        let default = o
+            .get("edge")
+            .and_then(|e| e.get("default"))
+            .and_then(Value::as_str)
+            .unwrap_or("STOP");
+        if default != "STOP" {
+            imp_tok("node.edge.default", default)?;
+            // The step body literally starts with `when` (it is a Given-kind
+            // step); the vocabulary spells it that way.
+            out.push_str(&format!(
+                "    And when the sub workflow completes continue at \"{default}\"\n"
+            ));
+        }
+        return Ok(());
+    }
+
+    let questions = o.get("questions").and_then(Value::as_object);
+    let primary_q = o.get("primary_q").and_then(Value::as_str).unwrap_or("ok");
+    let first_q = questions.and_then(|q| q.keys().next()).map(|s| s.as_str());
+
+    let mut st = ImpSteps::default();
+    if let Some(questions) = questions {
+        for (qname, q) in questions {
+            let q = q
+                .as_object()
+                .ok_or_else(|| anyhow!("cannot import: question {qname:?} is not an object"))?;
+            imp_question(&mut st, qname, q)?;
+        }
+    }
+
+    // Edges. A condition entry that already routes to the default is folded
+    // away by the round-trip normaliser, so it is not emitted.
+    let edge = o.get("edge");
+    let default = edge
+        .and_then(|e| e.get("default"))
+        .and_then(Value::as_str)
+        .unwrap_or("STOP");
+    if let Some(cond) = edge.and_then(|e| e.get("condition")).and_then(Value::as_object) {
+        for (a, tgt) in cond {
+            let tgt = imp_str("edge.condition target", Some(tgt))?;
+            imp_tok("edge.condition answer", a)?;
+            imp_tok("edge.condition target", tgt)?;
+            if tgt == default {
+                continue;
+            }
+            st.push("when", format!("the answer \"{a}\" goes to \"{tgt}\""), vec![]);
+        }
+    }
+    if default != "STOP" || !st.when.is_empty() {
+        imp_tok("edge.default", default)?;
+        st.push("when", format!("any other answer goes to \"{default}\""), vec![]);
+    }
+
+    if first_q != Some(primary_q) {
+        imp_tok("primary_q", primary_q)?;
+        st.push("then", format!("the primary question is \"{primary_q}\""), vec![]);
+    }
+    if let Some(a) = o.get("action") {
+        imp_action(&mut st, primary_q, a)?;
+    }
+    if let Some(state) = o.get("state").and_then(Value::as_object) {
+        let keep = state
+            .get("keep")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("cannot import: node state has no keep array"))?;
+        for k in keep {
+            let k = imp_str("state.keep[]", Some(k))?;
+            imp_line("state.keep[]", k)?;
+            st.push("then", format!("keep the state key \"{k}\""), vec![]);
+        }
+    }
+    if let Some(mc) = o.get("min_confidence").and_then(Value::as_f64) {
+        if mc != 0.0 {
+            st.push(
+                "then",
+                format!("require confidence at least {}", imp_num(mc)?),
+                vec![],
+            );
+        }
+    }
+    if let Some(n) = o.get("max_retries").and_then(Value::as_u64) {
+        st.push("then", format!("allow up to {n} retries"), vec![]);
+    }
+
+    out.push_str(&st.render());
+    Ok(())
+}
+
+/// A spec → the `.feature` text that compiles back to it. The inverse of
+/// [`compile_decision`]; errors (rather than guessing) on anything the BDD
+/// grammar cannot spell.
+pub fn import_spec(spec: &Value) -> Result<String> {
+    let o = spec
+        .as_object()
+        .ok_or_else(|| anyhow!("cannot import: the spec is not a JSON object"))?;
+    let nodes = o
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("cannot import: the spec has no `nodes` array"))?;
+    if nodes.is_empty() {
+        bail!("cannot import: the spec has no nodes");
+    }
+    if o.contains_key("workflow") || o.contains_key("sub_workflow") {
+        bail!("cannot import: a spec that is itself a sub-workflow reference has no standalone spelling");
+    }
+    let name = imp_str("spec name", o.get("name"))?;
+    imp_line("spec name", name)?;
+    let start = imp_str("spec start", o.get("start"))?;
+    imp_line("spec start", start)?;
+    if !nodes.iter().any(|n| n.get("name").and_then(Value::as_str) == Some(start)) {
+        bail!("cannot import: spec start {start:?} is not one of the node names");
+    }
+
+    let mut out = String::from("@decision\n");
+    out.push_str(&format!("Feature: {name}\n"));
+
+    // The description is free prose between `Feature:` and `Background:`. Only
+    // reproduce it when every line is safe there (a line spelled like a Gherkin
+    // keyword would be read as a step); otherwise fall back to a generated one.
+    let desc = o.get("description").and_then(Value::as_str).unwrap_or("");
+    let safe_desc = !desc.is_empty()
+        && desc.lines().all(|l| {
+            let t = l.trim();
+            let low = t.to_lowercase();
+            !t.is_empty()
+                && !matches!(low.as_str(), "given" | "when" | "then" | "and" | "but")
+                && !matches!(
+                    t.split_once(':').map(|(h, _)| h.trim().to_lowercase()).as_deref(),
+                    Some("feature" | "background" | "scenario" | "scenario outline" | "examples" | "rule")
+                )
+        });
+    if safe_desc {
+        for l in desc.lines() {
+            out.push_str(&format!("\n  {}\n", l.trim()));
+        }
+    } else {
+        out.push_str(&format!("\n  Imported from the {name} workflow spec.\n"));
+    }
+
+    let mut background: Vec<(String, Vec<String>)> = Vec::new();
+    if let Some(n) = o.get("max_iterations").and_then(Value::as_u64) {
+        background.push((format!("the workflow runs at most {n} iterations"), vec![]));
+    }
+    if let Some(policy) = o.get("policy").and_then(Value::as_object) {
+        if !policy.is_empty() {
+            let mut rows: Vec<String> = Vec::new();
+            for (k, v) in policy {
+                let cell = match k.as_str() {
+                    "allow_exec" => match v.as_bool() {
+                        Some(b) => b.to_string(),
+                        None => bail!("cannot import: policy.allow_exec must be a bool, got {v}"),
+                    },
+                    "allow_hosts" | "allow_paths" => {
+                        let xs = v
+                            .as_array()
+                            .ok_or_else(|| anyhow!("cannot import: policy.{k} must be an array"))?;
+                        imp_tokens_esc(&format!("policy.{k}[]"), xs)?
+                    }
+                    "max_timeout_ms" | "max_output" | "retries" => match v.as_i64() {
+                        Some(n) => n.to_string(),
+                        None => bail!("cannot import: policy.{k} must be an integer, got {v}"),
+                    },
+                    _ => {
+                        let sval = v
+                            .as_str()
+                            .ok_or_else(|| anyhow!("cannot import: policy.{k} must be a string, got {v}"))?;
+                        imp_line(&format!("policy.{k}"), sval)?;
+                        imp_cell(sval)
+                    }
+                };
+                rows.push(format!("| {k} | {cell} |"));
+            }
+            background.push(("the policy".to_string(), rows));
+        }
+    }
+    if let Some(caps) = o.get("capabilities").and_then(Value::as_object) {
+        if !caps.is_empty() {
+            let mut rows: Vec<String> = Vec::new();
+            for (k, v) in caps {
+                imp_line("capability name", k)?;
+                let cfg = serde_json::to_string(v)?;
+                rows.push(format!("| {} | {} |", imp_cell(k), imp_cell(&cfg)));
+            }
+            background.push(("the capabilities".to_string(), rows));
+        }
+    }
+    if !background.is_empty() {
+        out.push_str("\n  Background:\n");
+        for (i, (line, rows)) in background.iter().enumerate() {
+            let kw = if i == 0 { "Given" } else { "And" };
+            out.push_str(&format!("    {kw} {line}\n"));
+            for row in rows {
+                out.push_str(&format!("      {row}\n"));
+            }
+        }
+    }
+
+    // The `start` node must be the first Scenario (that is how the compiler
+    // recovers `start`).
+    let mut order: Vec<&Value> = Vec::with_capacity(nodes.len());
+    for n in nodes {
+        if n.get("name").and_then(Value::as_str) == Some(start) {
+            order.push(n);
+        }
+    }
+    for n in nodes {
+        if n.get("name").and_then(Value::as_str) != Some(start) {
+            order.push(n);
+        }
+    }
+    for n in order {
+        imp_node(&mut out, n)?;
+    }
+    Ok(out)
+}
+
+/// `bdd import`: a spec file → a `.feature` that compiles back to it.
+pub fn import(o: &ImportOptions) -> Result<i32> {
+    let text = std::fs::read_to_string(&o.spec)
+        .with_context(|| format!("reading {}", o.spec))?;
+    let spec: Value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing {} as JSON", o.spec))?;
+    let feature = import_spec(&spec)?;
+    match &o.out {
+        Some(p) => {
+            if let Some(parent) = Path::new(p).parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            std::fs::write(p, &feature).with_context(|| format!("writing {p}"))?;
+            eprintln!("bdd import: wrote {p}");
+        }
+        None => print!("{feature}"),
+    }
+    Ok(0)
+}
+
+/// Options for `bdd import`.
+pub struct ImportOptions {
+    /// Path to the spec `.json` to import.
+    pub spec: String,
+    /// Write the `.feature` here instead of stdout.
+    pub out: Option<String>,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        Self { spec: String::new(), out: None }
+    }
+}
+
+/// Options for `bdd import-check`.
+pub struct ImportCheckOptions {
+    /// Write the per-spec verdicts as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for ImportCheckOptions {
+    fn default() -> Self {
+        Self { json: None }
+    }
+}
+
+/// The import gate: for every checked-in `@decision` feature, `import` its dsl
+/// spec and require the re-compiled graph to equal that spec. This is the
+/// *reverse* of `bdd round-trip`, and together they prove the two spellings are
+/// interchangeable - a spec is not just `transpile`-able from its feature, it is
+/// *recoverable* from the spec alone. A spec that cannot be imported is a
+/// workflow BDD cannot yet express.
+pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
+    let root = repo_root();
+    let wf_root = root.join("bdd").join("workflows");
+    let mut features: Vec<PathBuf> = Vec::new();
+    if wf_root.is_dir() {
+        walk_features(&wf_root, &mut features);
+    }
+    features.sort();
+
+    // Guarantee the scratch dirs the specs reference (`${env.LAYA_*}`) resolve,
+    // exactly as `bdd build` and `bdd round-trip` do.
+    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in env_map {
+            std::env::set_var(k, v);
+        }
+        let _ = crate::capability::secret::init(None);
+    }
+
+    let mut total = 0usize;
+    let mut matched = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+    let mut verdicts: Vec<Value> = Vec::new();
+    for f in &features {
+        let text = std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
+        let feature = parse(&text, &f.to_string_lossy())?;
+        if !has_tag(&feature.tags, "decision") {
+            continue;
+        }
+        total += 1;
+        let rel = f.strip_prefix(&wf_root).unwrap().to_string_lossy().into_owned();
+        let rel = rel.trim_start_matches('/').to_string();
+        let (cat, fname) = match rel.rsplit_once('/') {
+            Some((c, n)) => (c.to_string(), n.to_string()),
+            None => (String::new(), rel.clone()),
+        };
+        let name = fname.strip_suffix(".feature").unwrap_or(&fname).to_string();
+        let dsl_path = root.join("dsl").join(&cat).join(format!("{name}.json"));
+        let dsl_text = match std::fs::read_to_string(&dsl_path) {
+            Ok(t) => t,
+            Err(_) => {
+                problems.push(format!("{rel}: no dsl counterpart at {}", dsl_path.display()));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": "no dsl counterpart"}));
+                continue;
+            }
+        };
+        let dsl: Value = serde_json::from_str(&dsl_text)
+            .with_context(|| format!("parsing {}", dsl_path.display()))?;
+
+        let back_text = match import_spec(&dsl) {
+            Ok(t) => t,
+            Err(e) => {
+                problems.push(format!("{rel}: import failed: {e:#}"));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("import: {e:#}")}));
+                continue;
+            }
+        };
+        let back = match parse(&back_text, "<import>") {
+            Ok(f) => f,
+            Err(e) => {
+                problems.push(format!("{rel}: the imported feature does not parse: {e:#}"));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("reparse: {e:#}")}));
+                continue;
+            }
+        };
+        let spec = match compile_decision(&back, &json!({})) {
+            Ok(s) => s,
+            Err(e) => {
+                problems.push(format!("{rel}: the imported feature does not compile: {e:#}"));
+                verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("recompile: {e:#}")}));
+                continue;
+            }
+        };
+        if let Err(e) = crate::spec::from_spec_with_dir(&spec, None, None) {
+            problems.push(format!("{rel}: the imported feature fails validate: {e:#}"));
+            verdicts.push(json!({"feature": rel, "ok": false, "reason": format!("validate: {e:#}")}));
+            continue;
+        }
+        let nb = rt_norm(&spec);
+        let nd = rt_norm(&dsl);
+        if nb == nd {
+            matched += 1;
+            verdicts.push(json!({"feature": rel, "ok": true}));
+        } else {
+            let diff = rt_first_diff(&nb, &nd, "spec").unwrap_or_else(|| "non-equal".to_string());
+            problems.push(format!("{rel}: {diff}"));
+            verdicts.push(json!({"feature": rel, "ok": false, "reason": diff}));
+        }
+    }
+
+    if let Some(p) = &o.json {
+        let out = root.join(p);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&verdicts)?)?;
+    }
+
+    println!("bdd import: {matched}/{total} checked-in specs recompile from their imported feature");
+    for p in &problems {
+        println!("  {p}");
+    }
+    if !problems.is_empty() {
+        eprintln!("bdd import: FAIL - {} of {} specs could not be re-imported", problems.len(), total);
+        return Ok(1);
+    }
+    Ok(0)
+}
+
 pub struct RoundTripOptions {
     /// Write the per-feature verdicts as JSON here.
     pub json: Option<String>,
@@ -6766,6 +7767,15 @@ fn rt_norm_node(n: &Value) -> Value {
         }
     }
     rt_canon(Value::Object(no))
+}
+
+/// Two specs describe the same decision graph under the round-trip
+/// normalisation: compiler metadata and prose are ignored, nodes are compared
+/// by name, a condition entry that routes to the default is folded away, and
+/// absent heuristic probabilities are filled with the engine's defaults.
+/// Public so the offline tests can assert equivalence directly.
+pub fn same_graph(a: &Value, b: &Value) -> bool {
+    rt_norm(a) == rt_norm(b)
 }
 
 /// First differing path between two JSON values (for a readable problem line).

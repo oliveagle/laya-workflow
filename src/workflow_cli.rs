@@ -532,6 +532,23 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Import: turn an existing workflow spec (a `.json`) back into a
+    /// `@decision` `.feature` that compiles to the very same graph. The
+    /// inverse of `transpile`; the tool that lifts any known workflow into BDD.
+    Import {
+        /// Path to the spec `.json` to import.
+        spec: String,
+        /// Write the `.feature` here instead of stdout.
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Import gate: prove every checked-in spec is recoverable from a feature
+    /// that `import` emits (the reverse of `round-trip`).
+    ImportCheck {
+        /// Write the per-spec verdicts as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Quantify BDD authoring vs hand-written JSON DSL on the live corpus.
     Compare {
         /// Write the comparison as JSON here.
@@ -2499,6 +2516,13 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
         BddCmd::PortCheck { sources, cat, json } => bdd::port_check(&bdd::PortCheckOptions {
             sources: std::path::PathBuf::from(sources),
             cat: cat.clone(),
+            json: json.clone(),
+        })?,
+        BddCmd::Import { spec, out } => bdd::import(&bdd::ImportOptions {
+            spec: spec.clone(),
+            out: out.clone(),
+        })?,
+        BddCmd::ImportCheck { json } => bdd::import_check(&bdd::ImportCheckOptions {
             json: json.clone(),
         })?,
         BddCmd::Compare { json, cases } => bdd::compare(&bdd::CompareOptions {

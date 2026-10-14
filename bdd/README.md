@@ -679,9 +679,13 @@ build and still behave": check the step table, check the hand-written probe
 specs, run the plugin's argument-error probes, compile every `.feature`,
 `laya-workflow validate` each generated spec, run the offline behavioural
 smoke, and finally `laya-workflow bdd run`, which drives a real headless Chrome
-over CDP. A cross-repo `laya-workflow bdd port-check` (gated by
-`LAYA_OLE_EVAL_SOURCES`) proves every upstream scenario has a port and every port
-a source. The browser stage is **skip-not-fail**: `bdd run` prints a `skipped`
+over CDP. `laya-workflow bdd import-check` runs the reverse of the round-trip:
+it imports every checked-in spec back to a `.feature` and recompiles it, so the
+two spellings are proven interchangeable (a spec is not just compilable *from*
+its feature, it is *recoverable from the spec alone*). A cross-repo
+`laya-workflow bdd port-check` (gated by `LAYA_OLE_EVAL_SOURCES`) proves every
+upstream scenario has a port and every port a source. The browser stage is
+**skip-not-fail**: `bdd run` prints a `skipped`
 line and exits 0 where no browser is installed, so the file stays green on a
 browserless CI runner, but a broken scenario fails wherever a browser exists.
 Set `LAYA_BDD_SKIP_BROWSER=1` to skip that stage for speed. Two callers, so

@@ -186,6 +186,19 @@ if ! "$BIN" bdd round-trip >/dev/null 2> "$out/roundtrip.err"; then
   exit 1
 fi
 
+# The import gate: the reverse of the round-trip above. `bdd import` turns a
+# spec back into a `.feature`; this proves every checked-in spec is *recoverable*
+# from the feature that import emits, so the two spellings are interchangeable
+# and the BDD surface is at least as expressive as the JSON DSL. Needs only this
+# repo (no Chrome, no network).
+if ! "$BIN" bdd import-check > "$out/import.log" 2> "$out/import.err"; then
+  echo "bdd check: a checked-in spec could not be re-imported from a feature:" >&2
+  cat "$out/import.err" >&2
+  cat "$out/import.log" >&2
+  exit 1
+fi
+grep -E "^bdd import:" "$out/import.log" || true
+
 # The behavioural smoke gate: every spec under dsl/ must validate, and where a
 # labelled sample state is registered (bench/dsl_smoke_states.json) it must
 # route/decide to the expected label (bench/dsl_smoke_expect.json) through the

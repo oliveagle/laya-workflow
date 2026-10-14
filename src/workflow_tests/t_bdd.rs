@@ -2500,3 +2500,159 @@ pub fn test_bdd_port_check(h: &mut Harness) {
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_file(&rep);
 }
+
+pub fn test_bdd_import(h: &mut Harness) {
+    use laya_workflow::bdd::{compile_decision, import_spec, parse, repo_root, same_graph};
+
+    // A spec that exercises the whole surface: a capability config holding a
+    // `|`, a match_regex pattern holding a `"`, a heuristic with defaults to
+    // fill, a threshold rule that omits its question, `otherwise`, keep-keys, a
+    // confidence floor and a retry budget.
+    let spec = json!({
+        "name": "import_probe",
+        "dsl_version": 2,
+        "description": "A probe with a | pipe and a \"quote\".",
+        "start": "classify",
+        "max_iterations": 7,
+        "convergence_window": 5,
+        "convergence_eps": 0.0001,
+        "policy": {
+            "allow_exec": false,
+            "allow_hosts": ["a.example"],
+            "max_timeout_ms": 2000
+        },
+        "capabilities": {
+            "disk": {"kind": "shell", "command": "du -sk \"${state.work_dir}\" | awk '{print $1}'"},
+            "cls": {"kind": "needle", "op": "complete", "cact": "${env.NEEDLE3_CACT}"}
+        },
+        "nodes": [
+            {
+                "name": "classify",
+                "primary_q": "intent",
+                "questions": {
+                    "intent": {
+                        "type": "choice",
+                        "instructions": "pick one",
+                        "criteria": {"A": "first", "B": "second"},
+                        "heuristic": {"answer_field": "i_intent"}
+                    }
+                },
+                "edge": {"condition": {"A": "done"}, "default": "STOP"},
+                "min_confidence": 0.4
+            },
+            {
+                "name": "done",
+                "primary_q": "verdict",
+                "questions": {
+                    "verdict": {
+                        "type": "choice",
+                        "instructions": "",
+                        "criteria": {"ok": "fine"},
+                        "heuristic": {
+                            "field": "text",
+                            "match_regex": ["\"quoted\"", "a|b"],
+                            "p_hit": 0.9,
+                            "p_miss": 0.1
+                        }
+                    }
+                },
+                "edge": {"condition": {}, "default": "STOP"},
+                "action": {
+                    "kind": "threshold",
+                    "question": "verdict",
+                    "rules": [
+                        {"when": {"answer": "ok"}, "label": "ACCEPT"},
+                        {"when": {"value_gte": 1.5}, "label": "STRONG"},
+                        {"when": {"always": true}, "label": "NOOP"}
+                    ]
+                },
+                "state": {"keep": ["alpha", "beta"]},
+                "max_retries": 2
+            }
+        ]
+    });
+
+    let text = match import_spec(&spec) {
+        Ok(t) => t,
+        Err(e) => {
+            h.check(&format!("bdd import: a full spec imports ({e:#})"), false);
+            return;
+        }
+    };
+    h.check(
+        "bdd import: the feature opens with the @decision tag",
+        text.starts_with("@decision\nFeature: import_probe\n"),
+    );
+    h.check(
+        "bdd import: a `|` in a capability config is escaped for the table",
+        text.contains("\\| awk"),
+    );
+    h.check(
+        "bdd import: a `\"` in a match_regex pattern is escaped for the token list",
+        text.contains("\"\\\"quoted\\\"\""),
+    );
+    h.check(
+        "bdd import: a question-less value_gte rule is spelled with the action's question",
+        text.contains("when \"verdict\" is at least 1.5"),
+    );
+    h.check(
+        "bdd import: a start node is emitted first",
+        text.find("Scenario: classify").unwrap_or(usize::MAX)
+            < text.find("Scenario: done").unwrap_or(usize::MAX),
+    );
+
+    let back = parse(&text, "<import>").expect("the imported feature parses");
+    let rebuilt = compile_decision(&back, &json!({})).expect("the imported feature compiles");
+    h.check(
+        "bdd import: the imported feature compiles back to the same graph",
+        same_graph(&spec, &rebuilt),
+    );
+
+    // The IO half on a real checked-in spec: its capability config holds a real
+    // shell pipe, so this pins the table-cell escape against real data.
+    let real = repo_root()
+        .join("dsl")
+        .join("capabilities")
+        .join("data_pipeline_local.json");
+    match std::fs::read_to_string(&real) {
+        Ok(t) => {
+            let rs: Value = serde_json::from_str(&t).unwrap();
+            match import_spec(&rs) {
+                Ok(ft) => match parse(&ft, "<import>") {
+                    Ok(f) => {
+                        let rb = compile_decision(&f, &json!({})).unwrap();
+                        h.check(
+                            "bdd import: a real spec (data_pipeline_local) recompiles identically",
+                            same_graph(&rs, &rb),
+                        );
+                    }
+                    Err(e) => h.check(&format!("bdd import: real feature parses ({e:#})"), false),
+                },
+                Err(e) => h.check(&format!("bdd import: real spec imports ({e:#})"), false),
+            }
+        }
+        Err(e) => h.check(&format!("bdd import: real spec is present ({e})"), false),
+    }
+
+    // Inexpressible specs are refused by name, never silently mis-imported.
+    let bad_kind = json!({"name":"x","start":"n","nodes":[{"name":"n","primary_q":"ok","questions":{},"edge":{"condition":{},"default":"STOP"},"action":{"kind":"teleport"}}]});
+    h.check(
+        "bdd import: an unknown action kind is an error, not a silent pass",
+        import_spec(&bad_kind).is_err(),
+    );
+    let bad_when = json!({"name":"x","start":"n","nodes":[{"name":"n","primary_q":"ok","questions":{},"edge":{"condition":{},"default":"STOP"},"action":{"kind":"threshold","question":"ok","rules":[{"when":{"telepathy":1},"label":"X"}]}}]});
+    h.check(
+        "bdd import: an unsupported threshold `when` is an error",
+        import_spec(&bad_when).is_err(),
+    );
+    let bad_start = json!({"name":"x","start":"missing","nodes":[{"name":"n","primary_q":"ok","questions":{},"edge":{"condition":{},"default":"STOP"}}]});
+    h.check(
+        "bdd import: a start node that does not exist is an error",
+        import_spec(&bad_start).is_err(),
+    );
+    let not_a_spec = json!(["not", "an", "object"]);
+    h.check(
+        "bdd import: a non-object is an error",
+        import_spec(&not_a_spec).is_err(),
+    );
+}
