@@ -4511,6 +4511,14 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     let mut contract_ok = 0usize;
     let mut nested = 0usize;
     let mut specs_driven: BTreeSet<String> = BTreeSet::new();
+    // Corpus-wide heuristic-path contract audit (P98): every answer the offline
+    // heuristic itself produced must be one its question accepts (or the DSL's
+    // fail-closed `none`) — the same silent-`default` bug class P96 hard-fails on
+    // the caller path, checked here on the heuristic path so a new
+    // out-of-contract heuristic (e.g. a `match_any` A/B guess on a 4-option
+    // choice) cannot route a graph through its `default` branch unnoticed.
+    let mut heur_answers_checked = 0usize;
+    let mut heur_out_of_contract: Vec<String> = Vec::new();
     for spec in &specs {
         let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
         let Some(smap) = states_obj.get(&stem).and_then(Value::as_object) else {
@@ -4569,6 +4577,47 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
                 Ok(o) => o,
                 Err(_) => continue,
             };
+            // (1b) The heuristic's own answers must be inside each question's
+            //      contract: a choice answer outside `criteria` silently takes the
+            //      edge's `default` branch (P96's bug class) — so catch it here,
+            //      corpus-wide, before it can route. `none` is the DSL's explicit
+            //      fail-closed answer and a dynamic question materialises its
+            //      options from the state (empty literal criteria), so both are
+            //      legitimate and skipped.
+            for (node_name, ans) in &heur {
+                let Some(qs) = nodes
+                    .and_then(|m| m.get(node_name))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for (qid, a, _p, _c) in ans {
+                    let Some(qc) = qs.iter().find(|x| x["id"].as_str() == Some(qid.as_str()))
+                    else {
+                        continue;
+                    };
+                    if qc["type"].as_str().unwrap_or("choice") != "choice" {
+                        continue;
+                    }
+                    let accepted: Vec<&str> = qc["answers"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(Value::as_str).collect())
+                        .unwrap_or_default();
+                    if accepted.is_empty() {
+                        continue;
+                    }
+                    let Some(chosen) = a.as_str() else { continue };
+                    if chosen == "none" {
+                        continue;
+                    }
+                    heur_answers_checked += 1;
+                    if !accepted.contains(&chosen) {
+                        heur_out_of_contract.push(format!(
+                            "{stem}:{label}:{node_name} heuristic answered {qid}={chosen:?}, not in {accepted:?}"
+                        ));
+                    }
+                }
+            }
             // (2)+(3) the contract must be exactly what the node asked, and the
             // script is rebuilt from it alone.
             let mut script: Vec<Value> = Vec::new();
@@ -4675,6 +4724,18 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
         &format!("answers-from-list: only the {nested} nested sub-workflow spec(s) are skipped"),
         nested <= 2,
     );
+    h.check(
+        &format!(
+            "answers-from-list: every offline heuristic answer is inside its question's contract ({heur_answers_checked} choice answers checked; {} out-of-contract)",
+            heur_out_of_contract.len()
+        ),
+        heur_out_of_contract.is_empty() && heur_answers_checked >= 1500,
+    );
+    if !heur_out_of_contract.is_empty() {
+        for v in heur_out_of_contract.iter().take(10) {
+            h.check(&format!("answers-from-list: heuristic out-of-contract: {v}"), false);
+        }
+    }
     // The registered set minus what we drove is the audited skip set: the nested
     // sub-workflow spec, and any state whose offline walk needs an unreachable
     // local endpoint (it runs in the integration job). It must stay tiny + named.
