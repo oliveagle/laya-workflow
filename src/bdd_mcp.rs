@@ -607,7 +607,8 @@ fn spec_rel_key(path: &std::path::Path) -> Option<String> {
 }
 
 /// The per-node question contract of a spec's node — the *same* shape `bdd_list`
-/// exposes at `nodes[].questions`: a list of `{id, type, answers, from_state}`.
+/// exposes at `nodes[].questions`: a list of
+/// `{id, type, answers, from_state, primary, satisfied_by}`.
 /// Empty list when the node is unknown. A step-wise caller gets the next node's
 /// *contract* (not the raw deduped `questions` map, which also carries prose and
 /// merges shared ids across nodes), so one `bdd_decide {answers: []}` reply is
@@ -629,7 +630,7 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed)."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state, primary, satisfied_by}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts (`primary` marks the node's `primary_q`, and its `satisfied_by` maps answer -> destination node) — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed)."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -641,7 +642,7 @@ impl McpTool for DecideTool {
                 "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
                 "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
                 "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."},
-                "answers": {"type": ["array", "object"], "description": "Drive the graph with your own answers instead of the offline heuristic. Two shapes: (a) an ARRAY of one {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} object per node the walk visits, consumed in visit order; or (b) an OBJECT keyed by node name, {\"<node>\": {<qid>: <answer>}}, whose entry for a node is reused on every visit to it — a per-node policy you state once instead of replaying the visit sequence (handy for self-loop / retry graphs). Answers are in the same shape laya-tch returns. Pass [] (or {}) to start a step-wise walk: the reply then names the node the walk is waiting on (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is that node's own questions, each with the answers it accepts (`{id,type,answers,from_state}`, the same shape `bdd_list` reports) — and you append one answer (array) or add one keyed entry (object) per reply until ok:true."}
+                "answers": {"type": ["array", "object"], "description": "Drive the graph with your own answers instead of the offline heuristic. Two shapes: (a) an ARRAY of one {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} object per node the walk visits, consumed in visit order; or (b) an OBJECT keyed by node name, {\"<node>\": {<qid>: <answer>}}, whose entry for a node is reused on every visit to it — a per-node policy you state once instead of replaying the visit sequence (handy for self-loop / retry graphs). Answers are in the same shape laya-tch returns. Pass [] (or {}) to start a step-wise walk: the reply then names the node the walk is waiting on (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is that node's own questions, each with the answers it accepts (`{id,type,answers,from_state,primary,satisfied_by}`, the same shape `bdd_list` reports) — and you append one answer (array) or add one keyed entry (object) per reply until ok:true."}
             }
         })
     }
@@ -1000,7 +1001,19 @@ fn node_routes(node: &Value) -> (Value, Value) {
 /// by several nodes with different criteria, and a dynamic question
 /// (`criteria.from_state`) materialises its options from the state at decide
 /// time, so only the per-node list is the contract for feeding one step.
+///
+/// P105: each entry also carries `primary` (true for the one question the node's
+/// routing is keyed by — `node.primary_q` — `false` otherwise). The primary entry
+/// additionally carries `satisfied_by`, a per-answer map to the node that answer
+/// routes to (`edge.condition`, else `edge.default`), so a step-wise caller can
+/// plan the next hop from this one reply instead of cross-referencing the
+/// node-level `routes` / `default`. A non-primary entry omits `satisfied_by`
+/// (its answers do not key the edge). The keys are the existing `answers` set
+/// plus any `edge.condition` key (`none` on a dynamic question), which is empty
+/// when the node exposes no edge destination to enumerate.
 fn node_question_contract(node: &Value) -> Value {
+    let primary_q = node.get("primary_q").and_then(Value::as_str);
+    let (condition, default) = node_routes(node);
     let mut out: Vec<Value> = Vec::new();
     if let Some(qs) = node.get("questions").and_then(Value::as_object) {
         for (qid, q) in qs {
@@ -1021,12 +1034,35 @@ fn node_question_contract(node: &Value) -> Value {
             } else {
                 Vec::new()
             };
-            out.push(json!({
-                "id": qid,
-                "type": qtype,
-                "answers": answers,
-                "from_state": from_state,
-            }));
+            let primary = primary_q == Some(qid.as_str());
+            let mut entry = serde_json::Map::new();
+            entry.insert("id".into(), json!(qid));
+            entry.insert("type".into(), json!(qtype));
+            entry.insert("answers".into(), json!(answers.clone()));
+            entry.insert("from_state".into(), from_state);
+            entry.insert("primary".into(), json!(primary));
+            if primary {
+                // Tie each answer to the node it routes to (the node's
+                // `edge.condition`, else `edge.default`), so one reply is enough
+                // to plan the next hop. Keys = the accepted answers plus any
+                // `edge.condition` key (`none` on a dynamic question).
+                let mut keys: Vec<String> = answers.clone();
+                if let Some(c) = condition.as_object() {
+                    for k in c.keys() {
+                        if !keys.iter().any(|x| x == k) {
+                            keys.push(k.clone());
+                        }
+                    }
+                }
+                keys.sort();
+                let mut sb = serde_json::Map::new();
+                for k in keys {
+                    let dest = condition.get(&k).cloned().unwrap_or_else(|| default.clone());
+                    sb.insert(k, dest);
+                }
+                entry.insert("satisfied_by".into(), Value::Object(sb));
+            }
+            out.push(Value::Object(entry));
         }
     }
     out.sort_by(|a, b| a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or("")));
@@ -1235,7 +1271,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The unfiltered inventory is hundreds of KB: pass `query` (a keyword filter - every whitespace-separated term must appear, case-insensitive) to find a graph by intent, and `summary` to get the discovery fields only; `total` always reports the unfiltered corpus size. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null), primary (true for the node's `primary_q` - the question its routing is keyed by), satisfied_by (on the primary question only: answer -> the node it routes to, `edge.condition` else `edge.default`, so the next hop is readable from this one reply)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The unfiltered inventory is hundreds of KB: pass `query` (a keyword filter - every whitespace-separated term must appear, case-insensitive) to find a graph by intent, and `summary` to get the discovery fields only; `total` always reports the unfiltered corpus size. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({

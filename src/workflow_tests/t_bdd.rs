@@ -3267,6 +3267,70 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
         "bdd_list: outputs keep the agent_command_gate ladder order",
         labels(&acg["workflows"][0]) == vec!["BLOCK", "CONFIRM", "ALLOW"],
     );
+    // P105: a node's question contract marks the question its routing is keyed by
+    // (`primary_q`) and, on that question, maps each answer to the node it routes
+    // to (`edge.condition`, else `edge.default`) — so a step-wise caller plans the
+    // next hop from one reply instead of cross-referencing the node's `routes`.
+    let acg_node = &acg["workflows"][0]["nodes"][0];
+    let aq = acg_node["questions"].as_array().unwrap();
+    h.check(
+        "bdd_list: exactly one question in a node is primary",
+        aq.iter().filter(|q| q["primary"] == json!(true)).count() == 1,
+    );
+    let prim = aq.iter().find(|q| q["primary"] == json!(true)).unwrap();
+    h.eq("bdd_list: the primary question is the node's primary_q", prim["id"].clone(), json!("is_destructive"));
+    h.check(
+        "bdd_list: the other questions are marked non-primary",
+        aq.iter().all(|q| (q["id"] == "is_destructive") == (q["primary"] == json!(true))),
+    );
+    h.check(
+        "bdd_list: a non-primary question carries no satisfied_by",
+        aq.iter()
+            .filter(|q| q["id"] != "is_destructive")
+            .all(|q| !q.as_object().unwrap().contains_key("satisfied_by")),
+    );
+    // agent_command_gate's primary question has an empty `edge.condition`, so every
+    // answer routes to the node's `default` (STOP).
+    h.check(
+        "bdd_list: satisfied_by routes each answer through edge.condition else default",
+        prim["satisfied_by"]["A"] == json!("STOP") && prim["satisfied_by"]["B"] == json!("STOP"),
+    );
+    // A routing node: `edge.condition` splits the primary answers across the graph.
+    let str_wf = t.call(&json!({"name": "support_ticket_router"})).unwrap();
+    let cq = str_wf["workflows"][0]["nodes"][0]["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|q| q["id"] == "category")
+        .cloned()
+        .unwrap();
+    h.check(
+        "bdd_list: satisfied_by reads edge.condition per answer, else the default",
+        cq["primary"] == json!(true)
+            && cq["satisfied_by"]["technical"] == json!("severity_probe")
+            && cq["satisfied_by"]["billing"] == json!("severity_probe")
+            && cq["satisfied_by"]["sales"] == json!("STOP")
+            && cq["satisfied_by"]["other"] == json!("STOP"),
+    );
+    // A dynamic (`criteria.from_state`) primary question has no literal answers, but
+    // its `none` key still routes — satisfied_by carries that edge, so the fail-closed
+    // branch is legible from the contract.
+    let ss = t.call(&json!({"name": "span_selection"})).unwrap();
+    let sq = ss["workflows"][0]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["name"] == "select")
+        .and_then(|n| n["questions"].as_array())
+        .and_then(|qs| qs.iter().find(|q| q["id"] == "billing_contact"))
+        .cloned()
+        .unwrap();
+    h.check(
+        "bdd_list: a dynamic primary question maps its edge.condition key (none) to the destination",
+        sq["primary"] == json!(true)
+            && sq["answers"].as_array().unwrap().is_empty()
+            && sq["satisfied_by"]["none"] == json!("not_found"),
+    );
     // A single-node graph's top-level outputs equal its only node's outputs.
     let et = t.call(&json!({"name": "email_triage"})).unwrap();
     let etw = &et["workflows"][0];
@@ -4363,6 +4427,22 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
         event_answers.len() == 6
             && event_answers.contains(&"login")
             && event_answers.contains(&"halt"),
+    );
+    // P105: the reply's `ask` contract marks the primary question and maps its
+    // answers to the nodes they route to — the whole next-hop plan, in one reply.
+    let prim = ask.iter().find(|q| q["primary"] == json!(true)).cloned().unwrap_or(Value::Null);
+    h.eq("answers: [] ask marks the primary question (primary_q)", prim["id"].clone(), json!("event"));
+    h.check(
+        "answers: [] ask routes the primary answers to their destinations",
+        prim["satisfied_by"]["login"] == json!("authenticated")
+            && prim["satisfied_by"]["halt"] == json!("STOP"),
+    );
+    h.check(
+        "answers: [] ask leaves the non-primary question un-routed",
+        ask.iter()
+            .find(|q| q["id"] == "risk")
+            .map(|q| q["primary"] == json!(false) && !q.as_object().unwrap().contains_key("satisfied_by"))
+            .unwrap_or(false),
     );
     // `ask` and `bdd_list`'s per-node `questions` are the same contract: a caller
     // can read the next step from either.
