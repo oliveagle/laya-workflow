@@ -725,6 +725,38 @@ impl McpTool for DecideTool {
 /// right workflow and know what to feed `bdd_decide`. This is the discovery
 /// half of "use a BDD graph as a decision core": you cannot call what you
 /// cannot find.
+/// The decision labels a node's action can emit, in first-appearance order: a
+/// `threshold` ladder's rule labels, or a `gate` node's BLOCK / ALLOW / CONFIRM
+/// verbs. Other action kinds (`copy_keys`/`rubric`/`combine`/`call`/`none`) do not
+/// produce a top-level `label`, so they contribute nothing here. Deduped, order
+/// preserved (a ladder's order is priority, so it is more meaningful than sort).
+fn action_outputs(action: &Value) -> Vec<String> {
+    fn push(v: &mut Vec<String>, s: &str) {
+        if !v.iter().any(|x| x == s) {
+            v.push(s.to_string());
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    match action.get("kind").and_then(Value::as_str) {
+        Some("threshold") => {
+            if let Some(rules) = action.get("rules").and_then(Value::as_array) {
+                for r in rules {
+                    if let Some(l) = r.get("label").and_then(Value::as_str) {
+                        push(&mut out, l);
+                    }
+                }
+            }
+        }
+        Some("gate") => {
+            push(&mut out, "BLOCK");
+            push(&mut out, "ALLOW");
+            push(&mut out, "CONFIRM");
+        }
+        _ => {}
+    }
+    out
+}
+
 struct ListTool;
 
 impl McpTool for ListTool {
@@ -732,7 +764,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, nodes, questions, inputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`. Filter with cat and/or name. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Filter with cat and/or name. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -781,15 +813,28 @@ impl McpTool for ListTool {
                     if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
                         continue;
                     }
+                    // The closed output vocabulary of the graph: every label any
+                    // node can emit (for a single-node graph this is exactly its
+                    // output set; a multi-node graph's terminal label is the last
+                    // node's, visible in the `trace`). Deduped, first-appearance
+                    // order so a node keeps its ladder's priority order.
+                    let mut outputs: Vec<String> = Vec::new();
                     let nodes: Vec<Value> = spec["nodes"]
                         .as_array()
                         .map(|ns| {
                             ns.iter()
                                 .filter_map(|n| {
                                     let nm = n.get("name")?.as_str()?;
+                                    let node_outs = action_outputs(n.get("action").unwrap_or(&Value::Null));
+                                    for o in &node_outs {
+                                        if !outputs.iter().any(|x| x == o) {
+                                            outputs.push(o.clone());
+                                        }
+                                    }
                                     Some(json!({
                                         "name": nm,
                                         "primary_q": n.get("primary_q").cloned().unwrap_or(Value::Null),
+                                        "outputs": node_outs,
                                     }))
                                 })
                                 .collect()
@@ -845,6 +890,7 @@ impl McpTool for ListTool {
                         "nodes": nodes,
                         "questions": questions,
                         "inputs": inputs.into_iter().collect::<Vec<_>>(),
+                        "outputs": outputs,
                     }));
                 }
             }

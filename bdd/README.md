@@ -456,7 +456,9 @@ extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
 emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
 --out dsl/<cat>`) → audit completeness with `bdd_catalog` → lift any legacy JSON
 workflow back into BDD with `bdd_import` → discover the callable corpus with
-`bdd_list` and run one against a state with `bdd_decide` → run `bdd round-trip` +
+`bdd_list` (each graph also reports its closed set of decision `outputs` — a
+ladder's labels or a gate's BLOCK/ALLOW/CONFIRM — so a caller knows every label
+it can get back before running) and run one against a state with `bdd_decide` → run `bdd round-trip` +
 `check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →
 audit → lift a legacy spec → list the corpus → run a decision — runs over MCP
 without shelling out.

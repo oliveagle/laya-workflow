@@ -2955,6 +2955,80 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
         "bdd_list: questions include event + risk",
         qids.contains(&"event".to_string()) && qids.contains(&"risk".to_string()),
     );
+    // `outputs` is the closed decision vocabulary: a threshold ladder's labels or
+    // a gate node's verbs, per node and unioned at the top. For a single-node graph
+    // it is the exact output set.
+    let labels = |j: &Value| -> Vec<String> {
+        j["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    let apg = t.call(&json!({"name": "agent_permission_gate"})).unwrap();
+    h.check(
+        "bdd_list: outputs carry the agent_permission_gate label set",
+        labels(&apg["workflows"][0]) == vec!["BLOCK", "ESCALATE", "EXECUTE"],
+    );
+    let acg = t.call(&json!({"name": "agent_command_gate"})).unwrap();
+    h.check(
+        "bdd_list: outputs keep the agent_command_gate ladder order",
+        labels(&acg["workflows"][0]) == vec!["BLOCK", "CONFIRM", "ALLOW"],
+    );
+    // A single-node graph's top-level outputs equal its only node's outputs.
+    let et = t.call(&json!({"name": "email_triage"})).unwrap();
+    let etw = &et["workflows"][0];
+    let et_top = labels(etw);
+    let et_node = labels(&etw["nodes"][0]);
+    h.check(
+        "bdd_list: a single-node graph's outputs equal its node's outputs",
+        et_top == et_node
+            && et_top
+                == vec![
+                    "QUARANTINE",
+                    "TRASH",
+                    "PAGER_BILLING",
+                    "PAGER_ONCALL",
+                    "REPLY_TODAY",
+                    "REPLY_QUEUE",
+                    "FYI_ONLY",
+                ],
+    );
+    // A gate node contributes its three verbs, not a threshold ladder.
+    let ttm = t.call(&json!({"name": "triage_then_moderate"})).unwrap();
+    let ttmw = &ttm["workflows"][0];
+    let gate_node = ttmw["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["name"] == "safety_gate")
+        .unwrap();
+    h.check(
+        "bdd_list: a gate node's outputs are BLOCK/ALLOW/CONFIRM",
+        labels(gate_node) == vec!["BLOCK", "ALLOW", "CONFIRM"],
+    );
+    // Structural invariant across the whole corpus: the top-level `outputs` is
+    // exactly the deduped union of every node's outputs.
+    let mut union_ok = true;
+    for w in all["workflows"].as_array().unwrap() {
+        let mut uni: Vec<String> = Vec::new();
+        for n in w["nodes"].as_array().unwrap() {
+            for o in labels(n) {
+                if !uni.contains(&o) {
+                    uni.push(o);
+                }
+            }
+        }
+        if labels(w) != uni {
+            union_ok = false;
+        }
+    }
+    h.check(
+        "bdd_list: top-level outputs == deduped union of node outputs (whole corpus)",
+        union_ok,
+    );
+
     // bdd_decide resolves the same port name through the corpus.
     let d = bdd_tool("bdd_decide")
         .call(&json!({"name": "agent_permission_gate", "state": {"ev_unauthenticated": "halt", "ev_risk": "high"}}))

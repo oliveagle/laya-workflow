@@ -285,7 +285,8 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **960
 7. 反向搬运：**MCP `bdd_import`**（已有 JSON workflow spec → `@decision` feature，附 `graph_matches` 往返证明；批量走 CLI
    `laya-workflow bdd import --dir <DIR> --into <cat>`）—— 让「把已知 workflow 转成 BDD」也能在 MCP 里一把完成。
 8. 运行决策：先 **MCP `bdd_list`** 发现可用 workflow（返回每个 `@decision` 图的 `cat`/`name`/`description`/`start`/`nodes`/
-   每问 `questions`（id+type+`answer_field`）/ `inputs`（离线调用要喂的 state 字段）；再用 **MCP `bdd_decide`**
+   每问 `questions`（id+type+`answer_field`）/ `inputs`（离线调用要喂的 state 字段）/ `outputs`（该图能返回的全部
+   决策 label 闭集：阶梯的 label 或 gate 的 BLOCK/ALLOW/CONFIRM，单节点图即全量、多节点图取 trace 末节点）；再用 **MCP `bdd_decide`**
    （`name` 或 `feature_text`/`feature_path`/`spec_path` + `state` → `label` + 全 `trace` + `result`，与 `dsl smoke`
    同一离线确定性引擎）跑它 —— 让 BDD 图成为 agent **可发现、可调用的决策核心**，而不只是可写的产物。
 9. 全量门禁：`laya-workflow bdd round-trip`（160/160 复现）+ `scripts/bdd/check.sh`。
