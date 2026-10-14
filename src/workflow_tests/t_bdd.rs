@@ -3167,6 +3167,51 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
     );
     let one = t.call(&json!({"name": "agent_permission_gate"})).unwrap();
     h.eq("bdd_list: name filter is exact", one["count"].as_u64().unwrap(), 1);
+    // `query` is the discovery filter: the unfiltered inventory is hundreds of
+    // KB, so an agent finds a graph by keyword rather than reading it whole.
+    h.eq("bdd_list: total is the unfiltered corpus size", all["total"].clone(), json!(total));
+    let q_one = t.call(&json!({"query": "AGENT_PERMISSION_GATE"})).unwrap();
+    h.check(
+        "bdd_list: query is case-insensitive and matches a name",
+        q_one["count"].as_u64().unwrap() >= 1
+            && q_one["workflows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|w| w["name"] == "agent_permission_gate"),
+    );
+    h.eq("bdd_list: query leaves total at the corpus size", q_one["total"].clone(), json!(total));
+    let q_and = t.call(&json!({"query": "agent_permission_gate zzznosuchterm"})).unwrap();
+    h.eq(
+        "bdd_list: query terms are ANDed (an unmatched term empties the set)",
+        q_and["count"].as_u64().unwrap(),
+        0,
+    );
+    let q_kw = t.call(&json!({"query": "memory store"})).unwrap();
+    let q_kw_n = q_kw["count"].as_u64().unwrap();
+    h.check(
+        "bdd_list: a multi-term query narrows the corpus",
+        q_kw_n >= 1 && q_kw_n < total,
+    );
+    // `summary` is the cheap discovery projection: no per-node `nodes` and no
+    // workflow-level `questions`, but the fields a chooser needs stay.
+    let summ = t.call(&json!({"name": "agent_permission_gate", "summary": true})).unwrap();
+    let sw = &summ["workflows"][0];
+    h.check(
+        "bdd_list: summary drops the heavy nodes + questions",
+        sw.get("nodes").is_none() && sw.get("questions").is_none(),
+    );
+    h.check(
+        "bdd_list: summary keeps the discovery fields",
+        sw.get("outputs").is_some()
+            && sw.get("inputs").is_some()
+            && sw.get("node_count").is_some()
+            && sw.get("offline").is_some(),
+    );
+    h.check(
+        "bdd_list: summary is smaller than the full graph",
+        serde_json::to_string(sw).unwrap().len() < serde_json::to_string(&one["workflows"][0]).unwrap().len(),
+    );
     let wf = &one["workflows"][0];
     h.eq("bdd_list: cat", wf["cat"].clone(), json!("guards"));
     h.eq("bdd_list: start", wf["start"].clone(), json!("unauthenticated"));

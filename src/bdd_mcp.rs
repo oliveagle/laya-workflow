@@ -1226,20 +1226,24 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The unfiltered inventory is hundreds of KB: pass `query` (a keyword filter - every whitespace-separated term must appear, case-insensitive) to find a graph by intent, and `summary` to get the discovery fields only; `total` always reports the unfiltered corpus size. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
                 "cat": {"type": "string", "description": "Only list workflows in this category (e.g. guards, ole_eval, routing)."},
-                "name": {"type": "string", "description": "Only list the workflow whose port name matches this exactly."}
+                "name": {"type": "string", "description": "Only list the workflow whose port name matches this exactly."},
+                "query": {"type": "string", "description": "Keyword discovery filter: keep only graphs whose searchable text (name, cat, description, inputs, outputs, node names and question ids) contains EVERY whitespace-separated term, case-insensitive. The unfiltered corpus is hundreds of KB, so a query is the cheap way to find the right workflow by intent (e.g. \"memory store\" or \"ticket route\")."},
+                "summary": {"type": "boolean", "description": "When true, drop each graph's heavy per-node `nodes` and workflow-level `questions`, keeping the discovery fields (cat, name, description, start, node_count, inputs, outputs, offline, verified_by, why_live, outputs_complete). Read the full contract for one graph with bdd_list {name} or bdd_decide. Default false (full graph)."}
             }
         })
     }
     fn call(&self, args: &Value) -> Result<Value> {
         let cat_filter = args.get("cat").and_then(Value::as_str);
         let name_filter = args.get("name").and_then(Value::as_str);
+        let query = args.get("query").and_then(Value::as_str);
+        let summary = args.get("summary").and_then(Value::as_bool).unwrap_or(false);
         let dsl = bdd::repo_root().join("dsl");
         // The specs the corpus cannot behaviour-verify offline (chrome/network/
         // manual), from the same ledger `dsl smoke` counts. An agent that only
@@ -1352,17 +1356,61 @@ impl McpTool for ListTool {
                 "outputs_complete": !has_opaque_outputs(&spec),
             }));
         }
+        // `query` is the discovery filter: the unfiltered inventory runs to
+        // hundreds of KB (162 graphs), too big to read whole, so an agent finds a
+        // graph by keyword instead. A term matches anywhere in the graph's
+        // serialised text; a graph survives only if *every* term matches (AND), so
+        // more words narrow rather than widen.
+        let total = workflows.len();
+        if let Some(q) = query {
+            let terms: Vec<String> = q
+                .split_whitespace()
+                .map(|t| t.to_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if !terms.is_empty() {
+                workflows.retain(|w| {
+                    let hay = serde_json::to_string(w).unwrap_or_default().to_lowercase();
+                    terms.iter().all(|t| hay.contains(t.as_str()))
+                });
+            }
+        }
+        // `summary` drops the heavy per-graph detail (`nodes` with each node's
+        // `questions` contract, and the workflow-level `questions` union) - the
+        // fields a chooser does not need until it picks a graph, when it asks again
+        // with `name`. Opt-in, so the default stays the full inventory.
+        if summary {
+            workflows = workflows.iter().map(summary_projection).collect();
+        }
         let offline_count = workflows
             .iter()
             .filter(|w| w.get("offline").and_then(Value::as_bool).unwrap_or(false))
             .count();
         Ok(json!({
             "count": workflows.len(),
+            "total": total,
             "offline_count": offline_count,
             "live_count": workflows.len() - offline_count,
             "workflows": workflows,
         }))
     }
+}
+
+/// The discovery projection of a listed workflow: everything a caller needs to
+/// *choose* a graph, without the per-node `nodes` / workflow-level `questions`
+/// that make the full inventory expensive. `bdd_list {name}` returns the full
+/// graph for whichever one is chosen.
+fn summary_projection(w: &Value) -> Value {
+    let mut o = serde_json::Map::new();
+    for k in [
+        "cat", "name", "spec_name", "description", "start", "node_count",
+        "inputs", "outputs", "offline", "verified_by", "why_live", "outputs_complete",
+    ] {
+        if let Some(v) = w.get(k) {
+            o.insert(k.to_string(), v.clone());
+        }
+    }
+    Value::Object(o)
 }
 
 

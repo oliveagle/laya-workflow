@@ -505,7 +505,12 @@ workflow back into BDD with `bdd_import` → discover the callable corpus with
 labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, a rubric node's
 `status` — plus `routes`/`default`, the answer -> destination map, so a caller
 sees both the decision vocabulary and the topology that decides which of it a
-run actually returns, the same projection `bdd_decide` reports as its `label`),
+run actually returns, the same projection `bdd_decide` reports as its `label`;
+pass `query` to find a graph by keyword instead — the full inventory is
+hundreds of KB, so a keyword search is how an agent discovers one by intent —
+and `summary` to get the discovery fields alone, then re-ask with `name` for
+the chosen graph's full contract; `total` always reports the unfiltered corpus
+size),
 and `bdd_decide`
 echoes that contract back —
 the declared `inputs` (every heuristic source field, every `${state.*}` a node
