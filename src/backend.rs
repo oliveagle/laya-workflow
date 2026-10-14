@@ -155,81 +155,111 @@ impl Decide for ScriptedBackend {
     }
 }
 
-/// A caller-supplied answer script: one `Verdict` per node the walk visits,
-/// in order. This is how an agent (or any non-heuristic caller) drives a graph —
-/// the BDD graph stays the deterministic decision core, and the caller supplies
-/// the perceptions the offline `HeuristicBackend` would otherwise invent.
+/// A caller-supplied answer script. This is how an agent (or any non-heuristic
+/// caller) drives a graph — the BDD graph stays the deterministic decision core,
+/// and the caller supplies the perceptions the offline `HeuristicBackend` would
+/// otherwise invent.
 ///
-/// Each script entry is a `{<qid>: <answer>}` object in the same shape
-/// `laya-tch` returns (see [`verdict_from_response`]): a `choice` needs
-/// `choice` + `probabilities` + `confidence`, a `score` a `score`, a `noul` a
-/// `noul` probability. The backend answers every question the current node asks
-/// from the current entry, and refuses — naming the question and the entry —
-/// when an entry is missing a question it is asked, or when the walk needs more
-/// steps than the script provides (`exhausted()` is then true). That lets a
-/// caller drive the graph one question at a time instead of guessing the whole
-/// walk up front.
+/// Two shapes are accepted (see [`AnswersBackend::from_json`]):
+///
+///   * an **array** of `{<qid>: <answer>}` objects, one per node the walk
+///     visits, in visit order; or
+///   * an **object** `{"<node>": {<qid>: <answer>}}` keyed by node name, whose
+///     entry is reused on every visit to that node.
+///
+/// Each entry is an object in the same shape `laya-tch` returns (see
+/// [`verdict_from_response`]): a `choice` needs `choice` + `probabilities` +
+/// `confidence`, a `score` a `score`, a `noul` a `noul` probability. The backend
+/// answers every question the current node asks from that node's entry, and
+/// refuses — naming the question and the entry — when an entry is missing a
+/// question the node asks, when a choice answer is one the question does not
+/// accept, or when the walk needs an answer the script did not supply
+/// (`exhausted()` is then true). That lets a caller drive the graph one question
+/// at a time instead of guessing the whole walk up front.
 pub struct AnswersBackend {
+    /// Visit-order mode: one entry per node the walk visits, consumed in order.
     script: Vec<Verdict>,
+    /// Node-keyed mode: one entry per node name, reused on every visit to that
+    /// node. Populated (and `keyed` set) when `answers` is an object.
+    by_node: std::collections::HashMap<String, Verdict>,
+    keyed: bool,
     cursor: std::cell::Cell<usize>,
     exhausted: std::cell::Cell<bool>,
 }
 
 impl AnswersBackend {
-    /// Parse the `answers` argument: an array of `{<qid>: <answer>}` objects, one
-    /// per node visited. An empty array is allowed — the first call then reports
-    /// the start node's question instead of running a step.
+    /// Parse the `answers` argument. An array is visit-order mode (an empty array
+    /// starts a step-wise walk); an object is node-keyed mode (an empty object
+    /// starts a step-wise walk keyed by node).
     pub fn from_json(answers: &Value) -> Result<Self> {
-        let arr = answers.as_array().ok_or_else(|| {
-            anyhow!(
-                "answers must be an array of per-node answer objects (one per node the walk visits; [] starts a step-wise walk)"
-            )
-        })?;
-        let mut script = Vec::with_capacity(arr.len());
-        for (i, entry) in arr.iter().enumerate() {
-            let wrapped = serde_json::json!({ "answers": entry });
-            let v = verdict_from_response(&wrapped).map_err(|e| anyhow!("answers[{i}]: {e:#}"))?;
-            if v.answers.is_empty() {
-                return Err(anyhow!(
-                    "answers[{i}] is empty — each entry must answer the question(s) its node asks"
-                ));
+        let (script, by_node, keyed) = if let Some(arr) = answers.as_array() {
+            let mut script = Vec::with_capacity(arr.len());
+            for (i, entry) in arr.iter().enumerate() {
+                let wrapped = serde_json::json!({ "answers": entry });
+                let v = verdict_from_response(&wrapped)
+                    .map_err(|e| anyhow!("answers[{i}]: {e:#}"))?;
+                if v.answers.is_empty() {
+                    return Err(anyhow!(
+                        "answers[{i}] is empty — each entry must answer the question(s) its node asks"
+                    ));
+                }
+                script.push(v);
             }
-            script.push(v);
-        }
+            (script, std::collections::HashMap::new(), false)
+        } else if let Some(obj) = answers.as_object() {
+            let mut by_node = std::collections::HashMap::new();
+            for (node, entry) in obj {
+                let wrapped = serde_json::json!({ "answers": entry });
+                let v = verdict_from_response(&wrapped)
+                    .map_err(|e| anyhow!("answers[{node}]: {e:#}"))?;
+                if v.answers.is_empty() {
+                    return Err(anyhow!(
+                        "answers[{node}] is empty — each node entry must answer the question(s) that node asks"
+                    ));
+                }
+                by_node.insert(node.clone(), v);
+            }
+            (Vec::new(), by_node, true)
+        } else {
+            return Err(anyhow!(
+                "answers must be an array of per-node answer objects (one per node the walk visits; [] starts a step-wise walk) or an object keyed by node name ({{<node>: {{<qid>: <answer>}}}})"
+            ));
+        };
         Ok(Self {
             script,
+            by_node,
+            keyed,
             cursor: std::cell::Cell::new(0),
             exhausted: std::cell::Cell::new(false),
         })
     }
 
-    /// How many answers the walk has consumed so far.
+    /// How many answer entries the caller supplied (the walk's consumed count in
+    /// visit-order mode; the number of keyed nodes otherwise).
     pub fn calls(&self) -> usize {
-        self.cursor.get()
+        if self.keyed {
+            self.by_node.len()
+        } else {
+            self.cursor.get()
+        }
     }
 
-    /// True once the walk needed more answers than the script supplied.
+    /// True once the walk needed an answer the `answers` argument did not supply —
+    /// a visit past the array, or a node with no keyed entry.
     pub fn exhausted(&self) -> bool {
         self.exhausted.get()
     }
-}
 
-impl Decide for AnswersBackend {
-    fn decide(&self, _state: &Value, questions: &Value) -> Result<Verdict> {
-        let i = self.cursor.get();
+    /// The shared per-entry checks: every question the node asks must be answered,
+    /// and every choice answer must be one the question accepts (the engine would
+    /// otherwise silently take the edge's `default` branch). Returns the entry on
+    /// success; `label` names the entry for the error text (`answers[i]` /
+    /// `answers[node]`).
+    fn accept(&self, label: &str, v: &Verdict, questions: &Value) -> Result<Verdict> {
         let asked: Vec<String> = questions
             .as_object()
             .map(|o| o.keys().cloned().collect())
             .unwrap_or_default();
-        let Some(v) = self.script.get(i) else {
-            self.exhausted.set(true);
-            return Err(anyhow!(
-                "the walk needs another step but `answers` has only {} entr{}; the node asks question(s) {} — append one answer object for this step",
-                self.script.len(),
-                if self.script.len() == 1 { "y" } else { "ies" },
-                serde_json::to_string(&asked).unwrap_or_default(),
-            ));
-        };
         let missing: Vec<String> = asked
             .iter()
             .filter(|q| !v.answers.contains_key(*q))
@@ -237,7 +267,7 @@ impl Decide for AnswersBackend {
             .collect();
         if !missing.is_empty() {
             return Err(anyhow!(
-                "answers[{i}] does not answer question(s) {} asked by this node (it answers {})",
+                "{label} does not answer question(s) {} asked by this node (it answers {})",
                 serde_json::to_string(&missing).unwrap_or_default(),
                 serde_json::to_string(&v.answers.keys().collect::<Vec<_>>()).unwrap_or_default(),
             ));
@@ -268,12 +298,54 @@ impl Decide for AnswersBackend {
                 let mut allowed: Vec<&String> = criteria.keys().collect();
                 allowed.sort();
                 return Err(anyhow!(
-                    "answers[{i}] answers question {q:?} with {ans:?}, which is not one of its accepted answers {allowed:?} — the walk would otherwise silently take the default branch"
+                    "{label} answers question {q:?} with {ans:?}, which is not one of its accepted answers {allowed:?} — the walk would otherwise silently take the default branch"
                 ));
             }
         }
-        self.cursor.set(i + 1);
         Ok(v.clone())
+    }
+}
+
+impl Decide for AnswersBackend {
+    fn decide(&self, _state: &Value, questions: &Value) -> Result<Verdict> {
+        let i = self.cursor.get();
+        let asked: Vec<String> = questions
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default();
+        let Some(v) = self.script.get(i) else {
+            self.exhausted.set(true);
+            return Err(anyhow!(
+                "the walk needs another step but `answers` has only {} entr{}; the node asks question(s) {} — append one answer object for this step",
+                self.script.len(),
+                if self.script.len() == 1 { "y" } else { "ies" },
+                serde_json::to_string(&asked).unwrap_or_default(),
+            ));
+        };
+        let out = self.accept(&format!("answers[{i}]"), v, questions)?;
+        self.cursor.set(i + 1);
+        Ok(out)
+    }
+
+    fn decide_at(&self, node: &str, state: &Value, questions: &Value) -> Result<Verdict> {
+        if !self.keyed {
+            return self.decide(state, questions);
+        }
+        let Some(v) = self.by_node.get(node) else {
+            self.exhausted.set(true);
+            let mut keys: Vec<&String> = self.by_node.keys().collect();
+            keys.sort();
+            let asked: Vec<String> = questions
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+            return Err(anyhow!(
+                "the walk is at node {node:?}, which `answers` has no entry for (it is keyed by node; supplied {}); the node asks question(s) {} — add an entry for this node",
+                serde_json::to_string(&keys).unwrap_or_default(),
+                serde_json::to_string(&asked).unwrap_or_default(),
+            ));
+        };
+        self.accept(&format!("answers[{node}]"), v, questions)
     }
 }
 

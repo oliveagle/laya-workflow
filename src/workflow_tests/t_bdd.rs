@@ -4413,12 +4413,13 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
             .unwrap_or(false),
     );
 
-    // (4) A non-array `answers` is rejected before any walk.
+    // (4) `answers` that is neither an array nor an object is rejected before any
+    //     walk. (An object is now a valid *node-keyed* shape — see (7); an object
+    //     whose entries are not per-node answer objects is caught inside it.)
     h.check(
-        "answers: a non-array is rejected",
-        t.call(&json!({"spec_path": spec, "state": {},
-            "answers": {"event": {"type": "choice", "choice": "login", "confidence": 1.0}}}))
-            .is_err(),
+        "answers: a non-array, non-object is rejected",
+        t.call(&json!({"spec_path": spec, "state": {}, "answers": "login"})).is_err()
+            && t.call(&json!({"spec_path": spec, "state": {}, "answers": 42})).is_err(),
     );
 
     // (5) An entry that omits a question its node asks is rejected, naming both.
@@ -4444,6 +4445,87 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
         "answers: an out-of-contract choice is rejected, naming it",
         bad.contains("logn") && bad.contains("event") && bad.contains("default branch"),
     );
+
+    // (7) Node-keyed `answers`: the same walk stated as a per-node policy. The
+    //     object keyed by node name must reproduce the visit-order script exactly
+    //     — same nodes, same answers, same terminal label — so a caller can state
+    //     a policy once instead of replaying the visit sequence.
+    let keyed = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": {
+                "unauthenticated": step("login", "low"),
+                "authenticated":   step("authorize", "low"),
+                "authorized":      step("halt", "high")
+            }}))
+        .unwrap();
+    h.eq("answers[keyed]: a node-keyed policy returns ok", keyed["ok"].clone(), json!(true));
+    h.eq("answers[keyed]: reports backend=answers", keyed["backend"].clone(), json!("answers"));
+    let keyed_steps = keyed["trace"]["steps"].as_array().unwrap();
+    let keyed_nodes: Vec<&str> = keyed_steps.iter().filter_map(|s| s["node"].as_str()).collect();
+    let keyed_fed: Vec<&str> = keyed_steps.iter().filter_map(|s| s["answer"].as_str()).collect();
+    h.check(
+        "answers[keyed]: the keyed walk == the visit-order walk (nodes)",
+        keyed_nodes == vec!["unauthenticated", "authenticated", "authorized"],
+    );
+    h.check(
+        "answers[keyed]: the keyed walk == the visit-order walk (answers)",
+        keyed_fed == fed,
+    );
+    h.eq("answers[keyed]: the terminal label matches", keyed["label"].clone(), driven["label"].clone());
+
+    // (8) A keyed entry is reused on every visit to its node: a self-loop edge
+    //     (logout -> unauthenticated) is retried up to the node's max_retries,
+    //     each retry re-reading the same keyed entry rather than advancing a
+    //     cursor — the property that makes a keyed policy idempotent on loops.
+    let looped = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": {"unauthenticated": step("logout", "low")}}))
+        .unwrap();
+    let loop_steps = looped["trace"]["steps"].as_array().unwrap();
+    h.check(
+        "answers[keyed]: a keyed entry is reused across the visits of a self-loop",
+        loop_steps.len() >= 2
+            && loop_steps.iter().all(|s| s["node"] == "unauthenticated"),
+    );
+    h.eq(
+        "answers[keyed]: the self-loop exhausts the node's retries and escalates",
+        looped["trace"]["final_action"].clone(),
+        json!("escalate"),
+    );
+
+    // (9) A node the walk reaches with no keyed entry stops step-wise and names it.
+    let miss = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": {"authenticated": step("authorize", "low")}}))
+        .unwrap();
+    h.eq("answers[keyed]: a missing node stops (not ok)", miss["ok"].clone(), json!(false));
+    h.eq("answers[keyed]: the missing node is the start node", miss["at_node"].clone(), json!("unauthenticated"));
+    h.eq("answers[keyed]: a missing node sets needs_answer", miss["needs_answer"].clone(), json!(true));
+    h.check(
+        "answers[keyed]: the missing-node reply carries that node's contract",
+        miss["ask"].as_array().map(|a| a.iter().any(|q| q["id"] == "event")).unwrap_or(false),
+    );
+
+    // (10) A keyed entry with an out-of-contract answer still fails loudly (the
+    //      P96 check is shared by both shapes).
+    let keyed_bad = t
+        .call(&json!({"spec_path": spec, "state": {},
+            "answers": {"unauthenticated": step("logn", "low")}}))
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "answers[keyed]: an out-of-contract keyed answer is rejected, naming node + value",
+        keyed_bad.contains("logn")
+            && keyed_bad.contains("unauthenticated")
+            && keyed_bad.contains("default branch"),
+    );
+
+    // (11) `{}` starts a step-wise walk keyed by node — like `[]` for visit order.
+    let keyed_start = t
+        .call(&json!({"spec_path": spec, "state": {}, "answers": {}}))
+        .unwrap();
+    h.eq("answers[keyed]: {} starts a step-wise walk", keyed_start["needs_answer"].clone(), json!(true));
+    h.eq("answers[keyed]: {} waits at the start node", keyed_start["at_node"].clone(), json!("unauthenticated"));
 }
 
 

@@ -83,6 +83,14 @@ impl Verdict {
 /// by test mocks.
 pub trait Decide {
     fn decide(&self, state: &Value, questions: &Value) -> Result<Verdict>;
+
+    /// Like [`Decide::decide`], but told which node is asking. A node-keyed
+    /// backend uses the name to pick that node's answer no matter how many times
+    /// the walk has visited it; the default ignores the name and behaves exactly
+    /// like `decide`, so visit-order backends are unaffected.
+    fn decide_at(&self, _node: &str, state: &Value, questions: &Value) -> Result<Verdict> {
+        self.decide(state, questions)
+    }
 }
 
 // ─── edge / node ────────────────────────────────────────────────────
@@ -334,7 +342,7 @@ impl WorkflowNode {
     pub fn run<B: Decide + ?Sized>(&self, backend: &B, state: &Value) -> Result<NodeResult> {
         let t0 = Instant::now();
         let questions = expand_criteria_from_state(state, &self.questions)?;
-        let verdict = backend.decide(&self.backend_state(state), &questions)?;
+        let verdict = backend.decide_at(&self.name, &self.backend_state(state), &questions)?;
         let latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
         let primary = self.primary()?;
