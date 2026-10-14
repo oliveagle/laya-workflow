@@ -1114,7 +1114,7 @@ the child's **whole process group** (so Chrome dies too) and reaps it, and the
 child is run with `--progress` so the failure names the last node it reached:
 
 ```
-timed out after 180s (child killed); last node: [laya-progress]  wait_htmx  route  0.4s  → assert
+timed out after 180s (child pid 4321 and its tree killed); last node: [laya-progress]  wait_htmx  route  0.4s  → assert
 ```
 
 Measured on a spec whose only step is `sleep 300`, with `--timeout-secs 3`:

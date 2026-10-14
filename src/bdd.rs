@@ -6047,6 +6047,7 @@ fn run_scenario(spec_path: &Path, state: &Value, timeout_secs: u64) -> (i32, Str
     };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let child_pid = child.id();
     let out_h = std::thread::spawn(move || drain_pipe(stdout));
     let err_h = std::thread::spawn(move || drain_pipe(stderr));
 
@@ -6091,7 +6092,10 @@ fn run_scenario(spec_path: &Path, state: &Value, timeout_secs: u64) -> (i32, Str
             .unwrap_or_else(|| "<no node completed>".to_string());
         return (
             124,
-            format!("timed out after {timeout_secs}s (child killed); last node: {last}"),
+            format!(
+                "timed out after {timeout_secs}s (child pid {child_pid} and its tree killed); \
+                 last node: {last}"
+            ),
         );
     }
     let combined =
