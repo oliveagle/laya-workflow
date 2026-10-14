@@ -5463,6 +5463,30 @@ pub fn check_doc() -> Result<i32> {
         n
     };
 
+    // The coverage-ledger counts bdd/README.md quotes. They went stale once
+    // (P113 hand-fixed `127/162` -> `128/163` in this very file), so derive them
+    // from the same authority `dsl smoke` prints: the states table, the expect
+    // table, and the coverage-ledger audit. A number nobody recomputes rots on
+    // the next edit; a label that reads the live gate cannot.
+    let n_expect = std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v.as_object().map(|o| o.len()))
+        .unwrap_or(0);
+    let states_map: std::collections::BTreeMap<String, Value> =
+        std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .map(|o| o.into_iter().collect())
+            .unwrap_or_default();
+    let dsl_root = root.join("dsl");
+    let specs = crate::dsl_smoke::discover_specs(&dsl_root).unwrap_or_default();
+    let n_specs = specs.len();
+    let (n_offline, n_live, _) =
+        crate::dsl_smoke::coverage_ledger_audit(&specs, &dsl_root, &states_map)
+            .unwrap_or((0, 0, Vec::new()));
+
     // label regex -> owner source ("transpile" = count it here).
     let labels: Vec<(Regex, &str)> = vec![
         (Regex::new(r"Current state: \*\*(\d+) scenario").unwrap(), "transpile"),
@@ -5474,6 +5498,10 @@ pub fn check_doc() -> Result<i32> {
         (Regex::new(r"(\d+)/(\d+) argument errors refuse").unwrap(), "args"),
         (Regex::new(r"all (\d+) throw sites are accounted for").unwrap(), "args"),
         (Regex::new(r"\((\d+) pinned here, (\d+) declared elsewhere\)").unwrap(), "args"),
+        // The corpus counts, read live from the ledger authority above.
+        (Regex::new(r"(\d+) of (\d+) specs carry behavioural states").unwrap(), "ledger"),
+        (Regex::new(r"(\d+) labelled expectation sets").unwrap(), "ledger"),
+        (Regex::new(r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)").unwrap(), "ledger"),
     ];
     let quoted_blocks: Vec<(Regex, &str)> = vec![
         (
@@ -5504,10 +5532,23 @@ pub fn check_doc() -> Result<i32> {
         }
     }
 
+    let ledger_truth = |pat: &str| -> Vec<Vec<i64>> {
+        match pat {
+            r"(\d+) of (\d+) specs carry behavioural states" => {
+                vec![vec![n_offline as i64, n_specs as i64]]
+            }
+            r"(\d+) labelled expectation sets" => vec![vec![n_expect as i64]],
+            r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)" => {
+                vec![vec![n_offline as i64, n_live as i64, n_specs as i64]]
+            }
+            _ => vec![],
+        }
+    };
     let truth: Vec<Vec<Vec<i64>>> = labels
         .iter()
         .map(|(rx, src)| match *src {
             "transpile" => vec![vec![n_scenarios as i64]],
+            "ledger" => ledger_truth(rx.as_str()),
             "vocabulary" => rx
                 .captures_iter(&vocab_out)
                 .map(|c| (1..c.len()).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect())
