@@ -2306,6 +2306,100 @@ pub fn test_bdd_json_isolation(h: &mut Harness) {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The doc gate, driven as a pure function so the negatives are checked on every
+/// run instead of proven once by hand. `bdd doc-check` compares every labelled
+/// number in `bdd/README.md` **and** `bdd/AGENT.md` against the gate that owns
+/// it, and requires each quoted gate line to be exactly what the gate prints.
+/// AGENT.md is the guide an agent reads before it edits anything, and it had
+/// already drifted a document-length behind (expect 124/978 vs 125/980, states
+/// 127/987 vs 128/989, ledger 162 vs 163) with nobody noticing - that is what
+/// this section now catches.
+pub fn test_bdd_doc_check(h: &mut Harness) {
+    use laya_workflow::bdd::{doc_check_impl, repo_root};
+
+    let root = repo_root();
+    let readme = std::fs::read_to_string(root.join("bdd/README.md")).unwrap();
+    let agent = std::fs::read_to_string(root.join("bdd/AGENT.md")).unwrap();
+
+    // The AGENT.md half is green *in this process*: every one of its labels is
+    // owned by a checker that runs here (the two sample tables, the ledger, the
+    // round-trip line). The README's `bdd vocabulary:` / `bdd args probes:` labels
+    // are owned by gates that shell out to the real binary, so those are only
+    // checked by `check.sh` running `bdd doc-check` - not asserted here, where
+    // the process is this test runner and those sub-gates cannot run.
+    let (_checked, total, problems) = doc_check_impl(&readme, &agent).unwrap();
+    let agent_problems: Vec<&String> = problems
+        .iter()
+        .filter(|p| p.contains("bdd/AGENT.md"))
+        .collect();
+    h.check(
+        &format!(
+            "bdd doc-check: the checked-in AGENT.md is green ({total} labels, {} AGENT problem(s))",
+            agent_problems.len()
+        ),
+        agent_problems.is_empty(),
+    );
+    for p in &agent_problems {
+        h.check(&format!("bdd doc-check: live problem — {p}"), false);
+    }
+    h.check(
+        "bdd doc-check: it reads both documents (AGENT.md contributes labels)",
+        total > 14,
+    );
+
+    let problems_of = |r: &str, a: &str| -> Vec<String> {
+        doc_check_impl(r, a).map(|(_, _, p)| p).unwrap_or_default()
+    };
+    let any = |ps: &[String], needle: &str| ps.iter().any(|p| p.contains(needle));
+
+    // Negative 1: AGENT.md's expect-table count drifts from the table it quotes.
+    let drifted_agent = agent.replace(
+        "**125** 个 spec / **980** 个 state",
+        "**124** 个 spec / **978** 个 state",
+    );
+    let p = problems_of(&readme, &drifted_agent);
+    h.check(
+        "bdd doc-check: a stale AGENT.md table count is named with both numbers",
+        any(&p, "bdd/AGENT.md says [124, 978] where the truth is [125, 980]"),
+    );
+
+    // Negative 2: AGENT.md's ledger total drifts.
+    let p = problems_of(&readme, &agent.replace("= 163 specs", "= 162 specs"));
+    h.check(
+        "bdd doc-check: a stale AGENT.md ledger total is caught",
+        any(&p, "bdd/AGENT.md says [128, 35, 162] where the truth is [128, 35, 163]"),
+    );
+
+    // Negative 3: AGENT.md's gate lines drift.
+    let p = problems_of(&readme, &agent.replace("`dsl smoke 163/163`", "`dsl smoke 162/162`"));
+    h.check(
+        "bdd doc-check: a stale AGENT.md gate claim (dsl smoke) is caught",
+        any(&p, "bdd/AGENT.md says [162, 162] where the truth is [163, 163]"),
+    );
+
+    // Negative 4: the README's own count drifts - the file the gate was born for.
+    let p = problems_of(
+        &readme.replace("Current state: **25 scenarios", "Current state: **5 scenarios"),
+        &agent,
+    );
+    h.check(
+        "bdd doc-check: a stale README scenario count is still caught",
+        any(&p, "bdd/README.md says"),
+    );
+
+    // Negative 5: a labelled sentence is deleted, so its number goes unchecked.
+    let label_line = agent
+        .lines()
+        .find(|l| l.starts_with("**当前语料现状**"))
+        .unwrap()
+        .to_string();
+    let p = problems_of(&readme, &agent.replace(&label_line, "current state: see the gates"));
+    h.check(
+        "bdd doc-check: a dropped AGENT.md label is reported, not silently unchecked",
+        any(&p, "bdd/AGENT.md no longer says anything matching"),
+    );
+}
+
 /// A scenario that opens a page, asserts on it, then *releases* it must still
 /// declare the `browser` handle in its generated spec. The release clears the
 /// compiler's "a page is open now" flag, but the assert before it needed a live

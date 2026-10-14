@@ -5426,6 +5426,30 @@ pub fn check_doc() -> Result<i32> {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("bdd").join("README.md"))
         .with_context(|| "reading bdd/README.md")?;
+    let agent = std::fs::read_to_string(root.join("bdd").join("AGENT.md"))
+        .with_context(|| "reading bdd/AGENT.md")?;
+    let (checked, total, problems) = doc_check_impl(&readme, &agent)?;
+    for p in &problems {
+        eprintln!("bdd doc check: {p}");
+    }
+    if !problems.is_empty() {
+        eprintln!("bdd doc check: {} problem(s)", problems.len());
+        return Ok(1);
+    }
+    println!(
+        "bdd doc check: {checked}/{total} labelled counts across bdd/README.md and bdd/AGENT.md \
+         match the gates that own them, and every quoted gate line is still printed"
+    );
+    Ok(0)
+}
+
+/// The doc gate as a pure function of the two documents. `check_doc` reads the
+/// files, prints, and turns the count into an exit code; a regression hands in a
+/// mutated document and watches this same code report it. The README is the
+/// user-facing page, AGENT.md is the maintenance guide an agent reads before it
+/// edits anything - a guide that lies about the corpus is worse than no guide.
+pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, Vec<String>)> {
+    let root = repo_root();
     let ws = Regex::new(r"\s+").unwrap();
 
     // Run the two sub-checkers once; the doc check then searches *their* output
@@ -5468,12 +5492,15 @@ pub fn check_doc() -> Result<i32> {
     // from the same authority `dsl smoke` prints: the states table, the expect
     // table, and the coverage-ledger audit. A number nobody recomputes rots on
     // the next edit; a label that reads the live gate cannot.
-    let expect_keys: std::collections::BTreeSet<String> =
+    let expect_map: std::collections::BTreeMap<String, Value> =
         std::fs::read_to_string(root.join("bench").join("dsl_smoke_expect.json"))
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .and_then(|v| v.as_object().map(|o| o.keys().cloned().collect()))
+            .and_then(|v| v.as_object().cloned())
+            .map(|o| o.into_iter().collect())
             .unwrap_or_default();
+    let expect_keys: std::collections::BTreeSet<String> =
+        expect_map.keys().cloned().collect();
     let n_expect = expect_keys.len();
     let states_map: std::collections::BTreeMap<String, Value> =
         std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json"))
@@ -5482,6 +5509,19 @@ pub fn check_doc() -> Result<i32> {
             .and_then(|v| v.as_object().cloned())
             .map(|o| o.into_iter().collect())
             .unwrap_or_default();
+    // A <stem, {state: ...}> table: one spec per stem, one state per inner key.
+    // Both halves are quoted in bdd/AGENT.md and both have drifted, so both are
+    // recomputed here rather than counted by eye.
+    let table_counts = |m: &std::collections::BTreeMap<String, Value>| -> (i64, i64) {
+        let specs = m.len() as i64;
+        let states: i64 = m
+            .values()
+            .map(|v| v.as_object().map(|o| o.len() as i64).unwrap_or(0))
+            .sum();
+        (specs, states)
+    };
+    let (n_expect_specs, n_expect_states) = table_counts(&expect_map);
+    let (n_states_specs, n_states_states) = table_counts(&states_map);
     let dsl_root = root.join("dsl");
     let specs = crate::dsl_smoke::discover_specs(&dsl_root).unwrap_or_default();
     let n_specs = specs.len();
@@ -5508,8 +5548,9 @@ pub fn check_doc() -> Result<i32> {
         })
         .unwrap_or((0, 0));
 
-    // Collapse whitespace in the README before searching labels.
+    // Collapse whitespace in both documents before searching labels.
     let flat_readme = ws.replace_all(&readme, " ").into_owned();
+    let flat_agent = ws.replace_all(&agent, " ").into_owned();
 
     // The README also enumerates the pinned stems themselves ("+N pinned in the
     // decision workflows: a/b/c/..."). The count must equal the length of the list
@@ -5530,27 +5571,40 @@ pub fn check_doc() -> Result<i32> {
         .map(|l| vec![l.len() as i64])
         .collect();
 
-    // label regex -> owner source ("transpile" = count it here).
-    let labels: Vec<(Regex, &str)> = vec![
-        (Regex::new(r"Current state: \*\*(\d+) scenario").unwrap(), "transpile"),
-        (Regex::new(r"(\d+) steps map correctly").unwrap(), "vocabulary"),
-        (Regex::new(r"(\d+) step arguments survive").unwrap(), "vocabulary"),
-        (Regex::new(r"(\d+) operand types survive").unwrap(), "vocabulary"),
-        (Regex::new(r"(\d+) steps still refuse to run without a page").unwrap(), "vocabulary"),
-        (Regex::new(r"(\d+) stay refused after a release").unwrap(), "vocabulary"),
-        (Regex::new(r"(\d+)/(\d+) argument errors refuse").unwrap(), "args"),
-        (Regex::new(r"all (\d+) throw sites are accounted for").unwrap(), "args"),
-        (Regex::new(r"\((\d+) pinned here, (\d+) declared elsewhere\)").unwrap(), "args"),
+    // label regex -> (owning gate, document that quotes it). The README is the
+    // user-facing page; AGENT.md is the maintenance guide, and its "current
+    // state" paragraph quotes the same gates one document further from them - so
+    // it drifts one edit sooner.
+    const README: &str = "bdd/README.md";
+    const AGENT: &str = "bdd/AGENT.md";
+    let labels: Vec<(Regex, &str, &str)> = vec![
+        (Regex::new(r"Current state: \*\*(\d+) scenario").unwrap(), "transpile", README),
+        (Regex::new(r"(\d+) steps map correctly").unwrap(), "vocabulary", README),
+        (Regex::new(r"(\d+) step arguments survive").unwrap(), "vocabulary", README),
+        (Regex::new(r"(\d+) operand types survive").unwrap(), "vocabulary", README),
+        (Regex::new(r"(\d+) steps still refuse to run without a page").unwrap(), "vocabulary", README),
+        (Regex::new(r"(\d+) stay refused after a release").unwrap(), "vocabulary", README),
+        (Regex::new(r"(\d+)/(\d+) argument errors refuse").unwrap(), "args", README),
+        (Regex::new(r"all (\d+) throw sites are accounted for").unwrap(), "args", README),
+        (Regex::new(r"\((\d+) pinned here, (\d+) declared elsewhere\)").unwrap(), "args", README),
         // The corpus counts, read live from the ledger authority above.
-        (Regex::new(r"(\d+) of (\d+) specs carry behavioural states").unwrap(), "ledger"),
-        (Regex::new(r"(\d+) labelled expectation sets").unwrap(), "ledger"),
-        (Regex::new(r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)").unwrap(), "ledger"),
+        (Regex::new(r"(\d+) of (\d+) specs carry behavioural states").unwrap(), "ledger", README),
+        (Regex::new(r"(\d+) labelled expectation sets").unwrap(), "ledger", README),
+        (Regex::new(r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)").unwrap(), "ledger", README),
         // The round-trip authority and its enumerated pin list.
-        (Regex::new(r"Every one of the (\d+) checked-in").unwrap(), "roundtrip"),
+        (Regex::new(r"Every one of the (\d+) checked-in").unwrap(), "roundtrip", README),
         (
             Regex::new(r"\+(\d+) pinned in the decision workflows").unwrap(),
             "pinned",
+            README,
         ),
+        // AGENT.md's current-state paragraph: the two sample tables, the ledger,
+        // and the two gate lines it claims are green.
+        (Regex::new(r"覆盖 \*\*(\d+)\*\* 个 spec / \*\*(\d+)\*\* 个 state").unwrap(), "expect_table", AGENT),
+        (Regex::new(r"注册 \*\*(\d+)\*\* 个 spec / \*\*(\d+)\*\* 个 state").unwrap(), "states_table", AGENT),
+        (Regex::new(r"覆盖台账\s*`(\d+) offline-verified \+ (\d+) live-declared = (\d+) specs`").unwrap(), "ledger", AGENT),
+        (Regex::new(r"`dsl smoke (\d+)/(\d+)`").unwrap(), "smoke_total", AGENT),
+        (Regex::new(r"`bdd round-trip (\d+)/(\d+)`").unwrap(), "rt_total", AGENT),
     ];
     let quoted_blocks: Vec<(Regex, &str)> = vec![
         (
@@ -5566,7 +5620,7 @@ pub fn check_doc() -> Result<i32> {
 
     let ints = |s: &str| -> Vec<Vec<i64>> {
         let mut out = Vec::new();
-        for m in labels.iter().filter_map(|(rx, src)| if *src == s { Some(rx) } else { None }) {
+        for m in labels.iter().filter_map(|(rx, src, _)| if *src == s { Some(rx) } else { None }) {
             for c in m.captures_iter(&vocab_or_args(s, &vocab_out, &args_out)) {
                 out.push((1..=c.len() - 1).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect());
             }
@@ -5583,6 +5637,9 @@ pub fn check_doc() -> Result<i32> {
 
     let ledger_truth = |pat: &str| -> Vec<Vec<i64>> {
         match pat {
+            _ if pat.starts_with("覆盖台账") => {
+                vec![vec![n_offline as i64, n_live as i64, n_specs as i64]]
+            }
             r"(\d+) of (\d+) specs carry behavioural states" => {
                 vec![vec![n_offline as i64, n_specs as i64]]
             }
@@ -5595,9 +5652,15 @@ pub fn check_doc() -> Result<i32> {
     };
     let truth: Vec<Vec<Vec<i64>>> = labels
         .iter()
-        .map(|(rx, src)| match *src {
+        .map(|(rx, src, _)| match *src {
             "transpile" => vec![vec![n_scenarios as i64]],
+            "ledger" if rx.as_str().starts_with("覆盖台账") => {
+                vec![vec![n_offline as i64, n_live as i64, n_specs as i64]]
+            }
             "ledger" => ledger_truth(rx.as_str()),
+            "expect_table" => vec![vec![n_expect_specs, n_expect_states]],
+            "states_table" => vec![vec![n_states_specs, n_states_states]],
+            "smoke_total" | "rt_total" => vec![vec![n_specs as i64, n_specs as i64]],
             "roundtrip" => vec![vec![rt_total]],
             "pinned" => pinned_truth.clone(),
             "vocabulary" => rx
@@ -5614,14 +5677,15 @@ pub fn check_doc() -> Result<i32> {
 
     let mut problems: Vec<String> = Vec::new();
     let mut checked = 0usize;
-    for (i, (rx, src)) in labels.iter().enumerate() {
+    for (i, (rx, _src, doc)) in labels.iter().enumerate() {
+        let text = if *doc == README { &flat_readme } else { &flat_agent };
         let in_doc: Vec<Vec<i64>> = rx
-            .captures_iter(&flat_readme)
+            .captures_iter(text)
             .map(|c| (1..c.len()).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect())
             .collect();
         if in_doc.is_empty() {
             problems.push(format!(
-                "the README no longer says anything matching {:?}, so the number it used \
+                "{doc} no longer says anything matching {:?}, so the number it used \
                  to quote is no longer checked - either restore it or drop the label",
                 rx.as_str()
             ));
@@ -5630,7 +5694,7 @@ pub fn check_doc() -> Result<i32> {
         let want = &truth[i];
         if want.is_empty() {
             problems.push(format!(
-                "the README quotes {:?} but the gate no longer prints anything matching \
+                "{doc} quotes {:?} but the gate no longer prints anything matching \
                  it - the quote is stale",
                 rx.as_str()
             ));
@@ -5639,7 +5703,7 @@ pub fn check_doc() -> Result<i32> {
         checked += 1;
         if &in_doc != want {
             problems.push(format!(
-                "the README says {} where the truth is {} for {:?} - a number nobody \
+                "{doc} says {} where the truth is {} for {:?} - a number nobody \
                  recomputes goes stale on the next edit",
                 if in_doc.len() == 1 {
                     format!("{:?}", in_doc[0])
@@ -5704,19 +5768,7 @@ pub fn check_doc() -> Result<i32> {
         }
     }
 
-    for p in &problems {
-        eprintln!("bdd doc check: {p}");
-    }
-    if !problems.is_empty() {
-        eprintln!("bdd doc check: {} problem(s)", problems.len());
-        return Ok(1);
-    }
-    println!(
-        "bdd doc check: {checked}/{} counts the README quotes match what the gates \
-         print, and every quoted gate line is still printed",
-        labels.len()
-    );
-    Ok(0)
+    Ok((checked, labels.len(), problems))
 }
 
 /// Run vocabulary_check but write output into `out` instead of stdout, so the

@@ -938,12 +938,35 @@ Two details that the first version got wrong, and that mattered:
 
 It runs in `check.sh`, so CI runs it: no Chrome, no network.
 
+### The second document, and the guide that had drifted
+
+The gate now reads **`bdd/AGENT.md`** as well as this README. AGENT.md is the guide
+an agent reads *before* it touches anything, and its "current state" paragraph
+quotes the same gates from one document further away — so it drifts one edit
+sooner. It had: the expect table said `124 specs / 978 states` against a real
+`125 / 980`, the states table said `127 / 987` against `128 / 989`, and the
+ledger said `162` against `163`. Every one of them had been true when written.
+The paragraph's numbers are labels now (the two sample tables, the ledger, and
+the two gate lines it claims are green), and the numbers that *cannot* be
+recomputed from `check.sh` — the size of the regression suite, the section count
+— were deleted rather than left to rot.
+
+The gate itself is unit-tested: `laya-workflow-tests bdd-doc-check` feeds it
+mutated copies of both documents (a drifted table count, a drifted ledger, a
+drifted gate line, a dropped label, a renamed scenario count) and requires each
+to be reported. The negative no longer has to be proven by hand once and then
+forgotten. The README's `bdd vocabulary:` / `bdd args probes:` labels are owned by
+gates that shell out to the real binary, so *those* are only checked by
+`check.sh` running `bdd doc-check`; the AGENT.md half is checked in process.
+
 ### What this does not check
 
 The prose *around* the numbers is not machine-checked, and the counts it
 recomputes are only as trustworthy as the gates they come from. Counts written as
 words ("four probe specs") are not labels it recognises either, which is how two
-of them went stale the moment round 17 widened the probe set — see below.
+of them went stale the moment round 17 widened the probe set - see below. That
+is also why AGENT.md's regression-suite and section counts are gone rather than
+labelled: there is no gate in this repo that owns them.
 ## The header is the contract, so it is checked
 
 `plugins/bdd/main.rhai` opens with a table of its seven ops, its eleven assertions and
