@@ -198,6 +198,18 @@ if ! "$BIN" dsl smoke > "$out/smoke.log" 2> "$out/smoke.err"; then
   cat "$out/smoke.log" >&2
   exit 1
 fi
+# Cross-repo conversion gate: every upstream scenario must have a BDD port (a
+# @decision feature and a checked-in spec) and every port an upstream source.
+# The source directory lives in another repo (ole-eval
+# code/qwen_vm/app_scenarios), so there is no default path; point
+# LAYA_OLE_EVAL_SOURCES at it to make this a hard gate, and it is skipped (not
+# silently passed) when unset.
+if [ -n "${LAYA_OLE_EVAL_SOURCES:-}" ]; then
+  "$BIN" bdd port-check --sources "$LAYA_OLE_EVAL_SOURCES"
+else
+  echo "port check: skipped (set LAYA_OLE_EVAL_SOURCES=<ole-eval code/qwen_vm/app_scenarios> to prove the ole_eval conversion is closed)"
+fi
+
 # The browser run: the bdd/features scenarios and the hand-written probes
 # actually drive a real headless Chrome over CDP. `bdd run` skips cleanly when
 # no browser is present, so this stage is green on a browserless box; it fails

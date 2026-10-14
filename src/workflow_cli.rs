@@ -517,6 +517,21 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Prove a cross-repo conversion is closed: every upstream scenario has a
+    /// BDD port (a `@decision` feature and a checked-in spec) and every port has
+    /// an upstream source. Needs a second checkout, so it is explicit.
+    PortCheck {
+        /// Directory of upstream scenarios, one subdirectory each (for example
+        /// an ole-eval `code/qwen_vm/app_scenarios` checkout). Required.
+        #[arg(long)]
+        sources: String,
+        /// Port category: `bdd/workflows/<cat>/` and `dsl/<cat>/`.
+        #[arg(long, default_value = "ole_eval")]
+        cat: String,
+        /// Write the diff as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Quantify BDD authoring vs hand-written JSON DSL on the live corpus.
     Compare {
         /// Write the comparison as JSON here.
@@ -2479,6 +2494,11 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             json: json.clone(),
         })?,
         BddCmd::RoundTrip { json } => bdd::round_trip(&bdd::RoundTripOptions {
+            json: json.clone(),
+        })?,
+        BddCmd::PortCheck { sources, cat, json } => bdd::port_check(&bdd::PortCheckOptions {
+            sources: std::path::PathBuf::from(sources),
+            cat: cat.clone(),
             json: json.clone(),
         })?,
         BddCmd::Compare { json, cases } => bdd::compare(&bdd::CompareOptions {

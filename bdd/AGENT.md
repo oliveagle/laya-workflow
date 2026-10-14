@@ -121,6 +121,7 @@ laya-workflow bdd run --profile production --base-url <real>
 - `bench/bdd/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
 - `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
 - `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
+- `laya-workflow bdd port-check --sources <dir>` — 跨仓转换闭合性（每个上游 scenario 都有 BDD 端口、每个端口都有上游来源）；`LAYA_OLE_EVAL_SOURCES` 指向 ole-eval `code/qwen_vm/app_scenarios` 时由 `check.sh` 真跑（未设则跳过）
 
 ## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
 

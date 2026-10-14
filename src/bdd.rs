@@ -6811,6 +6811,204 @@ fn rt_first_diff<'a>(a: &'a Value, b: &'a Value, path: &str) -> Option<String> {
 }
 
 /// The round-trip gate: every `@decision` feature reproduces its dsl spec.
+/// A cross-repo conversion diff. `sources` are the upstream scenario names (for
+/// example the subdirectories of an ole-eval `app_scenarios/` directory);
+/// `features` and `specs` are the BDD port names in *this* repo. A closed
+/// conversion has every source name on both port sides and no port without a
+/// source. Pure, so the symmetric-difference rules are unit-testable without a
+/// second checkout.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PortDiff {
+    /// A source with no `bdd/workflows/<cat>/<name>.feature`.
+    pub sources_no_feature: Vec<String>,
+    /// A source with no `dsl/<cat>/<name>.json`.
+    pub sources_no_spec: Vec<String>,
+    /// A feature with no upstream source.
+    pub features_no_source: Vec<String>,
+    /// A checked-in spec with no upstream source.
+    pub specs_no_source: Vec<String>,
+}
+
+impl PortDiff {
+    pub fn is_empty(&self) -> bool {
+        self.sources_no_feature.is_empty()
+            && self.sources_no_spec.is_empty()
+            && self.features_no_source.is_empty()
+            && self.specs_no_source.is_empty()
+    }
+    pub fn total(&self) -> usize {
+        self.sources_no_feature.len()
+            + self.sources_no_spec.len()
+            + self.features_no_source.len()
+            + self.specs_no_source.len()
+    }
+}
+
+fn names_missing_from(set: &BTreeSet<String>, have: &BTreeSet<String>) -> Vec<String> {
+    set.difference(have).cloned().collect()
+}
+
+pub fn diff_port_sets(
+    sources: &BTreeSet<String>,
+    features: &BTreeSet<String>,
+    specs: &BTreeSet<String>,
+) -> PortDiff {
+    PortDiff {
+        sources_no_feature: names_missing_from(sources, features),
+        sources_no_spec: names_missing_from(sources, specs),
+        features_no_source: names_missing_from(features, sources),
+        specs_no_source: names_missing_from(specs, sources),
+    }
+}
+
+pub struct PortCheckOptions {
+    /// Upstream scenario source directory (one subdirectory per scenario).
+    pub sources: PathBuf,
+    /// Port category: `bdd/workflows/<cat>/` and `dsl/<cat>/`.
+    pub cat: String,
+    /// Write the diff as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for PortCheckOptions {
+    fn default() -> Self {
+        Self {
+            sources: PathBuf::new(),
+            cat: "ole_eval".into(),
+            json: None,
+        }
+    }
+}
+
+/// Scenario names under `dir`: its subdirectories, minus dot/dunder ones
+/// (`__pycache__`) and minus files (`README.md`, `__init__.py`). A source that
+/// is not a directory is not a scenario.
+fn read_source_names(dir: &Path) -> Result<BTreeSet<String>> {
+    let mut out = BTreeSet::new();
+    for e in std::fs::read_dir(dir)
+        .with_context(|| format!("reading source dir {}", dir.display()))?
+        .flatten()
+    {
+        if !e.path().is_dir() {
+            continue;
+        }
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with('.') || n.starts_with("__") {
+            continue;
+        }
+        out.insert(n);
+    }
+    Ok(out)
+}
+
+/// File stems of extension `ext` directly under `dir`. `<name>.config.json`
+/// sidecars are config, not specs, so they never count as a port.
+fn read_stem_set(dir: &Path, ext: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_file() {
+                continue;
+            }
+            let n = e.file_name().to_string_lossy().into_owned();
+            if ext == "json" && n.ends_with(".config.json") {
+                continue;
+            }
+            if let Some(stem) = n.strip_suffix(&format!(".{ext}")) {
+                if !stem.is_empty() {
+                    out.insert(stem.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `laya-workflow bdd port-check`: prove a cross-repo conversion is *closed*.
+/// Every upstream scenario must have both a `@decision` feature and a checked-in
+/// spec, and no port may exist without a source. The within-repo reverse
+/// direction (a spec with no feature) is already proven by `bdd round-trip`;
+/// this adds the one thing that needs the second checkout.
+pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
+    if o.sources.as_os_str().is_empty() {
+        bail!("--sources is required: the upstream scenario directory to compare against");
+    }
+    if !o.sources.is_dir() {
+        bail!("--sources {} is not a directory", o.sources.display());
+    }
+    let root = repo_root();
+    let sources = read_source_names(&o.sources)?;
+    let features = read_stem_set(&root.join("bdd").join("workflows").join(&o.cat), "feature");
+    let specs = read_stem_set(&root.join("dsl").join(&o.cat), "json");
+    let diff = diff_port_sets(&sources, &features, &specs);
+
+    if let Some(path) = &o.json {
+        let report = json!({
+            "sources": o.sources.to_string_lossy(),
+            "cat": o.cat,
+            "counts": {
+                "sources": sources.len(),
+                "features": features.len(),
+                "specs": specs.len()
+            },
+            "diff": {
+                "sources_no_feature": diff.sources_no_feature,
+                "sources_no_spec": diff.sources_no_spec,
+                "features_no_source": diff.features_no_source,
+                "specs_no_source": diff.specs_no_source
+            }
+        });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&report)?))?;
+    }
+
+    let label = |v: &[String]| -> String {
+        if v.is_empty() {
+            "-".into()
+        } else {
+            v.join(", ")
+        }
+    };
+    println!(
+        "bdd port-check: {} source(s) / {} feature(s) / {} spec(s)  (cat {})",
+        sources.len(),
+        features.len(),
+        specs.len(),
+        o.cat
+    );
+    if diff.is_empty() {
+        println!(
+            "bdd port-check: closed - every source has a feature and a spec, and every port has a source"
+        );
+        return Ok(0);
+    }
+    eprintln!("bdd port-check: {} drift(s):", diff.total());
+    if !diff.sources_no_feature.is_empty() {
+        eprintln!(
+            "  source with no feature: {}",
+            label(&diff.sources_no_feature)
+        );
+    }
+    if !diff.sources_no_spec.is_empty() {
+        eprintln!("  source with no spec:    {}", label(&diff.sources_no_spec));
+    }
+    if !diff.features_no_source.is_empty() {
+        eprintln!(
+            "  feature with no source: {}",
+            label(&diff.features_no_source)
+        );
+    }
+    if !diff.specs_no_source.is_empty() {
+        eprintln!("  spec with no source:    {}", label(&diff.specs_no_source));
+    }
+    Ok(1)
+}
+
 pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
     let root = repo_root();
     let wf_root = root.join("bdd").join("workflows");

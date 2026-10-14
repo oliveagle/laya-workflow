@@ -2386,3 +2386,117 @@ pub fn test_bdd_browser_gate(h: &mut Harness) {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+/// `bdd port-check`: the cross-repo conversion is closed. The pure
+/// symmetric-difference rules are pinned here, plus one real IO round-trip
+/// against the checked-in `ole_eval` ports using a throwaway source tree.
+pub fn test_bdd_port_check(h: &mut Harness) {
+    use laya_workflow::bdd::{diff_port_sets, port_check, PortCheckOptions};
+    use std::collections::BTreeSet;
+    let set = |xs: &[&str]| -> BTreeSet<String> { xs.iter().map(|s| s.to_string()).collect() };
+
+    let same = set(&["a", "b", "c"]);
+    h.check(
+        "bdd port-check: identical sets have no drift",
+        diff_port_sets(&same, &same, &same).is_empty(),
+    );
+
+    // Each drift direction lands on its own side and nowhere else.
+    let d = diff_port_sets(
+        &set(&["a", "b", "c"]),
+        &set(&["a", "b"]),
+        &set(&["a", "b", "c"]),
+    );
+    h.eq(
+        "bdd port-check: a source missing its feature is flagged",
+        d.sources_no_feature,
+        vec!["c".to_string()],
+    );
+    h.check(
+        "bdd port-check: ... and only that side is flagged",
+        d.sources_no_spec.is_empty()
+            && d.features_no_source.is_empty()
+            && d.specs_no_source.is_empty(),
+    );
+
+    let d = diff_port_sets(
+        &set(&["a"]),
+        &set(&["a", "ghost_f"]),
+        &set(&["a", "ghost_s"]),
+    );
+    h.eq(
+        "bdd port-check: a feature with no source is flagged",
+        d.features_no_source,
+        vec!["ghost_f".to_string()],
+    );
+    h.eq(
+        "bdd port-check: a spec with no source is flagged",
+        d.specs_no_source,
+        vec!["ghost_s".to_string()],
+    );
+
+    // The IO half: a throwaway source tree with a name that IS a port
+    // (dialogue_policy), one that is not (brand_new), a __pycache__ dir and a
+    // README file that must both be ignored.
+    let tag = std::process::id();
+    let src = std::env::temp_dir().join(format!("laya-portcheck-{tag}"));
+    let rep = std::env::temp_dir().join(format!("laya-portcheck-{tag}.json"));
+    let _ = std::fs::remove_dir_all(&src);
+    std::fs::create_dir_all(src.join("dialogue_policy")).unwrap();
+    std::fs::create_dir_all(src.join("brand_new")).unwrap();
+    std::fs::create_dir_all(src.join("__pycache__")).unwrap();
+    std::fs::write(src.join("README.md"), b"x").unwrap();
+
+    let o = PortCheckOptions {
+        sources: src.clone(),
+        cat: "ole_eval".into(),
+        json: Some(rep.to_string_lossy().into_owned()),
+    };
+    h.eq(
+        "bdd port-check: a drifted source tree exits 1",
+        port_check(&o).ok(),
+        Some(1),
+    );
+    let rj: Value = serde_json::from_str(&std::fs::read_to_string(&rep).unwrap()).unwrap();
+    let list = |k: &str| -> Vec<String> {
+        rj["diff"][k]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    h.check(
+        "bdd port-check: an unported source is reported missing a feature",
+        list("sources_no_feature").contains(&"brand_new".to_string()),
+    );
+    h.check(
+        "bdd port-check: ... and missing a spec",
+        list("sources_no_spec").contains(&"brand_new".to_string()),
+    );
+    h.check(
+        "bdd port-check: __pycache__ is not a scenario",
+        !list("sources_no_feature").contains(&"__pycache__".to_string()),
+    );
+    h.check(
+        "bdd port-check: a real port (dialogue_policy) is not reported",
+        !list("sources_no_feature").contains(&"dialogue_policy".to_string()),
+    );
+
+    // A source dir that does not exist is an error, never a silent pass.
+    let bad = PortCheckOptions {
+        sources: src.join("definitely-absent"),
+        cat: "ole_eval".into(),
+        json: None,
+    };
+    h.check(
+        "bdd port-check: a missing source dir is an error, not a pass",
+        port_check(&bad).is_err(),
+    );
+
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_file(&rep);
+}
