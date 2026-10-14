@@ -4338,3 +4338,292 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
         err.contains("answers[0]") && err.contains("event"),
     );
 }
+
+
+/// P95: the inventory is the contract. `bdd_list` now exposes, per node, the
+/// questions that node asks (id / type / accepted answers). This gate proves the
+/// loop is closed end-to-end: for **every offline spec × registered state** it
+/// (1) walks the graph with the offline heuristic, (2) checks the inventory's
+/// per-node contract is *exactly* the questions the engine asked, (3) rebuilds an
+/// `answers` script from that contract alone, and (4) drives the graph with it —
+/// asserting the two walks are identical (same nodes, same per-step answers,
+/// same terminal label). So a caller can drive any verified graph straight from
+/// `bdd_list`, and the `answers` path provably reproduces offline-verified
+/// behaviour, corpus-wide.
+pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
+    use laya_workflow::backend::{AnswersBackend, HeuristicBackend};
+    use laya_workflow::bdd_mcp::decision_label;
+    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external};
+    use laya_workflow::workflow::NodeResult;
+    use std::collections::{BTreeSet, HashMap};
+
+    let root = bdd::repo_root();
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    // The inventory, as an agent sees it: workflow name -> node name -> questions.
+    let list = bdd_tool("bdd_list").call(&json!({})).unwrap();
+    let mut contract: HashMap<String, HashMap<String, Value>> = HashMap::new();
+    for w in list["workflows"].as_array().cloned().unwrap_or_default() {
+        let Some(nm) = w["name"].as_str() else { continue };
+        let nodes = w["nodes"].as_array().cloned().unwrap_or_default();
+        let m: HashMap<String, Value> = nodes
+            .iter()
+            .filter_map(|n| Some((n["name"].as_str()?.to_string(), n["questions"].clone())))
+            .collect();
+        contract.insert(nm.to_string(), m);
+    }
+    let exposed = contract
+        .values()
+        .flat_map(|m| m.values())
+        .any(|q| q.as_array().map(|a| !a.is_empty()).unwrap_or(false));
+    h.check(
+        &format!(
+            "answers-from-list: the inventory exposes per-node questions ({} workflows)",
+            contract.len()
+        ),
+        exposed,
+    );
+    // The per-node contract is the node's OWN questions, not the workflow union:
+    // in agent_permission_gate only some nodes ask `risk`.
+    let apg = contract.get("agent_permission_gate").cloned().unwrap_or_default();
+    let asks = |node: &str, qid: &str| {
+        apg.get(node)
+            .and_then(Value::as_array)
+            .map(|qs| qs.iter().any(|x| x["id"].as_str() == Some(qid)))
+            .unwrap_or(false)
+    };
+    h.check(
+        "answers-from-list: a node's contract is its own questions, not the union",
+        asks("unauthenticated", "event")
+            && asks("unauthenticated", "risk")
+            && asks("refused", "risk")
+            && !asks("refused", "event"),
+    );
+    let risk_answers = apg
+        .get("unauthenticated")
+        .and_then(Value::as_array)
+        .and_then(|qs| qs.iter().find(|x| x["id"] == "risk"))
+        .map(|x| x["answers"].clone())
+        .unwrap_or(Value::Null);
+    h.check(
+        "answers-from-list: a question exposes the answers it accepts",
+        risk_answers
+            .as_array()
+            .map(|a| a.iter().any(|v| v == "high" || v == "low"))
+            .unwrap_or(false),
+    );
+
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+
+    // Discover dsl specs exactly as `dsl smoke` does.
+    let dsl_root = root.join("dsl");
+    let mut specs = Vec::new();
+    let mut stack = vec![dsl_root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("json")
+                && !p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+            {
+                specs.push(p);
+            }
+        }
+    }
+    specs.sort();
+
+    let mut driven_states = 0usize;
+    let mut contract_ok = 0usize;
+    let mut nested = 0usize;
+    let mut specs_driven: BTreeSet<String> = BTreeSet::new();
+    for spec in &specs {
+        let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let Some(smap) = states_obj.get(&stem).and_then(Value::as_object) else {
+            continue;
+        };
+        let raw: Value = std::fs::read_to_string(spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        if network_bound_external(&raw) {
+            continue;
+        }
+        // A nested sub-workflow container pulls in another spec's nodes at run
+        // time; the top-level contract cannot describe their questions, so skip
+        // (the ledger's offline set is otherwise fully driven).
+        if raw
+            .get("nodes")
+            .and_then(Value::as_array)
+            .map(|ns| ns.iter().any(|n| n.get("workflow").is_some()))
+            .unwrap_or(false)
+        {
+            nested += 1;
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
+            Ok(w) => w,
+            Err(e) => {
+                h.check(&format!("answers-from-list: {stem} loads ({e})"), false);
+                continue;
+            }
+        };
+        let nodes = contract.get(&stem);
+        for (label, st) in smap {
+            // (1) the offline heuristic walk, capturing each node's answer set.
+            let mut heur: Vec<(String, Vec<(String, Value, Value, f64)>)> = Vec::new();
+            let mut h_answers: Vec<Value> = Vec::new();
+            let hout = wf.run_with_progress(&HeuristicBackend, st, &mut |r: &NodeResult| {
+                let mut ans: Vec<(String, Value, Value, f64)> = r
+                    .verdict
+                    .answers
+                    .iter()
+                    .map(|(q, d)| {
+                        (
+                            q.clone(),
+                            d.answer.clone(),
+                            Value::Object(d.probabilities.clone()),
+                            d.confidence,
+                        )
+                    })
+                    .collect();
+                ans.sort_by(|a, b| a.0.cmp(&b.0));
+                heur.push((r.node_name.clone(), ans));
+                h_answers.push(r.edge_answer.clone());
+            });
+            let hout = match hout {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            // (2)+(3) the contract must be exactly what the node asked, and the
+            // script is rebuilt from it alone.
+            let mut script: Vec<Value> = Vec::new();
+            let mut ok = true;
+            for (node, ans) in &heur {
+                let qc = nodes.and_then(|m| m.get(node)).cloned().unwrap_or(Value::Null);
+                let listed: BTreeSet<String> = qc
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|q| q["id"].as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let asked: BTreeSet<String> = ans.iter().map(|(q, _, _, _)| q.clone()).collect();
+                if listed != asked {
+                    ok = false;
+                }
+                let mut entry = serde_json::Map::new();
+                for (qid, a, probs, conf) in ans {
+                    let qtype = qc
+                        .as_array()
+                        .and_then(|arr| arr.iter().find(|x| x["id"].as_str() == Some(qid.as_str())))
+                        .and_then(|x| x["type"].as_str())
+                        .unwrap_or("choice");
+                    let mut o = serde_json::Map::new();
+                    o.insert("type".into(), json!(qtype));
+                    let field = match qtype {
+                        "score" => "score",
+                        "noul" => "noul",
+                        "boolean" => "probability",
+                        _ => "choice",
+                    };
+                    o.insert(field.into(), a.clone());
+                    if probs.as_object().map(|m| !m.is_empty()).unwrap_or(false) {
+                        o.insert("probabilities".into(), probs.clone());
+                    }
+                    o.insert("confidence".into(), json!(conf));
+                    entry.insert(qid.clone(), Value::Object(o));
+                }
+                script.push(Value::Object(entry));
+            }
+            if ok {
+                contract_ok += 1;
+            } else {
+                h.check(
+                    &format!("answers-from-list: {stem}:{label} contract == the questions asked"),
+                    false,
+                );
+            }
+            // (4) drive the graph from the contract-built script and compare.
+            let be = match AnswersBackend::from_json(&Value::Array(script)) {
+                Ok(b) => b,
+                Err(e) => {
+                    h.check(
+                        &format!("answers-from-list: {stem}:{label} script builds ({e:#})"),
+                        false,
+                    );
+                    continue;
+                }
+            };
+            let mut awalk: Vec<(String, Value)> = Vec::new();
+            let aout = match wf.run_with_progress(&be, st, &mut |r: &NodeResult| {
+                awalk.push((r.node_name.clone(), r.edge_answer.clone()));
+            }) {
+                Ok(o) => o,
+                Err(e) => {
+                    h.check(
+                        &format!("answers-from-list: {stem}:{label} answers walk runs ({e:#})"),
+                        false,
+                    );
+                    continue;
+                }
+            };
+            let hnodes: Vec<&String> = heur.iter().map(|(n, _)| n).collect();
+            let anodes: Vec<&String> = awalk.iter().map(|(n, _)| n).collect();
+            let ha: Vec<&Value> = h_answers.iter().collect();
+            let aa: Vec<&Value> = awalk.iter().map(|(_, a)| a).collect();
+            let hj = hout.to_json();
+            let aj = aout.to_json();
+            let hl = decision_label(&hj["result"], hout.final_action());
+            let al = decision_label(&aj["result"], aout.final_action());
+            if hnodes == anodes && ha == aa && hl == al {
+                driven_states += 1;
+                specs_driven.insert(stem.clone());
+            } else {
+                h.check(
+                    &format!(
+                        "answers-from-list: {stem}:{label} the answers walk reproduces the heuristic walk (h={hnodes:?} a={anodes:?} hl={hl} al={al})"
+                    ),
+                    false,
+                );
+            }
+        }
+    }
+    h.check(
+        &format!(
+            "answers-from-list: drove {driven_states} offline states across {} specs from the inventory (contract-matched {contract_ok})",
+            specs_driven.len()
+        ),
+        driven_states == contract_ok && specs_driven.len() >= 125,
+    );
+    h.check(
+        &format!("answers-from-list: only the {nested} nested sub-workflow spec(s) are skipped"),
+        nested <= 2,
+    );
+    // The registered set minus what we drove is the audited skip set: the nested
+    // sub-workflow spec, and any state whose offline walk needs an unreachable
+    // local endpoint (it runs in the integration job). It must stay tiny + named.
+    let mut no_walk: BTreeSet<String> = states_obj.keys().cloned().collect();
+    for s in &specs_driven {
+        no_walk.remove(s);
+    }
+    h.check(
+        &format!("answers-from-list: not driven (nested / offline-unreachable) = {no_walk:?}"),
+        no_walk.len() == 2
+            && no_walk.contains("hf_trending")
+            && no_walk.contains("intake_pipeline_nested"),
+    );
+}

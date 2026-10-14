@@ -979,6 +979,46 @@ fn node_routes(node: &Value) -> (Value, Value) {
     (condition, default)
 }
 
+/// The answer contract a caller needs to drive THIS node over `bdd_decide`'s
+/// `answers` argument: the node's own questions, each with the answer shape
+/// (`type`) and the answers it accepts. Distinct from the workflow-level
+/// `questions`, which is a deduped union across nodes — a shared id can be asked
+/// by several nodes with different criteria, and a dynamic question
+/// (`criteria.from_state`) materialises its options from the state at decide
+/// time, so only the per-node list is the contract for feeding one step.
+fn node_question_contract(node: &Value) -> Value {
+    let mut out: Vec<Value> = Vec::new();
+    if let Some(qs) = node.get("questions").and_then(Value::as_object) {
+        for (qid, q) in qs {
+            let qtype = q.get("type").and_then(Value::as_str).unwrap_or("choice");
+            let from_state = q
+                .pointer("/criteria/from_state")
+                .and_then(Value::as_str)
+                .map(|s| json!(s))
+                .unwrap_or(Value::Null);
+            let answers: Vec<String> = if from_state.is_null() {
+                let mut v: Vec<String> = q
+                    .get("criteria")
+                    .and_then(Value::as_object)
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                v.sort();
+                v
+            } else {
+                Vec::new()
+            };
+            out.push(json!({
+                "id": qid,
+                "type": qtype,
+                "answers": answers,
+                "from_state": from_state,
+            }));
+        }
+    }
+    out.sort_by(|a, b| a["id"].as_str().unwrap_or("").cmp(b["id"].as_str().unwrap_or("")));
+    Value::Array(out)
+}
+
 /// The decision label a run's `result` projects, in order: `label` (a threshold
 /// ladder), `gate_action` (a gate), `route` (a combine: the choice answer or its
 /// review label), then `status` (a rubric: `scored` / `human_review`). Only when
@@ -1181,7 +1221,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -1241,6 +1281,7 @@ impl McpTool for ListTool {
                                 "outputs": node_outs,
                                 "routes": routes,
                                 "default": default,
+                                "questions": node_question_contract(n),
                             }))
                         })
                         .collect()
