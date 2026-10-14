@@ -6,9 +6,9 @@ website over CDP with a headless Chrome. No fixture server, no mocks. It exists 
 two questions the hermetic suite cannot: *does the vocabulary actually drive the real web*,
 and *what does authoring a workflow in BDD cost versus writing the JSON spec by hand*.
 
-- Corpus: `bench/bdd/live/*.feature` (+ a `<name>.config.json` sidecar naming the hosts it may reach).
+- Corpus: `bdd/workflows/browser/*.feature` (moved there from `bench/bdd/live/` on 2026-10-13; the `<name>.config.json` sidecars live in `dsl/browser/`).
 - Runner: `laya-workflow bdd live` (live-fire mode: no fixtures, no probes, `base_url` empty so every URL is absolute).
-- Result: **29 passed, 0 failed** — 842 steps, ~221 s serial on one headless Chrome.
+- Result: **29 passed, 0 failed** — 842 steps, ~221 s serial on one headless Chrome. This is the recorded live run of 2026-10-10; the numbers need a network and are not re-measured by any offline gate.
 
 ## The corpus
 
@@ -144,7 +144,8 @@ Two more authoring gotchas are worth recording because they are silent-failure s
 ## Reproduce
 
 ```sh
-# 1. offline: compile the whole live corpus; measure volume + the authoring gate
+# 1. offline: compile the whole live corpus (bdd/workflows/browser/*.feature);
+#    measure volume + the authoring gate
 laya-workflow bdd compare --json bench/bdd/live/compare.json
 
 # 2. live: run all 29 cases against the real sites (needs Chrome)
@@ -153,7 +154,7 @@ CHROME_BIN=/usr/bin/chromium-browser laya-workflow bdd live \
 
 # one case, or a subset
 CHROME_BIN=/usr/bin/chromium-browser laya-workflow bdd run \
-    bench/bdd/live/02_wikipedia_rust.feature --live
+    bdd/workflows/browser/02_wikipedia_rust.feature --live
 ```
 
 ## Verdict

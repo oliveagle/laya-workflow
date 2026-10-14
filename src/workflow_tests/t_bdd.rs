@@ -2310,6 +2310,8 @@ pub fn test_bdd_json_isolation(h: &mut Harness) {
 /// run instead of proven once by hand. `bdd doc-check` compares every labelled
 /// number in `bdd/README.md` **and** `bdd/AGENT.md` against the gate that owns
 /// it, and requires each quoted gate line to be exactly what the gate prints.
+/// It also requires every concrete `bdd/…` / `bench/…` path the docs quote to
+/// exist on disk, so a moved corpus cannot leave a phantom path behind.
 /// AGENT.md is the guide an agent reads before it edits anything, and it had
 /// already drifted a document-length behind (expect 124/978 vs 125/980, states
 /// 127/987 vs 128/989, ledger 162 vs 163) with nobody noticing - that is what
@@ -2327,7 +2329,7 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     // are owned by gates that shell out to the real binary, so those are only
     // checked by `check.sh` running `bdd doc-check` - not asserted here, where
     // the process is this test runner and those sub-gates cannot run.
-    let (_checked, total, problems) = doc_check_impl(&readme, &agent).unwrap();
+    let (_checked, total, _paths, problems) = doc_check_impl(&readme, &agent).unwrap();
     let agent_problems: Vec<&String> = problems
         .iter()
         .filter(|p| p.contains("bdd/AGENT.md"))
@@ -2348,7 +2350,7 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     );
 
     let problems_of = |r: &str, a: &str| -> Vec<String> {
-        doc_check_impl(r, a).map(|(_, _, p)| p).unwrap_or_default()
+        doc_check_impl(r, a).map(|(_, _, _, p)| p).unwrap_or_default()
     };
     let any = |ps: &[String], needle: &str| ps.iter().any(|p| p.contains(needle));
 
@@ -2397,6 +2399,25 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     h.check(
         "bdd doc-check: a dropped AGENT.md label is reported, not silently unchecked",
         any(&p, "bdd/AGENT.md no longer says anything matching"),
+    );
+
+    // Negative 6 (P123): a quoted path that no longer exists is caught. The
+    // corpus move that orphaned `bench/bdd/live/*.feature` is exactly this
+    // failure, and nothing recomputed the report that quoted it. Inject a
+    // phantom into the README and expect it named.
+    let phantom = readme.replace("bdd/fixtures/app.html", "bdd/fixtures/ghost_page.html");
+    let p = problems_of(&phantom, &agent);
+    h.check(
+        "bdd doc-check: a quoted path that no longer exists is named (P123)",
+        any(&p, "quotes bdd/fixtures/ghost_page.html, which does not exist on disk"),
+    );
+
+    // ...and the checked-in docs quote no missing path (the negative above is a
+    // real detection, not a blanket failure).
+    let (_c, _t, _pp, all) = doc_check_impl(&readme, &agent).unwrap();
+    h.check(
+        "bdd doc-check: the checked-in docs quote no missing path",
+        !any(&all, "does not exist on disk"),
     );
 }
 

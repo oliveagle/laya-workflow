@@ -5428,7 +5428,7 @@ pub fn check_doc() -> Result<i32> {
         .with_context(|| "reading bdd/README.md")?;
     let agent = std::fs::read_to_string(root.join("bdd").join("AGENT.md"))
         .with_context(|| "reading bdd/AGENT.md")?;
-    let (checked, total, problems) = doc_check_impl(&readme, &agent)?;
+    let (checked, total, n_paths, problems) = doc_check_impl(&readme, &agent)?;
     for p in &problems {
         eprintln!("bdd doc check: {p}");
     }
@@ -5438,7 +5438,8 @@ pub fn check_doc() -> Result<i32> {
     }
     println!(
         "bdd doc check: {checked}/{total} labelled counts across bdd/README.md and bdd/AGENT.md \
-         match the gates that own them, and every quoted gate line is still printed"
+         match the gates that own them, every quoted gate line is still printed, and all \
+         {n_paths} quoted bdd/bench paths exist on disk"
     );
     Ok(0)
 }
@@ -5448,7 +5449,7 @@ pub fn check_doc() -> Result<i32> {
 /// mutated document and watches this same code report it. The README is the
 /// user-facing page, AGENT.md is the maintenance guide an agent reads before it
 /// edits anything - a guide that lies about the corpus is worse than no guide.
-pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, Vec<String>)> {
+pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize, Vec<String>)> {
     let root = repo_root();
     let ws = Regex::new(r"\s+").unwrap();
 
@@ -5768,7 +5769,69 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, Vec<St
         }
     }
 
-    Ok((checked, labels.len(), problems))
+    // P123: every concrete `bdd/…` / `bench/…` path the docs quote must exist on
+    // disk. A corpus move once left `bench/bdd/live/*.feature` in a report after
+    // the sources had moved to `bdd/workflows/browser/`, and nothing recomputed
+    // the doc that quoted it. Globs (`bdd/*.feature`) and `<placeholders>` are
+    // skipped — only a literal path with a known extension is a claim about a
+    // file that has to be there. The README and AGENT.md are scanned from the
+    // strings handed in (so a regression can inject a phantom); the toolchain
+    // docs under `bench/bdd/` are read from disk.
+    // The `regex` crate has no look-around, so the left boundary is matched as a
+    // (non-captured) consuming group; group 1 is the path.
+    let path_rx = Regex::new(
+        r"(?:^|[^A-Za-z0-9_./<>-])((?:bdd|bench)/[A-Za-z0-9_./-]+\.(?:feature|json|md|sh|rs|rhai|html))",
+    )
+    .unwrap();
+    let mut path_docs: Vec<(String, String)> = vec![
+        (README.to_string(), readme.to_string()),
+        (AGENT.to_string(), agent.to_string()),
+    ];
+    {
+        let mut stack = vec![root.join("bench").join("bdd")];
+        let mut mds: Vec<PathBuf> = Vec::new();
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|x| x.to_str()) == Some("md") {
+                    mds.push(p);
+                }
+            }
+        }
+        mds.sort();
+        for p in mds {
+            if let Ok(t) = std::fs::read_to_string(&p) {
+                let rel = p
+                    .strip_prefix(&root)
+                    .map(|r| r.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+                path_docs.push((rel, t));
+            }
+        }
+    }
+    let mut n_paths = 0usize;
+    let mut seen_paths: std::collections::BTreeSet<(String, String)> =
+        std::collections::BTreeSet::new();
+    for (doc, text) in &path_docs {
+        for c in path_rx.captures_iter(text) {
+            let p = c[1].trim_end_matches(['.', ',', ';', ')', ':']);
+            if !seen_paths.insert((doc.clone(), p.to_string())) {
+                continue;
+            }
+            n_paths += 1;
+            if !root.join(p).exists() {
+                problems.push(format!(
+                    "{doc} quotes {p}, which does not exist on disk - a moved file left a \
+                     phantom path behind"
+                ));
+            }
+        }
+    }
+
+    Ok((checked, labels.len(), n_paths, problems))
 }
 
 /// Run vocabulary_check but write output into `out` instead of stdout, so the
