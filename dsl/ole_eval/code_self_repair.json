@@ -1,0 +1,119 @@
+{
+  "name": "code_self_repair",
+  "_bdd": {
+    "feature": "code_self_repair",
+    "feature_path": "bdd/workflows/ole_eval/code_self_repair.feature",
+    "mode": "decision"
+  },
+  "description": "Guard for LLM-proposed bounded source patches as a single triage node, port of\nthe deterministic bounded-patch application and repair gates\n(code/qwen_vm/app_scenarios/code_self_repair). The model proposes only exact\nold/new fragments; this workflow validates the proposal, applies it\ntransactionally, and runs the lexical, syntax, safety and unit-test gates\nbefore accepting any repaired source. It never patches a real file on disk.\nThe engine's own verbs: the candidate source is accepted (the patch applies and\nevery gate passes) or refused with the engine's own first failing gate.\nFolding boundaries (documented, not computed in the DSL):\n- The patch envelope (the balanced-object scan, the output size cap, exactly the\nkeys target and patches, the assigned-target set, the non-empty fragment list,\nthe per-fragment old/new shape and the per-fragment / per-bundle size and line\ncaps) folds into the `proposal` choice. Because the parser already refuses an\nunassigned target and every size cap, the boundary gate's assigned-path and\npatch-size checks can never fire behind it and fold into the same choice.\n- The fixed target fixtures and their unit tests are the authority; the harness\nruns them and hands the DSL one answer per check.\n- The remaining ordered gate chain (the bounded-patch bounds, the exact-match\napplication, the CPython tokenizer, the Python AST parse, the static safety\nscan and the fixed unit tests) folds into the `gate` choice, which carries the\nengine's own first failing gate. The ladder mirrors the engine's gate order.\n- The outer re-propose loop (up to MAX_RETRIES extra attempts) is the agent's,\nnot the deterministic gate's, so a single evaluation is one node visit.\nEmitted labels: reject_proposal, reject_bounded_patch, reject_exact_match,\nreject_tokenize, reject_ast, reject_malicious_pattern, reject_unit_tests,\naccept.",
+  "start": "guard",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "guard",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Does the model response parse as exactly one bounded patch proposal {target, patches} with an assigned target and a non-empty list of exact old/new fragments, each within the character and line caps and the bundle within the total new-line cap?",
+          "criteria": {
+            "accepted": "exactly one structurally valid bounded patch proposal",
+            "malformed": "no JSON object, an oversized output, a wrong key set, an unassigned or escaping target, an empty fragment list, or a fragment outside the old/new shape or size caps"
+          },
+          "heuristic": {
+            "answer_field": "ev_proposal"
+          }
+        },
+        "gate": {
+          "type": "choice",
+          "instructions": "Against the fixed target fixtures, which single ordered gate refuses the applied candidate first?",
+          "criteria": {
+            "none": "every gate passed: the candidate source is accepted",
+            "bounded_patch": "a patch replaces the whole file, replaces too much of it, or grows the changed region beyond the bound",
+            "exact_match": "an old fragment does not occur exactly once in the candidate",
+            "tokenize": "the CPython tokenizer refuses the candidate",
+            "ast": "the candidate does not parse as Python",
+            "malicious_pattern": "the candidate imports, calls, attributes or uses a construct on the forbidden list",
+            "unit_tests": "the candidate fails a fixed unit test"
+          },
+          "heuristic": {
+            "answer_field": "ev_gate"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "malformed"
+            },
+            "label": "reject_proposal"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "bounded_patch"
+            },
+            "label": "reject_bounded_patch"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "exact_match"
+            },
+            "label": "reject_exact_match"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "tokenize"
+            },
+            "label": "reject_tokenize"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "ast"
+            },
+            "label": "reject_ast"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "malicious_pattern"
+            },
+            "label": "reject_malicious_pattern"
+          },
+          {
+            "when": {
+              "question": "gate",
+              "answer": "unit_tests"
+            },
+            "label": "reject_unit_tests"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "accept"
+          }
+        ]
+      },
+      "state": {
+        "keep": [
+          "candidate_id"
+        ]
+      }
+    }
+  ]
+}

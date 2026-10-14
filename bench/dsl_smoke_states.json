@@ -6727,5 +6727,67 @@
       "ev_gate": "duplicate_issue",
       "ev_decision": "accept"
     }
+  },
+  "code_self_repair": {
+    "reject_proposal_malformed": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_missing_key": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_unassigned_target": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_empty_patches": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_bad_fragment": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "reject_proposal_oversized_output": {
+      "ev_proposal": "malformed",
+      "ev_gate": "none"
+    },
+    "accept_fix_subtraction": {
+      "ev_proposal": "accepted",
+      "ev_gate": "none"
+    },
+    "accept_fix_port_bound": {
+      "ev_proposal": "accepted",
+      "ev_gate": "none"
+    },
+    "reject_unit_tests": {
+      "ev_proposal": "accepted",
+      "ev_gate": "unit_tests"
+    },
+    "reject_exact_match": {
+      "ev_proposal": "accepted",
+      "ev_gate": "exact_match"
+    },
+    "reject_bounded_patch_whole_file": {
+      "ev_proposal": "accepted",
+      "ev_gate": "bounded_patch"
+    },
+    "reject_bounded_patch_grows_region": {
+      "ev_proposal": "accepted",
+      "ev_gate": "bounded_patch"
+    },
+    "reject_tokenize": {
+      "ev_proposal": "accepted",
+      "ev_gate": "tokenize"
+    },
+    "reject_ast": {
+      "ev_proposal": "accepted",
+      "ev_gate": "ast"
+    },
+    "reject_malicious_pattern": {
+      "ev_proposal": "accepted",
+      "ev_gate": "malicious_pattern"
+    }
   }
 }

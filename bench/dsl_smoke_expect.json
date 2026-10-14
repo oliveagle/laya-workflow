@@ -3037,5 +3037,22 @@
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "accept"
     }
+  },
+  "code_self_repair": {
+    "reject_proposal_malformed": "reject_proposal",
+    "reject_proposal_missing_key": "reject_proposal",
+    "reject_proposal_unassigned_target": "reject_proposal",
+    "reject_proposal_empty_patches": "reject_proposal",
+    "reject_proposal_bad_fragment": "reject_proposal",
+    "reject_proposal_oversized_output": "reject_proposal",
+    "accept_fix_subtraction": "accept",
+    "accept_fix_port_bound": "accept",
+    "reject_unit_tests": "reject_unit_tests",
+    "reject_exact_match": "reject_exact_match",
+    "reject_bounded_patch_whole_file": "reject_bounded_patch",
+    "reject_bounded_patch_grows_region": "reject_bounded_patch",
+    "reject_tokenize": "reject_tokenize",
+    "reject_ast": "reject_ast",
+    "reject_malicious_pattern": "reject_malicious_pattern"
   }
 }
