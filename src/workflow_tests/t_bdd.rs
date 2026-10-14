@@ -2431,7 +2431,7 @@ pub fn test_bdd_browser_gate(h: &mut Harness) {
 /// symmetric-difference rules are pinned here, plus one real IO round-trip
 /// against the checked-in `ole_eval` ports using a throwaway source tree.
 pub fn test_bdd_port_check(h: &mut Harness) {
-    use laya_workflow::bdd::{diff_port_sets, port_check, PortCheckOptions};
+    use laya_workflow::bdd::{diff_port_sets, port_check, repo_root, PortCheckOptions};
     use std::collections::BTreeSet;
     let set = |xs: &[&str]| -> BTreeSet<String> { xs.iter().map(|s| s.to_string()).collect() };
 
@@ -2491,6 +2491,7 @@ pub fn test_bdd_port_check(h: &mut Harness) {
         sources: src.clone(),
         cat: "ole_eval".into(),
         json: Some(rep.to_string_lossy().into_owned()),
+        ..PortCheckOptions::default()
     };
     h.eq(
         "bdd port-check: a drifted source tree exits 1",
@@ -2531,14 +2532,214 @@ pub fn test_bdd_port_check(h: &mut Harness) {
         sources: src.join("definitely-absent"),
         cat: "ole_eval".into(),
         json: None,
+        ..PortCheckOptions::default()
     };
     h.check(
         "bdd port-check: a missing source dir is an error, not a pass",
         port_check(&bad).is_err(),
     );
 
+    // ── the seal: the same gate's in-repo half ─────────────────────────────
+    // A normal run has no second checkout, so the closure is proven against a
+    // sealed source set checked in under bench/bdd/port_pins/. The names come
+    // from the seal, never from the port set (that would be the port against
+    // itself), and the README's "prove a cross-repo conversion is closed" is
+    // exactly the claim a tautology would fake.
+    let pin = std::env::temp_dir().join(format!("laya-portcheck-{tag}.pin.json"));
+    let _ = std::fs::remove_file(&pin);
+    h.check(
+        "bdd port-check: --write-pin without --sources is an error, never an empty seal",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            write_pin: Some(pin.clone()),
+            ..PortCheckOptions::default()
+        })
+        .is_err(),
+    );
+    h.eq(
+        "bdd port-check: sealing the live checkout is an act, and it exits 0",
+        port_check(&PortCheckOptions {
+            sources: src.clone(),
+            cat: "ole_eval".into(),
+            write_pin: Some(pin.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(0),
+    );
+    let sealed: Value = serde_json::from_str(&std::fs::read_to_string(&pin).unwrap()).unwrap();
+    let sealed_names: Vec<String> = sealed["sources"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x["name"].as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    h.check(
+        "bdd port-check: the seal records every scenario and nothing else",
+        sealed_names == vec!["brand_new".to_string(), "dialogue_policy".to_string()],
+    );
+    h.check(
+        "bdd port-check: the seal carries a source fingerprint per scenario",
+        sealed["sources"]
+            .as_array()
+            .map(|a| {
+                a.iter().all(|x| {
+                    x["fingerprint"].as_str().map(|f| f.len() == 16).unwrap_or(false)
+                })
+            })
+            .unwrap_or(false),
+    );
+    // A seal whose names came from the source set still proves the port: the
+    // unported `brand_new` in the seal is what makes this fail.
+    h.eq(
+        "bdd port-check: --pin proves the port against the seal (unported source)",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            pin: Some(pin.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(1),
+    );
+    // The seal is the authority for the *names*, never the port set itself, so a
+    // normal `check.sh` (no second checkout) runs against the checked-in seal.
+    // This is the headline: the in-repo half closes.
+    let checked_in = repo_root().join("bench").join("bdd").join("port_pins").join("ole_eval.json");
+    h.eq(
+        "bdd port-check: the checked-in seal closes the conversion in-repo",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            pin: Some(checked_in.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(0),
+    );
+    // The checked-in copy is name-only - the corpus lives in another repo, so no
+    // bytes of it (nor a hash of them) are quoted here. A *live* checkout then
+    // still verifies it by name; only a fingerprint the seal actually carries is
+    // compared against the source.
+    let sealed: Value = serde_json::from_str(&std::fs::read_to_string(&checked_in).unwrap()).unwrap();
+    let sealed_entries = sealed["sources"].as_array().cloned().unwrap_or_default();
+    h.check(
+        "bdd port-check: the checked-in seal is name-only, quoting no other repo's bytes",
+        !sealed_entries.is_empty()
+            && sealed_entries
+                .iter()
+                .all(|x| x["fingerprint"].as_str() == Some("")),
+    );
+
+    // Rebuild that name set into a live tree: a directory per sealed name. A live
+    // checkout that is exactly the seal closes even with no fingerprint sealed.
+    let live = std::env::temp_dir().join(format!("laya-portcheck-{tag}.live"));
+    let _ = std::fs::remove_dir_all(&live);
+    for e in &sealed_entries {
+        let d = live.join(e["name"].as_str().unwrap());
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("engine.py"), b"pass\n").unwrap();
+    }
+    h.eq(
+        "bdd port-check: a live checkout matching a name-only seal closes (no fingerprint sealed)",
+        port_check(&PortCheckOptions {
+            sources: live.clone(),
+            cat: "ole_eval".into(),
+            pin: Some(checked_in.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(0),
+    );
+    // A seal that *does* carry a fingerprint is compared against the source, so a
+    // moved source cannot pass unnoticed.
+    let moved = std::env::temp_dir().join(format!("laya-portcheck-{tag}.pin1.json"));
+    let mut drifted = sealed.clone();
+    drifted["sources"][0]["fingerprint"] = json!("0000000000000000");
+    std::fs::write(&moved, serde_json::to_string_pretty(&drifted).unwrap()).unwrap();
+    h.eq(
+        "bdd port-check: a sealed fingerprint that no longer matches fails",
+        port_check(&PortCheckOptions {
+            sources: live.clone(),
+            cat: "ole_eval".into(),
+            pin: Some(moved.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(1),
+    );
+    // A seal naming a source the port never converted does not close...
+    let ghost = std::env::temp_dir().join(format!("laya-portcheck-{tag}.pin2.json"));
+    let mut with_ghost = sealed.clone();
+    with_ghost["sources"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name": "ghost_source", "fingerprint": ""}));
+    std::fs::write(&ghost, serde_json::to_string_pretty(&with_ghost).unwrap()).unwrap();
+    h.eq(
+        "bdd port-check: --pin alone fails when the seal names an unported source",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            pin: Some(ghost.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(1),
+    );
+    // ...and neither does a seal that has lost one port (a port with no source).
+    let short = std::env::temp_dir().join(format!("laya-portcheck-{tag}.pin3.json"));
+    let mut missing = sealed.clone();
+    missing["sources"].as_array_mut().unwrap().pop();
+    std::fs::write(&short, serde_json::to_string_pretty(&missing).unwrap()).unwrap();
+    h.eq(
+        "bdd port-check: --pin alone fails when a port has no source in the seal",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            pin: Some(short.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(1),
+    );
+    // With both, the seal is put on trial: the live checkout holds a source the
+    // seal never saw, so the seal itself is what fails.
+    h.eq(
+        "bdd port-check: --pin + --sources puts the seal on trial",
+        port_check(&PortCheckOptions {
+            sources: src.clone(),
+            cat: "ole_eval".into(),
+            pin: Some(ghost.clone()),
+            ..PortCheckOptions::default()
+        })
+        .ok(),
+        Some(1),
+    );
+    h.check(
+        "bdd port-check: a seal that is not there is an error, not a pass",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            pin: Some(src.join("no-such-seal.json")),
+            ..PortCheckOptions::default()
+        })
+        .is_err(),
+    );
+    h.check(
+        "bdd port-check: neither --sources nor --pin is an error, not a silent pass",
+        port_check(&PortCheckOptions {
+            cat: "ole_eval".into(),
+            ..PortCheckOptions::default()
+        })
+        .is_err(),
+    );
+
     let _ = std::fs::remove_dir_all(&src);
     let _ = std::fs::remove_file(&rep);
+    let _ = std::fs::remove_file(&pin);
+    let _ = std::fs::remove_dir_all(&live);
+    let _ = std::fs::remove_file(&moved);
+    let _ = std::fs::remove_file(&ghost);
+    let _ = std::fs::remove_file(&short);
 }
 
 pub fn test_bdd_import(h: &mut Harness) {

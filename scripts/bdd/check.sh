@@ -211,16 +211,35 @@ if ! "$BIN" dsl smoke > "$out/smoke.log" 2> "$out/smoke.err"; then
   cat "$out/smoke.log" >&2
   exit 1
 fi
-# Cross-repo conversion gate: every upstream scenario must have a BDD port (a
-# @decision feature and a checked-in spec) and every port an upstream source.
-# The source directory lives in another repo (ole-eval
-# code/qwen_vm/app_scenarios), so there is no default path; point
-# LAYA_OLE_EVAL_SOURCES at it to make this a hard gate, and it is skipped (not
-# silently passed) when unset.
+# Cross-repo conversion gate, in two halves. Every upstream scenario must have a
+# BDD port (a @decision feature and a checked-in spec) and every port an upstream
+# source. The upstream corpus lives in another repo (ole-eval
+# code/qwen_vm/app_scenarios), so its source *names* are sealed under
+# bench/bdd/port_pins/<cat>.json; the first half runs against that seal and needs
+# no second checkout, so a normal run proves the closure. Point
+# LAYA_OLE_EVAL_SOURCES at a live checkout to run the second half, which puts the
+# seal itself on trial: the live names must equal the seal's, and any fingerprint
+# the seal carries must still match the source.
+PORT_PIN="$ROOT/bench/bdd/port_pins/ole_eval.json"
+if [ ! -f "$PORT_PIN" ]; then
+  echo "bdd check: the port seal is missing: $PORT_PIN" >&2
+  exit 1
+fi
+if ! "$BIN" bdd port-check --pin "$PORT_PIN" > "$out/port.log" 2>&1; then
+  echo "bdd check: the port closure failed against the seal:" >&2
+  tail -40 "$out/port.log" | sed 's/^/  /' >&2
+  exit 1
+fi
 if [ -n "${LAYA_OLE_EVAL_SOURCES:-}" ]; then
-  "$BIN" bdd port-check --sources "$LAYA_OLE_EVAL_SOURCES"
+  if ! "$BIN" bdd port-check --sources "$LAYA_OLE_EVAL_SOURCES" --pin "$PORT_PIN" \
+      > "$out/port_live.log" 2>&1; then
+    echo "bdd check: the port closure failed against the live checkout:" >&2
+    tail -40 "$out/port_live.log" | sed 's/^/  /' >&2
+    exit 1
+  fi
+  echo "port check: closed against the live checkout and the seal is intact"
 else
-  echo "port check: skipped (set LAYA_OLE_EVAL_SOURCES=<ole-eval code/qwen_vm/app_scenarios> to prove the ole_eval conversion is closed)"
+  echo "port check: closed against the seal (set LAYA_OLE_EVAL_SOURCES=<ole-eval code/qwen_vm/app_scenarios> to also put the seal on trial against a live checkout)"
 fi
 
 # The browser run: the bdd/features scenarios and the hand-written probes

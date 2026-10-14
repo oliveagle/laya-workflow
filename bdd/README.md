@@ -799,8 +799,13 @@ port under `bdd/workflows/<cat>/` and `dsl/<cat>/` so both gates cover it. Every
 feature is verified — re-parsed and recompiled to the same graph — *before* it
 is written, and a directory with nothing importable is an error, not a silent
 pass. A cross-repo
-`laya-workflow bdd port-check` (gated by `LAYA_OLE_EVAL_SOURCES`) proves every
-upstream scenario has a port and every port a source. The browser stage is
+`laya-workflow bdd port-check` proves every upstream scenario has a port and
+every port a source. Upstream lives in another repo, so its source *names* are
+sealed under `bench/bdd/port_pins/<cat>.json` and the gate runs against that seal
+(with no second checkout, a normal `check.sh` proves the closure); pointing
+`LAYA_OLE_EVAL_SOURCES` at a live upstream checkout turns the run into a trial of
+the seal as well — the live names must equal the seal's, and any fingerprint the
+seal carries must still match the source. The browser stage is
 **skip-not-fail**: `bdd run` prints a `skipped`
 line and exits 0 where no browser is installed, so the file stays green on a
 browserless CI runner, but a broken scenario fails wherever a browser exists.

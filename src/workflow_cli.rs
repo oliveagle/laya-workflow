@@ -534,11 +534,14 @@ enum BddCmd {
     },
     /// Prove a cross-repo conversion is closed: every upstream scenario has a
     /// BDD port (a `@decision` feature and a checked-in spec) and every port has
-    /// an upstream source. Needs a second checkout, so it is explicit.
+    /// an upstream source. The checked-in seal under `bench/bdd/port_pins/`
+    /// proves it without a second checkout; `--sources` adds a live checkout and
+    /// puts the seal on trial.
     PortCheck {
         /// Directory of upstream scenarios, one subdirectory each (for example
-        /// an ole-eval `code/qwen_vm/app_scenarios` checkout). Required.
-        #[arg(long)]
+        /// an ole-eval `code/qwen_vm/app_scenarios` checkout). Optional when
+        /// `--pin` supplies the sealed source set.
+        #[arg(long, default_value = "")]
         sources: String,
         /// Port category: `bdd/workflows/<cat>/` and `dsl/<cat>/`.
         #[arg(long, default_value = "ole_eval")]
@@ -546,6 +549,15 @@ enum BddCmd {
         /// Write the diff as JSON here.
         #[arg(long)]
         json: Option<String>,
+        /// The sealed source set, `bench/bdd/port_pins/<cat>.json`. Proves the
+        /// port is closed without a second checkout; with `--sources` it also
+        /// re-verifies the seal (same names, same source fingerprints).
+        #[arg(long)]
+        pin: Option<String>,
+        /// Seal the live `--sources` directory into this manifest (a deliberate
+        /// act after a review, never a gate).
+        #[arg(long)]
+        write_pin: Option<String>,
     },
     /// Import: turn an existing workflow spec (a `.json`) back into a
     /// `@decision` `.feature` that compiles to the very same graph — the
@@ -2557,10 +2569,18 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
         BddCmd::RoundTrip { json } => {
             bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?
         }
-        BddCmd::PortCheck { sources, cat, json } => bdd::port_check(&bdd::PortCheckOptions {
+        BddCmd::PortCheck {
+            sources,
+            cat,
+            json,
+            pin,
+            write_pin,
+        } => bdd::port_check(&bdd::PortCheckOptions {
             sources: std::path::PathBuf::from(sources),
             cat: cat.clone(),
             json: json.clone(),
+            pin: pin.clone().map(std::path::PathBuf::from),
+            write_pin: write_pin.clone().map(std::path::PathBuf::from),
         })?,
         BddCmd::Import {
             spec,

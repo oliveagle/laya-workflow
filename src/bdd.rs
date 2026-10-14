@@ -9004,6 +9004,13 @@ pub struct PortCheckOptions {
     pub cat: String,
     /// Write the diff as JSON here.
     pub json: Option<String>,
+    /// The **sealed** upstream source set, checked in under `bench/bdd/`. Without
+    /// a second checkout the closure can only be proven against this seal, and
+    /// with one it is re-verified — see `port_check`.
+    pub pin: Option<PathBuf>,
+    /// Seal the live `sources` directory into this manifest (re-seal after a
+    /// review, never on a hunch).
+    pub write_pin: Option<PathBuf>,
 }
 
 impl Default for PortCheckOptions {
@@ -9012,29 +9019,10 @@ impl Default for PortCheckOptions {
             sources: PathBuf::new(),
             cat: "ole_eval".into(),
             json: None,
+            pin: None,
+            write_pin: None,
         }
     }
-}
-
-/// Scenario names under `dir`: its subdirectories, minus dot/dunder ones
-/// (`__pycache__`) and minus files (`README.md`, `__init__.py`). A source that
-/// is not a directory is not a scenario.
-fn read_source_names(dir: &Path) -> Result<BTreeSet<String>> {
-    let mut out = BTreeSet::new();
-    for e in std::fs::read_dir(dir)
-        .with_context(|| format!("reading source dir {}", dir.display()))?
-        .flatten()
-    {
-        if !e.path().is_dir() {
-            continue;
-        }
-        let n = e.file_name().to_string_lossy().into_owned();
-        if n.starts_with('.') || n.starts_with("__") {
-            continue;
-        }
-        out.insert(n);
-    }
-    Ok(out)
 }
 
 /// File stems of extension `ext` directly under `dir`. `<name>.config.json`
@@ -9061,20 +9049,199 @@ fn read_stem_set(dir: &Path, ext: &str) -> BTreeSet<String> {
     out
 }
 
+/// FNV-1a 64 of `bytes`, lowercase hex.
+///
+/// A *fingerprint*, not a digest: it exists so that a scenario whose source
+/// changed since it was sealed stops matching the seal. Nothing here is a
+/// security boundary and the crate carries no hash dependency for it.
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in bytes {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// A scenario's *source* fingerprint: the top-level `.py` files, sorted by name,
+/// each folded in as `name` + NUL + bytes. `results/` and `__pycache__/` are
+/// outputs, not source, so a benchmark run does not move the seal.
+fn scenario_fingerprint(dir: &Path) -> Result<String> {
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
+    for e in std::fs::read_dir(dir)
+        .with_context(|| format!("reading scenario dir {}", dir.display()))?
+        .flatten()
+    {
+        let p = e.path();
+        if !p.is_file() {
+            continue;
+        }
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.ends_with(".py") {
+            files.push((n, p));
+        }
+    }
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (n, p) in &files {
+        let body = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
+        for chunk in [n.as_bytes(), &[0u8], body.as_slice()] {
+            h ^= fnv1a64(chunk);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    Ok(format!("{h:016x}"))
+}
+
+/// Every scenario under `dir`: name -> source fingerprint, name-sorted.
+fn read_sources_sealed(dir: &Path) -> Result<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for e in std::fs::read_dir(dir)
+        .with_context(|| format!("reading source dir {}", dir.display()))?
+        .flatten()
+    {
+        if !e.path().is_dir() {
+            continue;
+        }
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.starts_with('.') || n.starts_with("__") {
+            continue;
+        }
+        let fp = scenario_fingerprint(&e.path())?;
+        out.push((n, fp));
+    }
+    out.sort();
+    Ok(out)
+}
+
+/// The sealed manifest (`bench/bdd/port_pins/<cat>.json`), as name -> fingerprint.
+fn read_pin(path: &Path) -> Result<Vec<(String, String)>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading the seal {}", path.display()))?;
+    let v: Value = serde_json::from_str(&text)
+        .with_context(|| format!("parsing the seal {}", path.display()))?;
+    let arr = v
+        .get("sources")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow!("{}: no `sources` array", path.display()))?;
+    let mut out: Vec<(String, String)> = Vec::new();
+    for it in arr {
+        let name = it
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("{}: a `sources` entry has no `name`", path.display()))?;
+        let fp = it
+            .get("fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        out.push((name.to_string(), fp));
+    }
+    out.sort();
+    Ok(out)
+}
+
 /// `laya-workflow bdd port-check`: prove a cross-repo conversion is *closed*.
 /// Every upstream scenario must have both a `@decision` feature and a checked-in
 /// spec, and no port may exist without a source. The within-repo reverse
 /// direction (a spec with no feature) is already proven by `bdd round-trip`;
 /// this adds the one thing that needs the second checkout.
 pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
-    if o.sources.as_os_str().is_empty() {
-        bail!("--sources is required: the upstream scenario directory to compare against");
+    let live: Option<Vec<(String, String)>> = if o.sources.as_os_str().is_empty() {
+        None
+    } else {
+        if !o.sources.is_dir() {
+            bail!("--sources {} is not a directory", o.sources.display());
+        }
+        Some(read_sources_sealed(&o.sources)?)
+    };
+
+    // Sealing is a deliberate act, never a gate: it writes the manifest from a
+    // checkout a reviewer just compared by hand.
+    if let Some(path) = &o.write_pin {
+        let Some(live) = &live else {
+            bail!("--write-pin needs --sources <DIR>: there is nothing to seal");
+        };
+        let arr: Vec<Value> = live
+            .iter()
+            .map(|(n, fp)| json!({"name": n, "fingerprint": fp}))
+            .collect();
+        let doc = json!({
+            "cat": o.cat,
+            "what": "The sealed upstream source set that the BDD port under bdd/workflows/<cat>/ \
+                     and dsl/<cat>/ was converted from, one entry per scenario (fingerprint = \
+                     FNV-1a 64 over its top-level .py files). `bdd port-check --pin <this>` \
+                     proves the port is still exactly this set without a second checkout; adding \
+                     `--sources <checkout>` re-verifies the seal itself (same names, same source \
+                     fingerprints), so a change upstream cannot pass unnoticed.",
+            "sources": arr,
+        });
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&doc)?))?;
+        println!(
+            "bdd port-check: sealed {} source(s) into {}",
+            live.len(),
+            path.display()
+        );
+        // Sealing is an act, not a verdict: it says nothing about the port, so it
+        // does not pretend to. The gate that *does* judge is `--pin`.
+        return Ok(0);
     }
-    if !o.sources.is_dir() {
-        bail!("--sources {} is not a directory", o.sources.display());
+
+    // Where the source *names* come from. With a live checkout that is the
+    // authority; without one, the seal stands in for it. Never the port set
+    // itself - that would be comparing the port against itself.
+    let names_from = if live.is_some() { "live checkout" } else { "sealed manifest" };
+    let source_names: BTreeSet<String> = match (&live, &o.pin) {
+        (Some(live), _) => live.iter().map(|(n, _)| n.clone()).collect(),
+        (None, Some(pin)) => read_pin(pin)?.iter().map(|(n, _)| n.clone()).collect(),
+        (None, None) => bail!(
+            "port-check needs --sources <DIR> (a live upstream checkout) or --pin <FILE> \
+             (the sealed source set under bench/bdd/port_pins/)"
+        ),
+    };
+
+    // Given both, the seal itself is on trial: same names, same fingerprints.
+    let mut seal_problems: Vec<String> = Vec::new();
+    if let (Some(live), Some(pin)) = (&live, &o.pin) {
+        let sealed = read_pin(pin)?;
+        let live_names: BTreeSet<String> = live.iter().map(|(n, _)| n.clone()).collect();
+        let sealed_names: BTreeSet<String> = sealed.iter().map(|(n, _)| n.clone()).collect();
+        for n in live_names.difference(&sealed_names) {
+            seal_problems.push(format!(
+                "the upstream source {n:?} is not in the seal - port it, then re-seal with \
+                 --write-pin"
+            ));
+        }
+        for n in sealed_names.difference(&live_names) {
+            seal_problems.push(format!(
+                "the seal lists {n:?} but the upstream checkout has no such scenario - the seal \
+                 outlived its source"
+            ));
+        }
+        for (n, fp) in live {
+            if let Some((_, sfp)) = sealed.iter().find(|(s, _)| s == n) {
+                // An empty fingerprint is a *name-only* seal: the source set was
+                // sealed, its contents were not (the checked-in copy of a corpus
+                // that lives in another repo seals names, so no bytes of that
+                // corpus are quoted here). Only a seal that carries a
+                // fingerprint is compared against the live source.
+                if !sfp.is_empty() && sfp != fp {
+                    seal_problems.push(format!(
+                        "the upstream source {n:?} changed since it was sealed ({sfp} -> {fp}) - \
+                         re-check the port, then re-seal"
+                    ));
+                }
+            }
+        }
     }
+
     let root = repo_root();
-    let sources = read_source_names(&o.sources)?;
+    let sources = source_names;
     let features = read_stem_set(&root.join("bdd").join("workflows").join(&o.cat), "feature");
     let specs = read_stem_set(&root.join("dsl").join(&o.cat), "json");
     let diff = diff_port_sets(&sources, &features, &specs);
@@ -9082,6 +9249,8 @@ pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
     if let Some(path) = &o.json {
         let report = json!({
             "sources": o.sources.to_string_lossy(),
+            "names_from": names_from,
+            "seal_problems": seal_problems.clone(),
             "cat": o.cat,
             "counts": {
                 "sources": sources.len(),
@@ -9117,9 +9286,17 @@ pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
         specs.len(),
         o.cat
     );
-    if diff.is_empty() {
+    for p in &seal_problems {
+        eprintln!("bdd port-check: {p}");
+    }
+    if diff.is_empty() && seal_problems.is_empty() {
         println!(
-            "bdd port-check: closed - every source has a feature and a spec, and every port has a source"
+            "bdd port-check: closed against the {names_from} ({} source(s) / {} feature(s) / {} \
+             spec(s)) - every source has a feature and a spec, every port has a source, and the \
+             seal is intact",
+            sources.len(),
+            features.len(),
+            specs.len()
         );
         return Ok(0);
     }

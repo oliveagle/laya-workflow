@@ -1,0 +1,270 @@
+{
+  "cat": "ole_eval",
+  "what": "The sealed upstream source set the BDD port under bdd/workflows/ole_eval/ and dsl/ole_eval/ was converted from, one entry per scenario. This checked-in copy is a *name-only* seal: the upstream corpus lives in another repository, so the names are recorded and the fingerprint is left empty (`\"\"`) - no bytes of that corpus, and no hash of them, are quoted here. `laya-workflow bdd port-check --pin <this>` proves the port is still exactly this set without a second checkout. Add `--sources <checkout>` and the seal is put on trial too: the live checkout must hold the same names, and any fingerprint that is present (a locally re-sealed copy carries FNV-1a 64 of the scenario's top-level .py files) must match.",
+  "sources": [
+    {
+      "name": "accessibility_content_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "adaptive_risk_control",
+      "fingerprint": ""
+    },
+    {
+      "name": "alert_noise_reduction",
+      "fingerprint": ""
+    },
+    {
+      "name": "aml_screener",
+      "fingerprint": ""
+    },
+    {
+      "name": "api_key_rotation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "api_quota_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "approval_workflow",
+      "fingerprint": ""
+    },
+    {
+      "name": "bracket_matcher",
+      "fingerprint": ""
+    },
+    {
+      "name": "cache_invalidation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "cache_policy_enforcer",
+      "fingerprint": ""
+    },
+    {
+      "name": "circuit_breaker_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "code_review_gate",
+      "fingerprint": ""
+    },
+    {
+      "name": "code_self_repair",
+      "fingerprint": ""
+    },
+    {
+      "name": "compliance_audit_evidence_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "config_schema_migration_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "content_safety_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "contract_conflict_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "crawler_schema_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "credential_issuance_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "credential_rotation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "data_contract_schema_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "data_retention_expiry_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "dead_letter_queue_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "deployment_canary_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "dialogue_policy",
+      "fingerprint": ""
+    },
+    {
+      "name": "dns_record_validator",
+      "fingerprint": ""
+    },
+    {
+      "name": "endpoint_health_checker",
+      "fingerprint": ""
+    },
+    {
+      "name": "experiment_design_gate",
+      "fingerprint": ""
+    },
+    {
+      "name": "feature_flag_rollout_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "file_upload_scanner",
+      "fingerprint": ""
+    },
+    {
+      "name": "formal_checker",
+      "fingerprint": ""
+    },
+    {
+      "name": "incident_response_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "indentation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "intrusion_signal_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "inventory_replenishment_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "keyword_order_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "knowledge_graph_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "literature_synthesis_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "loan_dialogue",
+      "fingerprint": ""
+    },
+    {
+      "name": "log_redaction_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "model_drift_detector",
+      "fingerprint": ""
+    },
+    {
+      "name": "network_bandwidth_allocation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "order_tracker",
+      "fingerprint": ""
+    },
+    {
+      "name": "policy_as_code",
+      "fingerprint": ""
+    },
+    {
+      "name": "pricing_discount_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "privacy_retention_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "protocol_parser",
+      "fingerprint": ""
+    },
+    {
+      "name": "query_complexity_limiter",
+      "fingerprint": ""
+    },
+    {
+      "name": "rate_limit_budget_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "rate_limiter_config_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "reasoning_audit",
+      "fingerprint": ""
+    },
+    {
+      "name": "refactor_plan_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "resource_scheduler_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "rpa_action_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "self_healing_gate",
+      "fingerprint": ""
+    },
+    {
+      "name": "session_token_validator",
+      "fingerprint": ""
+    },
+    {
+      "name": "settlement_allocation_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "shift_assignment_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "shipping_route_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "sla_checker",
+      "fingerprint": ""
+    },
+    {
+      "name": "subscription_churn_retention_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "subscription_entitlement_guard",
+      "fingerprint": ""
+    },
+    {
+      "name": "test_case_generator",
+      "fingerprint": ""
+    },
+    {
+      "name": "verifiable_cot",
+      "fingerprint": ""
+    },
+    {
+      "name": "webhook_signature_verifier",
+      "fingerprint": ""
+    },
+    {
+      "name": "workflow_dag_validator",
+      "fingerprint": ""
+    }
+  ]
+}

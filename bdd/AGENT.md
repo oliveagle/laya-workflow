@@ -117,11 +117,11 @@ laya-workflow bdd run --profile production --base-url <real>
 - `laya-workflow bdd build` — 统一 accuracy gate + 多产物（本指南的核心命令）
 - `laya-workflow bdd run` — 执行器（本地 hermetic / 生产 IT）；无浏览器时 skip（exit 0），`--require-browser` 改判 error，`LAYA_BDD_SKIP_BROWSER=1` 关掉 `check.sh` 里的这一段
 - `laya-workflow bdd build --assist` — needle 建议模块（只建议，不编译）
-- `bench/bdd/` — bdd 工具链 JSON 数据（authoring 造册 `tasks/*.json`、实战结果 `live/`、`args_probes.json`）；`bdd/` 内无任何 `.json`
+- `bench/bdd/` — bdd 工具链 JSON 数据（authoring 造册 `tasks/*.json`、实战结果 `live/`、`args_probes.json`、跨仓端口来源封存 `port_pins/<cat>.json`）；`bdd/` 内无任何 `.json`
 - `bench/bdd/live/REPORT.md` — 实战结果（29 passed / 842 steps）+ BDD vs 手写 JSON 效率对比
 - `laya-workflow bdd live` — 跑实战语料（需要 Chrome，**绝不在 CI**）
 - `laya-workflow bdd compare` — BDD vs 手写 JSON 的体积/门禁对比（离线，可进 CI）
-- `laya-workflow bdd port-check --sources <dir>` — 跨仓转换闭合性（每个上游 scenario 都有 BDD 端口、每个端口都有上游来源）；`LAYA_OLE_EVAL_SOURCES` 指向 ole-eval `code/qwen_vm/app_scenarios` 时由 `check.sh` 真跑（未设则跳过）
+- `laya-workflow bdd port-check [--pin <seal>] [--sources <dir>]` — 跨仓转换闭合性（每个上游 scenario 都有 BDD 端口、每个端口都有上游来源）。上游语料在另一个 repo，故来源**名集**封存在 `bench/bdd/port_pins/<cat>.json`（check-in 的是「只有名、`fingerprint` 留空」的 seal，不引用他仓任何字节或其哈希）：`--pin` 无需第二份 checkout 即可证明闭合，`check.sh` 默认就跑这一半；`--sources` 指向活的 ole-eval `code/qwen_vm/app_scenarios` 时把 seal 也拉上审判席（活名集必须与 seal 相同、seal 里带指纹的项必须仍匹配），`LAYA_OLE_EVAL_SOURCES` 设了才跑；`--write-pin` 是本地重新封存（审阅后的动作，不是门禁）
 - `laya-workflow bdd import <spec.json> [--out <f.feature> | --into <cat>]` / `laya-workflow bdd import --dir <DIR> [--out <dir> | --into <cat>] [--json <f>] [--force]` — 正向搬运：把已有 workflow spec 转成 `@decision` `.feature`（transpile 的逆）。单文件默认打 stdout；`--into` 归入本仓 `bdd/workflows/<cat>/` 并把 spec 抄进 `dsl/<cat>/`（`name` 钉成端口名，保证落仓即过 `round-trip`/`import-check`）。`--dir` 递归批量：只收「解析成功且 `nodes` 非空」的 json，按名跳过 `*.config.json`、其余非 workflow json 记为 skipped，**一个都没命中即报错**（绝不 false-green）；每个 feature 落盘前先验证「重新解析 + 重新编译 == 原 spec（`same_graph`）」；目标已存在默认报冲突（`--force` 覆盖）。`bdd import-check` 门禁证明每个已入库 spec 都能被 import 出的 feature 编译回同一张图（`check.sh` 真跑）
 
 ## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
