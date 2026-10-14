@@ -278,8 +278,12 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **958
    dsl_version 剥离对齐 dsl 约定；`write=true` 落盘 dsl/<cat>/ 带 exists 防覆盖）或 CLI
    `laya-workflow bdd transpile <file> --out dsl/<cat>`。
 6. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
-7. 全量门禁：`laya-workflow bdd round-trip`（160/160 复现）+ `scripts/bdd/check.sh`。
-6. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
+7. 反向搬运：**MCP `bdd_import`**（已有 JSON workflow spec → `@decision` feature，附 `graph_matches` 往返证明；批量走 CLI
+   `laya-workflow bdd import --dir <DIR> --into <cat>`）—— 让「把已知 workflow 转成 BDD」也能在 MCP 里一把完成。
+8. 运行决策：**MCP `bdd_decide`**（`feature_text`/`feature_path`/`spec_path` + `state` → `label` + 全 `trace` + `result`，
+   与 `dsl smoke` 同一离线确定性引擎）—— 让 BDD 图成为 agent **可调用的决策核心**，而不只是可写的产物。
+9. 全量门禁：`laya-workflow bdd round-trip`（160/160 复现）+ `scripts/bdd/check.sh`。
+10. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
 
 ### 为什么这样是 agentic workflow 的核心
 
@@ -287,5 +291,5 @@ expect 表现况：`bench/dsl_smoke_expect.json` 覆盖 **122** 个 spec / **958
 - **正确性可证**：语义图校验 + 决策输出断言 + **决策 trace 全钉** + offline-detection，让"决策对没对"是
   可测、可复现、可回归的（P24-P31），不只是"能编译"。
 - **单一事实来源**：`.feature` 是源，`dsl/*.json` 是编译产物；round-trip 证明等价，杜绝双份漂移。
-- **可直接运行**：`laya-workflow run --spec dsl/<cat>/<name>.json` 用 HeuristicBackend / 真实 LLM 跑决策图。
+- **可直接运行 / 可被 agent 调用**：`laya-workflow run --spec dsl/<cat>/<name>.json` 用 HeuristicBackend / 真实 LLM 跑决策图；MCP `bdd_decide` 让同一张图在进程内被 agent 直接调用（feature/spec + state → label + trace）。
 - **完整性可审计**：`bdd_catalog` 让"所有已知 workflow 都 BDD 化"这件事可测（孤儿即报）。

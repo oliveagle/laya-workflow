@@ -2851,3 +2851,70 @@ pub fn test_bdd_import_dir(h: &mut Harness) {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+
+/// `bdd_import` MCP tool: lift a checked-in dsl spec back into a `@decision`
+/// feature, in-process — the agent-facing counterpart of `bdd import`, and the
+/// in-process proof that any known JSON workflow can be lifted into BDD. The
+/// emitted feature must recompile to the very same graph (`graph_matches`), a
+/// non-workflow JSON must be rejected, and a missing input must error cleanly.
+pub fn test_bdd_mcp_import(h: &mut Harness) {
+    let t = bdd_tool("bdd_import");
+    let r = t
+        .call(&json!({"spec_path": "dsl/guards/agent_permission_gate.json"}))
+        .unwrap();
+    h.eq("bdd_import: ok", r["ok"].as_bool().unwrap(), true);
+    h.eq("bdd_import: graph matches", r["graph_matches"].as_bool().unwrap(), true);
+    let text = r["feature_text"].as_str().unwrap_or("").to_string();
+    h.check("bdd_import: emits @decision", text.starts_with("@decision\n"));
+    // The emitted text must itself pass the authoring gate.
+    let v = bdd_tool("bdd_validate")
+        .call(&json!({"feature_text": text}))
+        .unwrap();
+    h.eq("bdd_import: imported feature passes bdd_validate", v["ok"].as_bool().unwrap(), true);
+    // A non-workflow JSON (no nodes) is refused, not silently accepted.
+    h.check(
+        "bdd_import: non-spec JSON errors",
+        t.call(&json!({"spec_json": "{\"hello\": 1}"})).is_err(),
+    );
+    // No input errors cleanly instead of panicking.
+    h.check("bdd_import: no input errors", t.call(&json!({})).is_err());
+}
+
+/// `bdd_decide` MCP tool: run a `@decision` workflow against a state and get
+/// the verdict + full trace — the callable core of a BDD graph for an agent.
+/// Uses the same deterministic offline engine as `dsl smoke`.
+pub fn test_bdd_mcp_decide(h: &mut Harness) {
+    let t = bdd_tool("bdd_decide");
+    // A 1-step high-risk path: BLOCK.
+    let r = t
+        .call(&json!({
+            "feature_path": "bdd/workflows/guards/agent_permission_gate.feature",
+            "state": {"ev_unauthenticated": "halt", "ev_risk": "high"}
+        }))
+        .unwrap();
+    h.eq("bdd_decide: ok", r["ok"].as_bool().unwrap(), true);
+    h.eq("bdd_decide: label BLOCK", r["label"].clone(), json!("BLOCK"));
+    h.eq("bdd_decide: one step", r["trace"]["steps"].as_array().unwrap().len(), 1);
+    // The same workflow on a checked-in spec, a 3-step login→authorize→halt path.
+    let r2 = t
+        .call(&json!({
+            "spec_path": "dsl/guards/agent_permission_gate.json",
+            "state": {"ev_unauthenticated": "login", "ev_authenticated": "authorize", "ev_authorized": "halt", "ev_risk": "low"}
+        }))
+        .unwrap();
+    h.eq("bdd_decide: spec_path label EXECUTE", r2["label"].clone(), json!("EXECUTE"));
+    h.eq("bdd_decide: 3 steps", r2["trace"]["steps"].as_array().unwrap().len(), 3);
+    h.eq("bdd_decide: step0 node", r2["trace"]["steps"][0]["node"].clone(), json!("unauthenticated"));
+    h.check("bdd_decide: result object", r2["result"].is_object());
+    // A browser-step feature is refused (that path is `bdd run`).
+    h.check(
+        "bdd_decide: browser feature refused",
+        t.call(&json!({"feature_path": "bdd/features/navigation.feature", "state": {}})).is_err(),
+    );
+    // `state` is required.
+    h.check(
+        "bdd_decide: no state errors",
+        t.call(&json!({"feature_path": "bdd/workflows/guards/agent_permission_gate.feature"})).is_err(),
+    );
+}

@@ -12,6 +12,14 @@
 //! `@decision` source, and vice versa. Orphans on either side are reported so
 //! a workflow that has not been converted (or a feature with no spec) cannot
 //! hide.
+//!
+//! `bdd_import` and `bdd_decide` close the loop from the other two sides.
+//! `bdd_import` lifts an existing JSON workflow spec back into a `@decision`
+//! `.feature` that recompiles to the very same graph — so an agent can convert
+//! *any* known workflow into BDD in-process, not just author a new one.
+//! `bdd_decide` runs a finished `@decision` graph against a state and returns
+//! the verdict + trace, so the graph is a decision an agent can *call*, not only
+//! a product it writes.
 
 use std::sync::Arc;
 
@@ -34,6 +42,8 @@ impl McpToolSet for BddTools {
             Arc::new(TranspileTool),
             Arc::new(ValidateTool),
             Arc::new(CatalogTool),
+            Arc::new(ImportTool),
+            Arc::new(DecideTool),
         ]
     }
 }
@@ -488,6 +498,198 @@ impl McpTool for TranspileTool {
             "next": [
                 "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
             ]
+        }))
+    }
+}
+
+
+/// `bdd_import`: lift an existing workflow spec (a `.json`) into a `@decision`
+/// `.feature` that compiles back to the very same graph — the reverse
+/// transpiler (the inverse of `bdd_transpile`), in-process. The agent-facing
+/// counterpart of `laya-workflow bdd import` / `bdd import --dir`: the tool
+/// that lets an agent lift *any* known JSON workflow into BDD. Pass
+/// `spec_path` (repo-relative or absolute) or `spec_json` (raw text).
+struct ImportTool;
+
+impl McpTool for ImportTool {
+    fn name(&self) -> &str {
+        "bdd_import"
+    }
+    fn description(&self) -> &str {
+        "Import (lift) an existing workflow spec (a .json) into a @decision .feature that compiles back to the very same graph — the reverse transpiler, in-process; the agent-facing counterpart of `laya-workflow bdd import`. Pass spec_path (repo-relative or absolute) or spec_json (raw text). Returns the .feature text plus a round-trip proof (graph_matches), so an agent can lift any known JSON workflow into BDD."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "spec_path": {"type": "string", "description": "Path to an existing workflow spec .json, repo-relative or absolute. Provide this or spec_json."},
+                "spec_json": {"type": "string", "description": "Raw workflow spec JSON text to import. Provide this or spec_path."}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let (spec, source) = match args.get("spec_json").and_then(Value::as_str) {
+            Some(t) => (
+                serde_json::from_str::<Value>(t)
+                    .map_err(|e| anyhow!("bdd_import: spec_json is not valid JSON: {e}"))?,
+                "<mcp>".to_string(),
+            ),
+            None => {
+                let p = args
+                    .get("spec_path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("bdd_import: provide spec_path or spec_json"))?;
+                let path = if std::path::Path::new(p).is_absolute() {
+                    std::path::PathBuf::from(p)
+                } else {
+                    bdd::repo_root().join(p)
+                };
+                let text = std::fs::read_to_string(&path)
+                    .map_err(|e| anyhow!("bdd_import: cannot read {p}: {e}"))?;
+                (
+                    serde_json::from_str::<Value>(&text)
+                        .map_err(|e| anyhow!("bdd_import: {p} is not valid JSON: {e}"))?,
+                    p.to_string(),
+                )
+            }
+        };
+        let name = spec
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("<spec>")
+            .to_string();
+        let feature_text = bdd::import_spec(&spec)?;
+        // Prove the emitted feature recompiles to the same graph — the same
+        // check `bdd import --dir` runs before it writes anything.
+        let graph_matches = match bdd::parse(&feature_text, "<import>") {
+            Ok(pf) => match bdd::compile_decision(&pf, &json!({})) {
+                Ok(rb) => bdd::same_graph(&spec, &rb),
+                Err(_) => false,
+            },
+            Err(_) => false,
+        };
+        Ok(json!({
+            "ok": graph_matches,
+            "name": name,
+            "source": source,
+            "feature_text": feature_text,
+            "graph_matches": graph_matches,
+            "next": [
+                "file the .feature under bdd/workflows/<cat>/ so `bdd round-trip` and `bdd import-check` both pass"
+            ]
+        }))
+    }
+}
+
+/// `bdd_decide`: run a `@decision` workflow against a state and return the
+/// verdict — the "use the workflow" step that makes a BDD graph a callable
+/// decision core for an agent, not just something it authors. Compiles the
+/// feature on the fly (or loads a checked-in spec) and executes it with the
+/// offline heuristic backend, the same deterministic engine `dsl smoke` and
+/// `bdd score --run` drive. Pass `feature_text`/`feature_path` or `spec_path`,
+/// plus `state`.
+struct DecideTool;
+
+impl McpTool for DecideTool {
+    fn name(&self) -> &str {
+        "bdd_decide"
+    }
+    fn description(&self) -> &str {
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer) and the result object."
+    }
+    fn input_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["state"],
+            "properties": {
+                "feature_text": {"type": "string", "description": "The .feature source text to compile and run. Provide this, feature_path, or spec_path."},
+                "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature decision workflow, e.g. bdd/workflows/guards/agent_permission_gate.feature."},
+                "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
+                "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."}
+            }
+        })
+    }
+    fn call(&self, args: &Value) -> Result<Value> {
+        let state = args
+            .get("state")
+            .cloned()
+            .ok_or_else(|| anyhow!("bdd_decide: state is required"))?;
+        if !state.is_object() {
+            return Err(anyhow!("bdd_decide: state must be a JSON object"));
+        }
+        // Seed the scratch ${env.LAYA_*} dirs the way `bdd build` / `dsl smoke`
+        // do, so policy.allow_paths references resolve in the offline run.
+        if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+            for (k, v) in env_map {
+                std::env::set_var(k, v);
+            }
+            let _ = crate::capability::secret::init(None);
+        }
+
+        let wf = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
+            let path = if std::path::Path::new(rel).is_absolute() {
+                std::path::PathBuf::from(rel)
+            } else {
+                bdd::repo_root().join(rel)
+            };
+            crate::spec::load_file(&path.to_string_lossy())
+                .map_err(|e| anyhow!("bdd_decide: cannot load spec {rel}: {e:#}"))?
+        } else {
+            let (text, src_name) = match args.get("feature_text").and_then(Value::as_str) {
+                Some(t) => (t.to_string(), "<mcp>".to_string()),
+                None => {
+                    let rel = args
+                        .get("feature_path")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            anyhow!("bdd_decide: provide feature_text, feature_path, or spec_path")
+                        })?;
+                    let p = bdd::repo_root().join(rel);
+                    (
+                        std::fs::read_to_string(&p)
+                            .map_err(|e| anyhow!("bdd_decide: cannot read {rel}: {e}"))?,
+                        rel.to_string(),
+                    )
+                }
+            };
+            let feature = bdd::parse(&text, &src_name)?;
+            let decision = feature
+                .tags
+                .iter()
+                .any(|t| t == "decision" || t.starts_with("decision("));
+            if !decision {
+                return Err(anyhow!(
+                    "bdd_decide: only @decision workflows are runnable here; {src_name} is a browser-step feature (use `bdd run` for those)"
+                ));
+            }
+            let mut spec = bdd::compile_decision(&feature, &json!({}))?;
+            if let Some(o) = spec.as_object_mut() {
+                o.remove("dsl_version");
+            }
+            crate::spec::from_spec_with_dir(&spec, None, None)
+                .map_err(|e| anyhow!("bdd_decide: {e:#}"))?
+        };
+
+        let out = wf
+            .run(&crate::backend::HeuristicBackend, &state)
+            .map_err(|e| anyhow!("bdd_decide: run failed: {e:#}"))?;
+        let j = out.to_json();
+        // The decision label is the projected `result.label` (or `gate_action`
+        // for a gate node) — the same field `check_expect` pins; `trace.final_action`
+        // is only the terminal verb ("stop").
+        let label = j
+            .pointer("/result/label")
+            .and_then(Value::as_str)
+            .or_else(|| j.pointer("/result/gate_action").and_then(Value::as_str))
+            .unwrap_or_else(|| out.final_action())
+            .to_string();
+        Ok(json!({
+            "ok": true,
+            "label": label,
+            "final_action": out.final_action(),
+            "trace": j.get("trace").cloned().unwrap_or(Value::Null),
+            "result": j.get("result").cloned().unwrap_or(Value::Null),
+            "iterations": j.get("iterations").cloned().unwrap_or(Value::Null),
         }))
     }
 }
