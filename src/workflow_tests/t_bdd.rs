@@ -2412,12 +2412,59 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
         any(&p, "quotes bdd/fixtures/ghost_page.html, which does not exist on disk"),
     );
 
-    // ...and the checked-in docs quote no missing path (the negative above is a
-    // real detection, not a blanket failure).
-    let (_c, _t, _pp, all) = doc_check_impl(&readme, &agent).unwrap();
+    // Negative 7 (P123): the `dsl/` tree is a spec root too, so a doc that quotes
+    // a moved `dsl/…/x.json` must be caught the same way. Inject a phantom dsl
+    // path into the README (whose real text quotes six probe specs) and expect it
+    // named.
+    let dsl_phantom = readme.replace(
+        "dsl/browser/browser_base_probe.json",
+        "dsl/browser/ghost_base_probe.json",
+    );
+    let p = problems_of(&dsl_phantom, &agent);
+    h.check(
+        "bdd doc-check: a quoted dsl/ path that no longer exists is named (P125)",
+        any(&p, "quotes dsl/browser/ghost_base_probe.json, which does not exist on disk"),
+    );
+
+    // Negative 8 (P125): the scan used to read only `bench/bdd/`, so the documents
+    // a user actually reads first (`docs/*.md`) were unchecked - measured, that is
+    // where both live stale paths hid. Drop a throwaway doc under `docs/` quoting
+    // a phantom (one bdd/ path and one dsl/ path) and expect both named *as that
+    // doc*; the file is removed before the assertion so a red test leaves no dirt.
+    let probe = root.join("docs").join("__p125_scope_probe.md");
+    let _ = std::fs::remove_file(&probe);
+    std::fs::write(
+        &probe,
+        "probe: bdd/workflows/guards/__p125_ghost__.feature and dsl/guards/__p125_ghost__.json\n",
+    )
+    .unwrap();
+    let p = problems_of(&readme, &agent);
+    let _ = std::fs::remove_file(&probe);
+    h.check(
+        "bdd doc-check: a doc under docs/ is scanned for a bdd/ path (P125)",
+        any(
+            &p,
+            "docs/__p125_scope_probe.md quotes bdd/workflows/guards/__p125_ghost__.feature",
+        ),
+    );
+    h.check(
+        "bdd doc-check: a doc under docs/ is scanned for a dsl/ path too (P125)",
+        any(&p, "docs/__p125_scope_probe.md quotes dsl/guards/__p125_ghost__.json"),
+    );
+
+    // ...and the checked-in docs quote no missing path (the negatives above are
+    // real detections, not a blanket failure). The distinct (doc, path) count is a
+    // second, structural witness of the widened scope: the three docs the gate used
+    // to read contribute ~45, the whole checked-in doc tree 189 (measured). A
+    // regression that quietly narrows the walk back would drop below this floor.
+    let (_c, _t, n_paths, all) = doc_check_impl(&readme, &agent).unwrap();
     h.check(
         "bdd doc-check: the checked-in docs quote no missing path",
         !any(&all, "does not exist on disk"),
+    );
+    h.check(
+        &format!("bdd doc-check: every checked-in doc is scanned, not just the BDD toolchain's (P125) [{n_paths} paths]"),
+        n_paths > 150,
     );
 }
 

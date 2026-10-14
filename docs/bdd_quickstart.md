@@ -268,9 +268,9 @@ scripts/bdd/check.sh ./target/release/laya-workflow
 4. 不正确的做法：把 needle 建议直接 paste 到 spec 里——研究（`docs/bdd_to_needle.md`）实测基础模型对生造措辞全字段准确率 ~40%，强自动编译会静默通过不正确的 spec。
 
 ```bash
-# 1. 写 feature
+# 1. 写 feature（下面把 <your> 换成你自己的文件名）
 # 2. 跑带 --assist 的 build
-laya-workflow bdd build bdd/workflows/examples/my.feature --assist --out /tmp/x
+laya-workflow bdd build bdd/workflows/examples/<your>.feature --assist --out /tmp/x
 # 3. 看建议（例：Then the heading "#hero" should be displayed -> op=type conf=0.06 guess）
 # 4. 在 `plugins/bdd/main.rhai` 加规则：_THEN 表加一行 (re.compile(r'^the heading (?P<sel>.+) should be (visible|displayed)$'), 'assert', 'visible')
 # 5. 重跑：`laya-workflow bdd build` exit 0，coverage 100%

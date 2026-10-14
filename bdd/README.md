@@ -966,6 +966,24 @@ forgotten. The README's `bdd vocabulary:` / `bdd args probes:` labels are owned 
 gates that shell out to the real binary, so *those* are only checked by
 `check.sh` running `bdd doc-check`; the AGENT.md half is checked in process.
 
+### And the paths, and the two documents that hid outside the scan
+
+`bdd doc-check` also insists that every concrete path a checked-in document
+quotes is really there: a `bdd/…`, `bench/…` or `dsl/…` literal with a known
+extension is a claim about a file, while a glob (`bdd/*.feature`) or a
+`<placeholder>` is not — which is how "not written yet" is told apart from
+"moved". The first version of this scan read only this README, `bdd/AGENT.md` and
+`bench/bdd/**/*.md`, and the `dsl/` prefix was not covered at all. So the two
+documents a reader meets *first* were unchecked, and both had rotted: the
+quickstart's step-by-step told you to run `bdd build` on a feature under
+`bdd/workflows/examples/` that does not exist (copy it and you get a
+file-not-found), and the codegraph note cited a spec under `dsl/codegraph/` that
+is still only a proposal. The scan now walks every checked-in `*.md` in the repo
+(skipping `.git` and `target`) and covers the `dsl/` tree as well — `dsl/` is a
+spec root, so a moved spec quoted by a doc was just as unchecked as a moved
+`.feature`. Both stale spellings were rewritten as placeholders, and the gate is
+now red on a phantom under `docs/`, which is the case that used to slip past.
+
 ### What this does not check
 
 The prose *around* the numbers is not machine-checked, and the counts it

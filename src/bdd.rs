@@ -5439,7 +5439,7 @@ pub fn check_doc() -> Result<i32> {
     println!(
         "bdd doc check: {checked}/{total} labelled counts across bdd/README.md and bdd/AGENT.md \
          match the gates that own them, every quoted gate line is still printed, and all \
-         {n_paths} quoted bdd/bench paths exist on disk"
+         {n_paths} quoted bdd/bench/dsl paths exist on disk"
     );
     Ok(0)
 }
@@ -5769,18 +5769,25 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
         }
     }
 
-    // P123: every concrete `bdd/…` / `bench/…` path the docs quote must exist on
-    // disk. A corpus move once left `bench/bdd/live/*.feature` in a report after
-    // the sources had moved to `bdd/workflows/browser/`, and nothing recomputed
-    // the doc that quoted it. Globs (`bdd/*.feature`) and `<placeholders>` are
+    // P123/P125: every concrete `bdd/…` / `bench/…` / `dsl/…` path a checked-in
+    // doc quotes must exist on disk. A corpus move once left
+    // `bench/bdd/live/*.feature` in a report after the sources had moved to
+    // `bdd/workflows/browser/`, and nothing recomputed the doc that quoted it.
+    // P125 widened the scope twice: the `dsl/` tree is a spec root too (a moved
+    // `dsl/…/x.json` quoted by a doc went unchecked), and the scan used to read
+    // only `bench/bdd/`, so the two documents a user actually reads first -
+    // `docs/bdd_quickstart.md` and `docs/*.md` - were never checked. It now reads
+    // every checked-in `*.md` (skipping `.git`/`target`).
+    // Globs (`bdd/*.feature`, `dsl/codegraph/*.json`) and `<placeholders>` are
     // skipped — only a literal path with a known extension is a claim about a
-    // file that has to be there. The README and AGENT.md are scanned from the
-    // strings handed in (so a regression can inject a phantom); the toolchain
-    // docs under `bench/bdd/` are read from disk.
+    // file that has to be there, so a proposed file must be spelled as a
+    // placeholder. The README and AGENT.md are scanned from the strings handed in
+    // (so a regression can inject a phantom) *and* from disk; the dedup key is
+    // (doc, path), so scanning them twice does not double the count.
     // The `regex` crate has no look-around, so the left boundary is matched as a
     // (non-captured) consuming group; group 1 is the path.
     let path_rx = Regex::new(
-        r"(?:^|[^A-Za-z0-9_./<>-])((?:bdd|bench)/[A-Za-z0-9_./-]+\.(?:feature|json|md|sh|rs|rhai|html))",
+        r"(?:^|[^A-Za-z0-9_./<>-])((?:bdd|bench|dsl)/[A-Za-z0-9_./-]+\.(?:feature|json|md|sh|rs|rhai|html))",
     )
     .unwrap();
     let mut path_docs: Vec<(String, String)> = vec![
@@ -5788,14 +5795,20 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
         (AGENT.to_string(), agent.to_string()),
     ];
     {
-        let mut stack = vec![root.join("bench").join("bdd")];
+        // Every checked-in `*.md`, not just the BDD toolchain's own. `.git` and
+        // `target` are the only trees skipped (a build artifact is not a doc).
+        const SKIP_DIRS: [&str; 2] = [".git", "target"];
+        let mut stack = vec![root.clone()];
         let mut mds: Vec<PathBuf> = Vec::new();
         while let Some(d) = stack.pop() {
             let Ok(rd) = std::fs::read_dir(&d) else { continue };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
-                    stack.push(p);
+                    let name = p.file_name().and_then(|x| x.to_str()).unwrap_or("");
+                    if !SKIP_DIRS.contains(&name) {
+                        stack.push(p);
+                    }
                 } else if p.extension().and_then(|x| x.to_str()) == Some("md") {
                     mds.push(p);
                 }

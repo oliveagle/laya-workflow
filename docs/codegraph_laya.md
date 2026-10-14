@@ -250,7 +250,7 @@ change.
 1. **Should `codegraph_fetch` live in the MCP tool set or as a `kind: "db"`
    workflow?** The `db` capability already speaks SQLite and would let a DSL
    spec drive the same loop without any Rust. Worth a spike: write the
-   worked example above as a `dsl/codegraph/auth_flow.json` using only
+   worked example above as a `dsl/codegraph/<name>.json` using only
    `kind: "db"` + the existing `routing/stopping/traversal` specs, and see
    how far it gets. If it reads cleanly, the MCP tool set may be a thin
    wrapper rather than a new surface.
