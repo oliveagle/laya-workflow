@@ -461,8 +461,10 @@ ladder's labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, or a
 rubric node's `status` — the same projection `bdd_decide` returns as its `label`,
 so a caller knows every answer it can get back before running), and `bdd_decide`
 echoes that contract back —
-the declared `inputs` and the `missing_inputs` the state did not supply, so an
-under-fed call is visible instead of a silent defaults-only walk) → run `bdd round-trip` +
+the declared `inputs` (every heuristic source field, every `${state.*}` a node
+interpolates, and the fields a kind reads directly) and the `missing_inputs` the
+state did not supply, so an under-fed call is visible instead of a silent
+defaults-only walk) → run `bdd round-trip` +
 `check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →
 audit → lift a legacy spec → list the corpus → run a decision — runs over MCP
 without shelling out.

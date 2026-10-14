@@ -598,7 +598,7 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; when `inputs` is empty the graph reads no state at all and every call returns the same default walk, so drive it with a real backend)."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend)."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -630,14 +630,21 @@ impl McpTool for DecideTool {
             let _ = crate::capability::secret::init(None);
         }
 
-        let wf = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
+        let (wf, spec_value) = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
             let path = if std::path::Path::new(rel).is_absolute() {
                 std::path::PathBuf::from(rel)
             } else {
                 bdd::repo_root().join(rel)
             };
-            crate::spec::load_file(&path.to_string_lossy())
-                .map_err(|e| anyhow!("bdd_decide: cannot load spec {rel}: {e:#}"))?
+            let txt = std::fs::read_to_string(&path)
+                .map_err(|e| anyhow!("bdd_decide: cannot read spec {rel}: {e:#}"))?;
+            let sv = serde_json::from_str::<Value>(&txt)
+                .map_err(|e| anyhow!("bdd_decide: spec {rel} is not valid json: {e:#}"))?;
+            (
+                crate::spec::load_file(&path.to_string_lossy())
+                    .map_err(|e| anyhow!("bdd_decide: cannot load spec {rel}: {e:#}"))?,
+                sv,
+            )
         } else if let Some(name) = args.get("name").and_then(Value::as_str) {
             // Resolve a workflow by its port name across the repo dsl tree, so
             // `bdd_list` -> `bdd_decide {name}` composes without a path.
@@ -650,8 +657,17 @@ impl McpTool for DecideTool {
                 .collect();
             match hits.len() {
                 0 => return Err(anyhow!("bdd_decide: no decision spec named {name:?} under dsl/")),
-                1 => crate::spec::load_file(&hits[0].to_string_lossy())
-                    .map_err(|e| anyhow!("bdd_decide: cannot load {:?}: {e:#}", hits[0]))?,
+                1 => {
+                    let txt = std::fs::read_to_string(&hits[0])
+                        .map_err(|e| anyhow!("bdd_decide: cannot read {:?}: {e:#}", hits[0]))?;
+                    let sv = serde_json::from_str::<Value>(&txt)
+                        .map_err(|e| anyhow!("bdd_decide: {:?} is not valid json: {e:#}", hits[0]))?;
+                    (
+                        crate::spec::load_file(&hits[0].to_string_lossy())
+                            .map_err(|e| anyhow!("bdd_decide: cannot load {:?}: {e:#}", hits[0]))?,
+                        sv,
+                    )
+                }
                 n => {
                     return Err(anyhow!(
                         "bdd_decide: {name:?} is ambiguous ({n} specs share that name); pass spec_path instead"
@@ -690,20 +706,22 @@ impl McpTool for DecideTool {
             if let Some(o) = spec.as_object_mut() {
                 o.remove("dsl_version");
             }
-            crate::spec::from_spec_with_dir(&spec, None, None)
-                .map_err(|e| anyhow!("bdd_decide: {e:#}"))?
+            let sv = spec.clone();
+            (
+                crate::spec::from_spec_with_dir(&spec, None, None)
+                    .map_err(|e| anyhow!("bdd_decide: {e:#}"))?,
+                sv,
+            )
         };
 
-        // The state fields the offline engine reads (declared on the graph's
-        // questions) and which of them the caller did not supply. A missing
+        // The state fields the graph reads (its questions' heuristic sources, its
+        // `${state.*}` interpolations, kind-implicit reads) and which of them the
+        // caller did not supply. A missing
         // field is not an error — only some paths read some fields — but it is
         // the honest signal that a returned label may come from defaults rather
         // than from the caller's state: an empty `state` on a graph with declared
         // inputs yields the all-defaults walk, not a data-driven call.
-        let mut declared: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for n in wf.nodes.values() {
-            inputs_from_questions(Some(&n.questions), &mut declared);
-        }
+        let declared = spec_inputs(&spec_value);
         let provided: std::collections::BTreeSet<String> = state
             .as_object()
             .map(|o| o.keys().cloned().collect())
@@ -859,15 +877,98 @@ pub fn scan_dsl_specs(root: &std::path::Path) -> Vec<(String, std::path::PathBuf
 }
 
 /// Fold a node's declared questions into the set of state fields a
-/// deterministic (offline) call reads — every question's
-/// `heuristic.answer_field`.
+/// deterministic (offline) call reads. A heuristic names its source field in one
+/// of three ways, all of which are real state reads:
+///
+///   * `answer_field` — the field's value *is* the answer;
+///   * `field` — the field's text is matched (`match_rules` / `match_any` /
+///     `match_regex` / `match_mid_any`), e.g. `{"field":"message"}`;
+///   * `extract_numeric` — the field's number is compared.
+///
+/// A dotted path contributes its root state key.
 fn inputs_from_questions(qs: Option<&Value>, into: &mut std::collections::BTreeSet<String>) {
     if let Some(o) = qs.and_then(Value::as_object) {
         for q in o.values() {
-            if let Some(af) = q.pointer("/heuristic/answer_field").and_then(Value::as_str) {
-                into.insert(af.to_string());
+            let Some(h) = q.get("heuristic") else { continue };
+            for k in ["answer_field", "field", "extract_numeric"] {
+                if let Some(f) = h.get(k).and_then(Value::as_str) {
+                    let root = f.split('.').next().unwrap_or(f);
+                    if !root.is_empty() {
+                        into.insert(root.to_string());
+                    }
+                }
             }
         }
+    }
+}
+
+/// Every state field the graph reads for a deterministic (offline) call:
+///
+///   * each question's heuristic source field (`inputs_from_questions`);
+///   * any `${state.<key>}` a node action or capability payload interpolates;
+///   * the fields an action kind reads directly — `ui_proposal` reads `surface`
+///     and `snapshot_hash` out of the state.
+///
+/// This is exactly what a caller must put in `state` for `bdd_decide`; anything
+/// absent is reported back as `missing_inputs`, so the two tools cannot disagree
+/// about the contract.
+fn spec_inputs(spec: &Value) -> std::collections::BTreeSet<String> {
+    let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    if let Some(ns) = spec.get("nodes").and_then(Value::as_array) {
+        for n in ns {
+            inputs_from_questions(n.get("questions"), &mut out);
+            if n.pointer("/action/kind").and_then(Value::as_str) == Some("ui_proposal") {
+                out.insert("surface".to_string());
+                out.insert("snapshot_hash".to_string());
+            }
+        }
+    }
+    collect_state_templates(spec, &mut out);
+    out
+}
+
+/// Add the root key of every `${state.<key>[.path]}` template found in `v`.
+/// Question definitions are skipped — their heuristic source fields are already
+/// collected (and they are declarations, not reads). Byte-wise scan so it is
+/// safe on multi-byte text.
+fn collect_state_templates(v: &Value, into: &mut std::collections::BTreeSet<String>) {
+    match v {
+        Value::Object(o) => {
+            for (k, sub) in o {
+                if k == "questions" {
+                    continue;
+                }
+                collect_state_templates(sub, into);
+            }
+        }
+        Value::Array(a) => {
+            for sub in a {
+                collect_state_templates(sub, into);
+            }
+        }
+        Value::String(s) => {
+            let bytes = s.as_bytes();
+            let needle = b"${state.";
+            let mut i = 0;
+            while i + needle.len() <= bytes.len() {
+                if &bytes[i..i + needle.len()] == needle {
+                    let mut j = i + needle.len();
+                    let start = j;
+                    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                        j += 1;
+                    }
+                    if j > start {
+                        if let Ok(k) = std::str::from_utf8(&bytes[start..j]) {
+                            into.insert(k.to_string());
+                        }
+                        i = j;
+                        continue;
+                    }
+                }
+                i += 1;
+            }
+        }
+        _ => {}
     }
 }
 
@@ -878,7 +979,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields a deterministic (offline) call reads — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the closed set of decision labels the graph can return (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph that is its full output set; a multi-node graph's terminal label is the last node's (in the trace). Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -944,10 +1045,9 @@ impl McpTool for ListTool {
             // Questions deduped by id (first wins, since a shared id means the
             // same question), plus the state fields a deterministic call reads.
             let mut qmap: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
-            let mut inputs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            let inputs = spec_inputs(&spec);
             if let Some(ns) = spec["nodes"].as_array() {
                 for n in ns {
-                    inputs_from_questions(n.get("questions"), &mut inputs);
                     if let Some(qs) = n.get("questions").and_then(Value::as_object) {
                         for (qid, q) in qs {
                             let af = q.pointer("/heuristic/answer_field").and_then(Value::as_str);

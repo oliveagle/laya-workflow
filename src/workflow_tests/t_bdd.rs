@@ -2964,6 +2964,15 @@ pub fn test_bdd_mcp_decide(h: &mut Harness) {
         "bdd_decide: combine result carries route + urgency",
         route["result"]["route"] == json!("billing") && route["result"]["urgency"] == json!("high"),
     );
+    // The same declared set drives `missing_inputs`: a heuristic-`field`-only
+    // graph (support_routing) now reports its `message` field as missing on an
+    // empty state, instead of pretending it needs nothing.
+    let sr_empty = t.call(&json!({"name": "support_routing", "state": {}})).unwrap();
+    h.check(
+        "bdd_decide: a heuristic-field graph flags its field missing",
+        sr_empty["inputs"].clone() == json!(["message"])
+            && sr_empty["missing_inputs"].clone() == json!(["message"]),
+    );
     let rubric = t
         .call(&json!({"name": "quality_rubric", "state": {
             "rubric_usefulness_hint": "high", "rubric_clarity_hint": "high"}}))
@@ -3079,6 +3088,27 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
     h.check(
         "bdd_list: top-level outputs == deduped union of node outputs (whole corpus)",
         union_ok,
+    );
+
+    // `inputs` counts every form of state read, not just `answer_field`: the
+    // heuristic `field` (text to match) and `${state.*}` interpolations too.
+    let sr_in = t.call(&json!({"name": "support_routing"})).unwrap();
+    h.check(
+        "bdd_list: inputs count a heuristic `field` (text source)",
+        sr_in["workflows"][0]["inputs"].clone() == json!(["message"]),
+    );
+    let gr = t.call(&json!({"name": "goal_runner"})).unwrap();
+    h.check(
+        "bdd_list: inputs count ${state.*} interpolations",
+        gr["workflows"][0]["inputs"].clone() == json!(["goal", "workdir"]),
+    );
+    // The boundary the other way: a graph that genuinely reads no state reports
+    // an empty inputs, so `inputs == []` still means "the offline engine is blind
+    // to the state here".
+    let cpg = t.call(&json!({"name": "content_policy_gate"})).unwrap();
+    h.check(
+        "bdd_list: a state-free graph reports empty inputs",
+        cpg["workflows"][0]["inputs"].as_array().unwrap().is_empty(),
     );
 
     // A `combine` node's decision is its `route`: the choice's criteria minus the
