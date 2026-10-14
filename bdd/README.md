@@ -1184,6 +1184,23 @@ capability rewritten to `endpoint=<url>, launch=false, attach=true`, so:
 `bdd live` (`dsl/browser` live-fire) still launches its own browser; attaching is
 a `bdd run` knob.
 
+#### The extension is injected, not installed — and attach does not need it
+
+`extensions/laya-browser` is an **unpacked** extension folder, not something you
+install from a store: the engine injects it over CDP (`Extensions.loadUnpacked`)
+into a browser it launched. Two consequences that are easy to trip over:
+
+* **Launch mode requires that folder to exist** at the path the binary resolves
+  (`<checkout>/extensions/laya-browser`). Ship the checkout, not just the exe:
+  with the folder absent every scenario fails fast with
+  `browser extension is missing: …` and no Chrome is even started (measured: 1s,
+  0/20) — a staging gap, not a hang.
+* **Attach mode does not need it at all.** The BDD and `browser_base` ops are
+  pure CDP; measured 20/20 with `extensions/laya-browser` moved away. If an
+  attached flow needs extension-backed ops, set `extension_path` explicitly
+  (Laya will `loadUnpacked` into the attached browser) or load the folder by hand
+  via `chrome://extensions`.
+
 ## Known limits
 
 * Step *meanings* are reusable (they live in `plugins/bdd/main.rhai`, not in
