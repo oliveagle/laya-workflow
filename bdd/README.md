@@ -188,11 +188,19 @@ mean what they look like.
 
 ### Exec vocabulary (CLI integration tests, no browser)
 
-`I run the command "<shell>"` runs the whole command under `/bin/sh -c` via the
-engine's native `exec` capability and files `exit_code` / `stdout` / `stderr`
-into state — no Chrome, no page. It is the step that lets a `.feature` drive a
-CLI integration test (e.g. exec a real binary and check its verdict) the same
-way arkcli's JSON DSL specs do. Assertions on its results never touch the page:
+`I run the command "<shell>"` runs the whole command under the **platform
+shell** — `/bin/sh -c` on unix, `%COMSPEC% /c` (`cmd.exe`) on Windows — via the
+engine's native `exec` capability, and files `exit_code` / `stdout` / `stderr`
+into state — no Chrome, no page. The shell is resolved at transpile time from
+the host the suite runs on (`capability::util::shell_argv`), so a spec compiled
+and run on Windows gets `cmd /c` rather than a hard-coded `/bin/sh` that could
+never spawn there. It is the step that lets a `.feature` drive a CLI
+integration test (e.g. exec a real binary and check its verdict) the same way
+arkcli's JSON DSL specs do. Write the command with the target platform's syntax:
+a POSIX pipeline (`df -Pk … | awk …`) is not translated to `cmd.exe`, so a
+feature that needs POSIX-only tooling should gate the capability it calls with
+`"platforms": ["unix"]` (see "Platform-bound capabilities" below). Assertions on
+its results never touch the page:
 
 - `the exit code is 0` — strict compare (number form `0` or quoted form `"0"`)
 - `stdout contains "<text>"` / `stderr contains "<text>"` — substring of the captured stream
@@ -1098,6 +1106,33 @@ plugin fold gate — so a browserless CI runner stays green while a machine with
 a browser gates the scenarios for real. `--require-browser` turns that skip
 into an error when a guarantee is wanted; `LAYA_BDD_SKIP_BROWSER=1` skips the
 stage for speed.
+
+## Platform-bound capabilities
+
+A capability may be gated to the operating systems it can actually run on with a
+`platforms` list; the current build satisfies `windows`, or `unix` (plus `macos`
+/ `linux`). Omit the key and the capability is portable.
+
+```
+| disk_check | {"kind":"exec","argv":["/bin/sh","-c","df -Pk '${state.target}' | tail -1 | awk '{print $4}'"],"platforms":["unix"]} |
+```
+
+This exists because the low-level `exec` capability runs the `argv` you wrote,
+verbatim — the engine does not rewrite a hand-written `/bin/sh` into `cmd.exe`,
+because the command *body* (`df`/`awk`) has no `cmd.exe` equivalent anyway. The
+higher-level `shell` capability and the transpiled `I run the command` step
+*are* platform-aware (`/bin/sh -c` on unix, `%COMSPEC% /c` on Windows), so an
+ordinary command string works on both. Reserve `platforms` for the cases that
+genuinely need one OS's tooling.
+
+Gating is enforced at run time: `laya-workflow dsl smoke` skips (validate-only)
+any spec that *calls* a capability gated to another platform, and reports it as
+skipped rather than failed — the same stance as a network-bound spec, and for
+the same reason: the host cannot demonstrate the claim. A capability that is
+*declared* but never called does not bind the spec, so a portable workflow can
+carry a platform-specific probe without becoming platform-bound itself. The
+`exec_preflight_guard` and `data_pipeline_local` corpus specs use this to keep
+their POSIX pipelines while still validating on Windows.
 
 ## Known limits
 

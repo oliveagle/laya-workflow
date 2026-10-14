@@ -302,6 +302,68 @@ pub(crate) fn spec_network_targets(spec: &Value) -> Vec<(String, u16)> {
     out
 }
 
+/// The OS names a capability's `platforms` list may name, beyond the two
+/// shorthands `unix` / `windows`. `current_platform_tags()` returns the exact
+/// set this build satisfies.
+fn current_platform_tags() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec!["windows"]
+    } else if cfg!(target_os = "macos") {
+        vec!["unix", "macos"]
+    } else if cfg!(target_os = "linux") {
+        vec!["unix", "linux"]
+    } else {
+        vec!["unix"]
+    }
+}
+
+/// True when a spec *calls* a capability gated to a platform we are not on.
+///
+/// Some capabilities are inherently OS-specific: an `exec` argv of
+/// `["/bin/sh","-c","df -Pk … | awk …"]` (or a `shell` command invoking `sh`)
+/// is POSIX shell and cannot execute on Windows, where the same intent would
+/// need a different command entirely. A spec that declares
+/// `"platforms": ["unix"]` on such a capability is therefore skipped
+/// validate-only on Windows instead of reported as a regression — the same
+/// stance as the network-bound skip, and for the same reason: the run cannot
+/// make its claim on this host, but it can still prove the spec validates.
+pub fn platform_bound_here(spec: &Value) -> bool {
+    let Some(caps) = spec.get("capabilities").and_then(Value::as_object) else {
+        return false;
+    };
+    // Only capabilities a node actually calls matter; a declared-but-unused
+    // unix-only capability must not knock an otherwise-portable spec out.
+    let mut called: Vec<&str> = Vec::new();
+    if let Some(nodes) = spec.get("nodes").and_then(Value::as_array) {
+        for n in nodes {
+            if let Some(cap) = n
+                .get("action")
+                .and_then(|a| a.get("capability"))
+                .and_then(Value::as_str)
+            {
+                called.push(cap);
+            }
+        }
+    }
+    let here = current_platform_tags();
+    for (name, cdef) in caps {
+        if !called.contains(&name.as_str()) {
+            continue;
+        }
+        let Some(list) = cdef.get("platforms").and_then(Value::as_array) else {
+            continue;
+        };
+        let names: Vec<&str> = list.iter().filter_map(Value::as_str).collect();
+        if names.is_empty() {
+            continue;
+        }
+        if !names.iter().any(|n| here.contains(n)) {
+            return true;
+        }
+    }
+    false
+}
+
 fn tcp_reachable(host: &str, port: u16) -> bool {
     use std::net::ToSocketAddrs;
     let Ok(mut addrs) = (host, port).to_socket_addrs() else {
@@ -724,11 +786,26 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                 skipped += 1;
                 continue;
             }
+            // A capability gated to another platform (e.g. a POSIX
+            // `exec`/`shell` command on Windows) cannot run here; skip
+            // validate-only rather than report a regression the host cannot
+            // actually demonstrate.
+            if platform_bound_here(&raw_spec) {
+                if !opts.quiet {
+                    eprintln!(
+                        "       {label}: platform-bound capability (not available on {}) — skipped, validate only",
+                        current_platform_tags().join("/")
+                    );
+                }
+                skipped += 1;
+                continue;
+            }
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
                 Err(e) => {
                     if network_bound_offline(&raw_spec)
                         || (opts.base_url.is_none() && network_bound_external(&raw_spec))
+                        || platform_bound_here(&raw_spec)
                     {
                         if !opts.quiet {
                             eprintln!(

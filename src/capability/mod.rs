@@ -767,8 +767,9 @@ fn call_exec(c: &ExecCap, with: &Value, state: &Value, policy: &Policy) -> Resul
         .argv
         .iter()
         .map(|a| {
-            // BDD `I run the command` compiles to argv ["/bin/sh","-c",
-            // "${with.cmd}"] and passes the real command as `with.cmd`, which
+            // BDD `I run the command` compiles to the platform shell argv
+            // (`/bin/sh -c` on unix, `%COMSPEC% /c` on Windows) and passes the
+            // real command as `with.cmd`, which
             // may itself reference `${state.x}` / `${env.X}` (same grammar the
             // DSL specs use directly in argv). `expand` resolves one level, so
             // re-expand boundedly until no placeholder remains — otherwise a

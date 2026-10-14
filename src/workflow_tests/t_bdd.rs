@@ -3766,7 +3766,6 @@ pub fn test_bdd_app_port_parity(h: &mut Harness) {
     );
 }
 
-
 /// P90: `bdd_vocabulary` (MCP) and `bdd vocabulary` (CLI) expose the decision
 /// authoring grammar - the curated step templates behind the compiler's
 /// `did you mean` hints - so an agent can read the vocabulary *before* writing
@@ -5140,5 +5139,62 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     h.check(
         &format!("answers-from-list: not driven (external only) = {no_walk:?}"),
         no_walk.len() == 1 && no_walk.contains("hf_trending"),
+    );
+}
+
+/// The `platforms` gate behind the POSIX-shell skip: a spec that *calls* a
+/// capability gated to another OS is skipped validate-only (not failed), so a
+/// `["/bin/sh","-c","df … | awk …"]` exec or a `du … | awk` shell command can
+/// live in the corpus without breaking the Windows smoke. Pure and
+/// host-independent: the "current" tags are derived from `cfg!`, so the test
+/// asserts both directions on whatever OS it runs on.
+pub fn test_bdd_platform_bound_skip(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::platform_bound_here;
+
+    let (here, other) = if cfg!(windows) {
+        ("windows", "unix")
+    } else {
+        ("unix", "windows")
+    };
+
+    // Called + gated to the other platform -> bound here (skip).
+    let other_only = json!({
+        "capabilities": { "c": { "kind": "exec", "argv": ["x"], "platforms": [other] } },
+        "nodes": [{ "name": "a", "action": { "kind": "call", "capability": "c" } }],
+    });
+    h.check(
+        "bdd: platform-bound (called, other OS) is skipped",
+        platform_bound_here(&other_only),
+    );
+
+    // Called + gated to this platform -> not bound.
+    let here_only = json!({
+        "capabilities": { "c": { "kind": "shell", "command": "x", "platforms": [here] } },
+        "nodes": [{ "name": "a", "action": { "kind": "call", "capability": "c" } }],
+    });
+    h.check(
+        "bdd: platform-available (called, this OS) is not skipped",
+        !platform_bound_here(&here_only),
+    );
+
+    // Declared-but-uncalled other-OS capability must not knock out a portable
+    // spec: only a capability a node actually calls can bind the run.
+    let uncalled = json!({
+        "capabilities": { "c": { "kind": "exec", "argv": ["x"], "platforms": [other] } },
+        "nodes": [{ "name": "a", "action": { "kind": "call", "capability": "d" } }],
+    });
+    h.check(
+        "bdd: uncalled other-OS capability does not bind the spec",
+        !platform_bound_here(&uncalled),
+    );
+
+    // No `platforms` key at all -> portable.
+    let portable = json!({
+        "capabilities": { "c": { "kind": "exec", "argv": ["x"] } },
+        "nodes": [{ "name": "a", "action": { "kind": "call", "capability": "c" } }],
+    });
+    h.check(
+        "bdd: a capability with no `platforms` is portable",
+        !platform_bound_here(&portable),
     );
 }

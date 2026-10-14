@@ -14,6 +14,7 @@
     "disk_check": {
       "kind": "exec",
       "argv": ["/bin/sh", "-c", "echo 'target=${state.target}'; df -Pk '${state.target}' | tail -1 | awk '{print $4}'"],
+      "platforms": ["unix"],
       "timeout_ms": 4000,
       "max_output": 4096
     }

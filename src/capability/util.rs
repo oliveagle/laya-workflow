@@ -301,6 +301,26 @@ pub fn urlencoding_utf8(v: &str) -> String {
         .collect()
 }
 
+/// The argv that runs a *whole command string* under the platform shell.
+///
+/// This is what the BDD `I run the command "<shell>"` step and the `shell`
+/// capability compile to: `/bin/sh -c <cmd>` on unix, `%COMSPEC% /c <cmd>` on
+/// Windows (`cmd.exe` handles `echo`, pipes and `&&`; PowerShell would reject
+/// much of the POSIX-flavoured corpus, so cmd is the deliberate choice).
+/// Written once here so transpile and the engine cannot drift apart — a spec
+/// transpiled on Windows used to bake in `/bin/sh` and then fail at run time.
+pub fn shell_argv(cmd: &str) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        vec![shell, "/c".to_string(), cmd.to_string()]
+    }
+    #[cfg(not(windows))]
+    {
+        vec!["/bin/sh".to_string(), "-c".to_string(), cmd.to_string()]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

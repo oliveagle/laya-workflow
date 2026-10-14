@@ -73,8 +73,9 @@ pub fn test_capabilities(h: &mut Harness) {
     );
     h.eq("cap: exec exit code", out["exit_code"].as_i64().unwrap(), 0);
 
-    // Regression: BDD `I run the command` compiles to argv ["/bin/sh","-c",
-    // "${with.cmd}"] and hands the real command over as `with.cmd`. That
+    // Regression: BDD `I run the command` compiles to the platform shell argv
+    // (`/bin/sh -c` here on unix) and hands the real command over as
+    // `with.cmd`. That
     // command may itself reference `${state.x}` (the same grammar the DSL
     // specs write directly into argv, e.g. `BIN="${state.arkcli}"; ...`). The
     // argv used to be expanded exactly once, so the nested `${state.arkcli}`

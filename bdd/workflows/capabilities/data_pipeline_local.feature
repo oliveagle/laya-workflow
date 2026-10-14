@@ -15,7 +15,7 @@ Feature: data_pipeline_local
       | stamp | {"kind":"datetime","op":"format","format":"%Y-%m-%d %H:%M:%S"} |
       | slug | {"kind":"text","op":"extract","pattern":"[a-z0-9-]+"} |
       | report | {"kind":"file","op":"write","max_bytes":65536} |
-      | disk | {"kind":"shell","command":"du -sk \"${state.work_dir}\" \u007c awk '{print $1}'"} |
+      | disk | {"kind":"shell","command":"du -sk \"${state.work_dir}\" \u007c awk '{print $1}'","platforms":["unix"]} |
       | raw | {"kind":"passthrough"} |
 
   Scenario: stamp

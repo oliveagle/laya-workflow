@@ -2077,7 +2077,23 @@ pub fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
+/// The `chrome_binary` a transpiled scenario gets when its config pins none.
+///
+/// On unix this is `scripts/bdd/chrome-headless.sh`, which `exec`s a real
+/// Chrome with `--headless=new` prepended — a headful window nobody is looking
+/// at reports `visibilityState: "hidden"` and silently drops synthetic input,
+/// so a scripted click would test nothing.
+///
+/// On Windows there is no POSIX wrapper (and the release tarball ships only
+/// `laya-workflow.exe`), so the empty string is returned: the browser
+/// capability treats that as "use `default_chrome_binary()`", which resolves
+/// the platform Chrome (`chrome.exe`). The launch path adds the headless flags
+/// itself on a display-less host, and a Windows box running these tests has a
+/// desktop session, so a windowed Chrome is correct there.
 fn default_chrome_wrapper() -> String {
+    if cfg!(windows) {
+        return String::new();
+    }
     repo_root()
         .join("scripts")
         .join("bdd")
@@ -2345,13 +2361,17 @@ pub fn compile_scenario(
     }
     capabilities.insert("bdd".into(), Value::Object(bdd_cap));
     // `I run the command` steps call the engine's native exec capability. The
-    // argv wraps the whole command in `/bin/sh -c`; `cmd` arrives per-call via
+    // argv wraps the whole command in the platform shell — `/bin/sh -c` on
+    // unix, `%COMSPEC% /c` (cmd.exe) on Windows — so a spec transpiled on the
+    // machine that runs it works there; baking in `/bin/sh` made every exec
+    // step fail on Windows with "not found". `cmd` arrives per-call via
     // `${with.cmd}`. Unused in browser-only scenarios, so always declared.
+    let exec_argv = crate::capability::util::shell_argv("${with.cmd}");
     capabilities.insert(
         "exec".into(),
         json!({
             "kind": "exec",
-            "argv": ["/bin/sh", "-c", "${with.cmd}"],
+            "argv": exec_argv,
             "timeout_ms": 120000,
             "max_output": 1048576
         }),

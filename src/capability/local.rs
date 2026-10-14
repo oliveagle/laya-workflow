@@ -531,7 +531,8 @@ pub fn call_shell(c: &ShellCap, with: &Value, state: &Value, policy: &Policy) ->
     }
     let cmd = stringify(&expand(&Value::String(c.command.clone()), state, with));
     let cap = ExecCap {
-        argv: vec!["/bin/sh".to_string(), "-c".to_string(), cmd.clone()],
+        // Platform-aware: `/bin/sh -c` on unix, `%COMSPEC% /c` on Windows.
+        argv: crate::capability::util::shell_argv(&cmd),
         cwd: c.cwd.clone(),
         env: serde_json::Map::new(),
         timeout_ms: if c.timeout_ms == 0 {
