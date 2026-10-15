@@ -6143,6 +6143,376 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     );
 }
 
+/// P135: the step-wise `bdd_decide` walk is the documented agent loop — call
+/// with `answers: []`, read `at_node` + `ask` from the reply, append one answer
+/// object, repeat until `ok:true`. This gate drives that loop, corpus-wide,
+/// through the *real MCP tool*: for every offline-walkable decision state it
+/// captures the authoritative per-node answer script at the engine level, then
+/// replays it one answer at a time and, at each prefix, asserts the reply
+/// localizes the walk — `at_node` is the node the walk visits next and `ask` is
+/// that node's own *non-empty* contract (the same shape `bdd_list` reports) —
+/// until the final prefix returns `ok:true` with the walk's label. So the loop is
+/// proven to close for the whole corpus and a step-wise caller is never left on a
+/// node with an empty `ask` (a stuck walk is a hard failure). It also pins the
+/// first reply's trust fields, so a caller learns up front whether the graph can
+/// be walked offline at all.
+pub fn test_bdd_decide_stepwise_walk(h: &mut Harness) {
+    use laya_workflow::backend::HeuristicBackend;
+    use laya_workflow::bdd_mcp::decision_label;
+    use laya_workflow::dsl_smoke::{coverage_ledger_live_only, ensure_env_dirs, network_bound_external};
+    use laya_workflow::workflow::NodeResult;
+    use std::collections::{BTreeSet, HashMap};
+
+    let root = bdd::repo_root();
+    if let Ok(env) = ensure_env_dirs() {
+        for (k, v) in &env {
+            std::env::set_var(k, v);
+        }
+    }
+    let _ = laya_workflow::capability::secret::init(None);
+
+    let t = bdd_tool("bdd_decide");
+
+    // The inventory contract, so every stepped `ask` can be checked against the
+    // exact per-node questions `bdd_list` reports.
+    let list = bdd_tool("bdd_list").call(&json!({})).unwrap();
+    let mut listed: HashMap<String, HashMap<String, Value>> = HashMap::new();
+    for w in list["workflows"].as_array().cloned().unwrap_or_default() {
+        let Some(nm) = w["name"].as_str() else { continue };
+        let m: HashMap<String, Value> = w["nodes"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|n| Some((n["name"].as_str()?.to_string(), n["questions"].clone())))
+            .collect();
+        listed.insert(nm.to_string(), m);
+    }
+
+    let states: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench").join("dsl_smoke_states.json")).unwrap(),
+    )
+    .unwrap();
+    let states_obj = states.as_object().unwrap();
+
+    // Discover dsl specs exactly as `dsl smoke` / `answers-from-inventory` do.
+    let dsl_root = root.join("dsl");
+    let mut specs = Vec::new();
+    let mut stack = vec![dsl_root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let p = entry.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("json")
+                && !p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().ends_with(".config.json"))
+                    .unwrap_or(false)
+            {
+                specs.push(p);
+            }
+        }
+    }
+    specs.sort();
+
+    let mut walkable = 0usize;
+    let mut walked = 0usize;
+    let mut steps_total = 0usize;
+    let mut composed_states = 0usize;
+    let mut specs_walked: BTreeSet<String> = BTreeSet::new();
+    let mut stuck: Vec<String> = Vec::new();
+    let mut ask_drift: Vec<String> = Vec::new();
+    let mut label_drift: Vec<String> = Vec::new();
+
+    for spec in &specs {
+        let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+        let Some(smap) = states_obj.get(&stem).and_then(Value::as_object) else { continue };
+        let raw: Value = std::fs::read_to_string(spec)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(Value::Null);
+        if network_bound_external(&raw) {
+            continue;
+        }
+        let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
+            Ok(w) => w,
+            Err(_) => continue,
+        };
+        // node name -> its raw `questions` object, so each captured answer carries
+        // the `type` the question declares (the shape `AnswersBackend` checks).
+        let expanded = laya_workflow::spec::expand_spec_nodes(&raw, spec.parent())
+            .unwrap_or_else(|_| raw.clone());
+        let node_q: HashMap<String, Value> = expanded["nodes"]
+            .as_array()
+            .map(|ns| {
+                ns.iter()
+                    .filter_map(|n| Some((n["name"].as_str()?.to_string(), n["questions"].clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let spec_str = spec.to_string_lossy().to_string();
+
+        for (label, st) in smap {
+            // (1) the authoritative per-node answer script, captured at the engine
+            //     level: every question the heuristic answered for each visited node.
+            let mut script: Vec<Value> = Vec::new();
+            let mut order: Vec<String> = Vec::new();
+            let hout = wf.run_with_progress(&HeuristicBackend, st, &mut |r: &NodeResult| {
+                order.push(r.node_name.clone());
+                let mut entry = serde_json::Map::new();
+                for (qid, d) in r.verdict.answers.iter() {
+                    let qtype = node_q
+                        .get(&r.node_name)
+                        .and_then(|qs| qs.get(qid.as_str()))
+                        .and_then(|q| q.get("type"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("choice");
+                    let mut o = serde_json::Map::new();
+                    o.insert("type".into(), json!(qtype));
+                    let field = match qtype {
+                        "score" => "score",
+                        "noul" => "noul",
+                        "boolean" => "probability",
+                        _ => "choice",
+                    };
+                    o.insert(field.into(), d.answer.clone());
+                    let probs = Value::Object(d.probabilities.clone());
+                    if probs.as_object().map(|m| !m.is_empty()).unwrap_or(false) {
+                        o.insert("probabilities".into(), probs);
+                    }
+                    o.insert("confidence".into(), json!(d.confidence));
+                    entry.insert(qid.clone(), Value::Object(o));
+                }
+                script.push(Value::Object(entry));
+            });
+            let hout = match hout {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+            walkable += 1;
+            let hj = hout.to_json();
+            let hlabel = decision_label(&hj["result"], hout.final_action());
+
+            // (2)+(3) replay the loop one answer at a time through the real tool.
+            let mut ok = true;
+            for k in 0..=script.len() {
+                let mut args = serde_json::Map::new();
+                args.insert("spec_path".into(), json!(spec_str));
+                args.insert("state".into(), st.clone());
+                args.insert("answers".into(), Value::Array(script[..k].to_vec()));
+                let r = match t.call(&Value::Object(args)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        stuck.push(format!("{stem}:{label} step {k} errored: {e:#}"));
+                        ok = false;
+                        break;
+                    }
+                };
+                if r["ok"] == json!(true) {
+                    if k != script.len() || r["label"] != json!(hlabel) {
+                        label_drift.push(format!(
+                            "{stem}:{label} closed at step {k} (want {}) label {} != {hlabel}",
+                            script.len(),
+                            r["label"]
+                        ));
+                        ok = false;
+                    }
+                    break;
+                }
+                let at = r["at_node"].clone();
+                let ask = r["ask"].as_array().cloned().unwrap_or_default();
+                if at.is_null() || ask.is_empty() {
+                    stuck.push(format!(
+                        "{stem}:{label} step {k}: at_node={at} ask={}",
+                        serde_json::to_string(&ask).unwrap_or_default()
+                    ));
+                    ok = false;
+                    break;
+                }
+                if k >= order.len() || at != json!(order[k]) {
+                    ask_drift.push(format!(
+                        "{stem}:{label} step {k}: at_node {at} != the walk's node {:?}",
+                        order.get(k)
+                    ));
+                    ok = false;
+                    break;
+                }
+                let want = listed
+                    .get(&stem)
+                    .and_then(|m| m.get(order[k].as_str()))
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                if Value::Array(ask.clone()) != want {
+                    ask_drift.push(format!(
+                        "{stem}:{label} step {k}: ask != bdd_list contract at {}",
+                        order[k]
+                    ));
+                    ok = false;
+                    break;
+                }
+            }
+            if ok {
+                walked += 1;
+                steps_total += script.len();
+                if order.iter().any(|n| n.contains("::")) {
+                    composed_states += 1;
+                }
+                specs_walked.insert(stem.clone());
+            }
+        }
+    }
+
+    h.check(
+        &format!(
+            "bdd-decide-stepwise: the loop closes for {walked} offline states across {} specs ({steps_total} steps replayed)",
+            specs_walked.len()
+        ),
+        walked == walkable && walked >= 980 && specs_walked.len() >= 125,
+    );
+    h.check(
+        "bdd-decide-stepwise: no walk stalls on a null at_node or an empty ask",
+        stuck.is_empty(),
+    );
+    for v in stuck.iter().take(5) {
+        h.check(&format!("bdd-decide-stepwise: stuck — {v}"), false);
+    }
+    h.check(
+        "bdd-decide-stepwise: every stepped ask == bdd_list's per-node contract",
+        ask_drift.is_empty(),
+    );
+    for v in ask_drift.iter().take(5) {
+        h.check(&format!("bdd-decide-stepwise: ask drift — {v}"), false);
+    }
+    h.check(
+        "bdd-decide-stepwise: the final reply's label == the heuristic walk's label",
+        label_drift.is_empty(),
+    );
+    for v in label_drift.iter().take(5) {
+        h.check(&format!("bdd-decide-stepwise: label drift — {v}"), false);
+    }
+    // A composed (sub-workflow) graph is stepped by name into its *inlined*
+    // children (`intake::classify`), not the container - so the walker always has
+    // a contract to answer.
+    h.check(
+        &format!("bdd-decide-stepwise: a composed graph steps into its inlined children ({composed_states} such states)"),
+        composed_states > 0,
+    );
+
+    // (4) the first reply is self-describing about trust: an offline graph says so,
+    //     from the very first `needs_answer` reply, not only from the final one.
+    {
+        let spec = "dsl/guards/agent_permission_gate.json";
+        let r = t
+            .call(&json!({"spec_path": spec, "state": {}, "answers": []}))
+            .unwrap();
+        h.check(
+            "bdd-decide-stepwise: the first reply carries the trust fields (offline/verified_by/why_live)",
+            r.get("offline").is_some() && r.get("verified_by").is_some() && r.get("why_live").is_some(),
+        );
+        h.eq(
+            "bdd-decide-stepwise: an offline graph's first reply says offline=true",
+            r["offline"].clone(),
+            json!(true),
+        );
+    }
+    // (5) a live-only graph says offline=false (routed to its live gate) from the
+    //     first reply — the caller knows not to expect an offline walk.
+    {
+        let live_only = coverage_ledger_live_only().unwrap_or_default();
+        let mut checked = 0usize;
+        for (rel, entry) in live_only.iter() {
+            let p = root.join("dsl").join(format!("{rel}.json"));
+            if !p.is_file() {
+                continue;
+            }
+            let v = match t.call(&json!({"spec_path": p.to_string_lossy(), "state": {}, "answers": []})) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            h.eq(
+                &format!("bdd-decide-stepwise: live-only {rel} says offline=false on the first reply"),
+                v["offline"].clone(),
+                json!(false),
+            );
+            h.check(
+                &format!("bdd-decide-stepwise: live-only {rel} names the gate that verifies it"),
+                v["verified_by"].as_str().map(|s| !s.is_empty()).unwrap_or(false),
+            );
+            let _ = entry;
+            checked += 1;
+            if checked >= 3 {
+                break;
+            }
+        }
+        h.check(
+            &format!("bdd-decide-stepwise: the live-only trust path is exercised ({checked} graphs)"),
+            checked > 0,
+        );
+    }
+    // (6) a dynamic (`criteria.from_state`) question: the reply carries an empty
+    //     `answers` list (its candidates live in `pending_options`), and an answer
+    //     outside the materialised candidates is refused, never silently defaulted.
+    {
+        let spec = "dsl/capabilities/span_selection.json";
+        let st = json!({"text": "please reach me at billing@example.com for the invoice"});
+        let r1 = t
+            .call(&json!({"spec_path": spec, "state": st, "answers": [
+                {"has_text": {"type":"choice","choice":"A","confidence":0.99}}
+            ]}))
+            .unwrap();
+        let ask = r1["ask"].as_array().cloned().unwrap_or_default();
+        let q = ask.iter().find(|q| q["id"] == "billing_contact").cloned().unwrap_or(Value::Null);
+        h.check(
+            "bdd-decide-stepwise: a dynamic question's ask carries an empty answers list + from_state",
+            q["answers"].as_array().map(|a| a.is_empty()).unwrap_or(false)
+                && q["from_state"] == json!("candidates"),
+        );
+        h.check(
+            "bdd-decide-stepwise: the reply materialises the dynamic options in pending_options",
+            r1["pending_options"]["billing_contact"]
+                .as_object()
+                .map(|m| m.contains_key("candidate_0"))
+                .unwrap_or(false),
+        );
+        let bad = t.call(&json!({"spec_path": spec, "state": st, "answers": [
+            {"has_text": {"type":"choice","choice":"A","confidence":0.99}},
+            {"billing_contact": {"type":"choice","choice":"A","confidence":0.99}}
+        ]}));
+        h.check(
+            "bdd-decide-stepwise: an out-of-contract dynamic answer is refused, not silently defaulted",
+            bad.is_err(),
+        );
+    }
+    // (7) the caller-answers *error* path names a live-only graph the same way the
+    //     heuristic path does - the message routes to the live gate, so a caller is
+    //     not left with a bare runtime error. An offline graph's error stays bare.
+    {
+        let live_bad = t.call(&json!({"spec_path": "dsl/browser/arxiv.json", "state": {}, "answers": [
+            {"__probe__": {"type":"choice","choice":"A","confidence":0.9}}
+        ]}));
+        h.check(
+            "bdd-decide-stepwise: a live-only graph's answers error names the live gate",
+            live_bad
+                .as_ref()
+                .err()
+                .map(|e| format!("{e:#}").contains("not offline-verifiable"))
+                .unwrap_or(false),
+        );
+        let off_bad = t.call(&json!({"spec_path": "dsl/guards/agent_permission_gate.json", "state": {}, "answers": [
+            {"__probe__": {"type":"choice","choice":"A","confidence":0.9}}
+        ]}));
+        h.check(
+            "bdd-decide-stepwise: an offline graph's answers error stays bare (no live-gate note)",
+            off_bad
+                .as_ref()
+                .err()
+                .map(|e| !format!("{e:#}").contains("not offline-verifiable"))
+                .unwrap_or(false),
+        );
+    }
+}
+
 /// The `platforms` gate behind the POSIX-shell skip: a spec that *calls* a
 /// capability gated to another OS is skipped validate-only (not failed), so a
 /// `["/bin/sh","-c","df … | awk …"]` exec or a `du … | awk` shell command can

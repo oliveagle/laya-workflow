@@ -879,10 +879,30 @@ impl McpTool for DecideTool {
                             "pending_options": pending_options,
                             "state_so_far": acc_state,
                             "steps_so_far": steps,
+                            // P135: an agent opening a step-wise walk should
+                            // learn the graph's trust level from the first
+                            // reply, not only from the final one - a live-only
+                            // graph cannot be driven offline, so say so up front.
+                            "offline": offline,
+                            "verified_by": verified_by.clone(),
+                            "why_live": why_live.clone(),
                             "message": format!("{e:#}"),
                         }));
                     }
-                    Err(e) => return Err(anyhow!("bdd_decide: {e:#}")),
+                    Err(e) => {
+                        // P135: the *caller-answers* path must name a
+                        // live-only graph the same way the heuristic path
+                        // does - a bare runtime error leaves the caller with
+                        // no route to the gate that can actually verify it.
+                        if offline {
+                            return Err(anyhow!("bdd_decide: {e:#}"));
+                        }
+                        let by = verified_by.as_str().unwrap_or("live");
+                        let why = why_live.as_str().unwrap_or("");
+                        return Err(anyhow!(
+                            "bdd_decide: run failed offline: {e:#}\n(this graph is not offline-verifiable; verified by: {by}; {why})"
+                        ));
+                    }
                 }
             }
             None => {

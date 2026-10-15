@@ -171,6 +171,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-mcp-decide", t_bdd::test_bdd_mcp_decide),
         ("bdd-mcp-answers", t_bdd::test_bdd_mcp_answers),
         ("bdd-answers-from-inventory", t_bdd::test_bdd_answers_from_inventory),
+        ("bdd-decide-stepwise", t_bdd::test_bdd_decide_stepwise_walk),
         ("bdd-engine-contract", t_bdd::test_bdd_engine_contract),
         ("bdd-mcp-list", t_bdd::test_bdd_mcp_list),
         ("bdd-cli-diagnostics", t_bdd::test_bdd_cli_diagnostics),
