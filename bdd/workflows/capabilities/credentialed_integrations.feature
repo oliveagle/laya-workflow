@@ -37,7 +37,6 @@ Feature: credentialed_integrations
       | B | no |
     When any other answer goes to "STOP"
     Then call the capability "vendor_api"
-      | with.text | ${state.text} |
       | project.vendor_status | /status |
       | project.vendor_label | /body/label |
 

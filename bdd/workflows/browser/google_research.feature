@@ -21,7 +21,6 @@ Feature: google_research_open_extract_score
     When any other answer goes to "STOP"
     Then call the capability "chrome"
       | with.op | research |
-      | with.engine | google |
       | with.query | ${state.query} |
       | with.timeout_ms | 30000 |
       | with.result_count | ${state.result_count} |

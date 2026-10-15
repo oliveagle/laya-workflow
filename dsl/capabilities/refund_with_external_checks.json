@@ -68,9 +68,6 @@
       "action": {
         "kind": "call",
         "capability": "risk_scorer",
-        "with": {
-          "text": "${state.text}"
-        },
         "project": {
           "projected_label": "/label",
           "projected_risk": "/risk"

@@ -37,7 +37,6 @@
       "action": {
         "kind": "call",
         "capability": "disk_check",
-        "with": { "target": "${state.target}" },
         "project": { "free_kb_line": "/stdout" }
       }
     }

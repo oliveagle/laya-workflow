@@ -19,6 +19,5 @@ Feature: exec_preflight_guard
       | B      | yes, it could destroy or corrupt important state |
     When any other answer goes to "STOP"
     Then call the capability "disk_check"
-      | with.target      | ${state.target} |
       | project.free_kb_line  | /stdout |
 

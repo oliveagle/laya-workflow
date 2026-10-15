@@ -44,7 +44,6 @@
         "capability": "chrome",
         "with": {
           "op": "research",
-          "engine": "google",
           "query": "${state.query}",
           "timeout_ms": 30000,
           "result_count": "${state.result_count}",

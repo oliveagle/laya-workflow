@@ -23,7 +23,6 @@ Feature: refund_with_external_checks
       | large or recurring             |
     When any other answer goes to "assess"
     Then call the capability "risk_scorer"
-      | with.text      | ${state.text} |
       | project.projected_label  | /label |
       | project.projected_risk  | /risk |
 

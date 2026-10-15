@@ -151,9 +151,6 @@
       "action": {
         "kind": "call",
         "capability": "driver",
-        "with": {
-          "op": "call"
-        },
         "project": {
           "raw_result": "/stdout",
           "driver_exit": "/exit_code",

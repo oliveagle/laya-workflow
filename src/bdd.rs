@@ -3298,6 +3298,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     if !cp.is_empty() { e.insert("project".into(), Value::Object(cp)); }
                     call_chain.push(Value::Object(e));
                 }
+                guard_call_with(feature, &cap, &with, &call_chain, st.line)?;
                 call_action = Some((cap, with, project));
             }
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
@@ -3557,6 +3558,190 @@ fn step_once(declared: &mut Vec<(String, usize)>, what: &str, line: usize) -> Re
     Ok(())
 }
 
+
+/// The capability definitions a feature declares (`Given the capabilities`),
+/// keyed by name and left exactly as written (P164). The compiler folds each
+/// `kind` the same way the engine does before it looks a read set up.
+fn declared_capabilities(feature: &Feature) -> Map<String, Value> {
+    let mut out: Map<String, Value> = Map::new();
+    for st in &feature.background {
+        let Ok((_, tag)) = dec_match(&st.kind, &st.text) else {
+            continue;
+        };
+        if tag != "capabilities" {
+            continue;
+        }
+        for row in &st.table {
+            if row.len() < 2 || row[0].trim().is_empty() {
+                continue;
+            }
+            if let Ok(def) = serde_json::from_str::<Value>(row[1].trim()) {
+                if def.get("kind").and_then(Value::as_str).is_some() {
+                    out.insert(row[0].trim().to_string(), def);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Every `X` a value names with a `${with.X}` reference, at any depth. Used to
+/// treat a key that *is* referenced (from another `with` value, or from the
+/// capability's own definition — `${with.text}` inside a `body`) as read, even
+/// when no `with.get` literal names it (P164).
+fn with_refs(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::String(s) => {
+            let mut rest = s.as_str();
+            while let Some(i) = rest.find("${with.") {
+                let after = &rest[i + "${with.".len()..];
+                let name: String = after
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() {
+                    if after.is_empty() {
+                        break;
+                    }
+                    rest = &after[1..];
+                } else {
+                    rest = &after[name.len()..];
+                    out.insert(name);
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                with_refs(x, out);
+            }
+        }
+        Value::Object(o) => {
+            for x in o.values() {
+                with_refs(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `true` when `a` and `b` are one edit apart (a transposition counts, so
+/// `moed`/`mode` is caught too).
+fn one_apart(a: &str, b: &str) -> bool {
+    if a == b {
+        return false;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (n, m) = (a.len(), b.len());
+    if n.abs_diff(m) > 1 {
+        return false;
+    }
+    if n == m {
+        let diff: Vec<usize> = (0..n).filter(|&i| a[i] != b[i]).collect();
+        return diff.len() == 1
+            || (diff.len() == 2 && diff[1] == diff[0] + 1 && a[diff[0]] == b[diff[1]] && a[diff[1]] == b[diff[0]]);
+    }
+    let (s, l) = if n < m { (a, b) } else { (b, a) };
+    let (mut i, mut j) = (0, 0);
+    let mut skipped = false;
+    while i < s.len() && j < l.len() {
+        if s[i] == l[j] {
+            i += 1;
+            j += 1;
+        } else if skipped {
+            return false;
+        } else {
+            skipped = true;
+            j += 1;
+        }
+    }
+    true
+}
+
+/// Refuse a `call` step that hands a capability a `with.<key>` no call of that
+/// kind reads (P164).
+///
+/// The engine reads a fixed set of keys out of `with` and ignores the rest, so a
+/// mistyped key (`with.modes` for `mode`, or a key copied from another kind) is a
+/// **silent no-op**: the value the author set is dropped and the call runs with
+/// the default. Unlike P128 (an option nobody reads) this cannot be caught in the
+/// definition - the key is just data in a JSON object the compiler never looks
+/// inside. So read the key set off the sources ([`with_keys`]) and refuse a key
+/// outside it, naming the capability and the closest key it *does* read.
+///
+/// The read set is `kind_reads(kind)` unioned with every key the step's values
+/// (or the capability's own definition) name as `${with.X}`, plus the keys the
+/// kind is *open* to (`plugin` / `agent` - any key is legal, so those are left
+/// alone). `project.<key>` is a JSON pointer, not a `with` key, so it is untouched.
+fn guard_call_with(
+    feature: &Feature,
+    cap: &str,
+    with: &Map<String, Value>,
+    chain: &[Value],
+    line: usize,
+) -> Result<()> {
+    let caps = declared_capabilities(feature);
+    // Every key this step names as `${with.X}`, anywhere, is treated as read -
+    // one `with` value may derive from another (`decision = "${with.dec}"`).
+    let mut refs: BTreeSet<String> = BTreeSet::new();
+    with_refs(&Value::Object(with.clone()), &mut refs);
+    for e in chain {
+        with_refs(e, &mut refs);
+    }
+    let check = |capname: &str, keys: &[String]| -> Result<()> {
+        let Some(def) = caps.get(capname) else {
+            return Ok(());
+        };
+        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
+        if crate::capability::with_keys::is_open(kind) {
+            return Ok(());
+        }
+        let Some(set) = crate::capability::with_keys::kind_reads(kind) else {
+            return Ok(());
+        };
+        let mut used: BTreeSet<String> = set.iter().cloned().collect();
+        with_refs(def, &mut used);
+        used.extend(refs.iter().cloned());
+        for k in keys {
+            if used.contains(k) {
+                continue;
+            }
+            let known: Vec<&str> = set.iter().map(String::as_str).collect();
+            let reads = if known.is_empty() {
+                format!("A {kind:?} capability reads no `with` key by name; it only sees the keys its own definition names as `${{with.X}}`.")
+            } else {
+                let shown = if known.len() <= 24 {
+                    known.join(", ")
+                } else {
+                    format!("{} and {} more", known[..12].join(", "), known.len() - 12)
+                };
+                format!("The keys a {kind:?} capability reads: {shown}.")
+            };
+            let hint = set
+                .iter()
+                .find(|cand| one_apart(cand, k))
+                .map(|cand| format!(" Did you mean `with.{cand}`?"))
+                .unwrap_or_default();
+            bail!(
+                "line {line}: `call the capability {capname:?}` passes `with.{k}`, but no {kind:?} call reads that key - the engine ignores it and the call runs with the default, so the value you set is silently dropped.{hint} {reads}"
+            );
+        }
+        Ok(())
+    };
+    let outer: Vec<String> = with.keys().cloned().collect();
+    check(cap, &outer)?;
+    for e in chain {
+        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
+            continue;
+        };
+        let keys: Vec<String> = e
+            .get("with")
+            .and_then(Value::as_object)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+        check(cn, &keys)?;
+    }
+    Ok(())
+}
 /// Attach a heuristic to question `lq`, refusing a *second* heuristic on the same
 /// question (P162). A question carries one `heuristic` object, so a second
 /// `Given answer …` / `score …` step replaces the first and the question silently

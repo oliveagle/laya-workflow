@@ -45,6 +45,7 @@ pub mod sys;
 pub mod util;
 pub mod web;
 pub mod needle;
+pub mod with_keys;
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Map, Value};

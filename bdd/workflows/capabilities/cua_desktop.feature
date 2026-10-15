@@ -79,7 +79,6 @@ Feature: cua_desktop
     When the answer "A" goes to "decide"
     And any other answer goes to "STOP"
     Then call the capability "driver"
-      | with.op      | call |
       | project.raw_result  | /stdout |
       | project.driver_exit  | /exit_code |
       | project.argv_used  | /argv |

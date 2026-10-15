@@ -8211,3 +8211,166 @@ pub fn test_bdd_app_parity(h: &mut Harness) {
         !comp.problems.is_empty() && comp.matched < comp.total,
     );
 }
+
+/// P164: a `call` step hands the engine a `with` object, and every kind reads a
+/// fixed set of keys out of it and ignores the rest. A mistyped key is a silent
+/// no-op - the value is dropped and the call runs with the default - so the
+/// compiler refuses a key no call of that kind reads.
+pub fn test_bdd_call_with_keys(h: &mut Harness) {
+    use laya_workflow::capability::with_keys::{is_open, kind_reads};
+
+    let build = |text: &str| -> (bool, String) {
+        let feat = bdd::parse(text, "<probe>").expect("probe parses");
+        match bdd::compile_decision(&feat, &json!({})) {
+            Ok(_) => (true, String::new()),
+            Err(e) => (false, format!("{e:#}")),
+        }
+    };
+
+    // The failing shape: `with.epock` for `clock` (kind datetime). `datetime`
+    // reads `epoch`; the typo is refused and the nearest key is named.
+    let (ok, err) = build(
+        r#"
+@decision
+Feature: bad_key
+  Background:
+    Given the capabilities
+      | clock | {"kind": "datetime", "op": "now"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "clock"
+      | with.epock | 5 |
+"#,
+    );
+    h.check(
+        "bdd call with-keys: refuses a `with.<key>` no kind reads",
+        !ok && err.contains("with.epock") && err.contains("datetime"),
+    );
+    h.check(
+        "bdd call with-keys: names the nearest key the kind does read",
+        err.contains("with.epoch"),
+    );
+
+    // A key the kind reads, a `project.` JSON pointer (not a `with` key), and an
+    // aliased kind (`chrome_cdp` -> browser) all stay legal.
+    let (ok, err) = build(
+        r#"
+@decision
+Feature: good_key
+  Background:
+    Given the capabilities
+      | clock | {"kind": "datetime", "op": "now"} |
+      | page  | {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "clock"
+      | with.epoch | 5 |
+      | project.now | /text |
+  Scenario: shot
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "page"
+      | with.op | snapshot |
+"#,
+    );
+    h.check(
+        "bdd call with-keys: a read key, a project pointer and an alias kind stay legal",
+        ok,
+        );
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // An open kind (`plugin`, whose script reads whatever it wants) accepts any
+    // key; and a key the capability's *definition* names as `${with.X}` is read
+    // even though no `with.get` literal does.
+    let (ok, err) = build(
+        r#"
+@decision
+Feature: open_and_def
+  Background:
+    Given the capabilities
+      | site  | {"kind": "plugin", "plugin": "websites/x"} |
+      | vendor | {"kind": "http", "url": "http://127.0.0.1:9/", "body": {"text": "${with.text}"}} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "site"
+      | with.whatever | 1 |
+  Scenario: post
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When the answer "A" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "vendor"
+      | with.text | hello |
+"#,
+    );
+    h.check(
+        "bdd call with-keys: an open kind and a `${with.X}`-named key are legal",
+        ok,
+    );
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // A `chain.<as>` entry is judged against *its own* capability's kind, not the
+    // outer call's: a typo there must be refused too.
+    let (ok, err) = build(
+        r#"
+@decision
+Feature: chain_key
+  Background:
+    Given the capabilities
+      | page  | {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222"} |
+      | clock | {"kind": "datetime", "op": "now"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | you bet |
+      | B | no |
+    When any other answer goes to "STOP"
+    Then call the capability "page"
+      | with.op | open |
+      | chain.cap.capability | clock |
+      | chain.cap.with.epock | 5 |
+"#,
+    );
+    h.check(
+        "bdd call with-keys: a chain entry is judged by its own capability's kind",
+        !ok && err.contains("with.epock"),
+    );
+
+    // The contract is read off the sources, not a table: `browser` really reads
+    // `op`; `exec` reads no key by name (its `with` arrives through its argv
+    // template); `plugin` / `agent` are open.
+    h.check(
+        "bdd call with-keys: the read set is read off the capability sources",
+        kind_reads("browser").expect("browser").contains("op")
+            && kind_reads("chrome_cdp").is_some()
+            && kind_reads("exec").expect("exec").is_empty()
+            && is_open("plugin")
+            && is_open("agent")
+            && kind_reads("datetime").expect("datetime").contains("epoch"),
+    );
+}
