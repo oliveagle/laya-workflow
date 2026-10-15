@@ -2866,3 +2866,137 @@ pub fn test_validate_call_project(h: &mut Harness) {
         project_step_issue(&proj(json!({"now": "/epoch"})), &[]).is_none(),
     );
 }
+
+/// P179: a node/spec value of the wrong JSON *type* is silently replaced by the
+/// engine default — the parser reads every structural value with a typed accessor
+/// (`as_f64` / `as_u64` / `as_str` / `as_object`) and falls back when it returns
+/// `None`, so a hand-written spec that says `"min_confidence": "0.9"` runs with
+/// 0.0, `"max_retries": "5"` runs with 2, and `"edge.default": 5` leaves the node
+/// with no fallback route at all — every one of them green under `validate`.
+/// `guard_spec_value_types` rejects them; *range* (`min_confidence` ∈ [0, 1]) stays
+/// a separate axis, and `null` (the describe/round-trip spelling of an absent
+/// optional) and a `${...}` template are never judged.
+pub fn test_validate_spec_value_types(h: &mut Harness) {
+    let base = |node: Value| -> Value { json!({"name": "probe", "start": "a", "nodes": [node]}) };
+    // A structurally complete node — one `choice` question, one routable edge,
+    // no action — so a rejection can only come from the value under test.
+    let pnode = |extra: Value| -> Value {
+        let mut n = json!({
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "STOP", "B": "STOP"}}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}},
+        });
+        if let (Some(m), Some(e)) = (n.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        n
+    };
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+
+    // ── clean stays clean (no false refusal) ──
+    h.check("validate value-types: a plain node is OK", ok(&base(pnode(json!({})))));
+    h.check(
+        "validate value-types: `action: null` (describe's absent spelling) is OK",
+        ok(&base(pnode(json!({"action": null})))),
+    );
+    h.check(
+        "validate value-types: `edge.default: null` is OK",
+        ok(&base(pnode(json!({"edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": null}})))),
+    );
+    h.check(
+        "validate value-types: a `${...}` template is not judged",
+        ok(&base(pnode(json!({"min_confidence": "${X}"})))),
+    );
+    h.check(
+        "validate value-types: an integer min_confidence is OK",
+        ok(&base(pnode(json!({"min_confidence": 1})))),
+    );
+    h.check(
+        "validate value-types: max_retries 0 is OK",
+        ok(&base(pnode(json!({"max_retries": 0})))),
+    );
+    h.check(
+        "validate value-types: a string spec name is OK",
+        ok(&json!({"name": "probe", "start": "a", "convergence_eps": 0.5, "nodes": [pnode(json!({}))]})),
+    );
+
+    // ── the spec's own values ──
+    h.check(
+        "validate value-types: a non-string spec `name` is rejected",
+        !err(&json!({"name": 5, "start": "a", "nodes": [pnode(json!({}))]})).is_empty(),
+    );
+    h.check(
+        "validate value-types: a string `convergence_window` is rejected",
+        err(&json!({"name": "probe", "start": "a", "convergence_window": "3", "nodes": [pnode(json!({}))]}))
+            .contains("convergence_window"),
+    );
+    h.check(
+        "validate value-types: a fractional `convergence_window` is rejected",
+        err(&json!({"name": "probe", "start": "a", "convergence_window": 2.5, "nodes": [pnode(json!({}))]}))
+            .contains("convergence_window"),
+    );
+    h.check(
+        "validate value-types: a string `convergence_eps` is rejected",
+        err(&json!({"name": "probe", "start": "a", "convergence_eps": "0.001", "nodes": [pnode(json!({}))]}))
+            .contains("convergence_eps"),
+    );
+
+    // ── the node's own values ──
+    h.check(
+        "validate value-types: a string `min_confidence` names `as_f64()`",
+        err(&base(pnode(json!({"min_confidence": "0.9"})))).contains("as_f64()"),
+    );
+    h.check(
+        "validate value-types: a string `edge.min_confidence` is rejected",
+        err(&base(pnode(json!({"edge": {"condition": {"A": "STOP", "B": "STOP"}, "min_confidence": "0.9"}}))))
+            .contains("edge.min_confidence"),
+    );
+    h.check(
+        "validate value-types: a string `max_retries` names `as_u64()`",
+        err(&base(pnode(json!({"max_retries": "5"})))).contains("as_u64()"),
+    );
+    h.check(
+        "validate value-types: a negative `max_retries` is rejected",
+        !err(&base(pnode(json!({"max_retries": -1})))).is_empty(),
+    );
+    h.check(
+        "validate value-types: a fractional `max_retries` is rejected",
+        !err(&base(pnode(json!({"max_retries": 1.5})))).is_empty(),
+    );
+    h.check(
+        "validate value-types: a numeric `edge.default` names `as_str()`",
+        err(&base(pnode(json!({"edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": 5}}))))
+            .contains("as_str()"),
+    );
+    h.check(
+        "validate value-types: a non-object `edge` is rejected",
+        err(&base(pnode(json!({"edge": 5})))).contains("`edge`"),
+    );
+    h.check(
+        "validate value-types: an array `edge` is rejected",
+        !err(&base(pnode(json!({"edge": []})))).is_empty(),
+    );
+    h.check(
+        "validate value-types: a non-object `edge.condition` is rejected",
+        err(&base(pnode(json!({"edge": {"condition": 5}})))).contains("edge.condition"),
+    );
+    h.check(
+        "validate value-types: a non-object `questions` is rejected",
+        err(&base(pnode(json!({"questions": "q"})))).contains("`questions`"),
+    );
+    h.check(
+        "validate value-types: a non-object question entry is rejected",
+        !err(&base(pnode(json!({"questions": {"q": "x"}})))).is_empty(),
+    );
+    h.check(
+        "validate value-types: a non-object `action` is rejected",
+        err(&base(pnode(json!({"action": "copy"})))).contains("`action`"),
+    );
+    h.check(
+        "validate value-types: a numeric `primary_q` is rejected",
+        !err(&base(pnode(json!({"primary_q": 5})))).is_empty(),
+    );
+}

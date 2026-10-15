@@ -1038,6 +1038,150 @@ fn guard_call_spec(caps: &Map<String, Value>, node_list: &[Value]) -> Result<()>
     Ok(())
 }
 
+/// P179: a node/spec value whose *type* the parser silently discards.
+///
+/// `node_from_spec_with` / `from_spec_with_dir_cycle` read every structural value
+/// with a typed accessor (`as_f64` / `as_u64` / `as_str` / `as_object`) and fall
+/// back to a default whenever the accessor returns `None` — a *silently replaced*
+/// declaration. Same "a declared value the engine throws away" class as P148's
+/// keys and P168's policy values, but on the node/spec values themselves:
+/// `min_confidence: "0.9"` reads 0.0 (every route below the intended floor now
+/// passes), `max_retries: "5"` / `-1` / `2.5` reads the engine default (2),
+/// `edge.default: 5` reads `None` (the node has **no** fallback route at all),
+/// `edge: []` / `questions: "q"` / `action: "copy"` are dropped whole, and
+/// `convergence_window: "3"` / `convergence_eps: "0.001"` are ignored. The
+/// compiler always emits well-typed values, so this only ever fires on a
+/// hand-written / side-loaded spec — which is exactly where it was silent.
+///
+/// Type only: a value's *range* is a separate axis (`min_confidence` ∈ [0, 1] is
+/// checked in `validate_graph_semantics`), and JSON `null` or a `${...}` template
+/// is not a wrong type — `null` is the describe/round-trip spelling of an absent
+/// optional value and `${...}` is expanded by the engine at run time — so neither
+/// is judged here.
+fn guard_spec_value_types(spec: &Value, node_list: &[Value]) -> Result<()> {
+    // `null` (an absent optional) and a `${...}` template (resolved by the engine
+    // at run time, so its static JSON type is not what the author means) are never
+    // judged as a wrong type.
+    let unjudged = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.contains("${"));
+
+    if let Some(obj) = spec.as_object() {
+        if let Some(v) = obj.get("name") {
+            if !unjudged(v) && v.as_str().is_none() {
+                bail!(
+                    "spec `name` is {} — the engine reads it with `as_str()` and silently falls back to the placeholder `sub`, so the workflow is not named what you declared",
+                    json_kind_name(v)
+                );
+            }
+        }
+        if let Some(v) = obj.get("convergence_window") {
+            if !unjudged(v) && v.as_u64().is_none() {
+                bail!(
+                    "spec `convergence_window` is {} — the engine reads it with `as_u64()` and silently keeps the default 5, so the stall window is not what you declared",
+                    json_kind_name(v)
+                );
+            }
+        }
+        if let Some(v) = obj.get("convergence_eps") {
+            if !unjudged(v) && v.as_f64().is_none() {
+                bail!(
+                    "spec `convergence_eps` is {} — the engine reads it with `as_f64()` and silently keeps the default 1e-4, so the convergence threshold is not what you declared",
+                    json_kind_name(v)
+                );
+            }
+        }
+    }
+
+    for n in node_list {
+        let Some(obj) = n.as_object() else { continue };
+        let nm = obj.get("name").and_then(Value::as_str).unwrap_or("?");
+        if let Some(v) = obj.get("questions") {
+            if !unjudged(v) && v.as_object().is_none() {
+                bail!(
+                    "node {nm}: `questions` is {} — the engine reads it with `as_object()` and silently drops it, so the node asks nothing",
+                    json_kind_name(v)
+                );
+            }
+            if let Some(qs) = v.as_object() {
+                for (qid, qv) in qs {
+                    if qv.as_object().is_none() {
+                        bail!(
+                            "node {nm}: question {qid:?} is {} — a question must be an object (type / instructions / criteria / heuristic), so a non-object entry is silently dropped and the node never asks it",
+                            json_kind_name(qv)
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(v) = obj.get("edge") {
+            if !unjudged(v) && v.as_object().is_none() {
+                bail!(
+                    "node {nm}: `edge` is {} — the engine reads it with `as_object()` and silently drops the whole edge, so the node has no routes at all",
+                    json_kind_name(v)
+                );
+            }
+            if let Some(e) = v.as_object() {
+                if let Some(c) = e.get("condition") {
+                    if !unjudged(c) && c.as_object().is_none() {
+                        bail!(
+                            "node {nm}: `edge.condition` is {} — the engine reads it with `as_object()` and silently drops every route, so no answer resolves",
+                            json_kind_name(c)
+                        );
+                    }
+                }
+                if let Some(d) = e.get("default") {
+                    if !unjudged(d) && d.as_str().is_none() {
+                        bail!(
+                            "node {nm}: `edge.default` is {} — the engine reads it with `as_str()` and silently falls back to *no* default route, so an unmatched answer ESCALATEs instead of falling back",
+                            json_kind_name(d)
+                        );
+                    }
+                }
+                if let Some(mc) = e.get("min_confidence") {
+                    if !unjudged(mc) && mc.as_f64().is_none() {
+                        bail!(
+                            "node {nm}: `edge.min_confidence` is {} — the engine reads it with `as_f64()` and silently falls back to 0.0, so every route passes",
+                            json_kind_name(mc)
+                        );
+                    }
+                }
+            }
+        }
+        if let Some(v) = obj.get("min_confidence") {
+            if !unjudged(v) && v.as_f64().is_none() {
+                bail!(
+                    "node {nm}: `min_confidence` is {} — the engine reads it with `as_f64()` and silently falls back to 0.0, so every route passes",
+                    json_kind_name(v)
+                );
+            }
+        }
+        if let Some(v) = obj.get("primary_q") {
+            if !unjudged(v) && v.as_str().is_none() {
+                bail!(
+                    "node {nm}: `primary_q` is {} — the engine reads it with `as_str()` and silently ignores it, so the routed question falls back to declaration order",
+                    json_kind_name(v)
+                );
+            }
+        }
+        if let Some(v) = obj.get("max_retries") {
+            if !unjudged(v) && v.as_u64().is_none() {
+                bail!(
+                    "node {nm}: `max_retries` is {} — the engine reads it with `as_u64()` and silently keeps the default 2, so the node retries a different number of times than you declared",
+                    json_kind_name(v)
+                );
+            }
+        }
+        if let Some(v) = obj.get("action") {
+            if !unjudged(v) && v.as_object().is_none() {
+                bail!(
+                    "node {nm}: `action` is {} — the engine reads it with `as_object()` inside `run_action`, so a non-object action is silently a no-op",
+                    json_kind_name(v)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_graph_semantics(
     nodes: &[WorkflowNode],
     node_list: &[Value],
@@ -2276,6 +2420,9 @@ fn from_spec_with_dir_cycle(
         .cloned()
         .unwrap_or_default();
     guard_call_spec(&cap_defs, node_list)?;
+    // P179: a node/spec value of the wrong type is silently replaced by the engine
+    // default (see `guard_spec_value_types`) — reject it instead.
+    guard_spec_value_types(spec, node_list)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
     if let Some(v) = spec.get("max_iterations").and_then(|v| v.as_u64()) {
