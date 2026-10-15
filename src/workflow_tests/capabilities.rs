@@ -321,6 +321,37 @@ pub fn test_capabilities(h: &mut Harness) {
         cout.state["chained_chars"].as_u64().unwrap(),
         16,
     );
+
+    // P147: a chain step's own `project` is honoured (same pointer / `body`
+    // fallback as the main `call`), so `with.<as>` carries the chosen keys. The
+    // step projects datetime `now` as {"secs": <epoch>}; the main call then reads
+    // `/s/secs` — a pointer that only resolves when the step's project took
+    // effect (without it, `s` is {"epoch": …} and `secs` is absent).
+    let chain_proj_spec = json!({
+        "name": "chainproj", "start": "go",
+        "capabilities": {"seed": {"kind": "datetime", "op": "now"}},
+        "nodes": [{
+            "name": "go", "primary_q": "q",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}},
+            "edge": {"condition": {}, "default": "STOP"},
+            "action": {
+                "kind": "call", "capability": "seed",
+                "chain": [{"capability": "seed", "as": "s", "project": {"secs": "/epoch"}}],
+                "project": {"from_chain": "/s/secs"}
+            }
+        }]
+    });
+    let pwf = spec::from_spec(&chain_proj_spec).unwrap();
+    let pout = pwf
+        .run(
+            &ScriptedBackend::new(vec![verdict(&[("q", choice("A", &[("A", 0.9), ("B", 0.1)]))])]),
+            &json!({}),
+        )
+        .unwrap();
+    h.check(
+        "cap: chain step project exposes the projected key",
+        pout.state["from_chain"].as_u64().unwrap_or(0) > 1_000_000_000,
+    );
 }
 
 pub fn test_capabilities_extra(h: &mut Harness) {

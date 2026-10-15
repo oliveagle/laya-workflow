@@ -1334,3 +1334,33 @@ pub fn test_validate_question_keys(h: &mut Harness) {
         "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
         "heuristic": {"field": "text", "weights": [1, 2]}}})));
 }
+
+
+/// P147: an action object, its `rules[]` / `dimensions[]` and its `chain[]`
+/// steps are read by name too. A misspelled `capabilty` / `rulez` / `dimenions`
+/// / `wieght` is silently ignored: `validate` is green yet the action loses its
+/// capability / rules / dimensions. Same class as P145/P146, one level deeper.
+pub fn test_validate_action_keys(h: &mut Harness) {
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let qs = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}});
+    let ok = |action: Value| {
+        let n = json!({"name": "a", "primary_q": "q", "questions": qs.clone(),
+                       "edge": edge.clone(), "action": action});
+        spec::from_spec(&base_spec("a", json!([n]))).is_ok()
+    };
+
+    // positives — the keys each kind actually reads
+    h.check("validate: a threshold action with rules is OK", ok(json!({"kind": "threshold", "rules": [{"when": {"always": true}, "label": "X"}]})));
+    h.check("validate: a rubric action with dimensions is OK", ok(json!({"kind": "rubric", "min_confidence": 0.8, "dimensions": [{"question": "q", "levels": 3, "weight": 1.0}]})));
+    h.check("validate: a ui_proposal action is OK", ok(json!({"kind": "ui_proposal", "operation": "q", "field": "q", "amount": "q", "surface": "surface", "snapshot_hash": "snapshot_hash", "min_confidence": 0.8, "value_key": "k"})));
+    h.check("validate: a copy_keys action is OK", ok(json!({"kind": "copy_keys", "keys": ["q"]})));
+
+    // negatives — a stray / mistyped key on the action object
+    h.check("validate: action key typo `capabilty` rejected", !ok(json!({"kind": "copy_keys", "keys": ["q"], "capabilty": "x"})));
+    h.check("validate: a stray action key is rejected", !ok(json!({"kind": "threshold", "rules": [{"when": {"always": true}, "label": "X"}], "note": "x"})));
+
+    // negatives — the nested rule / dimension / chain-step objects
+    h.check("validate: threshold rule key typo `labl` rejected", !ok(json!({"kind": "threshold", "rules": [{"when": {"always": true}, "labl": "X"}]})));
+    h.check("validate: rubric dimension key typo `wieght` rejected", !ok(json!({"kind": "rubric", "dimensions": [{"question": "q", "levels": 3, "wieght": 1.0}]})));
+    h.check("validate: chain step key typo `capabilty` rejected", !ok(json!({"kind": "call", "capability": "c", "chain": [{"capabilty": "d", "as": "d"}]})));
+}

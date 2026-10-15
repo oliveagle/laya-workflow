@@ -296,6 +296,24 @@ pub fn test_computer_use(h: &mut Harness) {
     h.eq("cu: proposal extracted value is source text", out["proposal"]["extracted"]["value"].as_str().unwrap_or(""), "€120.00");
     h.eq("cu: proposal carries state hash", out["proposal"]["snapshot_hash"].as_str().unwrap_or(""), "abc123");
 
+    // P147: a declared `surface` / `snapshot_hash` names the STATE key it reads
+    // (like operation/field/amount name question keys) — a different name is
+    // honoured, not ignored. (The defaults keep every existing spec identical.)
+    let act_named = json!({
+        "kind": "ui_proposal",
+        "operation": "operation", "field": "field", "amount": "amount",
+        "surface": "obs_surface", "snapshot_hash": "obs_hash",
+        "min_confidence": 0.8, "value_key": "billing_contact"
+    });
+    let st_named = json!({
+        "obs_surface": "https://named.example.invalid/x",
+        "obs_hash": "deadbeef",
+        "snapshot": fx["snapshot"],
+    });
+    let named = laya_workflow::spec::run_action(&act_named, &st_named, &mk_verdict("done", "e2", "t2"), Some("operation")).unwrap();
+    h.eq("cu: proposal honours a declared surface key", named["proposal"]["surface"].as_str().unwrap_or(""), "https://named.example.invalid/x");
+    h.eq("cu: proposal honours a declared snapshot_hash key", named["proposal"]["snapshot_hash"].as_str().unwrap_or(""), "deadbeef");
+
     // low-confidence operation → human_review, no action
     let mut low = HashMap::new();
     low.insert("operation".into(), mk("fill", 0.5));

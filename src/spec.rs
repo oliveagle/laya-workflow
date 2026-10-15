@@ -1231,6 +1231,91 @@ fn validate_graph_semantics(
                         suggest(kind, KNOWN_KINDS)
                     );
                 }
+                // P147: the action object, its `rules[]` / `dimensions[]` and its
+                // `chain[]` steps are read by name too. `run_action` /
+                // `run_call_action` read only the keys below — anything else
+                // (`capabilty`, `rulez`, `dimenions`, `wieght`) is never touched, so
+                // the action silently loses its capability / rules / dimensions
+                // behind a green `validate`. Same class as P145/P146, one level
+                // deeper still. `question` is read for every kind; a ui_proposal's
+                // `surface` / `snapshot_hash` (the state keys it reads) and a chain
+                // step's `project` are emitted by the compiler and round-tripped by
+                // `bdd import`.
+                const COMMON_ACTION_KEYS: &[&str] = &["kind", "question"];
+                let kind_keys: &[&str] = match kind {
+                    "none" | "merge_open_probs" => &[],
+                    "copy_keys" => &["keys"],
+                    "threshold" => &["rules"],
+                    "rubric" => &["dimensions", "min_confidence"],
+                    "combine" => &[
+                        "choice", "signal", "min_confidence", "fallback", "review_label",
+                        "high_threshold", "low_threshold",
+                    ],
+                    "gate" => &["option", "block_at", "allow_at"],
+                    "ui_proposal" => &[
+                        "operation", "field", "amount", "min_confidence", "surface",
+                        "snapshot_hash", "value_key",
+                    ],
+                    "call" => &["capability", "with", "chain", "project"],
+                    _ => &[],
+                };
+                if let Some(ao) = action.as_object() {
+                    let mut allowed: Vec<&str> = COMMON_ACTION_KEYS.to_vec();
+                    allowed.extend_from_slice(kind_keys);
+                    for k in ao.keys() {
+                        if !allowed.contains(&k.as_str()) {
+                            bail!(
+                                "node {name}: action {kind:?} carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                                suggest(k, &allowed)
+                            );
+                        }
+                    }
+                }
+                if kind == "threshold" {
+                    if let Some(rules) = action.get("rules").and_then(Value::as_array) {
+                        for (i, r) in rules.iter().enumerate() {
+                            let Some(ro) = r.as_object() else { continue };
+                            for k in ro.keys() {
+                                if k != "when" && k != "label" {
+                                    bail!(
+                                        "node {name}: threshold rule #{i} carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                                        suggest(k, &["when", "label"])
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                if kind == "rubric" {
+                    if let Some(dims) = action.get("dimensions").and_then(Value::as_array) {
+                        for (i, d) in dims.iter().enumerate() {
+                            let Some(dim) = d.as_object() else { continue };
+                            for k in dim.keys() {
+                                if k != "question" && k != "levels" && k != "weight" {
+                                    bail!(
+                                        "node {name}: rubric dimension #{i} carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                                        suggest(k, &["question", "levels", "weight"])
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                if kind == "call" {
+                    if let Some(steps) = action.get("chain").and_then(Value::as_array) {
+                        for (i, st) in steps.iter().enumerate() {
+                            let Some(so) = st.as_object() else { continue };
+                            for k in so.keys() {
+                                if k != "capability" && k != "as" && k != "with" && k != "project" {
+                                    bail!(
+                                        "node {name}: chain step #{i} carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                                        suggest(k, &["capability", "as", "with", "project"])
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 let aq = action.get("question").and_then(|v| v.as_str());
                 match kind {
                     "threshold" | "gate" | "merge_open_probs" => {
@@ -2170,6 +2255,13 @@ pub fn run_call_action(
             }
             let step_with = crate::capability::expand(&step_with, state, &answers);
             let res = registry.call(step_cap, &step_with, state)?;
+            // P147: a chain step may project its own result (the same pointer /
+            // `body` fallback as the main `call`), so `with.<as>` carries the
+            // chosen keys instead of the whole envelope.
+            let res = match step.get("project").and_then(|p| p.as_object()) {
+                Some(proj) if !proj.is_empty() => Value::Object(project_result(&res, proj)),
+                _ => res,
+            };
             chain_results.insert(step_name.clone(), res);
         }
     }
@@ -2272,6 +2364,28 @@ fn json_pointer<'a>(root: &'a Value, segs: &[&str]) -> Option<&'a Value> {
         };
     }
     Some(cur)
+}
+
+/// Project named keys out of a capability result: each `out_key` reads the JSON
+/// pointer `ptr` against `root`, falling back to `root.body` (http-style
+/// envelopes). The single-root half of a `call`'s `project`, reused for each
+/// `chain` step so its declared `project` is honoured (P147).
+fn project_result(root: &Value, project: &Map<String, Value>) -> Map<String, Value> {
+    let mut out = Map::new();
+    for (key, ptr) in project {
+        let Some(ptr) = ptr.as_str() else { continue };
+        let segs: Vec<&str> = ptr
+            .trim_start_matches('/')
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
+        if let Some(v) = json_pointer(root, &segs)
+            .or_else(|| root.get("body").and_then(|b| json_pointer(b, &segs)))
+        {
+            out.insert(key.clone(), v.clone());
+        }
+    }
+    out
 }
 
 /// Condense a verdict into `{question: answer}` so capability templates can read
@@ -2499,13 +2613,25 @@ pub fn run_action(
                 .get("min_confidence")
                 .and_then(|x| x.as_f64())
                 .unwrap_or(0.8);
-            let surface = state
+            // P147: `surface` / `snapshot_hash` name the STATE keys the
+            // observation was fingerprinted under (like `operation` / `field` /
+            // `amount` name question keys). The defaults keep every existing spec
+            // byte-identical; a declared name is now honoured instead of ignored.
+            let surface_key = action
                 .get("surface")
+                .and_then(|x| x.as_str())
+                .unwrap_or("surface");
+            let surface = state
+                .get(surface_key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let snapshot_hash = state
+            let snapshot_hash_key = action
                 .get("snapshot_hash")
+                .and_then(|x| x.as_str())
+                .unwrap_or("snapshot_hash");
+            let snapshot_hash = state
+                .get(snapshot_hash_key)
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
