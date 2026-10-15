@@ -2355,6 +2355,73 @@ pub fn test_bdd_decision_suggest(h: &mut Harness) {
     );
 }
 
+/// P131: the decision-side vocabulary-drift gate. `decision_templates` is the
+/// single source behind `bdd vocabulary` and the "did you mean" hints, and it
+/// sits next to the compiler's own tables, so the two can drift silently. This
+/// proves both directions on the live tables, purely (so a truncated list
+/// fires), and that the CLI agrees.
+pub fn test_bdd_decision_vocab_check(h: &mut Harness) {
+    // Positive: the live index covers every compiler shape and every template it
+    // advertises compiles.
+    h.check(
+        "bdd decision-vocab-check: the live vocabulary has no drift",
+        bdd::decision_vocabulary_gaps(bdd::decision_templates()).is_empty(),
+    );
+    // The two halves are non-trivial: there are shapes to cover, across 3 kinds.
+    let shapes = bdd::decision_shape_tags();
+    let total_shapes: usize = shapes.values().map(|s| s.len()).sum();
+    h.check(
+        "bdd decision-vocab-check: the grammar has >= 40 shapes across three kinds",
+        total_shapes >= 40 && shapes.len() == 3,
+    );
+    // Negative A — a compiler shape no advertised template covers is named
+    // (truncate the index to a single `when` template: `edge_default` is then
+    // uncovered).
+    let gaps = bdd::decision_vocabulary_gaps(&[("when", r#"the answer "<a>" goes to "<node>""#)]);
+    h.check(
+        "bdd decision-vocab-check: an uncovered compiler shape is named",
+        gaps.iter().any(|g| g.contains("edge_default")),
+    );
+    // Negative B — a template the compiler rejects is named (a typo the index
+    // would hand to an author).
+    let gaps2 = bdd::decision_vocabulary_gaps(&[(
+        "then",
+        r#"label "<label>" whenn the answer to "<q>" is "<a>""#,
+    )]);
+    h.check(
+        "bdd decision-vocab-check: a non-compiling template is named",
+        gaps2.iter().any(|g| g.contains("does not compile")),
+    );
+    // The per-template compiler probe discriminates a good template from a
+    // wrong-kind one.
+    h.check(
+        "bdd decision-vocab-check: a good template compiles",
+        bdd::decision_template_compiles("then", r#"label "<label>" otherwise"#),
+    );
+    h.check(
+        "bdd decision-vocab-check: a wrong-kind template does not compile",
+        !bdd::decision_template_compiles("when", r#"a choice question "x" asks "y""#),
+    );
+    // CLI: the gate is wired into `bdd` and green.
+    let root = bdd::repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let out = std::process::Command::new(&bin)
+        .args(["bdd", "decision-vocab-check"])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd decision-vocab-check");
+    let text = String::from_utf8_lossy(&out.stdout);
+    h.check(
+        "bdd decision-vocab-check: CLI exits 0 and prints the coverage line",
+        out.status.success() && text.contains("cover all"),
+    );
+}
+
 /// P44: the bdd/json separation invariant, as a gate. `bdd/` (all `.feature`
 /// sources) and `dsl/` (all workflow `.json` specs) are two fully separate,
 /// hierarchical trees — a `.json` in `bdd/`, a `.feature` in `dsl/`, a source

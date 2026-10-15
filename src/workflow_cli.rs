@@ -434,6 +434,10 @@ enum BddCmd {
     },
     /// Prove the step vocabulary maps each step to the op it is supposed to run.
     VocabularyCheck,
+    /// Prove the decision authoring vocabulary has not drifted from the compiler:
+    /// every template `bdd vocabulary` prints still compiles, and every step shape
+    /// the `@decision` compiler accepts is advertised (no silent gap).
+    DecisionVocabCheck,
     /// Check the hand-written BDD probe specs without Chrome.
     ProbeCheck,
     /// Run the bdd plugin's argument-validation errors and hold the list complete.
@@ -2535,6 +2539,7 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             bdd::vocabulary_cli(&bdd::VocabularyOptions { json: *json })?
         }
         BddCmd::VocabularyCheck => bdd::check_vocabulary()?,
+        BddCmd::DecisionVocabCheck => bdd::decision_vocab_check()?,
         BddCmd::ProbeCheck => bdd::check_probes()?,
         BddCmd::ArgsProbeCheck => bdd::check_args_probes()?,
         BddCmd::DocCheck => bdd::check_doc()?,

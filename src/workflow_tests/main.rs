@@ -175,6 +175,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-vocabulary", t_bdd::test_bdd_vocabulary),
         ("bdd-app-port-parity", t_bdd::test_bdd_app_port_parity),
         ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),
+        ("bdd-decision-vocab-check", t_bdd::test_bdd_decision_vocab_check),
         ("bdd-decision-e2e-output-assert", t_bdd::test_bdd_decision_e2e_output_assert),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),

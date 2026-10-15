@@ -1296,7 +1296,9 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "the capabilities (table: | name | config |)"),
         ("given", "answer \"<ans>\" when the field \"<field>\" contains <needles> with hit <hit>"),
         ("given", "answer \"<ans>\" when the text contains <needles> with hit <hit>"),
+        ("given", "score \"<ans>\" from the numeric field \"<field>\""),
         ("given", "answer \"<ans>\" when the field \"<field>\" matches <patterns> with hit <hit>"),
+        ("given", "answer \"<ans>\" when the text matches <patterns> with hit <hit>"),
         ("given", "answer \"<ans>\" with mid <mid> when the field \"<field>\" contains <needles>"),
         ("given", "answer by rules on the field \"<field>\" with hit <hit>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
@@ -1305,7 +1307,9 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("when", "the answer \"<a>\" goes to \"<node>\""),
         ("when", "any other answer goes to \"<node>\""),
         ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\""),
+        ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\" with at least <c> confidence"),
         ("then", "label \"<label>\" when the answer to \"<q>\" is \"<a>\" with at most <c> confidence"),
+        ("then", "label \"<label>\" when the answer is \"<a>\" with at least <c> confidence"),
         ("then", "label \"<label>\" when the answer to \"<q>\" is one of <list>"),
         ("then", "label \"<label>\" when the answer is \"<a>\""),
         ("then", "label \"<label>\" when <cond> and <cond>"),
@@ -1483,6 +1487,168 @@ pub fn decision_suggest(kind: &str, text: &str) -> Option<String> {
         }
     }
     best.map(|(_, tmpl)| tmpl.to_string())
+}
+
+// ── P131: decision-side vocabulary-drift gate ───────────────────────────────
+//
+// `decision_templates` is the single source behind `bdd vocabulary` / MCP
+// `bdd_vocabulary` and the "did you mean" hints. It is hand-maintained next to
+// the compiler's own tables (`dec_given/when/then_table`), so the two can drift
+// silently: a template the index advertises but the compiler no longer accepts
+// (an author copies it and gets a red build), or a step shape the compiler
+// accepts but the index omits (a hint can never suggest it). This gate closes
+// both directions on the live tables.
+
+/// A sample token to stand in for one `<placeholder>` when a template is turned
+/// back into a concrete step. `quoted` is true when the placeholder already sits
+/// between the quotes in the template (e.g. `"<field>"`), so the same name can be
+/// a string in one template and a number in another (`"<high>"` vs `high <high>`).
+fn dec_sample(name: &str, quoted: bool) -> String {
+    if quoted {
+        return "x".to_string();
+    }
+    match name {
+        // list-ish placeholders render as a one-element quoted list.
+        "needles" | "patterns" | "list" => "\"x\"".to_string(),
+        // a full leaf condition for the conjunctive label rule.
+        "cond" => "the answer is \"x\"".to_string(),
+        // numeric placeholders.
+        "n" | "c" | "hit" | "miss" | "mid" | "midv" | "min" | "block" | "allow" | "w1" | "w2"
+        | "l1" | "l2" | "low" | "high" => "1".to_string(),
+        // everything else is a bare word where a quoted string is expected.
+        _ => "x".to_string(),
+    }
+}
+
+/// Turn one advertised template into a concrete step: drop a trailing
+/// `(table: …)` annotation, then replace every `<name>` with a sample.
+pub fn instantiate_decision_template(tmpl: &str) -> String {
+    let body = match tmpl.find(" (table:") {
+        Some(i) => &tmpl[..i],
+        None => tmpl,
+    };
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let after = &rest[lt + 1..];
+        match after.find('>') {
+            Some(gt) => {
+                let name = &after[..gt];
+                let quoted = out.ends_with('"') && after[gt + 1..].starts_with('"');
+                out.push_str(&dec_sample(name, quoted));
+                rest = &after[gt + 1..];
+            }
+            None => {
+                out.push('<');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Does a template compile? Instantiate it and feed it to the decision matcher
+/// for the same keyword kind. `false` = the index advertises a phrasing the
+/// compiler rejects (the dangerous direction of the drift).
+pub fn decision_template_compiles(kind: &str, tmpl: &str) -> bool {
+    dec_match(kind, &instantiate_decision_template(tmpl)).is_ok()
+}
+
+/// The compiler's live step shapes: keyword kind → the set of tags its table can
+/// produce. One tag = one accepted phrasing (one regex).
+pub fn decision_shape_tags(
+) -> std::collections::BTreeMap<&'static str, std::collections::BTreeSet<&'static str>> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut m: BTreeMap<&'static str, BTreeSet<&'static str>> = BTreeMap::new();
+    for (kind, table) in [
+        ("given", dec_given_table()),
+        ("when", dec_when_table()),
+        ("then", dec_then_table()),
+    ] {
+        m.insert(kind, table.iter().map(|(_, tag)| *tag).collect());
+    }
+    m
+}
+
+/// Every way the advertised vocabulary and the compiler's shapes can disagree,
+/// for the given template list. Empty means "the index covers every shape and
+/// nothing it advertises is dead". Pure over its inputs, so a regression can pass
+/// a truncated list and watch it fire.
+pub fn decision_vocabulary_gaps(templates: &[(&str, &str)]) -> Vec<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let shapes = decision_shape_tags();
+    let mut problems: Vec<String> = Vec::new();
+    let mut produced: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+    for (kind, tmpl) in templates {
+        if !VOCABULARY_KINDS.iter().any(|k| k == kind) {
+            problems.push(format!(
+                "template advertised under unknown kind {kind:?}: {tmpl:?}"
+            ));
+            continue;
+        }
+        let text = instantiate_decision_template(tmpl);
+        match dec_match(kind, &text) {
+            Ok((_, tag)) => {
+                produced.entry(kind.to_string()).or_default().insert(tag);
+            }
+            Err(_) => problems.push(format!(
+                "advertised {kind} template does not compile: {tmpl:?} (instantiated: {text:?})"
+            )),
+        }
+    }
+    for (kind, tags) in &shapes {
+        let seen = produced.get(*kind);
+        for tag in tags {
+            if !seen.map(|s| s.contains(*tag)).unwrap_or(false) {
+                problems.push(format!(
+                    "{kind} step shape {tag:?} is accepted by the compiler but no advertised \
+                     template covers it (a did-you-mean hint can never suggest it)"
+                ));
+            }
+        }
+    }
+    problems
+}
+
+pub fn decision_vocab_check() -> Result<i32> {
+    let (rc, _) = decision_vocab_check_impl(false)?;
+    Ok(rc)
+}
+
+fn decision_vocab_check_impl(silent: bool) -> Result<(i32, Option<String>)> {
+    let templates = decision_templates();
+    let problems = decision_vocabulary_gaps(templates);
+    if !problems.is_empty() {
+        eprintln!(
+            "bdd decision-vocab-check: {} drift problem(s) between the advertised \
+             vocabulary and the compiler:",
+            problems.len()
+        );
+        for p in &problems {
+            eprintln!("  {p}");
+        }
+        return Ok((1, None));
+    }
+    let shapes = decision_shape_tags();
+    let per_kind: Vec<String> = VOCABULARY_KINDS
+        .iter()
+        .map(|k| format!("{k}={}", shapes.get(k).map(|s| s.len()).unwrap_or(0)))
+        .collect();
+    let total: usize = shapes.values().map(|s| s.len()).sum();
+    let line = format!(
+        "decision vocabulary: {} advertised template(s) cover all {} compiler step shape(s) \
+         across {} keyword kind(s) ({})",
+        templates.len(),
+        total,
+        VOCABULARY_KINDS.len(),
+        per_kind.join(", ")
+    );
+    if !silent {
+        println!("{line}");
+    }
+    Ok((0, Some(line)))
 }
 
 /// P35: a semantic-validation error names the offending node (a Scenario slug)

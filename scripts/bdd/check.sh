@@ -76,6 +76,12 @@ fi
 # run green while the document stops meaning what it says.
 "$BIN" bdd vocabulary-check
 
+# The decision side of the same idea: an `@decision` step shape the compiler
+# accepts but the authoring vocabulary omits (or a template it advertises but
+# no longer compiles) is the quietest drift there is - the did-you-mean hint
+# and the grammar stop agreeing. Needs no Chrome.
+"$BIN" bdd decision-vocab-check
+
 # The hand-written probe specs are gated separately, because `validate` is the
 # wrong tool for them: measured, a probe whose edge names a node that does not
 # exist *passes* `validate` and fails at run time with error_node_missing and a
