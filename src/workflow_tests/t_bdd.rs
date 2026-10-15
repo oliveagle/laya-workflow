@@ -4915,6 +4915,260 @@ Feature: one_action
     );
 }
 
+/// P161: a step table is one JSON object, so a repeated row key is a silent drop.
+///
+/// Every decision-vocabulary table that carries `| key | value |` rows compiles
+/// into a single JSON object - a choice question's `criteria`, a `call` step's
+/// `with` / `project` / `chain`, the `policy`, the `capabilities`, a
+/// `match_rules` heuristic's label map. A row that repeats an earlier row's key
+/// overwrites it, so the declaration the author wrote first is thrown away while
+/// `bdd build` still exits 0. That is P128's "a declared option nobody reads" one
+/// level up, in the authoring layer, so the compiler now refuses it and names
+/// both lines. The `score` level table is the deliberate exception: its rows are
+/// a *list*, where a repeat is kept rather than dropped.
+///
+/// The keys are checked exactly as the compiler reads them, so `with.text` and
+/// `project.text` (two maps, both real in the corpus) stay legal, and so does a
+/// `with.text` beside a `chain.<as>.with.text`.
+pub fn test_bdd_table_key_once(h: &mut Harness) {
+    // Compile a `@decision` feature and return its error text ("" when it compiles).
+    let err_of = |text: &str| -> String {
+        match bdd::parse(text, "<dup>") {
+            Ok(f) => match bdd::compile_decision(&f, &json!({})) {
+                Ok(_) => String::new(),
+                Err(e) => format!("{e:#}"),
+            },
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    // The 1-based source line of the `nth` line that contains `needle`.
+    let line_of = |text: &str, needle: &str, nth: usize| -> usize {
+        text.lines()
+            .enumerate()
+            .filter(|(_, l)| l.contains(needle))
+            .nth(nth)
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0)
+    };
+
+    // A `call` step table: two `with.text` rows compile into one `with` object.
+    let call = r#"
+@decision
+Feature: dup_call
+Background:
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+  Then call the capability "digest"
+    | with.text | ${state.text} |
+    | with.text | ${state.again} |
+"#;
+    let err = err_of(call);
+    let first = line_of(call, "| with.text |", 0);
+    let second = line_of(call, "| with.text |", 1);
+    h.check(
+        "bdd table key once: refuses a call step table that repeats with.text",
+        err.contains(&format!("line {second}:"))
+            && err.contains("call step table")
+            && err.contains("declares \"with.text\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // A choice question: two rows with the same answer compile into one criteria.
+    let choice = r#"
+@decision
+Feature: dup_choice
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | yes | again |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(choice);
+    let first = line_of(choice, "| yes |", 0);
+    let second = line_of(choice, "| yes |", 1);
+    h.check(
+        "bdd table key once: refuses a choice question that repeats an answer row",
+        err.contains(&format!("line {second}:"))
+            && err.contains("choice question \"go\" table")
+            && err.contains("declares \"yes\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // A `match_rules` heuristic: two rows with the same label compile into one
+    // rules object.
+    let rules = r#"
+@decision
+Feature: dup_rules
+Scenario: root
+  Given a choice question "intent" asks "Which intent?"
+    | answer | meaning |
+    | ok     | normal  |
+    | reject | fraud   |
+  Given answer by rules on the field "text" with hit 0.9 and fallback "ok"
+    | label  | needles    |
+    | reject | "fraud"    |
+    | reject | "scripted" |
+  When any other answer goes to "STOP"
+  Then label "REJECTED" when the answer is "reject"
+  And label "OK" otherwise
+"#;
+    let err = err_of(rules);
+    let first = line_of(rules, "\"fraud\"", 0);
+    let second = line_of(rules, "\"scripted\"", 0);
+    h.check(
+        "bdd table key once: refuses a match_rules table that repeats a label",
+        err.contains(&format!("line {second}:"))
+            && err.contains("match_rules step")
+            && err.contains("declares \"reject\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // The policy table: a repeated key compiles into one policy object.
+    let policy = r#"
+@decision
+Feature: dup_policy
+Background:
+  Given the policy
+    | allow_exec | true  |
+    | allow_exec | false |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(policy);
+    let first = line_of(policy, "| allow_exec | true", 0);
+    let second = line_of(policy, "| allow_exec | false", 0);
+    h.check(
+        "bdd table key once: refuses a policy table that repeats a key",
+        err.contains(&format!("line {second}:"))
+            && err.contains("policy table")
+            && err.contains("declares \"allow_exec\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // The capabilities table: a repeated name compiles into one name -> config map.
+    let caps = r#"
+@decision
+Feature: dup_caps
+Background:
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+    | digest | {"kind": "text", "op": "words"}  |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(caps);
+    let first = line_of(caps, "\"length\"", 0);
+    let second = line_of(caps, "\"words\"", 0);
+    h.check(
+        "bdd table key once: refuses a capabilities table that repeats a name",
+        err.contains(&format!("line {second}:"))
+            && err.contains("capabilities table")
+            && err.contains("declares \"digest\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // A noul question's annotations, the same loss one table over.
+    let noul = r#"
+@decision
+Feature: dup_noul
+Scenario: root
+  Given a noul question "urgent" asks "Is this urgent?"
+    | truthy | a deadline |
+    | truthy | blocked    |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(noul);
+    let first = line_of(noul, "a deadline", 0);
+    let second = line_of(noul, "blocked", 0);
+    h.check(
+        "bdd table key once: refuses a noul table that repeats a key",
+        err.contains(&format!("line {second}:"))
+            && err.contains("noul question \"urgent\" table")
+            && err.contains("declares \"truthy\" twice")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // Positive: the raw row key is what is compared, so `with.text` and
+    // `project.text` (two different maps, both in the real corpus) still compile.
+    let both = r#"
+@decision
+Feature: with_and_project
+Background:
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+  Then call the capability "digest"
+    | with.text | ${state.text} |
+    | project.text | /text |
+"#;
+    h.check(
+        "bdd table key once: with.text beside project.text is two maps, still compiles",
+        err_of(both).is_empty(),
+    );
+
+    // Positive: an outer `with.text` beside a nested `chain.<as>.with.text` is the
+    // same key in two different rows of the grammar, so it stays legal.
+    let chained = r#"
+@decision
+Feature: chained
+Background:
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+    | echo   | {"kind": "text", "op": "words"}  |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+  Then call the capability "echo"
+    | with.text | ${state.text} |
+    | chain.digest.capability | digest |
+    | chain.digest.with.text | ${state.text} |
+"#;
+    h.check(
+        "bdd table key once: with.text beside chain.<as>.with.text still compiles",
+        err_of(chained).is_empty(),
+    );
+
+    // Positive: a `score` question's level table is a list, so a repeated level is
+    // kept (not dropped) and stays legal.
+    let score = r#"
+@decision
+Feature: dup_score_level
+Scenario: root
+  Given a score question "quality" asks "How good is it?"
+    | level |
+    | high  |
+    | high  |
+  When any other answer goes to "STOP"
+"#;
+    h.check(
+        "bdd table key once: a score level table is a list, a repeated level still compiles",
+        err_of(score).is_empty(),
+    );
+}
+
 /// P91: the declared output set must be real.
 ///
 /// For every offline **single-node** `@decision` graph, `bdd_list`'s `outputs`

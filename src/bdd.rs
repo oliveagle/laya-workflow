@@ -39,6 +39,10 @@ pub struct Step {
     /// step line, outside an Examples block). Used by the decision vocabulary
     /// to carry option/level tables. Empty for every browser step.
     pub table: Vec<Vec<String>>,
+    /// The source line of each `table` row, in the same order, so a rejected row
+    /// can be pointed at exactly (P161). Always the same length as `table` when
+    /// the text came from `parse`; a hand-built `Step` (a test) may leave it empty.
+    pub row_lines: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -296,6 +300,7 @@ fn read_include(rel: &str, including: &str, lineno: usize) -> Result<Vec<Step>> 
             text: body,
             line: n + 1,
             table: Vec::new(),
+            row_lines: Vec::new(),
         });
     }
     if steps.is_empty() {
@@ -509,7 +514,10 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
             let row = cells(stripped, lineno)?;
             if in_background {
                 match f.background.last_mut() {
-                    Some(st) => st.table.push(row),
+                    Some(st) => {
+                        st.table.push(row);
+                        st.row_lines.push(lineno);
+                    }
                     None => bail!("line {lineno}: table row without a preceding step"),
                 }
             } else {
@@ -520,6 +528,7 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
                     bail!("line {lineno}: table row without a preceding step");
                 };
                 st.table.push(row);
+                st.row_lines.push(lineno);
                 if let Some(last) = f.scenarios.last_mut() {
                     *last = sc.clone();
                 }
@@ -553,6 +562,7 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
             text: body,
             line: lineno,
             table: Vec::new(),
+            row_lines: Vec::new(),
         };
         if in_background {
             f.background.push(st);
@@ -2752,13 +2762,20 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                         // column header (`| answer | meaning |`), the rest are
                         // data rows.
                         let mut criteria = Map::new();
-                        for row in st.table.iter().skip(1) {
+                        let mut seen: Vec<(String, usize)> = Vec::new();
+                        for (i, row) in st.table.iter().enumerate().skip(1) {
                             if row.len() < 2 || row[0].is_empty() {
                                 bail!(
                                     "line {}: choice question {q:?} table rows need | answer | meaning |",
                                     st.line
                                 );
                             }
+                            table_key_once(
+                                &mut seen,
+                                row[0].as_str(),
+                                row_line(st, i),
+                                &format!("choice question {q:?} table"),
+                            )?;
                             criteria.insert(row[0].clone(), json!(row[1]));
                         }
                         if criteria.is_empty() {
@@ -2789,7 +2806,8 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                         // Optional | key | text | rows carry the yes/no
                         // semantics annotations (`truthy` / `falsy`) that the
                         // source DSL stores on noul questions.
-                        for row in &st.table {
+                        let mut seen: Vec<(String, usize)> = Vec::new();
+                        for (i, row) in st.table.iter().enumerate() {
                             if row.len() < 2 || row[0].trim().is_empty() {
                                 bail!(
                                     "line {}: noul question {q:?} table rows need | truthy | text | / | falsy | text |",
@@ -2797,6 +2815,12 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                                 );
                             }
                             let key = row[0].trim();
+                            table_key_once(
+                                &mut seen,
+                                key,
+                                row_line(st, i),
+                                &format!("noul question {q:?} table"),
+                            )?;
                             let val = row[1].trim();
                             match key {
                                 "truthy" | "falsy" => {
@@ -2919,13 +2943,20 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 let fallback = caps.name("fallback").map(|m| m.as_str().to_string());
                 let mut rules: Map<String, Value> = Map::new();
                 // First row is the `| label | needles |` header; skip it.
-                for row in st.table.iter().skip(1) {
+                let mut seen: Vec<(String, usize)> = Vec::new();
+                for (i, row) in st.table.iter().enumerate().skip(1) {
                     if row.len() < 2 || row[0].is_empty() {
                         bail!(
                             "line {}: match_rules step needs | label | needles | rows",
                             st.line
                         );
                     }
+                    table_key_once(
+                        &mut seen,
+                        row[0].trim(),
+                        row_line(st, i),
+                        "match_rules step",
+                    )?;
                     let needles = quoted_tokens_escaped(&row[1]);
                     if needles.is_empty() {
                         bail!("line {}: match_rules row {row:?} needs quoted needles", st.line);
@@ -3155,13 +3186,15 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 let chain_idx = |chain: &Vec<(String, String, Map<String, Value>, Map<String, Value>)>, as_name: &str| {
                     chain.iter().position(|(a, _, _, _)| a == as_name)
                 };
-                for row in &st.table {
+                let mut seen: Vec<(String, usize)> = Vec::new();
+                for (i, row) in st.table.iter().enumerate() {
                     if row.len() < 2 || row[0].is_empty() {
                         bail!(
                             "line {}: call step table rows need | with.<key> | value |, | project.<key> | ptr | or | chain.<as>.<key> | value |",
                             st.line
                         );
                     }
+                    table_key_once(&mut seen, row[0].as_str(), row_line(st, i), "call step table")?;
                     let cell = row[1].trim();
                     let val: Value = serde_json::from_str(cell).unwrap_or_else(|_| json!(cell));
                     if let Some(rest) = row[0].strip_prefix("chain.") {
@@ -3427,6 +3460,33 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     Ok(n)
 }
 
+/// The source line of row `i` of a step table. A `Step` built by hand (a test)
+/// has no `row_lines`, so fall back to the step's own line (P161).
+fn row_line(st: &Step, i: usize) -> usize {
+    st.row_lines.get(i).copied().unwrap_or(st.line)
+}
+
+/// Refuse a step table that names the same row key twice.
+///
+/// Every decision-vocabulary table that carries `| key | value |` rows compiles
+/// into a single JSON object (a choice question's `criteria`, a `call` step's
+/// `with`/`project`/`chain`, the `policy`, the `capabilities`, a `match_rules`
+/// heuristic), so a repeated key silently overwrites the row above it: the
+/// declaration the author wrote first is thrown away and `bdd build` still
+/// succeeds. That is P128's "a declared option nobody reads" one level up, in
+/// the authoring layer — so refuse it, naming both lines. `seen` is per step (a
+/// table is one map), and `key` is the raw row key exactly as the compiler reads
+/// it (P161).
+fn table_key_once(seen: &mut Vec<(String, usize)>, key: &str, line: usize, what: &str) -> Result<()> {
+    if let Some((_, first)) = seen.iter().find(|(k, _)| k.as_str() == key) {
+        bail!(
+            "line {line}: this {what} declares {key:?} twice (the first is at line {first}) - the rows compile into one JSON object, so the earlier row would be silently dropped; keep one row per key"
+        );
+    }
+    seen.push((key.to_string(), line));
+    Ok(())
+}
+
 /// Compile a `@decision` feature into a single decision-graph workflow spec.
 pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
     let mut nodes: Vec<Value> = Vec::new();
@@ -3447,7 +3507,8 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                     );
                 }
                 let mut p: Map<String, Value> = Map::new();
-                for row in &st.table {
+                let mut seen: Vec<(String, usize)> = Vec::new();
+                for (i, row) in st.table.iter().enumerate() {
                     if row.len() < 2 || row[0].trim().is_empty() {
                         bail!(
                             "line {}: policy table rows need | key | value |",
@@ -3455,6 +3516,7 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                         );
                     }
                     let key = row[0].trim();
+                    table_key_once(&mut seen, key, row_line(st, i), "policy table")?;
                     let raw = row[1].trim();
                     let val: Value = match key {
                         "allow_exec" => json!(raw == "true"),
@@ -3483,7 +3545,8 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                     );
                 }
                 let mut caps: Map<String, Value> = Map::new();
-                for row in &st.table {
+                let mut seen: Vec<(String, usize)> = Vec::new();
+                for (i, row) in st.table.iter().enumerate() {
                     if row.len() < 2 || row[0].trim().is_empty() {
                         bail!(
                             "line {}: capabilities table rows need | name | config |",
@@ -3491,6 +3554,7 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                         );
                     }
                     let name = row[0].trim();
+                    table_key_once(&mut seen, name, row_line(st, i), "capabilities table")?;
                     let raw = row[1].trim();
                     let val: Value = serde_json::from_str(raw).map_err(|e| {
                         anyhow!(
@@ -4967,6 +5031,7 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
         text: text.to_string(),
         line: 1,
         table: Vec::new(),
+        row_lines: Vec::new(),
     };
 
     // (kind, text, want_op, want_assertion, has_page)

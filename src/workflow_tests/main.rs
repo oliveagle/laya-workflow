@@ -195,6 +195,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-cli-diagnostics", t_bdd::test_bdd_cli_diagnostics),
         ("bdd-vocabulary", t_bdd::test_bdd_vocabulary),
         ("bdd-single-action", t_bdd::test_bdd_single_action),
+        ("bdd-table-key-once", t_bdd::test_bdd_table_key_once),
         ("bdd-app-port-parity", t_bdd::test_bdd_app_port_parity),
         ("bdd-app-parity", t_bdd::test_bdd_app_parity),
         ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),
