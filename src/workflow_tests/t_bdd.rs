@@ -8827,3 +8827,123 @@ pub fn test_bdd_payload_tags(h: &mut Harness) {
         e.contains("declares no reason"),
     );
 }
+
+pub fn test_bdd_selector_tags(h: &mut Harness) {
+    // A selector tag written almost right selects nothing: `bdd build --profile
+    // production` picks up only a scenario tagged exactly `@production`, so a
+    // near-miss is silently skipped (verified: a `@prodution` feature compiles
+    // locally at 100% coverage yet contributes zero production-IT). The guard
+    // refuses the near-miss, and the table it uses cannot drift from the
+    // `has_tag` readers.
+    let probs = |tags: &[&str], decision: bool| -> Vec<String> {
+        let v: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+        bdd::tag_shape_problems(&v, decision)
+    };
+    let has = |p: &[String], needle: &str| p.iter().any(|m| m.contains(needle));
+
+    // ── the drift scan: every `has_tag(<tags>, …)` reader is accounted for ──
+    let src = include_str!("../bdd.rs");
+    let mut readers: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let lit = regex_lite::Regex::new(r#"has_tag\([^,]*,\s*"([a-z_][a-z0-9_]*)"\s*\)"#).unwrap();
+    for c in lit.captures_iter(src) {
+        readers.insert(c[1].to_string());
+    }
+    // An ident second argument (`has_tag(tags, prod_tag)`) resolves through its
+    // binding; an unresolvable ident (`fname`, `tf`) is a dynamic file-name
+    // filter, not a reserved tag, so it is skipped rather than failed.
+    let mut bound: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for rx in [
+        r#"const\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&str\s*=\s*"([a-z_][a-z0-9_]*)""#,
+        r#"let\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([a-z_][a-z0-9_]*)""#,
+    ] {
+        let rx = regex_lite::Regex::new(rx).unwrap();
+        for c in rx.captures_iter(src) {
+            bound.insert(c[1].to_string(), c[2].to_string());
+        }
+    }
+    let ident =
+        regex_lite::Regex::new(r#"has_tag\([^,]*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"#).unwrap();
+    for c in ident.captures_iter(src) {
+        if let Some(name) = bound.get(&c[1].to_string()) {
+            readers.insert(name.clone());
+        }
+    }
+    // `decision` is read by `has_tag` too but is deliberately not guarded: its
+    // near-miss already fails loudly, and refusing it would risk a false refusal
+    // on ordinary words (`decide`, `decisions`). The exclusion is pinned here so a
+    // new bare-flag reader cannot slip in under its cover.
+    let loud: std::collections::BTreeSet<String> =
+        ["decision"].iter().map(|s| s.to_string()).collect();
+    let expected: std::collections::BTreeSet<String> = bdd::SELECTOR_TAGS
+        .iter()
+        .map(|s| s.to_string())
+        .chain(loud.iter().cloned())
+        .collect();
+    h.check(
+        "bdd selector tags: the `has_tag` readers are exactly SELECTOR_TAGS + the loud `decision`",
+        readers == expected,
+    );
+    if readers != expected {
+        h.check(&format!("  (readers={readers:?} expected={expected:?})"), false);
+    }
+
+    // ── the guard's behaviour ──
+    h.check(
+        "bdd selector tags: a transposed @prodution is refused",
+        has(&probs(&["prodution"], false), "did you mean @production"),
+    );
+    h.check(
+        "bdd selector tags: a case typo @Production is refused",
+        has(&probs(&["Production"], false), "did you mean @production"),
+    );
+    h.check(
+        "bdd selector tags: the exact @production stays legal",
+        probs(&["production"], false).is_empty(),
+    );
+    h.check(
+        "bdd selector tags: a payload-tag near-miss is not re-framed as a selector",
+        has(&probs(&["outptus(x)"], false), "did you mean @outputs"),
+    );
+
+    // ── a wrong refusal is worse than a missed typo: similar names stay legal ──
+    h.check(
+        "bdd selector tags: a merely similar name is not refused",
+        probs(
+            &[
+                "inputs(seed)",
+                "options(a, b)",
+                "objects(x)",
+                "expected_thing(y)",
+                "output_dir(z)",
+                "smoke",
+                "prod",
+                "decide",
+                "example",
+                "decision",
+            ],
+            false,
+        )
+        .is_empty(),
+    );
+
+    // ── end to end: the compiler refuses the near-miss, accepts the exact tag ──
+    let mk = |tag: &str| {
+        format!(
+            "Feature: sel\n  {tag}\n  Scenario: s\n    When I run the command \"true\"\n    Then the exit code is 0\n"
+        )
+    };
+    let bad = bdd::parse(&mk("@prodution"), "<sel-bad>").expect("parse @prodution");
+    let e = bdd::compile_scenario(&bad, &bad.scenarios[0], &json!({}), "chrome-headless.sh")
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd selector tags: a @prodution scenario fails the compile",
+        e.contains("did you mean @production"),
+    );
+    let ok = bdd::parse(&mk("@production"), "<sel-ok>").expect("parse @production");
+    h.check(
+        "bdd selector tags: a @production scenario still compiles",
+        bdd::compile_scenario(&ok, &ok.scenarios[0], &json!({}), "chrome-headless.sh").is_ok(),
+    );
+}

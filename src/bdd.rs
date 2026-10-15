@@ -2444,6 +2444,21 @@ fn merge(dst: &mut Value, src: &Value) {
 /// new payload reader therefore cannot be added without landing in this table.
 pub const PAYLOAD_TAGS: [&str; 2] = ["outputs", "expected_failure"];
 
+/// The bare-flag tags the toolchain reads by exact name whose near-miss is
+/// *silently* inert - here, the profile selector. `bdd build --profile
+/// production` (and `bdd run --profile production`) pick up only a scenario
+/// tagged exactly `@production`, so a near-miss is skipped without a word: the
+/// run goes green while the integration test never runs. Verified end to end - a
+/// `@prodution` feature compiles locally at 100% coverage yet contributes zero
+/// production-IT to the manifest.
+///
+/// `decision` is a bare-flag selector too (read by the same `has_tag`), but it is
+/// deliberately *not* listed here: a `@decison` feature already fails loudly - its
+/// decision steps are refused as browser steps - so the real case is covered, and
+/// a near-miss guard would risk refusing ordinary words (`decide`, `decisions`).
+/// `bdd-selector-tags` pins that exclusion by name.
+pub const SELECTOR_TAGS: [&str; 1] = ["production"];
+
 /// True when `a` and `b` are within two edits — a substitution, an insertion or a
 /// deletion — of each other, which is what a keying slip looks like. Unlike a
 /// similarity score this catches a transposition (`@outptus` scores only 0.54 by
@@ -2473,6 +2488,16 @@ fn within_two_edits(a: &str, b: &str) -> bool {
 /// A plausible mis-spelling of one of [`PAYLOAD_TAGS`], or `None`.
 fn near_payload_tag(name: &str) -> Option<&'static str> {
     PAYLOAD_TAGS
+        .iter()
+        .copied()
+        .find(|k| *k != name && within_two_edits(name, k))
+}
+
+/// A plausible mis-spelling of one of [`SELECTOR_TAGS`], or `None`. Same
+/// two-edit test as [`near_payload_tag`]: a wrong refusal is worse than a missed
+/// typo, so a merely similar name is left alone.
+fn near_selector_tag(name: &str) -> Option<&'static str> {
+    SELECTOR_TAGS
         .iter()
         .copied()
         .find(|k| *k != name && within_two_edits(name, k))
@@ -2516,6 +2541,24 @@ fn decision_payload_message(name: &str, tag: &str) -> String {
             "@{tag} is not compiled for a @decision feature: only `bdd run` (the browser \
              corpus) honours an xfail, and a decision feature compiles to a spec that runner \
              never executes. Drop the tag."
+        ),
+    }
+}
+
+/// Refuse a bare-flag selector written almost right. The toolchain reads it by
+/// exact name; any other spelling selects nothing, so the document drops out of
+/// the gate it meant to enter without a word.
+fn selector_tag_message(target: &str, tag: &str) -> String {
+    match target {
+        "production" => format!(
+            "@{tag} is not a tag the toolchain reads, so nothing selects on it - did you mean \
+             @production? Only a scenario tagged exactly @production is picked up by \
+             `bdd build --profile production` / `bdd run --profile production`, so a near-miss \
+             is silently skipped and the run goes green while the integration test never runs."
+        ),
+        _ => format!(
+            "@{tag} is not a tag the toolchain reads, so nothing selects on it - did you mean \
+             @{target}?"
         ),
     }
 }
@@ -2572,6 +2615,8 @@ pub fn tag_shape_problems(tags: &[String], decision: bool) -> Vec<String> {
                 "@{t} is not a tag the compiler reads, so it declares nothing - did you mean \
                  @{k}(...)? Write @{k}(...) if you meant {what}, or drop the tag."
             ));
+        } else if let Some(k) = near_selector_tag(name) {
+            problems.push(selector_tag_message(k, t));
         }
     }
     problems
