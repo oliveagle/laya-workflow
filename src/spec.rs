@@ -597,7 +597,37 @@ pub fn from_spec_with(spec: &Value, parent: Option<&Value>) -> Result<ResilientW
 /// author sees the fix at the error site. The metric is best-effort guidance
 /// only — it never gates a build.
 ///
-/// Character-level similarity in [0,1] between two short identifiers. in [0,1] between two short identifiers.
+/// Optimal-string-alignment (Damerau-Levenshtein restricted to adjacent
+/// transpositions) edit distance. An adjacent swap ("at" -> "ta") costs one
+/// edit, which is what lets a transposition typo count as a single mistake.
+/// O(n*m) but only ever called on short identifiers by `str_similarity`.
+fn osa_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (la, lb) = (a.len(), b.len());
+    let mut prev2: Vec<usize> = vec![0; lb + 1]; // row i-2
+    let mut prev: Vec<usize> = (0..=lb).collect(); // row i-1
+    let mut cur: Vec<usize> = vec![0; lb + 1];
+    for i in 1..=la {
+        cur[0] = i;
+        for j in 1..=lb {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            let mut d = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d = d.min(prev2[j - 2] + 1);
+            }
+            cur[j] = d;
+        }
+        std::mem::swap(&mut prev2, &mut prev);
+        std::mem::swap(&mut prev, &mut cur);
+        for x in cur.iter_mut() {
+            *x = 0;
+        }
+    }
+    prev[lb]
+}
+
+/// Character-level similarity in [0,1] between two short identifiers.
 /// Combines a bigram Dice coefficient with a longest-common-prefix bonus so a
 /// single typo ("biling" -> "billing") ranks well above unrelated names. Used
 /// only to build "did you mean ...?" hints in validation errors — never a gate.
@@ -629,7 +659,14 @@ pub fn str_similarity(a: &str, b: &str) -> f64 {
     };
     let lcp = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count() as f64;
     let denom = a.chars().count().max(b.chars().count()).max(1) as f64;
-    (dice + 0.35 * lcp / denom).min(1.0)
+    let base = (dice + 0.35 * lcp / denom).min(1.0);
+    // P155: a transposition typo ("satrt" for "start") shares almost no adjacent
+    // bigrams, so the Dice+LCP score alone leaves it invisible to `closest_match`.
+    // Fall back to a normalized transposition-aware (OSA) edit similarity that
+    // sees the swap as one edit. Take the larger of the two so the new term can
+    // only ever add a hint, never remove one the bigram metric already found.
+    let edit = 1.0 - osa_distance(&a, &b) as f64 / denom;
+    base.max(edit)
 }
 
 /// Best candidate for a misspelled `target` when one is close enough to be a

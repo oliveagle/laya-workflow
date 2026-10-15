@@ -43,6 +43,30 @@ pub fn test_spec_closest_match(h: &mut Harness) {
         closest_match("is_risky", &["is_suspicious", "is_safe"]),
         None,
     );
+    // P155: an adjacent transposition typo shares almost no adjacent bigrams, so
+    // the Dice+LCP metric alone left it invisible. `closest_match` must still
+    // find the neighbour whose single *swap* is the only mistake.
+    h.eq(
+        "closest: satrt -> start (transposition)",
+        closest_match("satrt", &["start", "stop"]),
+        Some("start"),
+    );
+    h.eq(
+        "closest: strat -> start (transposition)",
+        closest_match("strat", &["start", "stop"]),
+        Some("start"),
+    );
+    h.eq(
+        "closest: id_keey -> id_key (insertion, not a transposition)",
+        closest_match("id_keey", &["id_key"]),
+        Some("id_key"),
+    );
+    // A transposition still may not drag in an unrelated neighbour.
+    h.eq(
+        "closest: transposition far -> None",
+        closest_match("satrt", &["is_suspicious", "is_safe"]),
+        None,
+    );
     // similarity is symmetric and bounded.
     let a = str_similarity("biling", "billing");
     let b = str_similarity("billing", "biling");
