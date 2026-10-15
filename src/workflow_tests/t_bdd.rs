@@ -8604,3 +8604,92 @@ Feature: wty
             && with_value_rejected("browser", "timeout_ms", &json!(5000)).is_none(),
     );
 }
+
+pub fn test_bdd_outputs_tag_shape(h: &mut Harness) {
+    // P169: `@outputs(...)` is a contract, or it is an error. A payload tag the
+    // reader cannot honour - a bare or emptied `@outputs`, a near-miss name, any
+    // `@outputs(...)` in a @decision feature, or a tag line the parser would take
+    // for description text - used to be dropped while every gate stayed green.
+    let probs = |tags: &[&str], decision: bool| -> Vec<String> {
+        let v: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+        bdd::tag_shape_problems(&v, decision)
+    };
+    let has = |p: &[String], needle: &str| p.iter().any(|m| m.contains(needle));
+
+    h.check(
+        "bdd outputs tag: a well-formed list is left alone",
+        probs(&["outputs(title, url)"], false).is_empty()
+            && probs(&["decision", "outputs(title)", "expected_failure(typo)"], false).is_empty(),
+    );
+    h.check(
+        "bdd outputs tag: an unrelated payload tag is not dragged in",
+        probs(&["issue(PROJ-1)", "production", "smoke"], false).is_empty(),
+    );
+    let bare = probs(&["outputs"], false);
+    h.check("bdd outputs tag: a bare @outputs is refused", bare.len() == 1);
+    h.check(
+        "bdd outputs tag: the bare message names the cause",
+        has(&bare, "declares no outputs"),
+    );
+    h.check(
+        "bdd outputs tag: `@outputs()` / `@outputs( )` / `@outputs(,)` are all empty",
+        [["outputs()"], ["outputs(  )"], ["outputs(,)"]]
+            .iter()
+            .all(|t| probs(t, false).len() == 1),
+    );
+    let d = probs(&["outputs(label)"], true);
+    h.check("bdd outputs tag: a @decision feature refuses a well-formed @outputs", d.len() == 1);
+    h.check("bdd outputs tag: the @decision message says why", has(&d, "@decision"));
+    let typo = probs(&["outptus(exit_code)"], false);
+    h.check("bdd outputs tag: a transposed name is refused", typo.len() == 1);
+    h.check("bdd outputs tag: the typo message suggests @outputs", has(&typo, "did you mean"));
+    h.check(
+        "bdd outputs tag: a singular `@output(...)` is refused too",
+        has(&probs(&["output(exit_code)"], false), "did you mean"),
+    );
+
+    // End to end: the compiler refuses, and a green feature is untouched.
+    let mk = |tag: &str| {
+        format!(
+            "Feature: outs\n  {tag}\n  Scenario: s\n    When I run the command \"true\"\n    Then the exit code is 0\n"
+        )
+    };
+    let good = bdd::parse(&mk("@outputs(exit_code)"), "<outs-good>").expect("parse good");
+    h.check(
+        "bdd outputs tag: a produced output still compiles",
+        bdd::compile_scenario(&good, &good.scenarios[0], &json!({}), "chrome-headless.sh").is_ok(),
+    );
+    let bad = bdd::parse(&mk("@outputs"), "<outs-bad>").expect("parse bad");
+    let e = bdd::compile_scenario(&bad, &bad.scenarios[0], &json!({}), "chrome-headless.sh")
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd outputs tag: a bare @outputs fails the compile",
+        e.contains("declares no outputs"),
+    );
+    let decl = bdd::parse("@decision\nFeature: d\n  @outputs(label)\n  Scenario: r\n    Given a choice question \"c\" asks \"?\"\n      | answer | meaning |\n      | a      | first   |\n      | b      | second  |\n    When any other answer goes to \"STOP\"\n    Then label \"A\" when the answer to \"c\" is \"a\"\n    And label \"B\" otherwise\n", "<outs-dec>").expect("parse decision");
+    let e = bdd::compile_decision(&decl, &json!({}))
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd outputs tag: a @decision feature with @outputs is refused",
+        e.contains("@decision"),
+    );
+
+    // A `@`-leading line the tag grammar does not accept must not become prose.
+    for (name, src) in [
+        ("an unclosed tag line", mk("@outputs(exit_code")),
+        ("a space before the paren", mk("@outputs (exit_code)")),
+    ] {
+        let e = bdd::parse(&src, "<outs-shape>")
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        h.check(
+            &format!("bdd outputs tag: {name} is refused, not read as prose"),
+            e.contains("starts with '@'"),
+        );
+    }
+}

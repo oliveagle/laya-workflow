@@ -363,6 +363,22 @@ pub fn parse(text: &str, path: &str) -> Result<Feature> {
             continue;
         }
 
+        // A line that starts with '@' but that the tag grammar above did not accept
+        // (an unclosed `@outputs(k`, a space before the `(`, a space inside the name)
+        // used to fall through to the *description* text: the tag never reached the
+        // compiler, so the declaration the author wrote disappeared and every gate
+        // stayed green. Refuse it by name instead - the same stance as the rest of
+        // this parser, which would rather fail than guess (P169).
+        if stripped.starts_with('@') {
+            bail!(
+                "line {lineno}: {stripped:?} starts with '@' but is not a tag this parser \
+                 reads - a tag is `@name` or `@name(...)`, with no space between the name \
+                 and the '(' and no text after the ')'. It would be taken for description \
+                 text, so the declaration it was meant to make would be lost. Fix the tag, \
+                 or start the line with '#' if it is prose."
+            );
+        }
+
         let head = stripped
             .split_once(':')
             .map(|(h, _)| h.trim().to_lowercase())
@@ -2416,6 +2432,75 @@ fn merge(dst: &mut Value, src: &Value) {
 
 /// Compile one scenario into a full spec (public shape + `_bdd` metadata).
 
+/// Problems with a feature's *payload* tags — the tags that carry a declaration
+/// in parentheses rather than a bare flag (P169).
+///
+/// `@outputs(...)` is a contract: the compiler looks it up by the literal prefix
+/// `outputs(` and turns it into the `_bdd.outputs` list the `@outputs` gate then
+/// checks against what the workflow really produces. So a payload tag written
+/// *almost* right is not a harmless unknown tag — it is a declaration nothing
+/// reads, and the build stays green:
+///
+///   * a bare `@outputs` — which is also what `@outputs()` and `@outputs( )`
+///     parse into, because the parser drops an empty parenthetical — and a list
+///     with no items (`@outputs(,)`) both yield *zero* declared outputs, so the
+///     gate has nothing to check and the promise disappears;
+///   * `@outptus(title)` / `@output(...)` are stored as ordinary tags, so
+///     `bdd build` succeeds and the caller discovers at run time that the state
+///     key it was promised is not there;
+///   * in a `@decision` feature every `@outputs(...)` is dropped on the floor:
+///     only a browser Scenario compiles the tag, and a decision workflow's
+///     observable result is its final `label`.
+///
+/// `decision` says which mode the caller compiles in. Returned as a list so the
+/// guard can be exercised on tag vectors directly (the same shape as
+/// `decision_vocabulary_gaps`); the compilers refuse the first problem.
+pub fn tag_shape_problems(tags: &[String], decision: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    for t in tags {
+        let (name, payload) = match t.find('(') {
+            Some(i) if t.ends_with(')') => (&t[..i], Some(&t[i + 1..t.len() - 1])),
+            _ => (t.as_str(), None),
+        };
+        if name == "outputs" {
+            if decision {
+                problems.push(format!(
+                    "@{t} is not compiled for a @decision feature: only a browser Scenario \
+                     turns @outputs(...) into a checked contract, and a decision workflow's \
+                     observable result is its final label. Drop the tag, or declare the \
+                     outputs on the browser Scenario that produces the keys."
+                ));
+            } else if payload
+                .map(|p| p.split(',').all(|x| x.trim().is_empty()))
+                .unwrap_or(true)
+            {
+                problems.push(format!(
+                    "@{t} declares no outputs - the @outputs(...) contract gate then has \
+                     nothing to check, so the promise the tag was there to make disappears \
+                     without a word. Write @outputs(<state key>, ...) with at least one state \
+                     key (a bare @outputs, @outputs() and @outputs(,) are all empty)."
+                ));
+            }
+            continue;
+        }
+        // A *payload* tag whose name is a near-miss of `outputs`: the author meant
+        // the contract, the compiler reads no such tag. Only names that could be a
+        // typo of it (same length +-2, close spelling) are reported, so an
+        // unrelated `@issue(PROJ-1)` style tag is left alone.
+        if payload.is_some()
+            && name.len().abs_diff("outputs".len()) <= 2
+            && crate::spec::str_similarity(name, "outputs") >= 0.5
+        {
+            problems.push(format!(
+                "@{t} is not a tag the compiler reads, so it declares nothing - did you mean \
+                 @outputs(...)? Write @outputs(<state key>, ...) if you meant the output \
+                 contract."
+            ));
+        }
+    }
+    problems
+}
+
 /// `@outputs(a, b)` on a Scenario declares the state keys the workflow is
 /// *contractually* supposed to produce, so a caller (an agent invoking this as
 /// a tool) knows what it can read back. Returns [] when the tag is absent.
@@ -2461,6 +2546,14 @@ pub fn compile_scenario(
     config: &Value,
     chrome_wrapper: &str,
 ) -> Result<Value> {
+    // P169: a payload tag the reader cannot honour is a declaration that would be
+    // silently dropped (`@outputs` with no keys, a near-miss name, or any
+    // `@outputs(...)` in a @decision feature). Refuse it while it is in hand.
+    let mut tags: Vec<String> = feature.tags.clone();
+    tags.extend(scenario.tags.iter().cloned());
+    if let Some(p) = tag_shape_problems(&tags, false).first() {
+        bail!("{p}");
+    }
     let merged: Vec<Step> = feature
         .background
         .iter()
@@ -3919,6 +4012,15 @@ fn set_heuristic(
 /// Compile a `@decision` feature into a single decision-graph workflow spec.
 /// Compile a `@decision` feature into a single decision-graph workflow spec.
 pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
+    // P169: every `@outputs(...)` in a @decision feature is dropped on the floor -
+    // refuse it here rather than let the author believe a caller contract exists.
+    let mut tags: Vec<String> = feature.tags.clone();
+    for sc in &feature.scenarios {
+        tags.extend(sc.tags.iter().cloned());
+    }
+    if let Some(p) = tag_shape_problems(&tags, true).first() {
+        bail!("{p}");
+    }
     let mut nodes: Vec<Value> = Vec::new();
     let mut max_iterations: Option<usize> = None;
 
