@@ -5169,6 +5169,262 @@ Scenario: root
     );
 }
 
+/// P162: a *step* that sets something one-per-node, declared twice, is a silent
+/// drop too.
+///
+/// P161 closed the table layer (a repeated row key inside one table). The same
+/// loss happens one layer up, where the declaration is a whole step: `edge_condition`
+/// is a map keyed by the answer, `edge_default` / `min_confidence` / `max_retries` /
+/// the sub-workflow reference / the primary question / the action question are
+/// `Option`s, `state.rename` is a map keyed by the output key, and a question holds
+/// one `heuristic` object. Each of those keeps the *last* writer, so the step the
+/// author wrote first is thrown away while `bdd build` still exits 0 - and unlike a
+/// dropped row, a dropped route or setting changes what the node does.
+///
+/// The keys are per node and, for the heuristic, per question, so the normal corpus
+/// shapes (several heuristics in one Scenario, one per question; a route plus a
+/// catch-all; `keep the state key` twice, which is a list) stay legal - the positive
+/// cases below pin exactly those.
+pub fn test_bdd_step_once(h: &mut Harness) {
+    // Compile a `@decision` feature and return its error text ("" when it compiles).
+    let err_of = |text: &str| -> String {
+        match bdd::parse(text, "<dup>") {
+            Ok(f) => match bdd::compile_decision(&f, &json!({})) {
+                Ok(_) => String::new(),
+                Err(e) => format!("{e:#}"),
+            },
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    // The 1-based source line of the `nth` line that contains `needle`.
+    let line_of = |text: &str, needle: &str, nth: usize| -> usize {
+        text.lines()
+            .enumerate()
+            .filter(|(_, l)| l.contains(needle))
+            .nth(nth)
+            .map(|(i, _)| i + 1)
+            .unwrap_or(0)
+    };
+
+    // A repeated route for the same answer: the second `goes to` overwrites the first.
+    let route = r#"
+@decision
+Feature: dup_route
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When the answer "yes" goes to "STOP"
+  And the answer "yes" goes to "STOP"
+"#;
+    let err = err_of(route);
+    let first = line_of(route, "the answer \"yes\" goes to", 0);
+    let second = line_of(route, "the answer \"yes\" goes to", 1);
+    h.check(
+        "bdd step once: refuses a scenario that routes one answer twice",
+        err.contains(&format!("line {second}:"))
+            && err.contains("the route for answer \"yes\"")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // A repeated catch-all: `any other answer goes to` is one Option.
+    let fall = r#"
+@decision
+Feature: dup_fallthrough
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When the answer "yes" goes to "STOP"
+  And any other answer goes to "STOP"
+  And any other answer goes to "STOP"
+"#;
+    let err = err_of(fall);
+    let first = line_of(fall, "any other answer goes to", 0);
+    let second = line_of(fall, "any other answer goes to", 1);
+    h.check(
+        "bdd step once: refuses a scenario with two catch-all routes",
+        err.contains(&format!("line {second}:"))
+            && err.contains("a catch-all route")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // Two heuristics on the *same* question: the question keeps one `heuristic`
+    // object, so the second step replaces the first.
+    let heur = r#"
+@decision
+Feature: dup_heuristic
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Given answer "yes" when the text contains "a" with hit 0.9
+  Given answer "yes" when the text contains "b" with hit 0.9
+"#;
+    let err = err_of(heur);
+    let first = line_of(heur, "contains \"a\" with hit", 0);
+    let second = line_of(heur, "contains \"b\" with hit", 0);
+    h.check(
+        "bdd step once: refuses a second heuristic on the same question",
+        err.contains(&format!("line {second}:"))
+            && err.contains("a heuristic on question \"go\"")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // Node-wide singletons, one case each: confidence floor, retry budget, primary
+    // question, and a rename target.
+    let conf = r#"
+@decision
+Feature: dup_confidence
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Then require confidence at least 0.8
+  And require confidence at least 0.9
+"#;
+    let err = err_of(conf);
+    let first = line_of(conf, "require confidence at least", 0);
+    let second = line_of(conf, "require confidence at least", 1);
+    h.check(
+        "bdd step once: refuses a second confidence floor",
+        err.contains(&format!("line {second}:"))
+            && err.contains("`require confidence at least N`")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let retries = r#"
+@decision
+Feature: dup_retries
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Then allow up to 1 retries
+  And allow up to 2 retries
+"#;
+    let err = err_of(retries);
+    let first = line_of(retries, "allow up to", 0);
+    let second = line_of(retries, "allow up to", 1);
+    h.check(
+        "bdd step once: refuses a second retry budget",
+        err.contains(&format!("line {second}:"))
+            && err.contains("`allow up to N retries`")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let primary = r#"
+@decision
+Feature: dup_primary
+Scenario: root
+  Given a choice question "a" asks "a?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Given a choice question "b" asks "b?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Then the primary question is "a"
+  And the primary question is "b"
+"#;
+    let err = err_of(primary);
+    let first = line_of(primary, "the primary question is ", 0);
+    let second = line_of(primary, "the primary question is ", 1);
+    h.check(
+        "bdd step once: refuses a second primary question",
+        err.contains(&format!("line {second}:"))
+            && err.contains("the primary question")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let rename = r#"
+@decision
+Feature: dup_rename
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Then map the state key "out" from "a"
+  And map the state key "out" from "b"
+"#;
+    let err = err_of(rename);
+    let first = line_of(rename, "map the state key \"out\"", 0);
+    let second = line_of(rename, "map the state key \"out\"", 1);
+    h.check(
+        "bdd step once: refuses a second rename of the same state key",
+        err.contains(&format!("line {second}:"))
+            && err.contains("the state rename for \"out\"")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // Positive: the corpus shape of the agents/* features - several heuristics in
+    // one Scenario, one per question - must keep compiling.
+    let perq = r#"
+@decision
+Feature: one_heuristic_per_question
+Scenario: gate
+  Given a choice question "staged" asks "staged?"
+    | answer | meaning |
+    | A      | no      |
+    | B      | yes     |
+  And answer "B" when the text contains "a" with hit 0.95
+  And a choice question "repo" asks "repo?"
+    | answer | meaning |
+    | A      | no      |
+    | B      | yes     |
+  And answer "B" when the text contains "b" with hit 0.9
+  Then label "FAIL" when the answer to "staged" is "B"
+  And label "WARN" when the answer to "repo" is "B"
+  And label "PASS" otherwise
+"#;
+    h.check(
+        "bdd step once: one heuristic per question is the normal shape, still compiles",
+        err_of(perq).is_empty(),
+    );
+
+    // Positive: distinct answers routed, plus a catch-all, compile.
+    let many = r#"
+@decision
+Feature: two_routes
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When the answer "yes" goes to "STOP"
+  And the answer "no" goes to "STOP"
+  And any other answer goes to "STOP"
+"#;
+    h.check(
+        "bdd step once: distinct answers plus a catch-all still compile",
+        err_of(many).is_empty(),
+    );
+
+    // Positive: `keep the state key` targets a list, so a repeat is kept, not dropped.
+    let keep = r#"
+@decision
+Feature: keep_twice
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  Then keep the state key "a"
+  And keep the state key "a"
+"#;
+    h.check(
+        "bdd step once: keep the state key twice is a list, still compiles",
+        err_of(keep).is_empty(),
+    );
+}
+
 /// P91: the declared output set must be real.
 ///
 /// For every offline **single-node** `@decision` graph, `bdd_list`'s `outputs`

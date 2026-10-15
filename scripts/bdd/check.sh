@@ -248,6 +248,17 @@ fi
 # LAYA_OLE_EVAL_SOURCES at a live checkout to run the second half, which puts the
 # seal itself on trial: the live names must equal the seal's, and any fingerprint
 # the seal carries must still match the source.
+# Put the seal on trial automatically when the sibling ole-eval checkout sits
+# next to this one (`../ole-eval`, the layout both repos are developed in), so a
+# dev box compares against the live upstream by default instead of only against
+# the checked-in seal. An explicit LAYA_OLE_EVAL_* still wins, and a machine
+# without the sibling keeps the offline behaviour and the message below.
+if [ -z "${LAYA_OLE_EVAL_ROOT:-}" ] && [ -d "$ROOT/../ole-eval" ]; then
+  LAYA_OLE_EVAL_ROOT="$(cd "$ROOT/../ole-eval" && pwd)"
+fi
+if [ -z "${LAYA_OLE_EVAL_SOURCES:-}" ] && [ -d "${LAYA_OLE_EVAL_ROOT:-}/code/qwen_vm/app_scenarios" ]; then
+  LAYA_OLE_EVAL_SOURCES="$LAYA_OLE_EVAL_ROOT/code/qwen_vm/app_scenarios"
+fi
 PORT_PIN="$ROOT/bench/bdd/port_pins/ole_eval.json"
 if [ ! -f "$PORT_PIN" ]; then
   echo "bdd check: the port seal is missing: $PORT_PIN" >&2

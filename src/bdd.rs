@@ -2726,6 +2726,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     // order, as `(kind, line)`. Used below to refuse a Scenario that declares
     // more than one action (see the note at the assembly).
     let mut action_steps: Vec<(String, usize)> = Vec::new();
+    // P162: what this node declares and the line it was declared on, so a second
+    // declaration of a one-per-node thing is refused instead of silently winning.
+    let mut declared: Vec<(String, usize)> = Vec::new();
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
@@ -2869,7 +2872,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
                 };
                 h.insert("p_miss".into(), json!(miss));
-                q.insert("heuristic".into(), Value::Object(h));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_numeric" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -2887,7 +2890,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 };
                 h.insert("extract_numeric".into(), json!(field));
                 h.insert("score_miss".into(), json!(miss));
-                q.insert("heuristic".into(), Value::Object(h));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_mid" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -2932,7 +2935,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
                 };
                 h.insert("p_miss".into(), json!(miss));
-                q.insert("heuristic".into(), Value::Object(h));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_match_rules" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -2977,7 +2980,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 if let Some(fb) = fallback {
                     h.insert("fallback".into(), json!(fb));
                 }
-                q.insert("heuristic".into(), Value::Object(h));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_score_bands" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -2998,7 +3001,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 h.insert("score_hit".into(), json!(hit));
                 h.insert("score_mid".into(), json!(midv));
                 h.insert("score_miss".into(), json!(miss));
-                q.insert("heuristic".into(), Value::Object(h));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_answer" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -3008,7 +3011,13 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     .get_mut(&lq)
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
-                q.insert("heuristic".into(), json!({"answer": caps["a"].to_string()}));
+                set_heuristic(
+                    &mut declared,
+                    q,
+                    &lq,
+                    st.line,
+                    json!({"answer": caps["a"].to_string()}),
+                )?;
             }
             "heur_answer_field" => {
                 let lq = last_question.clone().ok_or_else(|| {
@@ -3018,7 +3027,13 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     .get_mut(&lq)
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
-                q.insert("heuristic".into(), json!({"answer_field": caps["f"].to_string()}));
+                set_heuristic(
+                    &mut declared,
+                    q,
+                    &lq,
+                    st.line,
+                    json!({"answer_field": caps["f"].to_string()}),
+                )?;
             }
             "gate" => {
                 let q = caps["q"].to_string();
@@ -3078,9 +3093,15 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "edge" => {
                 let a = caps["a"].to_string();
                 let node = caps["node"].to_string();
+                step_once(&mut declared, &format!("the route for answer {a:?}"), st.line)?;
                 edge_condition.insert(a, json!(node));
             }
             "edge_default" => {
+                step_once(
+                    &mut declared,
+                    "a catch-all route (`any other answer goes to …`)",
+                    st.line,
+                )?;
                 edge_default = Some(caps["node"].to_string());
             }
             "label_all" => {
@@ -3167,14 +3188,34 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             "copy_keys" => copy_keys.push(caps["q"].to_string()),
             "keep_state" => keep.push(caps["k"].to_string()),
             "rename_state" => {
-                rename.insert(caps["out"].to_string(), json!(caps["in"].to_string()));
+                let out = caps["out"].to_string();
+                step_once(&mut declared, &format!("the state rename for {out:?}"), st.line)?;
+                rename.insert(out, json!(caps["in"].to_string()));
             }
-            "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
-            "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
-            "sub_workflow" => sub_workflow = Some(caps["w"].to_string()),
-            "sub_workflow_continue" => sub_continue = Some(caps["w"].to_string()),
-            "primary_q" => explicit_primary = Some(caps["q"].to_string()),
-            "action_q" => action_q = Some(caps["q"].to_string()),
+            "min_conf" => {
+                step_once(&mut declared, "`require confidence at least N`", st.line)?;
+                min_confidence = Some(caps["n"].to_string().parse()?);
+            }
+            "max_retries" => {
+                step_once(&mut declared, "`allow up to N retries`", st.line)?;
+                max_retries = Some(caps["n"].to_string().parse()?);
+            }
+            "sub_workflow" => {
+                step_once(&mut declared, "the sub workflow reference", st.line)?;
+                sub_workflow = Some(caps["w"].to_string());
+            }
+            "sub_workflow_continue" => {
+                step_once(&mut declared, "the sub workflow continue target", st.line)?;
+                sub_continue = Some(caps["w"].to_string());
+            }
+            "primary_q" => {
+                step_once(&mut declared, "the primary question", st.line)?;
+                explicit_primary = Some(caps["q"].to_string());
+            }
+            "action_q" => {
+                step_once(&mut declared, "the action question", st.line)?;
+                action_q = Some(caps["q"].to_string());
+            }
             "call" => {
                 let cap = caps["cap"].to_string();
                 let mut with: Map<String, Value> = Map::new();
@@ -3487,6 +3528,50 @@ fn table_key_once(seen: &mut Vec<(String, usize)>, key: &str, line: usize, what:
     Ok(())
 }
 
+/// The step-layer twin of [`table_key_once`] (P162): a `Given` / `When` / `Then`
+/// step that sets something the compiler keeps only one of.
+///
+/// A second `When the answer "a" goes to …`, a second `any other answer goes to
+/// …`, a second heuristic on the same question, a second `require confidence at
+/// least N` / `allow up to N retries` / `the primary question is "q"` / `map the
+/// state key "out" from "in"` - each overwrites the one before it, so the step the
+/// author wrote first is thrown away while `bdd build` still exits 0. That is
+/// P161's silent loss one layer up: there the dropped declaration was a row of one
+/// table, here it is a whole step (the node's routing, or a node-wide setting), so
+/// the behaviour of the node quietly changes. `what` names the declaration, and
+/// both lines are reported.
+///
+/// The `keep the …` steps are the deliberate exception: their target is a *list*
+/// (`state.keep` / `state.rename` keys are separate maps), where a repeat is kept
+/// rather than dropped.
+fn step_once(declared: &mut Vec<(String, usize)>, what: &str, line: usize) -> Result<()> {
+    if let Some((_, first)) = declared.iter().find(|(k, _)| k == what) {
+        bail!(
+            "line {line}: this node declares {what} twice (the first is at line {first}) - the later step overwrites the earlier one, so the one you wrote first would be silently dropped; keep one per node"
+        );
+    }
+    declared.push((what.to_string(), line));
+    Ok(())
+}
+
+/// Attach a heuristic to question `lq`, refusing a *second* heuristic on the same
+/// question (P162). A question carries one `heuristic` object, so a second
+/// `Given answer …` / `score …` step replaces the first and the question silently
+/// loses the rules the author wrote first. Heuristics on *different* questions are
+/// the normal shape (one per question), which is why the key is the question id.
+fn set_heuristic(
+    declared: &mut Vec<(String, usize)>,
+    q: &mut Map<String, Value>,
+    lq: &str,
+    line: usize,
+    h: Value,
+) -> Result<()> {
+    step_once(declared, &format!("a heuristic on question {lq:?}"), line)?;
+    q.insert("heuristic".into(), h);
+    Ok(())
+}
+
+/// Compile a `@decision` feature into a single decision-graph workflow spec.
 /// Compile a `@decision` feature into a single decision-graph workflow spec.
 pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
     let mut nodes: Vec<Value> = Vec::new();
