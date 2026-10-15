@@ -1,5 +1,5 @@
 {
-  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* of workflows (a directory in another repo) and how this repo's BDD corpus accounts for every workflow inside it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy). `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream workflow cannot be silently skipped).",
+  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* of workflows (a directory in another repo) and how this repo's BDD corpus accounts for every workflow inside it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy). `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream workflow cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it).",
   "universes": [
     {
       "id": "ole_eval_app_scenarios",
@@ -31,6 +31,30 @@
         "wasm_action_picker": "search-space over (action, window, threshold, low, high); the action is looked up in a shared registry and the correct pick is data-dependent"
       },
       "note": "`agent_permission` is a permission state-machine + calibrated risk gate, so it IS a decision graph and was ported (P79). The other nine are parameter search-spaces for the LLM-as-optimizer loop; porting them would mean inventing a policy, so they are named here, with reasons, rather than forced into the decision vocabulary."
+    },
+    {
+      "id": "agent_toolbox",
+      "upstream": "agent-toolbox repo (skills/ + code/scripts/ + .githooks/; private - a set of shell/Python ops scripts, not a public workflow directory)",
+      "enumerate": false,
+      "ported": {
+        "bitx_wrapper_test": "bdd/workflows/agents/bitx_wrapper_test.feature",
+        "coding_env_check": "bdd/workflows/agents/coding_env_check.feature",
+        "commit_msg_gate": "bdd/workflows/agents/commit_msg_gate.feature",
+        "commit_push_precheck": "bdd/workflows/agents/commit_push_precheck.feature",
+        "htmx_app_lint": "bdd/workflows/agents/htmx_app_lint.feature",
+        "mlu270_smoke": "bdd/workflows/agents/mlu270_smoke.feature",
+        "project_structure_guard": "bdd/workflows/agents/project_structure_guard.feature",
+        "quality_gate": "bdd/workflows/agents/quality_gate.feature",
+        "rebase_push_gate": "bdd/workflows/agents/rebase_push_gate.feature",
+        "security_scan": "bdd/workflows/agents/security_scan.feature",
+        "skill_publish_gate": "bdd/workflows/agents/skill_publish_gate.feature",
+        "ssl_certificate_expiry": "bdd/workflows/agents/ssl_certificate_expiry.feature",
+        "task_quality_gate": "bdd/workflows/agents/task_quality_gate.feature",
+        "version_gate": "bdd/workflows/agents/version_gate.feature",
+        "workflow_guardian": "bdd/workflows/agents/workflow_guardian.feature",
+        "zero_leftover_gate": "bdd/workflows/agents/zero_leftover_gate.feature"
+      },
+      "note": "The agent-toolbox decision workflows were ported to DSL first (dsl/agents/, whose README maps each spec to its upstream ops script) and then to BDD (@decision). Their upstream is a private repo of shell/Python scripts, so it cannot be enumerated publicly; the upstream names are pinned here and every ported feature must exist and be a @decision graph. `enumerate: false` tells `--sources` not to demand a directory - there is no public one to list - so the universe is accounted for by name instead of being silently omitted from the bound."
     }
   ]
 }

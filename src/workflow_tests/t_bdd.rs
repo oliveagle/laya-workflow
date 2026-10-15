@@ -2663,21 +2663,47 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads both universes", counts.universes, 2);
+    h.eq("bdd scope-check: reads all three universes", counts.universes, 3);
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
         9,
     );
     h.eq(
-        "bdd scope-check: 1 explicit port (agent_permission)",
+        "bdd scope-check: 17 explicit ports (agent_permission + the 16 agent-toolbox workflows)",
         counts.ported,
-        1,
+        17,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
         counts.ported_all,
         1,
+    );
+    h.eq(
+        "bdd scope-check: 1 non-enumerable universe (agent_toolbox - a private upstream)",
+        counts.non_enumerable,
+        1,
+    );
+    // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
+    // its 16 names are pinned here. A census that *dropped* it would report 2, which the
+    // count above forbids; and a ported feature that vanished is named by the existence
+    // check the positive case already requires. Pin the 16 by name so a rename cannot
+    // quietly shrink the bound.
+    let census_json: serde_json::Value = serde_json::from_str(&census).unwrap();
+    let toolbox = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "agent_toolbox")
+        .expect("agent_toolbox universe");
+    h.eq(
+        "bdd scope-check: 16 agent-toolbox workflows are pinned by name",
+        toolbox["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        16,
+    );
+    h.check(
+        "bdd scope-check: agent_toolbox is marked non-enumerable",
+        toolbox["enumerate"] == serde_json::json!(false),
     );
 
     let probs_of = |c: &str| {

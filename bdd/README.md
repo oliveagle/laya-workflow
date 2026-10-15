@@ -812,7 +812,9 @@ scope-check`, bounds the wider claim "every known workflow is in BDD":
 `bench/bdd/scope_census.json` names each upstream workflow *universe* and how
 this corpus accounts for every workflow in it — either ported (proven by `bdd
 port-check`) or explicitly a parameter search-space, with the reason it is not a
-decision graph. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
+decision graph. A universe whose upstream is *not publicly enumerable* (a private
+repo) is pinned by name with `enumerate: false`, so it is accounted for instead of
+being silently left out of the bound. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
 census must name exactly the live upstream workflows, so a new one nobody ported
 fails the gate instead of going unnoticed. The browser stage is
 **skip-not-fail**: `bdd run` prints a `skipped`

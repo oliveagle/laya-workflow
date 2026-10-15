@@ -9639,6 +9639,10 @@ pub struct ScopeCounts {
     pub search_space: usize,
     /// Universes declared `ported_all` (a full conversion proven by `bdd port-check`).
     pub ported_all: usize,
+    /// Universes declared `enumerate: false` - a private upstream `--sources` cannot
+    /// list; their names are pinned in the census and every ported feature is still
+    /// existence-checked.
+    pub non_enumerable: usize,
     /// Live upstream workflow files enumerated (only with `--sources`).
     pub sources: usize,
 }
@@ -9739,47 +9743,59 @@ pub fn scope_check_impl(
             }
         }
 
+        // A universe may declare `enumerate: false` when its upstream is not publicly
+        // enumerable (a private repo, e.g. a set of ops scripts). Its names are pinned
+        // here and every `ported` feature was existence-checked above; `--sources` has
+        // no directory to list, so it is skipped rather than reported as a missing dir.
+        let enumerable = u.get("enumerate").and_then(Value::as_bool).unwrap_or(true);
+        if !enumerable {
+            counts.non_enumerable += 1;
+        }
         if let Some(src) = sources {
-            let dir = src.join(upstream);
-            if !dir.is_dir() {
-                problems.push(format!(
-                    "{id}: --sources has no {upstream} under {}",
-                    src.display()
-                ));
+            if !enumerable {
+                // pinned in-repo; nothing to enumerate live
             } else {
-                let mut live: BTreeSet<String> = BTreeSet::new();
-                for e in std::fs::read_dir(&dir)?.flatten() {
-                    let n = e.file_name().to_string_lossy().into_owned();
-                    if let Some(stem) = n.strip_suffix(".py") {
-                        if !stem.is_empty() && stem != "__init__" {
-                            live.insert(stem.to_string());
+                let dir = src.join(upstream);
+                if !dir.is_dir() {
+                    problems.push(format!(
+                        "{id}: --sources has no {upstream} under {}",
+                        src.display()
+                    ));
+                } else {
+                    let mut live: BTreeSet<String> = BTreeSet::new();
+                    for e in std::fs::read_dir(&dir)?.flatten() {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        if let Some(stem) = n.strip_suffix(".py") {
+                            if !stem.is_empty() && stem != "__init__" {
+                                live.insert(stem.to_string());
+                            }
                         }
                     }
-                }
-                if ported_all {
-                    // A fully-ported universe is checked name-by-name by
-                    // `bdd port-check`; here it only contributes to the count.
-                    counts.sources += live.len();
-                } else {
-                    let mut listed: BTreeSet<String> = BTreeSet::new();
-                    if let Some(p) = ported {
-                        listed.extend(p.keys().cloned());
-                    }
-                    if let Some(s) = search {
-                        listed.extend(s.keys().cloned());
-                    }
-                    counts.sources += listed.len();
-                    for n in live.difference(&listed) {
-                        problems.push(format!(
-                            "{id}: the upstream {upstream}/{n}.py is not in the census - port it, \
-                             or list it (with a reason) as a search-space"
-                        ));
-                    }
-                    for n in listed.difference(&live) {
-                        problems.push(format!(
-                            "{id}: the census lists {n} but {upstream} has no {n}.py - the census \
-                             outlived its source"
-                        ));
+                    if ported_all {
+                        // A fully-ported universe is checked name-by-name by
+                        // `bdd port-check`; here it only contributes to the count.
+                        counts.sources += live.len();
+                    } else {
+                        let mut listed: BTreeSet<String> = BTreeSet::new();
+                        if let Some(p) = ported {
+                            listed.extend(p.keys().cloned());
+                        }
+                        if let Some(s) = search {
+                            listed.extend(s.keys().cloned());
+                        }
+                        counts.sources += listed.len();
+                        for n in live.difference(&listed) {
+                            problems.push(format!(
+                                "{id}: the upstream {upstream}/{n}.py is not in the census - port it, \
+                                 or list it (with a reason) as a search-space"
+                            ));
+                        }
+                        for n in listed.difference(&live) {
+                            problems.push(format!(
+                                "{id}: the census lists {n} but {upstream} has no {n}.py - the census \
+                                 outlived its source"
+                            ));
+                        }
                     }
                 }
             }
@@ -9809,6 +9825,7 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
                 "ported": counts.ported,
                 "search_space": counts.search_space,
                 "ported_all": counts.ported_all,
+                "non_enumerable": counts.non_enumerable,
                 "sources": counts.sources
             },
             "problems": problems.clone(),
@@ -9829,12 +9846,13 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
     }
     println!(
         "bdd scope-check: {} upstream universe(s) accounted for - {} ported in full (proven by \
-         `bdd port-check`), {} workflow(s) named ({} ported + {} search-space){}",
+         `bdd port-check`), {} workflow(s) named ({} ported + {} search-space), {} non-enumerable{}",
         counts.universes,
         counts.ported_all,
         counts.ported + counts.search_space,
         counts.ported,
         counts.search_space,
+        counts.non_enumerable,
         if sources.is_some() {
             " - the census matches the live checkout"
         } else {
