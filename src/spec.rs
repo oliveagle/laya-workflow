@@ -135,6 +135,19 @@ pub fn validate_spec_keys(spec: &Value) -> Result<()> {
                 );
             }
         }
+        // P168: a policy value of the wrong JSON type is silently replaced by the
+        // engine's default — `{"allow_exec":"yes"}` does *not* allow exec (it
+        // stays off), `{"allow_hosts":"a.com"}` becomes the empty list (*no*
+        // restriction), `{"max_timeout_ms":"60000"}` becomes 60000. Same
+        // "a declared value the engine throws away" class as P152/P154/P164; the
+        // compiler always emits well-typed values (a `Given the policy` table is
+        // checked as it is read), so this only ever fires on a hand-written or
+        // sidecar spec — which is exactly where it was silent.
+        for (k, v) in po {
+            if let Some(msg) = policy_value_error(k, v) {
+                bail!("spec {msg}");
+            }
+        }
     }
     if let Some(b) = obj.get("_bdd").and_then(Value::as_object) {
         for k in b.keys() {
@@ -894,6 +907,36 @@ fn thr_rule_is_catch_all(r: &Value) -> bool {
 /// The JSON kind of a value, for error messages ("a string", "an array", …).
 /// (P142: the `state` projection is validated by kind, so the message names the
 /// kind the author actually wrote.)
+/// P168: the message for a `policy` value whose JSON type the engine will not
+/// read, or `None` when the value is the type its accessor wants. Every key is
+/// read leniently (`as_bool` / `as_array` / `as_u64`) and the wrong type silently
+/// keeps the engine's default, so the policy that runs is not the one written.
+fn policy_value_error(k: &str, v: &Value) -> Option<String> {
+    match k {
+        "allow_exec" if !v.is_boolean() => Some(format!(
+            "`policy` key {k:?} is {}, but it must be a boolean (`true` / `false`) — the engine reads it with `as_bool()` and silently keeps its default (false) on any other type, so a capability that spawns a process stays disabled",
+            json_kind_name(v)
+        )),
+        "allow_hosts" | "allow_paths" => match v.as_array() {
+            None => Some(format!(
+                "`policy` key {k:?} is {}, but it must be an array of strings — the engine reads it with `as_array()` and silently falls back to the empty list, which for `allow_hosts` means *no* host restriction at all",
+                json_kind_name(v)
+            )),
+            Some(a) => a.iter().find(|x| !x.is_string()).map(|bad| {
+                format!(
+                    "`policy` key {k:?} must be an array of strings, but it holds {} — the engine's `filter_map(|x| x.as_str())` silently drops a non-string element, so part of the list never applies",
+                    json_kind_name(bad)
+                )
+            }),
+        },
+        "max_timeout_ms" | "max_output" | "retries" if v.as_u64().is_none() => Some(format!(
+            "`policy` key {k:?} is {}, but it must be a non-negative integer — the engine reads it with `as_u64()` and silently keeps its default on any other value",
+            json_kind_name(v)
+        )),
+        _ => None,
+    }
+}
+
 fn json_kind_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",

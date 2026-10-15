@@ -2656,6 +2656,34 @@ fn quoted_tokens(text: &str) -> Vec<String> {
     re.captures_iter(text).map(|c| c[1].to_string()).collect()
 }
 
+/// The part of a policy list cell that the quoted-token splitter *drops*:
+/// everything outside a `"…"` span, with `\"` / `\\` honoured inside a span
+/// exactly as [`quoted_tokens_escaped`] reads it. A caller refuses the row when
+/// this still holds anything but commas and whitespace, because the dropped
+/// text is a value the author wrote that the engine will never see (P168).
+fn policy_list_residual(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '"' {
+            out.push(c);
+            continue;
+        }
+        while let Some(c2) = chars.next() {
+            match c2 {
+                '\\' => {
+                    if matches!(chars.peek(), Some('"') | Some('\\')) {
+                        chars.next();
+                    }
+                }
+                '"' => break,
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 /// Like `quoted_tokens` but honours `\"` escapes inside the quoted spans, so a
 /// regex pattern that contains a literal double-quote (e.g. `['"]`) can be
 /// written as `['\"]` inside the outer `"..."` delimiters. Backslashes that do
@@ -3930,8 +3958,34 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                     table_key_once(&mut seen, key, row_line(st, i), "policy table")?;
                     let raw = row[1].trim();
                     let val: Value = match key {
-                        "allow_exec" => json!(raw == "true"),
+                        // P168: the engine keeps only the exact spellings `true`
+                        // / `false` (any other word — `yes`, `True`, `1` — is
+                        // silently read as *false*, which is the opposite of what
+                        // a `yes` author meant), and reads the list keys as the
+                        // *quoted* spans of the cell (bare text is dropped, and an
+                        // emptied list means *no* restriction). Both are the same
+                        // "a declared value the engine throws away" class as
+                        // P152/P154/P164; refuse them here, where the raw text is
+                        // still in hand.
+                        "allow_exec" => match raw {
+                            "true" => json!(true),
+                            "false" => json!(false),
+                            other => bail!(
+                                "line {}: policy key \"allow_exec\" must be exactly `true` or `false`, got {other:?} — the engine reads only that spelling, so any other word is silently taken as false (not the default), and your policy differs from what you wrote",
+                                st.line
+                            ),
+                        },
                         "allow_hosts" | "allow_paths" => {
+                            if let Some(bad) = policy_list_residual(raw)
+                                .split(',')
+                                .map(str::trim)
+                                .find(|t| !t.is_empty())
+                            {
+                                bail!(
+                                    "line {}: policy key {key:?} takes a comma-separated list of quoted strings, but {bad:?} is not inside quotes — the engine keeps only the quoted spans, so {bad:?} is silently dropped, and an emptied list means *no* restriction at all",
+                                    st.line
+                                );
+                            }
                             json!(quoted_tokens_escaped(raw))
                         }
                         "max_timeout_ms" | "max_output" | "retries" => json!(

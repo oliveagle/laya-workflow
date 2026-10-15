@@ -652,6 +652,73 @@ Feature: bare_workflow
     let fb = bdd::parse(bare, "<bare>").expect("parse bare feature");
     let sb = bdd::compile_decision(&fb, &json!({})).expect("compile bare");
     h.eq("bdd: bare no policy", sb.get("policy").is_none(), true);
+
+    // ── P168: the policy table's declared values must mean what they say ────
+    // The engine reads `allow_exec` as the exact word `true` / `false` (any other
+    // spelling — `yes`, `True`, `1` — is silently taken as *false*), and reads the
+    // list keys as the *quoted* spans of the cell (bare text is dropped, and an
+    // emptied list means *no* restriction). Both were accepted and quietly
+    // discarded the author's value; the compiler now refuses them where the raw
+    // text is still in hand.
+    let with_policy = |rows: &str| {
+        format!(
+            r#"
+@decision
+Feature: p168_policy
+
+  Background:
+    Given the policy
+{rows}
+    Given the capabilities
+      | x | {{"kind":"passthrough"}} |
+
+  Scenario: a
+    Given a choice question "q" asks "ok?"
+      | answer | meaning |
+      | A      | yes     |
+    When any other answer goes to "STOP"
+    Then call the capability "x"
+"#
+        )
+    };
+    let policy_err = |rows: &str| -> String {
+        match bdd::parse(&with_policy(rows), "<p168>")
+            .and_then(|f| bdd::compile_decision(&f, &json!({})))
+        {
+            Ok(_) => String::new(),
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    let rows_ok = |rows: &str| policy_err(rows).is_empty();
+
+    let m = policy_err("      | allow_exec | yes |");
+    h.check(
+        "bdd: policy allow_exec `yes` refused (was silently false)",
+        !m.is_empty() && m.contains("allow_exec") && m.contains("true") && m.contains("false"),
+    );
+    h.check(
+        "bdd: policy allow_exec `True` refused",
+        !policy_err("      | allow_exec | True |").is_empty(),
+    );
+    h.check("bdd: policy allow_exec `true` ok", rows_ok("      | allow_exec | true |"));
+    h.check("bdd: policy allow_exec `false` ok", rows_ok("      | allow_exec | false |"));
+    let m = policy_err("      | allow_exec | true |\n      | allow_hosts | example.com |");
+    h.check(
+        "bdd: policy unquoted allow_hosts refused (was silently dropped)",
+        !m.is_empty() && m.contains("allow_hosts") && m.contains("example.com") && m.contains("quotes"),
+    );
+    let m2 = policy_err("      | allow_paths | ${env.HOME}/tmp |");
+    h.check("bdd: policy unquoted allow_paths refused", !m2.is_empty() && m2.contains("allow_paths"));
+    h.check(
+        "bdd: policy quoted list ok",
+        rows_ok("      | allow_hosts | \"a.com\", \"b.com\" |"),
+    );
+    h.check("bdd: policy trailing comma ok", rows_ok("      | allow_hosts | \"a.com\", |"));
+    h.check("bdd: policy empty list cell ok (round-trips to [])", rows_ok("      | allow_hosts |  |"));
+    h.check(
+        "bdd: policy quoted path with an inner comma ok",
+        rows_ok("      | allow_paths | \"${env.HOME}/a,b\" |"),
+    );
 }
 
 pub fn test_bdd_decision_ui_proposal(h: &mut Harness) {

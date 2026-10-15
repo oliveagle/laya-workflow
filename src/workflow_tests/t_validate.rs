@@ -1406,6 +1406,56 @@ pub fn test_validate_spec_keys(h: &mut Harness) {
     let mut badbdd = base_spec("a", nodes.clone());
     badbdd["_bdd"] = json!({"featur": "f"});
     h.check("validate: `_bdd` key typo `featur` rejected", !ok(badbdd));
+
+    // ── P168: a policy value's JSON type must be the one the engine reads ────
+    // The engine reads every policy key leniently (`as_bool` / `as_array` /
+    // `as_u64`) and silently keeps its default on the wrong type, so a policy
+    // that declares `"allow_exec": "yes"` runs with exec *off* and one that
+    // declares `"allow_hosts": "a.com"` runs with *no* host restriction.
+    let pol = |v: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["policy"] = v;
+        s
+    };
+    let pol_err = |v: Value| -> String {
+        match spec::from_spec(&pol(v)) {
+            Ok(_) => String::new(),
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    let m = pol_err(json!({"allow_exec": "yes"}));
+    h.check(
+        "validate: policy allow_exec as a string rejected (was silently default false)",
+        !m.is_empty(),
+    );
+    h.check("validate: the allow_exec error names the key", m.contains("allow_exec"));
+    h.check("validate: the allow_exec error says boolean", m.contains("boolean"));
+    h.check("validate: policy allow_exec true OK", ok(pol(json!({"allow_exec": true}))));
+    h.check("validate: policy allow_exec false OK", ok(pol(json!({"allow_exec": false}))));
+    let m = pol_err(json!({"allow_hosts": "a.com"}));
+    h.check(
+        "validate: policy allow_hosts as a string rejected (was silently [])",
+        !m.is_empty() && m.contains("allow_hosts") && m.contains("array"),
+    );
+    h.check(
+        "validate: policy allow_hosts with a non-string element rejected",
+        !ok(pol(json!({"allow_hosts": ["a.com", 5]}))),
+    );
+    h.check(
+        "validate: policy allow_hosts list of strings OK",
+        ok(pol(json!({"allow_hosts": ["a.com", "b.com"]}))),
+    );
+    h.check("validate: policy allow_hosts empty list OK", ok(pol(json!({"allow_hosts": []}))));
+    h.check(
+        "validate: policy max_timeout_ms as a string rejected",
+        !ok(pol(json!({"max_timeout_ms": "60000"}))),
+    );
+    h.check("validate: policy retries negative rejected", !ok(pol(json!({"retries": -1}))));
+    h.check("validate: policy retries 0 OK", ok(pol(json!({"retries": 0}))));
+    h.check(
+        "validate: policy allow_paths array of strings OK",
+        ok(pol(json!({"allow_paths": ["/tmp"]}))),
+    );
 }
 
 
