@@ -10248,50 +10248,39 @@ impl Default for AppParityOptions {
 /// that silently drifts from the app it claims to reproduce fails here rather than
 /// passing unnoticed. `root` anchors the port paths (`dsl/...`) so a test can point
 /// it at a mutated copy and prove the gate actually reads the spec.
-pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
+/// Run one checked-in port spec on `state` and return the decision label the
+/// engine projects (the same projection `bdd_decide` uses).
+fn port_decision_label(root: &std::path::Path, spec_rel: &str, state: &Value) -> Result<String> {
     let backend = crate::backend::HeuristicBackend;
+    let wf = crate::spec::load_file(&root.join(spec_rel).to_string_lossy())?;
+    let out = wf.run(&backend, state)?;
+    let j = out.to_json();
+    Ok(crate::bdd_mcp::decision_label(
+        j.get("result").unwrap_or(&Value::Null),
+        out.final_action(),
+    ))
+}
+
+pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
     let mut report = AppParityReport::default();
+
+    // Primitive apps: the port must reproduce the app's published reference label.
     for c in crate::apps::all_reference_cases() {
         report.total += 1;
-        let path = root.join(c.bdd_spec);
-        let wf = match crate::spec::load_file(&path.to_string_lossy()) {
-            Ok(wf) => wf,
+        let label = match port_decision_label(root, c.bdd_spec, &c.state) {
+            Ok(l) => l,
             Err(e) => {
-                report.problems.push(format!(
-                    "{}: cannot load port spec {}: {e:#}",
-                    c.app, c.bdd_spec
-                ));
+                report
+                    .problems
+                    .push(format!("{}: port {} failed on {}: {e:#}", c.app, c.bdd_spec, c.state));
                 report.verdicts.push(json!({
                     "app": c.app, "port": c.bdd_spec, "input": c.state,
-                    "expected": c.expected, "ok": false,
-                    "reason": format!("load: {e:#}"),
+                    "expected": c.expected, "ok": false, "reason": format!("{e:#}"),
                 }));
                 continue;
             }
         };
-        let (label, ok) = match wf.run(&backend, &c.state) {
-            Ok(out) => {
-                let j = out.to_json();
-                let label = crate::bdd_mcp::decision_label(
-                    j.get("result").unwrap_or(&Value::Null),
-                    out.final_action(),
-                );
-                let ok = c.expected.split('|').any(|e| e.trim() == label);
-                (label, ok)
-            }
-            Err(e) => {
-                report.problems.push(format!(
-                    "{}: port {} run error on {}: {e:#}",
-                    c.app, c.bdd_spec, c.state
-                ));
-                report.verdicts.push(json!({
-                    "app": c.app, "port": c.bdd_spec, "input": c.state,
-                    "expected": c.expected, "ok": false,
-                    "reason": format!("run: {e:#}"),
-                }));
-                continue;
-            }
-        };
+        let ok = c.expected.split('|').any(|e| e.trim() == label);
         if ok {
             report.matched += 1;
         } else {
@@ -10305,6 +10294,67 @@ pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
             "label": label, "expected": c.expected, "ok": ok,
         }));
     }
+
+    // Composed app: the built-in gateway (gate -> triage). Both the APP and its
+    // port are driven and both must land in the expected label set — the app
+    // proves the expectation is its real behaviour, the port proves it reproduces
+    // it. (The app writes its verdict under `action`, the port under `label`.)
+    for (name, state, expected) in crate::apps::gateway_reference_cases() {
+        report.total += 1;
+        let want = |label: &str| expected.split('|').any(|e| e.trim() == label);
+
+        let app_label = match crate::apps::gateway_workflow()
+            .run(&crate::backend::HeuristicBackend, &state)
+        {
+            Ok(out) => out
+                .state
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string(),
+            Err(e) => {
+                report.problems.push(format!("gateway/{name}: app run failed: {e:#}"));
+                report.verdicts.push(json!({
+                    "app": "gateway", "case": name, "input": state,
+                    "expected": expected, "ok": false, "reason": format!("app: {e:#}"),
+                }));
+                continue;
+            }
+        };
+        let port_label = match port_decision_label(root, crate::apps::GATEWAY_BDD_SPEC, &state) {
+            Ok(l) => l,
+            Err(e) => {
+                report.problems.push(format!(
+                    "gateway/{name}: port {} failed: {e:#}",
+                    crate::apps::GATEWAY_BDD_SPEC
+                ));
+                report.verdicts.push(json!({
+                    "app": "gateway", "case": name, "input": state,
+                    "expected": expected, "ok": false, "reason": format!("port: {e:#}"),
+                }));
+                continue;
+            }
+        };
+        let ok = want(&app_label) && want(&port_label);
+        if ok {
+            report.matched += 1;
+        } else if !want(&app_label) {
+            report
+                .problems
+                .push(format!("gateway/{name}: app produced `{app_label}`, expected `{expected}`"));
+        } else {
+            report.problems.push(format!(
+                "gateway/{name}: port {} produced `{port_label}`, expected `{expected}` (app said `{app_label}`)",
+                crate::apps::GATEWAY_BDD_SPEC
+            ));
+        }
+        report.verdicts.push(json!({
+            "app": "gateway", "case": name, "input": state,
+            "app_label": app_label, "port_label": port_label,
+            "expected": expected, "ok": ok,
+        }));
+    }
+
     Ok(report)
 }
 

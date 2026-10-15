@@ -592,6 +592,29 @@ pub fn value_to_key(v: Value) -> String {
     }
 }
 
+/// Project the composed state down to the gate's input fields
+/// (`command`/`intent`/`cwd`) before the gate backend decides — the same
+/// projection the BDD port declares via `state.keep`.
+///
+/// The composed `gateway` shares one state across a tool-call gate and an email
+/// triage chain, so the gate would otherwise let unrelated text (an email body
+/// routed for the triage half) sway its heuristic and flip a routing answer —
+/// which the port, scoped to the command, never sees. Mirroring the projection
+/// is what keeps the app and its port behaviour-equivalent.
+fn gate_state(state: &Value) -> Value {
+    let mut m = Map::new();
+    for k in ["command", "intent", "cwd"] {
+        if let Some(v) = state.get(k) {
+            m.insert(k.to_string(), v.clone());
+        }
+    }
+    if m.is_empty() {
+        state.clone()
+    } else {
+        Value::Object(m)
+    }
+}
+
 /// Multi-app workflow: gate → (unsafe: stop) or (safe: execute triage chain).
 ///
 /// Demonstrates app composition on the Rust engine: the gate decides whether the
@@ -608,6 +631,10 @@ pub fn gateway_workflow() -> ResilientWorkflow {
         Edge::new(&[("A", "triage"), ("B", "STOP")], Some("STOP"), 0.0),
     )
     .with_primary(agent_gate::PRIMARY_Q)
+    // Judge the *command*: project the shared state down to the gate's input
+    // fields before the backend decides, exactly as the BDD port declares via
+    // `state.keep` (see `gate_state`).
+    .with_state_fn(gate_state)
     .with_action(|state: &Value, v: &Verdict| {
         let command = state.get("command").and_then(|c| c.as_str()).unwrap_or("");
         Ok(agent_gate::route(command, v))
@@ -623,6 +650,84 @@ pub fn gateway_workflow() -> ResilientWorkflow {
 
     // start at gate; the gate action merges its payload via `action_result`.
     ResilientWorkflow::new(vec![gate, triage], "gate")
+}
+
+/// The checked-in BDD port spec for the composed `gateway` app.
+pub const GATEWAY_BDD_SPEC: &str = "dsl/apps/gateway_triage.json";
+
+/// The composed `gateway` app's reference cases: `<name, state, expected-label>`.
+///
+/// The gateway gates a tool call and, when the primary answer is *not*
+/// destructive, runs the email-triage chain in the same graph. On the STOP path
+/// the observable label is the gate's threshold label (`BLOCK`); on the triage
+/// path it is the email-triage label the merged state carries. Its BDD port
+/// (`dsl/apps/gateway_triage.json`) is a decision graph too, but the app writes
+/// its verdict under `action` while the port writes `label` — so parity drives
+/// **both** and requires both to land in the expected set (see `bdd app-parity`).
+pub fn gateway_reference_cases() -> Vec<(&'static str, Value, &'static str)> {
+    let mail = |subject: &str, body: &str, sender: &str| -> Value {
+        json!({
+            "command": "ls -la /tmp", "intent": "list files", "cwd": "/tmp",
+            "subject": subject, "body": body, "sender": sender
+        })
+    };
+    vec![
+        (
+            "unsafe",
+            json!({"command": "sudo rm -rf /", "intent": "free up disk space", "cwd": "/"}),
+            "BLOCK",
+        ),
+        (
+            "destructive",
+            json!({"command": "rm -rf ./build", "intent": "clean the project build directory", "cwd": "/"}),
+            "BLOCK",
+        ),
+        (
+            "safe_billing",
+            mail(
+                "Re: invoice duplicate charge",
+                "Hi, we were billed twice for March. Please refund today or we cancel.",
+                "user@acme.com",
+            ),
+            "PAGER_BILLING",
+        ),
+        (
+            "safe_oncall",
+            mail(
+                "ALL HANDS: prod outage",
+                "Payments API 500 since 14:32 UTC. Need hotfix before sprint end.",
+                "sre@x.com",
+            ),
+            "PAGER_ONCALL",
+        ),
+        (
+            "safe_spam",
+            mail(
+                "Earn $5000/week!!!",
+                "Limited offer! Click here to earn. 50% off premium membership",
+                "promo@spam.tld",
+            ),
+            "TRASH",
+        ),
+        (
+            "safe_phishing",
+            mail(
+                "verify your account",
+                "Your account will be suspended unless you confirm credentials at http://evil.example",
+                "noreply@susp.cn",
+            ),
+            "QUARANTINE",
+        ),
+        (
+            "safe_fyi",
+            mail(
+                "Office closed Monday",
+                "Reminder office closed Monday. No action needed.",
+                "mgr@acme.com",
+            ),
+            "FYI_ONLY",
+        ),
+    ]
 }
 
 /// Expose a sub-workflow wrapper so callers can nest app workflows.

@@ -7319,60 +7319,80 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
     );
 }
 
-/// P137: the app-parity gate — every built-in app's reference case replayed end
-/// to end through the app's checked-in BDD port spec. The port is the app's
-/// routing as *data*; the app is *code*. This pins that the two agree on all 25
-/// cases AND that the gate actually depends on the port spec (a mutated copy
-/// diverges), so a silently drifted port fails here instead of passing.
+/// P137/P138: the app-parity gate — every built-in app's reference case replayed
+/// end to end through the app's checked-in BDD port spec. The port is the app's
+/// routing as *data*; the app is *code*. This pins that the two agree on all
+/// reference cases (the 4 primitive apps *and* the composed gateway) AND that the
+/// gate actually depends on the port spec (a mutated copy diverges), so a silently
+/// drifted port fails here instead of passing.
 pub fn test_bdd_app_parity(h: &mut Harness) {
     use laya_workflow::bdd::{app_parity_impl, repo_root};
 
     let root = repo_root();
     let report = app_parity_impl(&root).unwrap();
+    let expect_total = laya_workflow::apps::all_reference_cases().len()
+        + laya_workflow::apps::gateway_reference_cases().len();
     h.eq(
-        "bdd app-parity: the reference set is the 25 app cases",
+        "bdd app-parity: the reference set is the apps' cases (primitive + composed)",
         report.total,
-        laya_workflow::apps::all_reference_cases().len(),
+        expect_total,
     );
     h.check(
         &format!(
             "bdd app-parity: every case reproduces its label ({}/{} case(s))",
             report.matched, report.total
         ),
-        report.problems.is_empty() && report.matched == report.total && report.total == 25,
+        report.problems.is_empty() && report.matched == report.total && report.total == 32,
     );
     for p in &report.problems {
         h.check(&format!("bdd app-parity: divergence — {p}"), false);
     }
 
-    // Flip test: point the gate at a copy whose port spec has been mutated, and
-    // prove it now diverges. Without this, a gate that read nothing (or a fixed
-    // answer) would look green above.
+    // Flip tests: point the gate at a copy whose port spec has been mutated and
+    // prove it now diverges — once for a primitive port and once for the composed
+    // gateway port, so each half is shown to read the real spec rather than a
+    // baked-in answer.
     let ports = [
         "dsl/guards/agent_command_gate.json",
         "dsl/apps/email_triage.json",
         "dsl/guards/content_policy_gate.json",
         "dsl/apps/draft_scorer.json",
+        "dsl/apps/gateway_triage.json",
     ];
-    let tmp = std::env::temp_dir().join(format!("laya_app_parity_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    for rel in ports {
-        let dst = tmp.join(rel);
-        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
-        let mut text = std::fs::read_to_string(root.join(rel)).unwrap();
-        // Break the catch-all ALLOW in the command gate so its ALLOW cases diverge.
-        if rel.ends_with("agent_command_gate.json") {
-            assert_eq!(text.matches("\"label\": \"ALLOW\"").count(), 1);
-            text = text.replacen("\"label\": \"ALLOW\"", "\"label\": \"NOPE\"", 1);
-            std::fs::write(&dst, text).unwrap();
-        } else {
+    let mutate = |rel: &str, from: &str, to: &str| -> laya_workflow::bdd::AppParityReport {
+        let tmp = std::env::temp_dir().join(format!(
+            "laya_app_parity_{}_{}",
+            std::process::id(),
+            rel.rsplit('/').next().unwrap()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        for p in ports {
+            let dst = tmp.join(p);
+            std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            let mut text = std::fs::read_to_string(root.join(p)).unwrap();
+            if p == rel {
+                assert_eq!(text.matches(from).count(), 1, "anchor {from} not unique in {rel}");
+                text = text.replacen(from, to, 1);
+            }
             std::fs::write(&dst, text).unwrap();
         }
-    }
-    let broken = app_parity_impl(&tmp).unwrap();
-    h.check(
-        "bdd app-parity: a mutated port diverges (the gate reads the spec)",
-        !broken.problems.is_empty() && broken.matched < broken.total,
+        let r = app_parity_impl(&tmp).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+        r
+    };
+
+    let prim = mutate(
+        "dsl/guards/agent_command_gate.json",
+        "\"label\": \"ALLOW\"",
+        "\"label\": \"NOPE\"",
     );
-    let _ = std::fs::remove_dir_all(&tmp);
+    h.check(
+        "bdd app-parity: a mutated primitive port diverges (the gate reads the spec)",
+        !prim.problems.is_empty() && prim.matched < prim.total,
+    );
+    let comp = mutate("dsl/apps/gateway_triage.json", "\"A\": \"triage\"", "\"A\": \"STOP\"");
+    h.check(
+        "bdd app-parity: a mutated composed port diverges (the gateway half reads the spec)",
+        !comp.problems.is_empty() && comp.matched < comp.total,
+    );
 }

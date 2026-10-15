@@ -103,10 +103,11 @@ fi
 "$BIN" bdd doc-check
 
 # The app-parity gate: every built-in app's reference case (`laya-workflow apps`,
-# 25 cases across 4 apps) replayed end to end through the app's checked-in BDD
-# port spec, and the label the engine projects must match the app's expectation.
-# The port is the app's routing as *data*; the app is *code*. This holds the two
-# together so a port that drifts from the app fails here. No Chrome, no network.
+# 32 cases across 5 apps: the 4 primitive apps plus the composed gateway)
+# replayed end to end through the app's checked-in BDD port spec, and the label
+# the engine projects must match the app's expectation. The port is the app's
+# routing as *data*; the app is *code*. This holds the two together so a port
+# that drifts from the app fails here. No Chrome, no network.
 "$BIN" bdd app-parity
 
 # The authoring corpus: can a workflow actually be expressed from an intent, and
