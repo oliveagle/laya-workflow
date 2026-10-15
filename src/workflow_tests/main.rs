@@ -106,6 +106,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-duplicate-names", t_validate::test_validate_duplicate_names),
         ("validate-primary-q-missing", t_validate::test_validate_primary_q_missing),
         ("validate-action-q-missing", t_validate::test_validate_action_q_missing),
+        ("validate-primary-required", t_validate::test_validate_primary_required),
         ("validate-gate-option", t_validate::test_validate_gate_option),
         ("validate-rubric-dim", t_validate::test_validate_rubric_dim),
         ("validate-combine-q", t_validate::test_validate_combine_q),

@@ -962,6 +962,28 @@ fn validate_graph_semantics(
                 );
             }
         }
+        // P136: with several questions, routing on the primary is only well-defined
+        // when the primary is named. `Edge::resolve` matches the *primary* answer
+        // against the edge condition keys, and `WorkflowNode::primary()` falls back to
+        // the first-declared question — so a node that declares >=2 questions, carries
+        // edge condition keys and names no `primary_q` would silently route on
+        // whichever question happens to be declared first (a hand-written spec has no
+        // compiler to have made that choice explicit).
+        let n_qs = questions.as_ref().map(|m| m.len()).unwrap_or(0);
+        let cond_keys: Vec<&str> = n
+            .get("edge")
+            .and_then(|e| e.get("condition"))
+            .and_then(|c| c.as_object())
+            .map(|m| m.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        if n_qs >= 2
+            && !cond_keys.is_empty()
+            && n.get("primary_q").and_then(Value::as_str).is_none()
+        {
+            bail!(
+                "node {name}: declares {n_qs} questions and routes on a question (edge condition keys {cond_keys:?}) but names no `primary_q` — the routed question would otherwise be inferred from declaration order, so name it explicitly"
+            );
+        }
         // edge `min_confidence` gates every route (an answer below it resolves
         // to no edge → the node ESCALATEs). A value outside [0, 1] is
         // meaningless: > 1 makes every route fail (the node always escalates),

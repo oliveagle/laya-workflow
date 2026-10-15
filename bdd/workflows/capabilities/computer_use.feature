@@ -61,6 +61,7 @@ Feature: computer_use
     And the answer "done" goes to "verify_done"
     And the answer "wait" goes to "STOP"
     And the answer "blocked" goes to "STOP"
+    Then the primary question is "operation"
     Then prepare a UI proposal from operation "operation" field "field" amount "amount" surface "surface" hash "snapshot_hash" requiring 0.8 value "billing_contact"
     Then require confidence at least 0.8
 

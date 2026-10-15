@@ -158,6 +158,55 @@ pub fn test_validate_primary_q_missing(h: &mut Harness) {
     h.check("validate: missing primary_q rejected", r.is_err());
 }
 
+/// Regression (P136): a node that routes on a question (non-empty edge
+/// condition keys) must name its `primary_q` when it declares more than one
+/// question. Routing matches the *primary* answer against the condition keys,
+/// and `WorkflowNode::primary()` falls back to the first-declared question —
+/// so with several questions and no explicit primary the routed question would
+/// be inferred from declaration order and a reorder would silently misroute.
+pub fn test_validate_primary_required(h: &mut Harness) {
+    let two_q = json!({
+        "event": {"type": "choice", "instructions": "?", "criteria": {"login": "yes", "logout": "no"}},
+        "risk": {"type": "score", "instructions": "?", "criteria": ["low", "high"]}
+    });
+    // routes on a question, two questions, no primary -> reject
+    let bad = base_spec(
+        "a",
+        json!([node(
+            "a",
+            two_q.clone(),
+            json!({"condition": {"login": "STOP", "logout": "STOP"}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["event"]})
+        )]),
+    );
+    h.check("validate: multi-question routing node without primary_q rejected", spec::from_spec(&bad).is_err());
+    // control: same node names the primary -> parses
+    let ok = base_spec(
+        "a",
+        json!([{
+            "name": "a",
+            "primary_q": "event",
+            "questions": two_q.clone(),
+            "edge": {"condition": {"login": "STOP", "logout": "STOP"}, "default": "STOP"},
+            "min_confidence": 0.0,
+            "max_retries": 1,
+            "action": {"kind": "copy_keys", "keys": ["event"]}
+        }]),
+    );
+    h.check("validate: multi-question routing node with primary_q parses (no false positive)", spec::from_spec(&ok).is_ok());
+    // control: two questions but NO routing (condition empty) -> primary not required
+    let no_route = base_spec(
+        "a",
+        json!([node(
+            "a",
+            two_q.clone(),
+            json!({"condition": {}, "default": "STOP"}),
+            json!({"kind": "copy_keys", "keys": ["event", "risk"]})
+        )]),
+    );
+    h.check("validate: multi-question node with no routing needs no primary_q", spec::from_spec(&no_route).is_ok());
+}
+
 /// Regression: action.question on a gate must name a declared question.
 pub fn test_validate_action_q_missing(h: &mut Harness) {
     let spec = base_spec(

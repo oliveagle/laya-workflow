@@ -20,5 +20,6 @@ Feature: iterative_refine_loop
     And the answer "accept" goes to "STOP"
     And the answer "revise" goes to "review"
     And the answer "escalate" goes to "STOP"
+    Then the primary question is "verdict"
     Then merge open probabilities on "verdict"
     Then allow up to 3 retries

@@ -34,6 +34,7 @@ Feature: agent_permission_gate
     And the answer "request" goes to "refused"
     And the answer "violation" goes to "blocked"
     And any other answer goes to "STOP"
+    Then the primary question is "event"
     Then label "BLOCK" when the answer to "risk" is "high"
     And label "ESCALATE" when the answer to "risk" is "uncertain"
     And label "EXECUTE" otherwise
@@ -60,6 +61,7 @@ Feature: agent_permission_gate
     And the answer "request" goes to "refused"
     And the answer "violation" goes to "blocked"
     And any other answer goes to "STOP"
+    Then the primary question is "event"
     Then label "BLOCK" when the answer to "risk" is "high"
     And label "ESCALATE" when the answer to "risk" is "uncertain"
     And label "EXECUTE" otherwise
@@ -86,6 +88,7 @@ Feature: agent_permission_gate
     And the answer "authorize" goes to "refused"
     And the answer "violation" goes to "blocked"
     And any other answer goes to "STOP"
+    Then the primary question is "event"
     Then label "BLOCK" when the answer to "risk" is "high"
     And label "ESCALATE" when the answer to "risk" is "uncertain"
     And label "EXECUTE" otherwise

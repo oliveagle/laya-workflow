@@ -2671,6 +2671,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let name = scenario.slug();
     let mut questions: Map<String, Value> = Map::new();
     let mut primary_q: Option<String> = None;
+    let mut first_q_line: Option<usize> = None;
     let mut edge_condition: Map<String, Value> = Map::new();
     let mut edge_default: Option<String> = None;
     let mut rules: Vec<Value> = Vec::new();
@@ -2768,6 +2769,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 }
                 if primary_q.is_none() {
                     primary_q = Some(q.clone());
+                    first_q_line = Some(st.line);
                 }
                 last_question = Some(q.clone());
                 questions.insert(q, Value::Object(qv));
@@ -3178,6 +3180,26 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             }
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
         }
+    }
+
+    // P136: a node whose edge routes on a question must name its primary when it
+    // declares more than one question. `Edge::resolve` matches the *primary* answer
+    // against the condition keys, and with several questions and no explicit
+    // `the primary question is "<q>"` the compiler silently takes the
+    // first-declared one — so reordering the questions (or a hand edit) would
+    // silently change the routed question, with nothing failing. Make the routed
+    // question explicit in the source instead of inferred from declaration order.
+    if !edge_condition.is_empty() && questions.len() >= 2 && explicit_primary.is_none() {
+        let declared: Vec<&str> = questions.keys().map(String::as_str).collect();
+        bail!(
+            "line {}: Scenario {:?} routes on a question (edge condition keys {:?}) but declares {} questions and no primary — add `Then the primary question is \"{}\"` (the routed question is otherwise inferred from declaration order; declared: {:?})",
+            first_q_line.unwrap_or(scenario.line),
+            scenario.name,
+            edge_condition.keys().collect::<Vec<_>>(),
+            questions.len(),
+            primary_q.clone().unwrap_or_default(),
+            declared,
+        );
     }
 
     // A sub-workflow reference node composes by reference: the whole node is
@@ -8370,6 +8392,7 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
         .and_then(|e| e.get("default"))
         .and_then(Value::as_str)
         .unwrap_or("STOP");
+    let mut routed = false;
     if let Some(cond) = edge.and_then(|e| e.get("condition")).and_then(Value::as_object) {
         for (a, tgt) in cond {
             let tgt = imp_str("edge.condition target", Some(tgt))?;
@@ -8378,6 +8401,7 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
             if tgt == default {
                 continue;
             }
+            routed = true;
             st.push("when", format!("the answer \"{a}\" goes to \"{tgt}\""), vec![]);
         }
     }
@@ -8386,7 +8410,12 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
         st.push("when", format!("any other answer goes to \"{default}\""), vec![]);
     }
 
-    if first_q != Some(primary_q) {
+    // Emit the primary explicitly when it is not the first question, or whenever
+    // the node routes on a question while declaring more than one (P136: the
+    // compiler now requires that, so the routed question is never inferred from
+    // declaration order).
+    let n_q = questions.map(|q| q.len()).unwrap_or(0);
+    if first_q != Some(primary_q) || (n_q >= 2 && routed) {
         imp_tok("primary_q", primary_q)?;
         st.push("then", format!("the primary question is \"{primary_q}\""), vec![]);
     }

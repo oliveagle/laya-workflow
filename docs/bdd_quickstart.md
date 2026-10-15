@@ -391,7 +391,7 @@ Feature: support_ticket_router
 | Then | `label "X" when "Q" is at least 1.5` | threshold rule `{when:{question,value_gte},label}` |
 | Then | `label "X" when "Q" is below 0.85` | threshold rule `{when:{question,value_lt},label}` |
 | Then | `label "X" otherwise` | threshold rule `{when:{always},label}` |
-| Then | `the primary question is "Q"` | `primary_q` 显式覆盖首个问题默认 |
+| Then | `the primary question is "Q"` | 声明 `primary_q`（路由问题的显式来源）。**多问题且带 `When ... goes to` 路由键时必须写**，否则编译报错（否则路由问题会由声明顺序隐式决定）；单问题或只有 `default` 的节点可省 |
 | Then | `the action reads the question "Q"` | threshold `action.question` 覆盖（读非 primary 问题） |
 | Then | `keep the answer to "Q"` | `action.copy_keys` |
 | Then | `keep the state key "K"` | `state.keep` |

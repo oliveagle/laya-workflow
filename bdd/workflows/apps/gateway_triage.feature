@@ -31,6 +31,7 @@ Feature: gateway_triage
       | irreversible destructive |
     When the answer "A" goes to "triage"
     And any other answer goes to "STOP"
+    Then the primary question is "is_destructive"
     Then the action reads the question "risk"
     And label "BLOCK" when the answer to "is_destructive" is "B" with at least 0.8 confidence
     And label "BLOCK" when "risk" is at least 2
