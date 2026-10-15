@@ -151,6 +151,65 @@ fn check_required_options(name: &str, kind: &str, def: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Numeric options the parsers read via `Value::as_u64`. A *present* value that
+/// is not a non-negative integer (`-1`, `1.5`, `"9000"`, `true`) is silently
+/// replaced by the option\'s default — the capability then runs with a timeout /
+/// limit nobody chose. Same "a declared value the engine throws away" class as
+/// P128/P149, now about the value\'s *domain* rather than its key (P150).
+const U64_OPTIONS: &[&str] = &[
+    "max_bytes",
+    "max_events",
+    "max_operations",
+    "max_output",
+    "max_owned_pages",
+    "max_results",
+    "max_text",
+    "max_tokens",
+    "owned_idle_ms",
+    "startup_timeout_ms",
+    "timeout_ms",
+];
+
+/// Numeric options the parsers read via `Value::as_f64`; a present value that is
+/// not a JSON number is silently defaulted (e.g. `"0.9"` leaves a computer-use
+/// node at a 0.8 floor).
+const F64_OPTIONS: &[&str] = &["chars_per_token", "min_confidence", "temperature"];
+
+/// Kinds whose `port` is stored as `u16`: any value above 65535 wraps, so
+/// `70000` quietly connects to `4464`. The port must be a real port.
+const PORT_KINDS: &[&str] = &["tcp", "udp", "redis", "nats", "mqtt", "smtp", "mail_send"];
+
+fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
+    let Some(obj) = def.as_object() else {
+        return Ok(());
+    };
+    for k in U64_OPTIONS {
+        if obj.contains_key(*k) && obj.get(*k).and_then(Value::as_u64).is_none() {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {k:?} must be a non-negative integer — the engine reads it as an unsigned number, so a fractional / negative / non-numeric value is silently replaced by the default"
+            );
+        }
+    }
+    for k in F64_OPTIONS {
+        if obj.contains_key(*k) && obj.get(*k).and_then(Value::as_f64).is_none() {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {k:?} must be a number — the engine reads it as a float, so a non-numeric value is silently replaced by the default"
+            );
+        }
+    }
+    if PORT_KINDS.contains(&kind) {
+        if let Some(v) = obj.get("port") {
+            match v.as_u64() {
+                Some(p) if (1..=65535).contains(&p) => {}
+                _ => bail!(
+                    "capability {name:?} (kind {kind:?}) option \"port\" must be a TCP/UDP port in 1..=65535 — it is cast to `u16`, so a larger value wraps to a different port (70000 -> 4464)"
+                ),
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
     let kind = def
         .get("kind")
@@ -184,6 +243,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             hints.join(", ")
         );
     }
+    check_option_domains(name, kind, def)?;
     Ok(cap)
 }
 

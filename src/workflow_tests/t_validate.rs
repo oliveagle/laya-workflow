@@ -1466,3 +1466,58 @@ pub fn test_validate_capability_runnable(h: &mut Harness) {
         Ok(_) => h.check("validate: expected an error", false),
     }
 }
+
+
+/// P150: a capability option whose *value* the parser throws away is the same
+/// bug as a key it never reads. A present `timeout_ms` that is not a
+/// non-negative integer (`-1`, `1.5`, `"9000"`) is silently defaulted, so the
+/// capability runs with a timeout nobody chose; a `port` above 65535 is cast to
+/// `u16` and wraps (`70000` -> `4464`), so it quietly dials the wrong port.
+pub fn test_validate_option_domains(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — in-domain values
+    h.check("validate: tcp port 1 is OK", ok(json!({"kind": "tcp", "host": "h", "port": 1})));
+    h.check("validate: tcp port 65535 is OK", ok(json!({"kind": "tcp", "host": "h", "port": 65535})));
+    h.check("validate: redis port 6379 is OK", ok(json!({"kind": "redis", "port": 6379})));
+    h.check("validate: smtp port 25 is OK", ok(json!({"kind": "smtp", "host": "h", "from": "a@b"})));
+    h.check("validate: http timeout_ms 1000 is OK", ok(json!({"kind": "http", "url": "http://x", "timeout_ms": 1000})));
+    h.check("validate: computer_use min_confidence 0.9 is OK", ok(json!({"kind": "computer_use", "allowed_surface": "s", "min_confidence": 0.9})));
+
+    // negatives — out-of-domain values that silently wrap / default
+    h.check("validate: tcp port 70000 rejected", !ok(json!({"kind": "tcp", "host": "h", "port": 70000})));
+    h.check("validate: redis port 99999 rejected", !ok(json!({"kind": "redis", "port": 99999})));
+    h.check("validate: http timeout_ms -1 rejected", !ok(json!({"kind": "http", "url": "http://x", "timeout_ms": -1})));
+    h.check("validate: exec timeout_ms 1.5 rejected", !ok(json!({"kind": "exec", "argv": ["x"], "timeout_ms": 1.5})));
+    h.check("validate: llm max_tokens string rejected", !ok(json!({"kind": "llm", "url": "http://x", "max_tokens": "256"})));
+    h.check("validate: computer_use min_confidence string rejected", !ok(json!({"kind": "computer_use", "allowed_surface": "s", "min_confidence": "0.9"})));
+
+    // the messages name the constraint
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "tcp", "host": "h", "port": 70000}});
+    if let Err(e) = spec::from_spec(&s) {
+        let m = e.to_string();
+        h.check("validate: the port error names the range", m.contains("1..=65535"));
+        h.check("validate: the port error explains the wrap", m.contains("u16"));
+    } else {
+        h.check("validate: expected a port error", false);
+    }
+
+    let mut s2 = base_spec("a", nodes.clone());
+    s2["capabilities"] = json!({"c": {"kind": "http", "url": "http://x", "timeout_ms": -1}});
+    if let Err(e) = spec::from_spec(&s2) {
+        h.check("validate: the timeout error says non-negative integer", e.to_string().contains("non-negative integer"));
+    } else {
+        h.check("validate: expected a timeout error", false);
+    }
+}
