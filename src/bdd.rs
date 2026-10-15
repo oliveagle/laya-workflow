@@ -3299,6 +3299,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     call_chain.push(Value::Object(e));
                 }
                 guard_call_with(feature, &cap, &with, &call_chain, st.line)?;
+                guard_call_project(&project, &call_chain, st.line)?;
                 call_action = Some((cap, with, project));
             }
             other => bail!("line {}: unhandled decision tag {other:?}", st.line),
@@ -3739,6 +3740,81 @@ fn guard_call_with(
             .map(|m| m.keys().cloned().collect())
             .unwrap_or_default();
         check(cn, &keys)?;
+    }
+    Ok(())
+}
+
+/// Name a JSON value's type the way the guard messages do.
+fn json_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(b) => {
+            if *b {
+                "`true`"
+            } else {
+                "`false`"
+            }
+        }
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// Refuse a `call` step's `project` row the engine can only silently discard
+/// (P165).
+///
+/// P164 checked the `with` half of the call table (which keys a kind reads);
+/// this is the `project` half. `project.<state key> | <pointer>` is applied at
+/// run time by reading the pointer with `as_str()` and resolving it against the
+/// call result, so a pointer of any other JSON type (`| project.ok | true |`,
+/// `| project.count | 3 |`) is skipped and `state.<key>` is **never written** -
+/// and because the compiler counts the row as a producer, an `@outputs` naming
+/// it stays green while the run cannot keep the promise. A projection key that
+/// is empty writes a state key the `${state.<key>}` grammar (one character or
+/// more) can never name, and a `chain` row keyed by an empty alias files the
+/// sub-call's result under a name no `chain.<alias>.*` row can reach. None of
+/// the three can do what it says, so each is refused rather than shipped.
+fn guard_call_project(project: &Map<String, Value>, chain: &[Value], line: usize) -> Result<()> {
+    let check = |row: &str, key: &str, val: &Value| -> Result<()> {
+        if key.is_empty() {
+            bail!(
+                "line {line}: `{row}` has an empty name - the engine files the value under the \
+                 empty key, which no `${{state.<key>}}` reference can name, so the row can never \
+                 do what it says. Give it a name."
+            );
+        }
+        if !val.is_string() {
+            bail!(
+                "line {line}: `{row}` is {}, not a JSON string - the engine reads a projection \
+                 with `as_str()` and skips any other type, so `state.{key}` is never written and \
+                 any `@outputs` naming it is silently broken. Write the pointer as a string \
+                 (e.g. `/count`).",
+                json_type_name(val)
+            );
+        }
+        Ok(())
+    };
+    for (k, v) in project {
+        check(&format!("project.{k}"), k, v)?;
+    }
+    for e in chain {
+        let as_name = e.get("as").and_then(Value::as_str).unwrap_or("");
+        if as_name.is_empty() {
+            let cap = e.get("capability").and_then(Value::as_str).unwrap_or("");
+            bail!(
+                "line {line}: a `chain` row is keyed by an empty alias (`| chain..… |`) - the \
+                 engine files the {cap:?} step's result under the empty name, which no \
+                 `${{with.<alias>}}` template and no `chain.<alias>.*` row can ever address. \
+                 Give the sub-call an alias (e.g. `| chain.<alias>.capability | {cap} |`)."
+            );
+        }
+        if let Some(cp) = e.get("project").and_then(Value::as_object) {
+            for (k, v) in cp {
+                check(&format!("chain.{as_name}.project.{k}"), k, v)?;
+            }
+        }
     }
     Ok(())
 }

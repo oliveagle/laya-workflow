@@ -8374,3 +8374,79 @@ Feature: chain_key
             && kind_reads("datetime").expect("datetime").contains("epoch"),
     );
 }
+
+/// P165 — the `project` half of the `call` table: a row the engine can only
+/// silently discard. `project.<key> | <pointer>` is applied by reading the
+/// pointer with `as_str()`, so a pointer of another JSON type is skipped (the
+/// state key is never written); an empty projection key or an empty chain alias
+/// names something no reference can address. Each is refused.
+pub fn test_bdd_call_project(h: &mut Harness) {
+    let build = |text: &str| -> (bool, String) {
+        let feat = bdd::parse(text, "<probe>").expect("probe parses");
+        match bdd::compile_decision(&feat, &json!({})) {
+            Ok(_) => (true, String::new()),
+            Err(e) => (false, format!("{e:#}")),
+        }
+    };
+    let head = r#"
+@decision
+Feature: proj
+  Background:
+    Given the capabilities
+      | clock | {"kind": "datetime", "op": "now"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When any other answer goes to "STOP"
+    Then call the capability "clock"
+"#;
+
+    // A pointer of any JSON type but a string is skipped by `as_str()`: the
+    // state key is never written, yet the compiler counts it as produced.
+    let (ok, err) = build(&format!("{head}      | project.count | 3 |\n"));
+    h.check(
+        "bdd call project: a non-string pointer is refused",
+        !ok && err.contains("project.count") && err.contains("not a JSON string"),
+    );
+    h.check(
+        "bdd call project: the refusal names the state key it would never write",
+        err.contains("state.count"),
+    );
+
+    // The same on a `chain` entry's own projection.
+    let (ok, err) = build(&format!(
+        "{head}      | project.now | /epoch |\n      | chain.cap.capability | clock |\n      | chain.cap.project.ok | true |\n"
+    ));
+    h.check(
+        "bdd call project: a chain entry's non-string pointer is refused too",
+        !ok && err.contains("chain.cap.project.ok"),
+    );
+
+    // An empty projection key writes a state key `${state.<key>}` cannot name.
+    let (ok, err) = build(&format!("{head}      | project. | /epoch |\n"));
+    h.check(
+        "bdd call project: an empty projection key is refused",
+        !ok && err.contains("project.") && err.contains("empty name"),
+    );
+
+    // An empty chain alias files the sub-call's result under a dead name.
+    let (ok, err) = build(&format!("{head}      | project.now | /epoch |\n      | chain..capability | clock |\n"));
+    h.check(
+        "bdd call project: an empty chain alias is refused",
+        !ok && err.contains("empty alias"),
+    );
+
+    // The legal shape: string pointers on the call and on a chain entry.
+    let (ok, err) = build(&format!(
+        "{head}      | project.now | /epoch |\n      | chain.extra.capability | clock |\n      | chain.extra.project.base | /offset_secs |\n"
+    ));
+    h.check(
+        "bdd call project: string pointers on the call and a chain entry stay legal",
+        ok,
+    );
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+}
