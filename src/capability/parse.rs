@@ -179,6 +179,26 @@ const F64_OPTIONS: &[&str] = &["chars_per_token", "min_confidence", "temperature
 /// `70000` quietly connects to `4464`. The port must be a real port.
 const PORT_KINDS: &[&str] = &["tcp", "udp", "redis", "nats", "mqtt", "smtp", "mail_send"];
 
+/// Boolean options the parsers read via `Value::as_bool`. A present value that
+/// is not a JSON boolean (`"false"`, `0`, `"yes"`) is silently replaced by the
+/// option's default — the classic footgun where `"false"` (a truthy string in
+/// most languages) silently keeps `readonly` / `human` at their defaults (P152).
+/// `headers` is a boolean only for `csv` (elsewhere it is an object), so this
+/// table is (kind, option), not a flat name list.
+const BOOL_OPTIONS: &[(&str, &str)] = &[
+    ("http", "expect_json"),
+    ("http", "allow_error_status"),
+    ("sqlite", "readonly"),
+    ("db", "readonly"),
+    ("csv", "headers"),
+    ("notify", "bell"),
+    ("notify", "timestamp"),
+    ("browser", "launch"),
+    ("browser", "attach"),
+    ("browser", "human"),
+    ("web_fetch", "body_urls_array"),
+];
+
 fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     let Some(obj) = def.as_object() else {
         return Ok(());
@@ -197,6 +217,14 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
             );
         }
     }
+    let ckind = canon_kind(kind);
+    for (k, opt) in BOOL_OPTIONS {
+        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_bool).is_none() {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {opt:?} must be true or false — the engine reads it as a boolean, so a non-boolean value (e.g. the string \"false\") is silently replaced by the default"
+            );
+        }
+    }
     if PORT_KINDS.contains(&kind) {
         if let Some(v) = obj.get("port") {
             match v.as_u64() {
@@ -211,22 +239,26 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
 }
 
 /// Closed-set string options: the runtime's own dispatch accepts only a fixed
-/// set of values, so a declared value outside it is never honoured — the call
-/// bails (`text op "len" unsupported …`) or silently substitutes a default.
-/// `validate` refuses it instead: the same "a declared value the engine throws
-/// away" class as P128/P149/P150, now about a *string* option's value.
+/// set of values, so a declared value outside it is never honoured. `validate`
+/// refuses it instead — the same "a declared value the engine throws away"
+/// class as P128/P149/P150, now about a *string* option's value.
 ///
 /// `allow_empty` mirrors the engine exactly: `""` is accepted only where it
 /// already resolves to a member (an explicit `if empty { default }` in the
 /// runtime or an `effective_op` fallback equal to the kind's documented
 /// default). Where `""` would bail, it is refused here too.
 ///
-/// (kind, option, accepted values, allow_empty)
-const CLOSED_SETS: &[(&str, &str, &[&str], bool)] = &[
-    ("db", "op", &["query", "exec", "analytics", "sync", "tables"], true),
-    ("db", "mode", &["embed", "server"], true),
-    ("db", "format", &["json", "csv", "md", "markdown"], true),
-    ("datetime", "op", &["now", "add", "format", "parse"], true),
+/// `fallback`: `Some(x)` means an out-of-set value does **not** bail — the
+/// engine silently substitutes `x` (P152: `pdf.op` → `text`,
+/// `web_fetch.format` → `text`, `web_search.method` → `GET`), so the typo runs
+/// to completion with the wrong behaviour. `None` means the call bails.
+///
+/// (kind, option, accepted values, allow_empty, fallback)
+const CLOSED_SETS: &[(&str, &str, &[&str], bool, Option<&str>)] = &[
+    ("db", "op", &["query", "exec", "analytics", "sync", "tables"], true, None),
+    ("db", "mode", &["embed", "server"], true, None),
+    ("db", "format", &["json", "csv", "md", "markdown"], true, None),
+    ("datetime", "op", &["now", "add", "format", "parse"], true, None),
     (
         "text",
         "op",
@@ -235,30 +267,32 @@ const CLOSED_SETS: &[(&str, &str, &[&str], bool)] = &[
             "base64_encode", "base64_decode", "json_get",
         ],
         false,
+        None,
     ),
-    ("text", "hash", &["fnv1a64"], true),
-    ("file", "op", &["read", "write", "append", "stat", "list"], false),
+    ("text", "hash", &["fnv1a64"], true, None),
+    ("file", "op", &["read", "write", "append", "stat", "list"], false, None),
     (
         "json",
         "op",
         &["pick", "merge", "patch", "path_set", "flatten", "sort_keys", "pick_by"],
         true,
+        None,
     ),
-    ("csv", "op", &["parse", "generate"], false),
-    ("xml", "op", &["tags", "text", "attrs"], false),
-    ("markdown", "op", &["headings", "code_blocks", "links", "outline"], false),
-    ("diff", "op", &["lines", "json"], false),
-    ("hash", "op", &["sha256", "sha256_hex", "fnv1a64", "crc32"], false),
-    ("graph", "op", &["reachable", "bfs", "toposort"], false),
-    ("tokenize", "op", &["count", "split"], false),
-    ("math", "op", &["eval", "stats"], true),
-    ("vector", "op", &["upsert", "search"], true),
-    ("keyvalue", "op", &["get", "has", "set", "del", "incr", "list"], false),
-    ("cache", "op", &["get", "set", "ttl", "purge"], false),
-    ("queue", "op", &["push", "pop", "peek", "length", "clear"], true),
-    ("archive", "op", &["list", "extract"], false),
-    ("sqlite", "op", &["query", "exec"], false),
-    ("sql", "driver", &["sqlite3", "psql", "mysql"], true),
+    ("csv", "op", &["parse", "generate"], false, None),
+    ("xml", "op", &["tags", "text", "attrs"], false, None),
+    ("markdown", "op", &["headings", "code_blocks", "links", "outline"], false, None),
+    ("diff", "op", &["lines", "json"], false, None),
+    ("hash", "op", &["sha256", "sha256_hex", "fnv1a64", "crc32"], false, None),
+    ("graph", "op", &["reachable", "bfs", "toposort"], false, None),
+    ("tokenize", "op", &["count", "split"], false, None),
+    ("math", "op", &["eval", "stats"], true, None),
+    ("vector", "op", &["upsert", "search"], true, None),
+    ("keyvalue", "op", &["get", "has", "set", "del", "incr", "list"], false, None),
+    ("cache", "op", &["get", "set", "ttl", "purge"], false, None),
+    ("queue", "op", &["push", "pop", "peek", "length", "clear"], true, None),
+    ("archive", "op", &["list", "extract"], false, None),
+    ("sqlite", "op", &["query", "exec"], false, None),
+    ("sql", "driver", &["sqlite3", "psql", "mysql"], true, None),
     (
         "needle",
         "op",
@@ -266,17 +300,24 @@ const CLOSED_SETS: &[(&str, &str, &[&str], bool)] = &[
             "extract", "needle_extract", "embed", "needle_embed", "complete", "needle_complete",
         ],
         false,
+        None,
     ),
-    ("computer_use", "op", &["fingerprint", "step", "verify"], true),
-    ("mcp", "transport", &["http", "stdio"], false),
-    ("agent", "transport", &["http", "stdio"], false),
+    ("computer_use", "op", &["fingerprint", "step", "verify"], true, None),
+    ("mcp", "transport", &["http", "stdio"], false, None),
+    ("agent", "transport", &["http", "stdio"], false, None),
     (
         "notify",
         "channel",
         &["log", "file", "macos", "os", "osx", "notification", "both", "auto"],
         true,
+        None,
     ),
-    ("http", "method", &["GET", "POST", "PUT", "DELETE", "PATCH"], false),
+    ("http", "method", &["GET", "POST", "PUT", "DELETE", "PATCH"], false, None),
+    // P152: out-of-set values that silently fall back to a default instead of
+    // bailing — the typo runs to completion with the wrong behaviour.
+    ("pdf", "op", &["text", "info"], true, Some("text")),
+    ("web_fetch", "format", &["text", "raw", "markdown"], true, Some("text")),
+    ("web_search", "method", &["GET", "POST"], true, Some("GET")),
 ];
 
 /// Fold a kind alias to the canonical name the closed-set table uses.
@@ -290,6 +331,9 @@ fn canon_kind(k: &str) -> &str {
         "notify_local" => "notify",
         "mail_send" => "smtp",
         "app_server" => "agent",
+        "chrome_cdp" => "browser",
+        "fetch_url" => "web_fetch",
+        "search" => "web_search",
         other => other,
     }
 }
@@ -299,22 +343,21 @@ fn check_option_values(name: &str, kind: &str, def: &Value) -> Result<()> {
         return Ok(());
     };
     let kind = canon_kind(kind);
-    for (k, option, allowed, allow_empty) in CLOSED_SETS {
+    for (k, option, allowed, allow_empty, fallback) in CLOSED_SETS {
         if *k != kind {
             continue;
         }
         let Some(v) = obj.get(*option) else {
             continue;
         };
-        if v.is_null() {
-            continue;
-        }
         let Some(s) = v.as_str() else {
             bail!(
                 "capability {name:?} (kind {kind:?}) option {option:?} must be a string — the engine reads it as a string and ignores a non-string value, so `validate` would be green while the option is silently dropped"
             );
         };
-        let value = if *k == "http" && *option == "method" {
+        // `method` is upper-cased by the parser before it is stored (`get` ==
+        // `GET`), so compare the same way here.
+        let value = if *option == "method" {
             s.to_uppercase()
         } else {
             s.to_string()
@@ -328,9 +371,14 @@ fn check_option_values(name: &str, kind: &str, def: &Value) -> Result<()> {
                 .map(|a| format!("{a:?}"))
                 .collect::<Vec<_>>()
                 .join(" | ");
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {option:?} value {s:?} is not one this engine accepts ({list}) — a value outside the set is never honoured: the call bails, or a default is silently substituted"
-            );
+            match fallback {
+                Some(fb) => bail!(
+                    "capability {name:?} (kind {kind:?}) option {option:?} value {s:?} is not one this engine accepts ({list}) — it silently falls back to {fb:?}, so the typo runs to completion with the wrong behaviour"
+                ),
+                None => bail!(
+                    "capability {name:?} (kind {kind:?}) option {option:?} value {s:?} is not one this engine accepts ({list}) — a value outside the set is never honoured: the call bails, or a default is silently substituted"
+                ),
+            }
         }
     }
     Ok(())

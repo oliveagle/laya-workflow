@@ -1619,3 +1619,75 @@ pub fn test_validate_option_values(h: &mut Harness) {
         h.check("validate: expected a non-string error", false);
     }
 }
+
+/// Regression (P152): a capability option the engine reads as a boolean must be
+/// a real JSON boolean — `"false"` / `0` / `"yes"` are silently replaced by the
+/// option's default (the `"false"`-is-truthy footgun). And an out-of-set value
+/// for a *silent-fallback* string option (`pdf.op` → `text`,
+/// `web_fetch.format` → `text`, `web_search.method` → `GET`) is refused too,
+/// because the engine substitutes a default instead of bailing — the typo would
+/// run to completion with the wrong behaviour.
+pub fn test_validate_option_values_2(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — a real JSON boolean on a boolean option is accepted
+    h.check("validate: http expect_json true OK", ok(json!({"kind": "http", "url": "http://x", "expect_json": true})));
+    h.check("validate: http allow_error_status false OK", ok(json!({"kind": "http", "url": "http://x", "allow_error_status": false})));
+    h.check("validate: sqlite readonly false OK", ok(json!({"kind": "sqlite", "db": "/tmp/x.db", "readonly": false})));
+    h.check("validate: browser human true OK", ok(json!({"kind": "browser", "human": true})));
+    h.check("validate: browser launch false OK", ok(json!({"kind": "browser", "launch": false})));
+    h.check("validate: csv headers false OK", ok(json!({"kind": "csv", "headers": false})));
+    h.check("validate: notify bell true OK", ok(json!({"kind": "notify", "bell": true})));
+    h.check("validate: web_fetch body_urls_array true OK", ok(json!({"kind": "web_fetch", "body_urls_array": true})));
+
+    // positives — a member of each silent-fallback set
+    h.check("validate: pdf op info OK", ok(json!({"kind": "pdf", "path": "/tmp/x.pdf", "op": "info"})));
+    h.check("validate: web_fetch format markdown OK", ok(json!({"kind": "web_fetch", "format": "markdown"})));
+    h.check("validate: web_search method GET OK", ok(json!({"kind": "web_search", "endpoint": "http://x", "method": "GET"})));
+    h.check("validate: web_search method get (lowercase) OK", ok(json!({"kind": "web_search", "endpoint": "http://x", "method": "get"})));
+
+    // negatives — a non-boolean on a boolean option is silently defaulted
+    h.check("validate: expect_json as string \"false\" rejected", !ok(json!({"kind": "http", "url": "http://x", "expect_json": "false"})));
+    h.check("validate: expect_json as 0 rejected", !ok(json!({"kind": "http", "url": "http://x", "expect_json": 0})));
+    h.check("validate: expect_json as 1 rejected", !ok(json!({"kind": "http", "url": "http://x", "expect_json": 1})));
+    h.check("validate: sqlite readonly as \"false\" rejected", !ok(json!({"kind": "sqlite", "db": "/tmp/x.db", "readonly": "false"})));
+    h.check("validate: browser human as \"yes\" rejected", !ok(json!({"kind": "browser", "human": "yes"})));
+    h.check("validate: csv headers as 0 rejected", !ok(json!({"kind": "csv", "headers": 0})));
+    h.check("validate: notify bell as \"true\" rejected", !ok(json!({"kind": "notify", "bell": "true"})));
+
+    // negatives — a value outside a silent-fallback set is refused
+    h.check("validate: pdf op txt rejected (falls back to text)", !ok(json!({"kind": "pdf", "path": "/tmp/x.pdf", "op": "txt"})));
+    h.check("validate: web_fetch format html rejected (falls back to text)", !ok(json!({"kind": "web_fetch", "format": "html"})));
+    h.check("validate: web_search method PUT rejected (falls back to GET)", !ok(json!({"kind": "web_search", "endpoint": "http://x", "method": "PUT"})));
+
+    // the messages name the option and the reason
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "http", "url": "http://x", "expect_json": "false"}});
+    if let Err(e) = spec::from_spec(&s) {
+        let m = e.to_string();
+        h.check("validate: the bool error says must be true or false", m.contains("must be true or false"));
+        h.check("validate: the bool error names the option", m.contains("expect_json"));
+    } else {
+        h.check("validate: expected a bool-type error", false);
+    }
+
+    let mut s2 = base_spec("a", nodes.clone());
+    s2["capabilities"] = json!({"c": {"kind": "web_fetch", "format": "html"}});
+    if let Err(e) = spec::from_spec(&s2) {
+        let m = e.to_string();
+        h.check("validate: the fallback error says silently falls back", m.contains("silently falls back to"));
+        h.check("validate: the fallback error names the accepted set", m.contains("markdown"));
+    } else {
+        h.check("validate: expected a fallback-value error", false);
+    }
+}
