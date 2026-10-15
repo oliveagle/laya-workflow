@@ -1364,3 +1364,46 @@ pub fn test_validate_action_keys(h: &mut Harness) {
     h.check("validate: rubric dimension key typo `wieght` rejected", !ok(json!({"kind": "rubric", "dimensions": [{"question": "q", "levels": 3, "wieght": 1.0}]})));
     h.check("validate: chain step key typo `capabilty` rejected", !ok(json!({"kind": "call", "capability": "c", "chain": [{"capabilty": "d", "as": "d"}]})));
 }
+
+
+/// P148: the spec object (and its `policy` / `_bdd` sub-objects) is read by name
+/// too. A misspelled `satrt` / `policiy` / `allow_exex` is silently ignored:
+/// `validate` is green yet the workflow starts elsewhere / the policy never
+/// applies. Same class as P142-P147, now at the spec level.
+pub fn test_validate_spec_keys(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |spec: Value| spec::from_spec(&spec).is_ok();
+
+    // positives — the keys the engine actually reads
+    h.check("validate: a well-formed spec is OK", ok(base_spec("a", nodes.clone())));
+    let mut with_policy = base_spec("a", nodes.clone());
+    with_policy["policy"] = json!({"allow_exec": false, "allow_hosts": [], "allow_paths": [],
+        "max_timeout_ms": 1000, "max_output": 1024, "retries": 0});
+    h.check("validate: a fully declared policy is OK", ok(with_policy));
+    let mut with_bdd = base_spec("a", nodes.clone());
+    with_bdd["_bdd"] = json!({"feature": "f", "feature_path": "p", "mode": "decision"});
+    h.check("validate: compiler `_bdd` metadata is OK", ok(with_bdd));
+
+    // negatives — a stray / mistyped top-level key
+    let mut typo = base_spec("a", nodes.clone());
+    typo["satrt"] = json!("a");
+    h.check("validate: spec key typo `satrt` rejected", !ok(typo));
+
+    let mut stray = base_spec("a", nodes.clone());
+    stray["title"] = json!("x");
+    h.check("validate: a stray spec key is rejected", !ok(stray));
+
+    // negatives — the `policy` / `_bdd` sub-objects
+    let mut badpol = base_spec("a", nodes.clone());
+    badpol["policy"] = json!({"allow_exex": true});
+    h.check("validate: policy key typo `allow_exex` rejected", !ok(badpol));
+
+    let mut badbdd = base_spec("a", nodes.clone());
+    badbdd["_bdd"] = json!({"featur": "f"});
+    h.check("validate: `_bdd` key typo `featur` rejected", !ok(badbdd));
+}

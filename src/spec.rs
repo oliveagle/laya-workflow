@@ -87,6 +87,68 @@ pub fn check_version(spec: &Value) -> Result<VersionCheck> {
     Ok(VersionCheck::Ok(declared))
 }
 
+/// P148: a spec object is read by name too. `from_spec_with_dir_cycle` /
+/// `Registry::from_spec` / `check_version` read only the keys below (plus the
+/// derived `_bdd` metadata the compiler writes and `bdd` tooling reads back),
+/// and the `policy` object is read only for its six keys. Anything else —
+/// `satrt`, `policiy`, `allow_exex` — is never touched, so the declared value is
+/// silently ignored: the workflow starts elsewhere / the policy never applies.
+/// Same class as P142's `state` and P145-P147's node / question / action keys.
+pub fn validate_spec_keys(spec: &Value) -> Result<()> {
+    const KNOWN_SPEC_KEYS: &[&str] = &[
+        "name", "dsl_version", "description", "start", "nodes",
+        "max_iterations", "convergence_window", "convergence_eps",
+        "capabilities", "policy", "_bdd",
+    ];
+    const KNOWN_POLICY_KEYS: &[&str] = &[
+        "allow_exec", "allow_hosts", "allow_paths", "max_timeout_ms",
+        "max_output", "retries",
+    ];
+    const KNOWN_BDD_META_KEYS: &[&str] = &[
+        "feature", "feature_path", "mode", "scenario", "tags", "initial_state", "outputs",
+    ];
+    // A non-object spec is reported by the parser below ("spec missing 'start'"),
+    // so this check stays silent on it rather than pre-empting that message.
+    let Some(obj) = spec.as_object() else {
+        return Ok(());
+    };
+    for k in obj.keys() {
+        if !KNOWN_SPEC_KEYS.contains(&k.as_str()) {
+            bail!(
+                "spec carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                suggest(k, KNOWN_SPEC_KEYS)
+            );
+        }
+    }
+    if let Some(p) = obj.get("policy") {
+        let Some(po) = p.as_object() else {
+            bail!(
+                "spec `policy` must be an object (allow_exec / allow_hosts / allow_paths / max_timeout_ms / max_output / retries), not {} — a non-object policy is silently ignored and every default applies",
+                json_kind_name(p)
+            );
+        };
+        for k in po.keys() {
+            if !KNOWN_POLICY_KEYS.contains(&k.as_str()) {
+                bail!(
+                    "spec `policy` carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                    suggest(k, KNOWN_POLICY_KEYS)
+                );
+            }
+        }
+    }
+    if let Some(b) = obj.get("_bdd").and_then(Value::as_object) {
+        for k in b.keys() {
+            if !KNOWN_BDD_META_KEYS.contains(&k.as_str()) {
+                bail!(
+                    "spec `_bdd` carries an unrecognised key {k:?}{} — it is compiler metadata and the tooling reads only the known keys",
+                    suggest(k, KNOWN_BDD_META_KEYS)
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Parse a workflow spec (JSON value) into a runnable `ResilientWorkflow`.
 pub fn from_spec(spec: &Value) -> Result<ResilientWorkflow> {
     from_spec_in(spec, None)
@@ -1863,6 +1925,9 @@ fn from_spec_with_dir_cycle(
     base_dir: Option<&std::path::Path>,
     ref_stack: &mut Vec<String>,
 ) -> Result<ResilientWorkflow> {
+    // P148: every top-level key (and each `policy` / `_bdd` key) must be one the
+    // engine actually reads; a misspelling silently drops a declaration.
+    validate_spec_keys(spec)?;
     // Version gate: rejects forward-incompatible specs, accepts legacy ones.
     check_version(spec)?;
     // Capabilities + safety policy declared by this spec (may be empty).
