@@ -554,7 +554,7 @@ enum BddCmd {
         json: Option<String>,
     },
     /// App-parity gate: replay every built-in app's reference case (`laya-workflow
-    /// apps`, 25 cases) end to end through the app's checked-in BDD port spec and
+    /// apps`) end to end through the app's checked-in BDD port spec and
     /// require the engine's label to match the app's expectation. The port is the
     /// app's routing as *data*; this holds the two together, offline.
     AppParity {

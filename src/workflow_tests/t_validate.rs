@@ -407,6 +407,73 @@ pub fn test_validate_call_and_ui_contract(h: &mut Harness) {
     );
 }
 
+/// Regression (P141): a decision action must read a question whose *declared
+/// type* produces what the action reads — the action-level sibling of P122
+/// (which holds a threshold rule leaf's operator to its question's type). A gate
+/// reads `prob(option)` (needs a choice), merge_open_probs reads keyed
+/// probabilities (needs a choice), combine.choice routes on an option key (needs
+/// a choice) while combine.signal is read as a number (needs score/noul), and a
+/// threshold rule's `answer`/`answer_in` must name a real option (else it can
+/// never fire). Each mismatch quietly computes 0.0 / never matches; each shape
+/// with the right type still passes.
+pub fn test_validate_action_question_type(h: &mut Harness) {
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let choice_q = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}}});
+    let score_q = json!({"q": {"type": "score", "instructions": "?", "levels": 5}});
+    let mk = |qs: Value, primary: Value, action: Value| {
+        let mut n = json!({"name": "a", "questions": qs, "edge": edge.clone(),
+                           "min_confidence": 0.0, "max_retries": 1, "action": action});
+        if let Some(p) = primary.as_str() { n["primary_q"] = json!(p); }
+        spec::from_spec(&base_spec("a", json!([n]))).is_err()
+    };
+
+    h.check(
+        "validate: gate on a score question rejected",
+        mk(score_q.clone(), json!(null), json!({"kind": "gate", "question": "q", "option": "B"})),
+    );
+    h.check(
+        "validate: gate on a choice question OK",
+        !mk(choice_q.clone(), json!(null), json!({"kind": "gate", "question": "q", "option": "B", "block_at": 0.6, "allow_at": 0.7})),
+    );
+    h.check(
+        "validate: merge_open_probs on a score question rejected",
+        mk(score_q.clone(), json!("q"), json!({"kind": "merge_open_probs", "question": "q"})),
+    );
+    h.check(
+        "validate: merge_open_probs on a choice question OK",
+        !mk(choice_q.clone(), json!("q"), json!({"kind": "merge_open_probs", "question": "q"})),
+    );
+    let combine_qs = json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}},
+                            "s": {"type": "noul", "instructions": "?", "criteria": {"truthy": "y", "falsy": "n"}},
+                            "sc": {"type": "score", "instructions": "?", "levels": 5}});
+    h.check(
+        "validate: combine.choice on a score question rejected",
+        mk(combine_qs.clone(), json!("sc"), json!({"kind": "combine", "choice": "sc", "signal": "s"})),
+    );
+    h.check(
+        "validate: combine.signal on a choice question rejected",
+        mk(combine_qs.clone(), json!("c"), json!({"kind": "combine", "choice": "c", "signal": "c"})),
+    );
+    h.check(
+        "validate: combine choice + noul signal OK",
+        !mk(combine_qs.clone(), json!("c"), json!({"kind": "combine", "choice": "c", "signal": "s"})),
+    );
+
+    let thr = |rules: Value| mk(choice_q.clone(), json!(null), json!({"kind": "threshold", "question": "q", "rules": rules}));
+    h.check(
+        "validate: threshold rule answer not in the question's options rejected",
+        thr(json!([{"when": {"answer": "C"}, "label": "X"}, {"label": "Y"}])),
+    );
+    h.check(
+        "validate: threshold rule answer_in with an unknown member rejected",
+        thr(json!([{"when": {"answer_in": ["A", "Z"]}, "label": "X"}, {"label": "Y"}])),
+    );
+    h.check(
+        "validate: threshold rule answer in the options OK",
+        !thr(json!([{"when": {"answer": "A"}, "label": "X"}, {"label": "Y"}])),
+    );
+}
+
 /// Regression: threshold rule `when` may only use known operators — an unknown
 /// key silently never matches at runtime.
 pub fn test_validate_when_operator(h: &mut Harness) {

@@ -10239,7 +10239,7 @@ impl Default for AppParityOptions {
 }
 
 /// Replay every built-in app's reference case (`crate::apps::all_reference_cases`,
-/// the same 25 cases `laya-workflow apps` scores) end to end through the app's
+/// the same cases `laya-workflow apps` scores) end to end through the app's
 /// checked-in BDD port spec, and require the label the engine projects to match
 /// the app's expectation.
 ///
@@ -10359,7 +10359,7 @@ pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
 }
 
 /// CLI gate over [`app_parity_impl`]: exits non-zero if any reference case
-/// diverges. The 25 cases live in `crate::apps`; the port paths are checked in
+/// diverges. The cases live in `crate::apps`; the port paths are checked in
 /// under `dsl/`.
 pub fn app_parity_check(o: &AppParityOptions) -> Result<i32> {
     let root = repo_root();

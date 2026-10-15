@@ -681,6 +681,61 @@ fn validate_threshold_when(
     Ok(())
 }
 
+/// P141: every `answer`/`answer_in` value in a `when` (recursing through `all`)
+/// that reads a *choice* question must be one of that question's options —
+/// otherwise the leaf can never match (a dead rule). The runtime compares the
+/// answer text to `answer`/`answer_in` (`rule_matches`), so a typo silently
+/// produces a rule that never fires, the same bug class as a dangling edge or a
+/// dead `copy_keys` key. `default_q` is the question a leaf reads when it names
+/// none (the action's resolved question).
+fn validate_when_answers(
+    w: &Value,
+    node: &str,
+    questions: &Option<serde_json::Map<String, Value>>,
+    default_q: Option<&str>,
+) -> Result<()> {
+    if let Some(all) = w.get("all").and_then(Value::as_array) {
+        for sub in all {
+            validate_when_answers(sub, node, questions, default_q)?;
+        }
+        return Ok(());
+    }
+    let q = match w.get("question").and_then(Value::as_str).or(default_q) {
+        Some(q) => q,
+        None => return Ok(()),
+    };
+    let Some(qdef) = questions.as_ref().and_then(|m| m.get(q)) else {
+        return Ok(());
+    };
+    // Only a `choice` question produces option-key answers.
+    if qdef.get("type").and_then(Value::as_str) != Some("choice") {
+        return Ok(());
+    }
+    let space: Option<Vec<String>> = match qdef.get("criteria") {
+        Some(Value::Object(m)) if !m.contains_key("from_state") => {
+            Some(m.keys().cloned().collect())
+        }
+        Some(Value::Array(a)) => Some(a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()),
+        _ => None, // from_state → dynamic answer space, cannot check statically
+    };
+    let Some(space) = space else { return Ok(()) };
+    let mut vals: Vec<&str> = Vec::new();
+    if let Some(a) = w.get("answer").and_then(Value::as_str) {
+        vals.push(a);
+    }
+    if let Some(arr) = w.get("answer_in").and_then(Value::as_array) {
+        vals.extend(arr.iter().filter_map(Value::as_str));
+    }
+    for v in vals {
+        if !space.iter().any(|o| o == v) {
+            bail!(
+                "node {node}: threshold rule matches {q:?} on answer {v:?}, which is not one of its options {space:?} — the rule can never fire"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A threshold rule `when` that matches everything — `{"always": true}`.
 /// (`apply_rules_multi` / `rule_matches_multi` return true on `always`
 /// before looking at any other operator.)
@@ -1084,6 +1139,12 @@ fn validate_graph_semantics(
                                     );
                                 }
                                 if let Some(w) = r.get("when") {
+                                    validate_when_answers(
+                                        w,
+                                        name,
+                                        &questions,
+                                        aq.or_else(|| n.get("primary_q").and_then(|v| v.as_str())),
+                                    )?;
                                     if !thr_when_is_catch_all(w) {
                                         if seen.iter().any(|s| *s == w) {
                                             bail!(
@@ -1106,6 +1167,17 @@ fn validate_graph_semantics(
                     let q = aq
                         .or_else(|| n.get("primary_q").and_then(|v| v.as_str()))
                         .unwrap_or("?");
+                    // P141: a gate reads `prob(option)` from a *choice* question's
+                    // keyed option probabilities. On a score/noul the option key is
+                    // absent, so `prob` is 0.0 and the verdict comes from the
+                    // thresholds' polarity, not the answer — silently wrong.
+                    if let Some(t) = q_types.get(q).map(String::as_str) {
+                        if t == "score" || t == "noul" {
+                            bail!(
+                                "node {name}: gate reads question {q:?} of type {t:?} but a gate needs a `choice` question — `prob(option)` reads keyed option probabilities, so a score/noul answer always reads 0.0"
+                            );
+                        }
+                    }
                     if let Some(opt) = action.get("option").and_then(|v| v.as_str()) {
                         let crit = questions
                             .as_ref()
@@ -1121,6 +1193,22 @@ fn validate_graph_semantics(
                                     suggest(opt, &opt_candidates)
                                 );
                             }
+                        }
+                    }
+                }
+                if kind == "merge_open_probs" {
+                    // P141: merging reads `probabilities`, which is only meaningful
+                    // for a *choice* question (keyed option probabilities). A
+                    // score/noul answer's probabilities are ordinal, not option
+                    // probabilities, so merging them is silently meaningless.
+                    let q = aq
+                        .or_else(|| n.get("primary_q").and_then(|v| v.as_str()))
+                        .unwrap_or("?");
+                    if let Some(t) = q_types.get(q).map(String::as_str) {
+                        if t == "score" || t == "noul" {
+                            bail!(
+                                "node {name}: merge_open_probs reads question {q:?} of type {t:?} but merging needs a `choice` question — a score/noul answer's probabilities are ordinal (`\"0\",\"1\",…`), not option probabilities"
+                            );
                         }
                     }
                 }
@@ -1251,6 +1339,21 @@ fn validate_graph_semantics(
                                 "node {name}: combine {f:?} references unknown question {q:?}{}",
                                 suggest(q, &q_candidates)
                             );
+                        }
+                        // P141: `choice` routes on an option-key answer (`as_str`),
+                        // `signal` is read as a number (`as_f64`). Feeding each the
+                        // other's question type silently routes on the wrong shape.
+                        if let Some(t) = q_types.get(q).map(String::as_str) {
+                            if f == "choice" && (t == "score" || t == "noul") {
+                                bail!(
+                                    "node {name}: combine.choice names question {q:?} of type {t:?} but the choice must be a `choice` question — combine routes on its option-key answer"
+                                );
+                            }
+                            if f == "signal" && t == "choice" {
+                                bail!(
+                                    "node {name}: combine.signal names question {q:?} of type {t:?} but the signal must be a score/noul question — combine reads it as a number (`as_f64`), and a choice answer is a string that reads 0.0"
+                                );
+                            }
                         }
                     }
                     // `fallback` is a value of the choice question; when the choice
