@@ -111,6 +111,7 @@ struct Rx {
     effective_op: Regex,
     str_field_lit: Regex,
     get_text_lit: Regex,
+    clamp_args: Regex,
 }
 
 fn rx() -> &'static Rx {
@@ -138,6 +139,10 @@ fn rx() -> &'static Rx {
         str_field_lit: Regex::new(r#"str_field\s*\([^,]*,\s*&?with\s*,\s*[^,]*,\s*"([^"]+)""#)
             .unwrap(),
         get_text_lit: Regex::new(r#"get_text\s*\(\s*&?with\s*,\s*"([^"]+)""#).unwrap(),
+        // P175: the two arguments of the `clamp` a read site applies. Either may
+        // be a non-literal (`clamp(result_count as u64, 30)`), so the bounds are
+        // parsed as literals and a non-literal side is simply not promised.
+        clamp_args: Regex::new(r"\.clamp\(\s*([^()]*),([^()]*)\)").unwrap(),
     })
 }
 
@@ -587,4 +592,172 @@ fn ty_in(seg: &str) -> Option<ReadTy> {
         }
     }
     found
+}
+
+// ── P175: the numeric band a `with.<key>` read site clamps to ───────────────
+
+/// The band a read site clamps a value into. Either bound is `None` when the
+/// clamp's argument is not a literal - `clamp(result_count as u64, 30)` - so only
+/// the literal side is something the reader can be held to.
+#[derive(Clone, Copy)]
+struct Band {
+    lo: Option<f64>,
+    hi: Option<f64>,
+}
+
+impl Band {
+    fn empty(self) -> bool {
+        self.lo.is_none() && self.hi.is_none()
+    }
+
+    fn exceeds(self, n: f64) -> bool {
+        self.lo.is_some_and(|lo| n < lo) || self.hi.is_some_and(|hi| n > hi)
+    }
+
+    /// The band as the refusal message writes it.
+    fn describe(self) -> String {
+        match (self.lo, self.hi) {
+            (Some(lo), Some(hi)) => format!("{}..={}", num(lo), num(hi)),
+            (Some(lo), None) => format!("at least {}", num(lo)),
+            (None, Some(hi)) => format!("at most {}", num(hi)),
+            (None, None) => "no bound".to_string(),
+        }
+    }
+}
+
+/// A bound as the message writes it: `20` for `20.0`, `0.5` for `0.5`.
+fn num(n: f64) -> String {
+    if n.fract() == 0.0 && n.abs() < 1e15 {
+        format!("{}", n as i64)
+    } else {
+        format!("{n}")
+    }
+}
+
+/// A bound literal, or `None` when the argument is an expression.
+fn num_lit(s: &str) -> Option<f64> {
+    let t = s.trim().replace('_', "");
+    if t.is_empty() || !t.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    t.parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// A `call` step hands `with.<key>` a number the read site clamps, so the engine
+/// replaces it and the call runs with a different value (P175).
+///
+/// The read site is the truth: a key is judged only when the kind's module reads
+/// it at **exactly one** place and that read clamps with a literal bound. One
+/// read means the clamp is what every op sees, so the band is a promise - a
+/// second read (with its own band, or none) means the compiler cannot know which
+/// op will run and must stay silent. `None` also covers an open kind, a key
+/// whose read has no literal clamp, and a value that is not a number (a string
+/// is the *type* guard's business, P166).
+pub fn with_range_rejected(kind: &str, key: &str, value: &Value) -> Option<String> {
+    let band = *with_bands().get(canon_kind(kind))?.get(key)?;
+    let n = value.as_f64()?;
+    if !band.exceeds(n) {
+        return None;
+    }
+    Some(band.describe())
+}
+
+/// The judged keys of `kind` with the band each is clamped to, as the guard
+/// writes it (P175's drift guard pins this against the sources).
+pub fn with_band_keys(kind: &str) -> Vec<(String, String)> {
+    with_bands()
+        .get(canon_kind(kind))
+        .map(|m| m.iter().map(|(k, b)| (k.clone(), b.describe())).collect())
+        .unwrap_or_default()
+}
+
+fn with_bands() -> &'static BTreeMap<String, BTreeMap<String, Band>> {
+    static B: OnceLock<BTreeMap<String, BTreeMap<String, Band>>> = OnceLock::new();
+    B.get_or_init(build_bands)
+}
+
+fn build_bands() -> BTreeMap<String, BTreeMap<String, Band>> {
+    let r = rx();
+    let stripped: Vec<(&str, String)> = SOURCES
+        .iter()
+        .map(|(n, s)| {
+            let s = strip_comments(s);
+            let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
+            (*n, s[..cut].to_string())
+        })
+        .collect();
+    // module -> key -> (how many read sites, the band of the first one)
+    let mut per_mod: BTreeMap<String, BTreeMap<String, (usize, Option<Band>)>> =
+        BTreeMap::new();
+    for (name, src) in &stripped {
+        let m = per_mod.entry((*name).to_string()).or_default();
+        for c in r.with_get_lit.captures_iter(src) {
+            let key = c[1].to_string();
+            let seg = band_segment(src, c.get(0).unwrap().end());
+            let band = band_in(&seg);
+            let e = m.entry(key).or_insert((0, None));
+            if e.0 == 0 {
+                e.1 = band;
+            }
+            e.0 += 1;
+        }
+    }
+    let km = kind_module();
+    let mut out: BTreeMap<String, BTreeMap<String, Band>> = BTreeMap::new();
+    for (kind, module) in km {
+        if OPEN.contains(&kind.as_str()) {
+            continue;
+        }
+        let Some(m) = per_mod.get(module) else { continue };
+        let judged: BTreeMap<String, Band> = m
+            .iter()
+            .filter_map(|(k, (sites, band))| match band {
+                Some(b) if *sites == 1 && !b.empty() => Some((k.clone(), *b)),
+                _ => None,
+            })
+            .collect();
+        if !judged.is_empty() {
+            out.insert(kind.clone(), judged);
+        }
+    }
+    out
+}
+
+/// The literal clamp a read segment applies, if any. Only the first `clamp` of
+/// the read counts; a bound that is not a literal stays `None`.
+fn band_in(seg: &str) -> Option<Band> {
+    let r = rx();
+    let c = r.clamp_args.captures(seg)?;
+    Some(Band { lo: num_lit(&c[1]), hi: num_lit(&c[2]) })
+}
+
+/// Like [`read_segment`] but for the *band*: it does not stop at a following
+/// `with.get` when that one is an alias in the same read
+/// (`with.get("tab_concurrency").or_else(|| with.get("concurrency"))`) - the
+/// clamp comes after the alias and applies to both names.
+fn band_segment(src: &str, from: usize) -> String {
+    let end = src.len().min(from + 240);
+    let tail = &src[from..end];
+    let mut cut = tail.find(';').unwrap_or(tail.len());
+    if let Some(i) = tail.find(",\n") {
+        cut = cut.min(i);
+    }
+    let mut at = 0usize;
+    while let Some(p) = tail[at..].find("with.get") {
+        let i = at + p;
+        if is_alias_read(&tail[..i]) {
+            at = i + "with".len();
+            continue;
+        }
+        cut = cut.min(i);
+        break;
+    }
+    tail[..cut].to_string()
+}
+
+/// `… .or_else(|| ` right before a `with.get` - the same read under a second
+/// name, not a second read.
+fn is_alias_read(before: &str) -> bool {
+    let t: String = before.chars().filter(|c| !c.is_whitespace()).collect();
+    t.ends_with("or_else(||")
 }

@@ -9165,3 +9165,164 @@ pub fn test_bdd_policy_ceilings(h: &mut Harness) {
         !m.is_empty() && m.contains("non-negative integer"),
     );
 }
+
+pub fn test_bdd_call_with_ranges(h: &mut Harness) {
+    // P175: P164 refused a `with.<key>` no kind reads, P166 the wrong *type*.
+    // This is the *range*: the read site clamps the value, so a number outside
+    // the band is replaced at the read site and the call runs with a different
+    // one - `| with.result_count | 50 |` runs as 20, and `| with.min_score | 1.5 |`
+    // (set to filter harder) runs as 1.0, which filters nothing. Both used to
+    // compile with every gate green.
+    use laya_workflow::capability::with_keys::{with_band_keys, with_range_rejected};
+
+    let build = |text: &str| -> (bool, String) {
+        let feat = bdd::parse(text, "<probe>").expect("probe parses");
+        match bdd::compile_decision(&feat, &json!({})) {
+            Ok(_) => (true, String::new()),
+            Err(e) => (false, format!("{e:#}")),
+        }
+    };
+    let head = r#"
+@decision
+Feature: wrg
+  Background:
+    Given the capabilities
+      | clock | {"kind": "datetime", "op": "now"} |
+      | page  | {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222"} |
+      | plug  | {"kind": "plugin", "plugin": "websites/x"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When any other answer goes to "STOP"
+    Then call the capability "page"
+"#;
+    let rows = |extra: &str| format!("{head}      | with.op | research |\n{extra}");
+
+    // `browser` clamps `result_count` to 1..=20: 50 runs as 20.
+    let (ok, err) = build(&rows("      | with.result_count | 50 |\n"));
+    h.check(
+        "bdd call with-ranges: an above-band result_count is refused",
+        !ok && err.contains("with.result_count") && err.contains("1..=20"),
+    );
+    h.check(
+        "bdd call with-ranges: the refusal names the replaced value and the band",
+        err.contains("as 50") && err.contains("silently replaced"),
+    );
+    // ... and 0 is raised to 1.
+    let (ok, err) = build(&rows("      | with.result_count | 0 |\n"));
+    h.check(
+        "bdd call with-ranges: a below-band result_count is refused",
+        !ok && err.contains("with.result_count"),
+    );
+
+    // `min_score` clamps to 0..=1 - a "stricter" 1.5 silently becomes 1.0.
+    let (ok, err) = build(&rows("      | with.min_score | 1.5 |\n"));
+    h.check(
+        "bdd call with-ranges: a min_score above 1 is refused",
+        !ok && err.contains("with.min_score") && err.contains("0..=1"),
+    );
+
+    // `tab_concurrency` clamps to 1..=10, and `concurrency` is its alias - the
+    // clamp comes after the alias, so both names carry the band.
+    let (ok, err) = build(&rows("      | with.tab_concurrency | 25 |\n"));
+    h.check(
+        "bdd call with-ranges: a tab_concurrency above 10 is refused",
+        !ok && err.contains("with.tab_concurrency") && err.contains("1..=10"),
+    );
+    let (ok, err) = build(&rows("      | with.concurrency | 25 |\n"));
+    h.check(
+        "bdd call with-ranges: the `concurrency` alias carries the same band",
+        !ok && err.contains("with.concurrency") && err.contains("1..=10"),
+    );
+
+    // `max_open` clamps against a literal 30 with a *computed* lower bound, so
+    // only the top is a promise the reader can be held to.
+    let (ok, err) = build(&rows("      | with.max_open | 100 |\n"));
+    h.check(
+        "bdd call with-ranges: a max_open above the literal cap is refused",
+        !ok && err.contains("with.max_open") && err.contains("at most 30"),
+    );
+
+    // The band edges themselves are inside it.
+    let (ok, err) = build(&rows("      | with.result_count | 20 |\n      | with.max_open | 30 |\n      | with.tab_concurrency | 1 |\n      | with.min_score | 1 |\n"));
+    h.check("bdd call with-ranges: values on the band edges stay legal", ok);
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // `max_text` is clamped by `research` (500..=20000) but only capped by
+    // `snapshot` (<=200000), so the op decides which band applies and the
+    // compiler must not guess: a value legal for one op is refused by the other.
+    let (ok, err) = build(&rows("      | with.max_text | 100 |\n"));
+    h.check(
+        "bdd call with-ranges: a key read at two places with different bands is not judged",
+        ok,
+    );
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // A `${state.x}` template has no compile-time value, and an open kind
+    // (`plugin`) is never judged at all.
+    let (ok, err) = build(&rows("      | with.result_count | ${state.n} |\n"));
+    h.check("bdd call with-ranges: a `${state.x}` template is not judged", ok);
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+    let open = format!(
+        "{head}      | with.op | research |\n"
+    )
+    .replace("Then call the capability \"page\"", "Then call the capability \"plug\"");
+    let (ok, err) = build(&format!("{open}      | with.result_count | 50 |\n"));
+    h.check("bdd call with-ranges: an open kind is not judged", ok);
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // A chain entry is judged against *its own* capability's kind.
+    let (ok, err) = build(&format!(
+        "{head}      | with.op | research |\n      | chain.cap.capability | page |\n      | chain.cap.with.result_count | 50 |\n"
+    ));
+    h.check(
+        "bdd call with-ranges: a chain entry is judged by its own read site",
+        !ok && err.contains("with.result_count") && err.contains("1..=20"),
+    );
+
+    // ── the bands are read off the sources, not a table ──
+    // Pin the derived set: a `clamp` added, removed or re-bounded in a capability
+    // module turns this red, and one read too many takes the key out of the set.
+    let bands = with_band_keys("browser");
+    let want: Vec<(String, String)> = [
+        ("concurrency", "1..=10"),
+        ("limit", "1..=1000"),
+        ("max_open", "at most 30"),
+        ("min_score", "0..=1"),
+        ("result_count", "1..=20"),
+        ("tab_concurrency", "1..=10"),
+    ]
+    .iter()
+    .map(|(k, b)| (k.to_string(), b.to_string()))
+    .collect();
+    h.check(
+        "bdd call with-ranges: the band of every judged key is read off the read site",
+        bands == want,
+    );
+    h.check(
+        "bdd call with-ranges: the alias folds to the same kind, an open kind is empty",
+        with_band_keys("chrome_cdp") == want && with_band_keys("plugin").is_empty(),
+    );
+    h.check(
+        "bdd call with-ranges: an unclamped key and an open kind are never judged",
+        with_range_rejected("browser", "result_count", &json!(50)).is_some()
+            && with_range_rejected("browser", "result_count", &json!(20)).is_none()
+            && with_range_rejected("browser", "max_text", &json!(100)).is_none()
+            && with_range_rejected("browser", "query", &json!(5)).is_none()
+            && with_range_rejected("plugin", "result_count", &json!(50)).is_none(),
+    );
+    h.check(
+        "bdd call with-ranges: a non-number is the type guard's business, not this one",
+        with_range_rejected("browser", "result_count", &json!("50")).is_none(),
+    );
+}

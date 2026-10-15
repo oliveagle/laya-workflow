@@ -3618,6 +3618,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 }
                 guard_call_with(feature, &cap, &with, &call_chain, st.line)?;
                 guard_call_with_types(feature, &cap, &with, &call_chain, st.line)?;
+                guard_call_with_ranges(feature, &cap, &with, &call_chain, st.line)?;
                 guard_call_project(&project, &call_chain, st.line)?;
                 call_action = Some((cap, with, project));
             }
@@ -4116,6 +4117,58 @@ fn guard_call_with_types(
                      {kind:?} call reads it as {want} - the engine falls back to its default on any \
                      other JSON type, so the value you set is silently discarded.",
                     json_type_name(v)
+                );
+            }
+        }
+        Ok(())
+    };
+    check(cap, with)?;
+    for e in chain {
+        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(m) = e.get("with").and_then(Value::as_object) {
+            check(cn, m)?;
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a `call` step whose `with.<key>` number the engine replaces with a
+/// clamped one (P175).
+///
+/// P164 refused a key no kind reads, P166 the wrong *type*. This is the *range*:
+/// the read site clamps the value (`with.result_count` to `1..=20`,
+/// `with.min_score` to `0..=1`, `with.tab_concurrency` to `1..=10`,
+/// `with.limit` to `1..=1000`, `with.max_open` to `at most 30`), so
+/// `| with.result_count | 50 |` runs as 20 and `| with.min_score | 1.5 |` - set
+/// to filter harder - runs as 1.0, which filters nothing. The band is read off
+/// the read site ([`crate::capability::with_keys::with_range_rejected`]); a key
+/// the module reads at more than one place (`with.max_text` is clamped by
+/// `research` and capped by `snapshot` with different bands) has no single band
+/// the compiler can hold the author to, so it is left alone.
+fn guard_call_with_ranges(
+    feature: &Feature,
+    cap: &str,
+    with: &Map<String, Value>,
+    chain: &[Value],
+    line: usize,
+) -> Result<()> {
+    let caps = declared_capabilities(feature);
+    let check = |capname: &str, kv: &Map<String, Value>| -> Result<()> {
+        let Some(def) = caps.get(capname) else {
+            return Ok(());
+        };
+        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
+        for (k, v) in kv {
+            if matches!(v.as_str(), Some(s) if s.contains("${")) {
+                continue;
+            }
+            if let Some(band) = crate::capability::with_keys::with_range_rejected(kind, k, v) {
+                bail!(
+                    "line {line}: `call the capability {capname:?}` passes `with.{k}` as {v}, but a \
+                     {kind:?} call clamps it to {band} - a value outside that band is silently \
+                     replaced at the read site, so the setting that runs is not the one written."
                 );
             }
         }
