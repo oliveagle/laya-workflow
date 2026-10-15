@@ -5423,6 +5423,130 @@ Scenario: root
         "bdd step once: keep the state key twice is a list, still compiles",
         err_of(keep).is_empty(),
     );
+
+    // P163 closes the rest of the family: a question id declared twice in one
+    // Scenario replaces the first question outright (options and heuristic and
+    // all), and the Background's own one-per-feature steps - the iteration budget,
+    // the policy, the capabilities - each set a single spec field, so a second one
+    // silently wins.
+    let dupq = r#"
+@decision
+Feature: dup_question
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  And a choice question "go" asks "go again?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(dupq);
+    let first = line_of(dupq, "a choice question \"go\"", 0);
+    let second = line_of(dupq, "a choice question \"go\"", 1);
+    h.check(
+        "bdd step once: refuses the same question id twice in one scenario",
+        err.contains(&format!("line {second}:"))
+            && err.contains("the question \"go\"")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let bg = r#"
+@decision
+Feature: dup_background
+Background:
+  Given the policy
+    | allow_exec | true |
+  Given the policy
+    | allow_exec | false |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(bg);
+    let first = line_of(bg, "Given the policy", 0);
+    let second = line_of(bg, "Given the policy", 1);
+    h.check(
+        "bdd step once: refuses a second `Given the policy` in the Background",
+        err.contains(&format!("line {second}:"))
+            && err.contains("`Given the policy`")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let bgc = r#"
+@decision
+Feature: dup_background_caps
+Background:
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+  Given the capabilities
+    | echo | {"kind": "text", "op": "words"} |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(bgc);
+    let first = line_of(bgc, "Given the capabilities", 0);
+    let second = line_of(bgc, "Given the capabilities", 1);
+    h.check(
+        "bdd step once: refuses a second `Given the capabilities` in the Background",
+        err.contains(&format!("line {second}:"))
+            && err.contains("`Given the capabilities`")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    let bgi = r#"
+@decision
+Feature: dup_background_iterations
+Background:
+  Given the workflow runs at most 3 iterations
+  Given the workflow runs at most 9 iterations
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    let err = err_of(bgi);
+    let first = line_of(bgi, "runs at most", 0);
+    let second = line_of(bgi, "runs at most", 1);
+    h.check(
+        "bdd step once: refuses a second iteration budget",
+        err.contains(&format!("line {second}:"))
+            && err.contains("`the workflow runs at most N iterations`")
+            && err.contains(&format!("the first is at line {first}")),
+    );
+
+    // Positive: the normal Background carries all three settings at once.
+    let okbg = r#"
+@decision
+Feature: full_background
+Background:
+  Given the workflow runs at most 4 iterations
+  Given the policy
+    | allow_exec | true |
+  Given the capabilities
+    | digest | {"kind": "text", "op": "length"} |
+Scenario: root
+  Given a choice question "go" asks "go?"
+    | answer | meaning |
+    | yes | y |
+    | no  | n |
+  When any other answer goes to "STOP"
+"#;
+    h.check(
+        "bdd step once: one of each Background setting still compiles",
+        err_of(okbg).is_empty(),
+    );
 }
 
 /// P91: the declared output set must be real.

@@ -2843,6 +2843,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     first_q_line = Some(st.line);
                 }
                 last_question = Some(q.clone());
+                step_once(&mut declared, &format!("the question {q:?}"), st.line)?;
                 questions.insert(q, Value::Object(qv));
             }
             // ── heuristics attach to the most recent question in this Scenario ──
@@ -3542,8 +3543,10 @@ fn table_key_once(seen: &mut Vec<(String, usize)>, key: &str, line: usize, what:
 /// both lines are reported.
 ///
 /// The `keep the …` steps are the deliberate exception: their target is a *list*
-/// (`state.keep` / `state.rename` keys are separate maps), where a repeat is kept
-/// rather than dropped.
+/// (`state.keep`), where a repeat is kept rather than dropped. (`state.rename` is a
+/// map keyed by the output key instead, so a repeated target *is* refused, and the
+/// Background's `Given the workflow runs at most N iterations` / `Given the policy`
+/// / `Given the capabilities` are guarded by the same helper one function over.)
 fn step_once(declared: &mut Vec<(String, usize)>, what: &str, line: usize) -> Result<()> {
     if let Some((_, first)) = declared.iter().find(|(k, _)| k == what) {
         bail!(
@@ -3579,12 +3582,21 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
 
     let mut policy: Option<Value> = None;
     let mut capabilities: Option<Value> = None;
+    // P163: the Background's own one-per-feature steps. `Given the workflow runs
+    // at most N iterations` / `Given the policy` / `Given the capabilities` each
+    // set a single field of the spec, so a second one silently replaces the first
+    // - the same loss `step_once` refuses inside a Scenario.
+    let mut declared: Vec<(String, usize)> = Vec::new();
     for st in &feature.background {
         let (caps, tag) = dec_match(&st.kind, &st.text)
             .with_context(|| format!("line {}: {}", st.line, st.text))?;
         match tag {
-            "max_iterations" => max_iterations = Some(caps["n"].to_string().parse()?),
+            "max_iterations" => {
+                step_once(&mut declared, "`the workflow runs at most N iterations`", st.line)?;
+                max_iterations = Some(caps["n"].to_string().parse()?);
+            }
             "policy" => {
+                step_once(&mut declared, "`Given the policy`", st.line)?;
                 if st.table.is_empty() {
                     bail!(
                         "line {}: `Given the policy` needs a | key | value | table ",
@@ -3623,6 +3635,7 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                 policy = Some(Value::Object(p));
             }
             "capabilities" => {
+                step_once(&mut declared, "`Given the capabilities`", st.line)?;
                 if st.table.is_empty() {
                     bail!(
                         "line {}: `Given the capabilities` needs a | name | config | table ",
