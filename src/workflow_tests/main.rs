@@ -199,6 +199,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-step-once", t_bdd::test_bdd_step_once),
         ("bdd-call-with-keys", t_bdd::test_bdd_call_with_keys),
         ("bdd-call-project", t_bdd::test_bdd_call_project),
+        ("bdd-call-with-types", t_bdd::test_bdd_call_with_types),
         ("bdd-app-port-parity", t_bdd::test_bdd_app_port_parity),
         ("bdd-app-parity", t_bdd::test_bdd_app_parity),
         ("bdd-decision-suggest", t_bdd::test_bdd_decision_suggest),

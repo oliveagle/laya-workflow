@@ -8450,3 +8450,90 @@ Feature: proj
         h.check(&format!("  (unexpected: {err})"), false);
     }
 }
+
+/// P166 — the *value* half of the `call` table: a `with.<key>` whose JSON type the
+/// kind's read site does not accept is silently replaced by the default, so the
+/// compiler refuses it. The wanted type is read off the `with` read site.
+pub fn test_bdd_call_with_types(h: &mut Harness) {
+    use laya_workflow::capability::with_keys::with_value_rejected;
+
+    let build = |text: &str| -> (bool, String) {
+        let feat = bdd::parse(text, "<probe>").expect("probe parses");
+        match bdd::compile_decision(&feat, &json!({})) {
+            Ok(_) => (true, String::new()),
+            Err(e) => (false, format!("{e:#}")),
+        }
+    };
+    let head = r#"
+@decision
+Feature: wty
+  Background:
+    Given the capabilities
+      | clock | {"kind": "datetime", "op": "now"} |
+      | page  | {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222"} |
+      | cache | {"kind": "cache", "op": "set", "path": "/tmp/x.json", "ttl_secs": 60} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | A | yes |
+      | B | no |
+    When any other answer goes to "STOP"
+    Then call the capability "page"
+"#;
+
+    // `browser` reads `timeout_ms` with `as_u64()`: a string is silently dropped.
+    let (ok, err) = build(&format!("{head}      | with.op | open |\n      | with.timeout_ms | \"5000\" |\n"));
+    h.check(
+        "bdd call with-types: a string on an integer read is refused",
+        !ok && err.contains("with.timeout_ms") && err.contains("non-negative integer"),
+    );
+    h.check(
+        "bdd call with-types: the refusal names the silent fallback",
+        err.contains("silently discarded"),
+    );
+
+    // A number on a boolean read (`browser` reads `keep_open` with `as_bool()`).
+    let (ok, err) = build(&format!("{head}      | with.op | open |\n      | with.keep_open | 1 |\n"));
+    h.check(
+        "bdd call with-types: a number on a boolean read is refused",
+        !ok && err.contains("with.keep_open") && err.contains("boolean"),
+    );
+
+    // A chain entry is judged by *its own* capability's kind (`cache.ttl_secs` i64).
+    let (ok, err) = build(&format!(
+        "{head}      | with.op | open |\n      | chain.cap.capability | cache |\n      | chain.cap.with.ttl_secs | \"abc\" |\n"
+    ));
+    h.check(
+        "bdd call with-types: a chain entry is judged by its own read site",
+        !ok && err.contains("with.ttl_secs") && err.contains("\"cache\""),
+    );
+
+    // The legal shapes: a matching type, an untyped key (`op` goes through
+    // `as_str`, and any key `get_text` stringifies is not judged), and a
+    // `${state.x}` template whose runtime type is dynamic.
+    let (ok, err) = build(&format!(
+        "{head}      | with.op | open |\n      | with.timeout_ms | 5000 |\n      | with.keep_open | true |\n"
+    ));
+    h.check("bdd call with-types: matching types stay legal", ok);
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+    let (ok, err) = build(&format!(
+        "{head}      | with.op | open |\n      | with.timeout_ms | ${{state.t}} |\n"
+    ));
+    h.check("bdd call with-types: a `${state.x}` template is not judged", ok);
+    if !ok {
+        h.check(&format!("  (unexpected: {err})"), false);
+    }
+
+    // The contract is read off the sources, not a table: a typed read refuses, an
+    // untyped read (`op`) and an open kind (`plugin`) are never judged.
+    h.check(
+        "bdd call with-types: the type is read off the `with` read site",
+        with_value_rejected("browser", "timeout_ms", &json!("x")).is_some()
+            && with_value_rejected("cache", "ttl_secs", &json!("x")).is_some()
+            && with_value_rejected("browser", "op", &json!(5)).is_none()
+            && with_value_rejected("plugin", "keep_open", &json!(1)).is_none()
+            && with_value_rejected("browser", "timeout_ms", &json!(5000)).is_none(),
+    );
+}

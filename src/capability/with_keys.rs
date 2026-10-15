@@ -26,6 +26,7 @@
 //! stays silent. Every other kind returns `Some(set)`.
 
 use regex_lite::Regex;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
@@ -106,6 +107,10 @@ struct Rx {
     call: Regex,
     str_lit: Regex,
     ident: Regex,
+    as_ty: Regex,
+    effective_op: Regex,
+    str_field_lit: Regex,
+    get_text_lit: Regex,
 }
 
 fn rx() -> &'static Rx {
@@ -126,6 +131,13 @@ fn rx() -> &'static Rx {
         call: Regex::new(r"([A-Za-z_][A-Za-z0-9_]*(?:::\w+)?)\s*\(").unwrap(),
         str_lit: Regex::new(r#""([^"\\]*)""#).unwrap(),
         ident: Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap(),
+        // `regex_lite` has no `\b`; a trailing `([^A-Za-z0-9_]|$)` is the whole-word
+        // boundary for the accessor names below.
+        as_ty: Regex::new(r"as_(u64|i64|f64|str|bool|array|object)([^A-Za-z0-9_]|$)").unwrap(),
+        effective_op: Regex::new(r"effective_op\s*\(").unwrap(),
+        str_field_lit: Regex::new(r#"str_field\s*\([^,]*,\s*&?with\s*,\s*[^,]*,\s*"([^"]+)""#)
+            .unwrap(),
+        get_text_lit: Regex::new(r#"get_text\s*\(\s*&?with\s*,\s*"([^"]+)""#).unwrap(),
     })
 }
 
@@ -374,3 +386,205 @@ fn strip_comments(src: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
+// ── P166: the JSON type each kind's `with` read site wants ──────────────────
+
+/// The JSON type a `with.<key>` read requires, when **every** read of that key
+/// in the kind's module is typed and they agree. A key read anywhere with
+/// `stringify` / `.cloned()` / `json!` accepts any JSON value, so it is absent
+/// from the map - the compiler must not judge it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadTy {
+    Str,
+    U64,
+    I64,
+    F64,
+    Bool,
+    StrArray,
+    Object,
+}
+
+impl ReadTy {
+    /// What the read site wants, for the refusal message.
+    fn name(self) -> &'static str {
+        match self {
+            ReadTy::Str => "a string",
+            ReadTy::U64 => "a non-negative integer",
+            ReadTy::I64 => "an integer",
+            ReadTy::F64 => "a number",
+            ReadTy::Bool => "a boolean",
+            ReadTy::StrArray => "an array",
+            ReadTy::Object => "a JSON object",
+        }
+    }
+
+    fn accepts(self, v: &Value) -> bool {
+        match self {
+            ReadTy::Str => v.is_string(),
+            ReadTy::U64 => v.as_u64().is_some(),
+            ReadTy::I64 => v.as_i64().is_some(),
+            ReadTy::F64 => v.as_f64().is_some(),
+            ReadTy::Bool => v.is_boolean(),
+            ReadTy::StrArray => v.is_array(),
+            ReadTy::Object => v.is_object(),
+        }
+    }
+}
+
+/// A `call` step hands `with.<key>` a value whose JSON type the kind's read site
+/// does not accept, so the engine takes its default and the value the author set
+/// is silently discarded (P166). `None` when the compiler must not judge it: an
+/// open kind, a key no read types, or a key read untyped somewhere.
+pub fn with_value_rejected(kind: &str, key: &str, value: &Value) -> Option<&'static str> {
+    let ty = with_types().get(canon_kind(kind))?.get(key)?;
+    if ty.accepts(value) {
+        return None;
+    }
+    Some(ty.name())
+}
+
+fn with_types() -> &'static BTreeMap<String, BTreeMap<String, ReadTy>> {
+    static T: OnceLock<BTreeMap<String, BTreeMap<String, ReadTy>>> = OnceLock::new();
+    T.get_or_init(build_types)
+}
+
+/// `kind` -> the module stem its dispatch arm lives in (the file whose reads
+/// define the kind's `with` contract).
+fn kind_module() -> &'static BTreeMap<String, String> {
+    static M: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    M.get_or_init(|| {
+        let r = rx();
+        let stripped: Vec<(&str, String)> =
+            SOURCES.iter().map(|(n, s)| (*n, strip_comments(s))).collect();
+        let src_of =
+            |name: &str| stripped.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str());
+        let mut kind2var: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(p) = src_of("parse") {
+            for m in r.kind_var.captures_iter(p) {
+                let var = m.get(2).unwrap().as_str().to_string();
+                for k in r.kind_lit.captures_iter(m.get(1).unwrap().as_str()) {
+                    kind2var.entry(k[1].to_string()).or_insert_with(|| var.clone());
+                }
+            }
+        }
+        let mut var2mod: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(p) = src_of("mod") {
+            for m in r.var_fn.captures_iter(p) {
+                var2mod.entry(m[1].to_string()).or_insert_with(|| {
+                    m.get(2).map(|x| x.as_str()).unwrap_or("mod").to_string()
+                });
+            }
+        }
+        let mut out: BTreeMap<String, String> = BTreeMap::new();
+        for (kind, var) in &kind2var {
+            if let Some(m) = var2mod.get(var) {
+                out.insert(canon_kind(kind).to_string(), m.clone());
+            }
+        }
+        out
+    })
+}
+
+/// A read either wants a type or accepts anything. Two reads that disagree mean
+/// the module does not speak with one voice, so the key is not judgeable.
+fn note_ty(m: &mut BTreeMap<String, Option<ReadTy>>, key: &str, ty: Option<ReadTy>) {
+    match m.get_mut(key) {
+        Some(cur) => {
+            if *cur != ty {
+                *cur = None;
+            }
+        }
+        None => {
+            m.insert(key.to_string(), ty);
+        }
+    }
+}
+
+fn build_types() -> BTreeMap<String, BTreeMap<String, ReadTy>> {
+    let r = rx();
+    // Only the non-test half speaks for the engine: a typed `with.get` inside a
+    // `#[cfg(test)]` module would otherwise pin a key nothing read types.
+    let stripped: Vec<(&str, String)> = SOURCES
+        .iter()
+        .map(|(n, s)| {
+            let s = strip_comments(s);
+            let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
+            (*n, s[..cut].to_string())
+        })
+        .collect();
+    let mut per_mod: BTreeMap<String, BTreeMap<String, Option<ReadTy>>> = BTreeMap::new();
+    for (name, src) in &stripped {
+        let m = per_mod.entry((*name).to_string()).or_default();
+        for c in r.with_get_lit.captures_iter(src) {
+            let key = c[1].to_string();
+            let seg = read_segment(src, c.get(0).unwrap().end());
+            note_ty(m, &key, ty_in(&seg));
+        }
+        // `effective_op(op, with, …)` reads `with.op` as a string, and only a
+        // non-empty string overrides the definition (P: `queue` op override).
+        for _ in r.effective_op.captures_iter(src) {
+            note_ty(m, "op", Some(ReadTy::Str));
+        }
+        for c in r.str_field_lit.captures_iter(src) {
+            note_ty(m, &c[1].to_string(), Some(ReadTy::Str));
+        }
+        // `get_text` runs the value through `stringify`, so any JSON type is
+        // accepted - the key must not be judged.
+        for c in r.get_text_lit.captures_iter(src) {
+            note_ty(m, &c[1].to_string(), None);
+        }
+    }
+    let km = kind_module();
+    let mut out: BTreeMap<String, BTreeMap<String, ReadTy>> = BTreeMap::new();
+    for (kind, module) in km {
+        if OPEN.contains(&kind.as_str()) {
+            continue;
+        }
+        let Some(m) = per_mod.get(module) else { continue };
+        let typed: BTreeMap<String, ReadTy> =
+            m.iter().filter_map(|(k, v)| v.map(|t| (k.clone(), t))).collect();
+        if !typed.is_empty() {
+            out.insert(kind.clone(), typed);
+        }
+    }
+    out
+}
+
+/// The text right after `with.get("…")`, up to the end of the read expression:
+/// the end of the statement, the next read, or a line-break comma. What follows
+/// the read is what types it.
+fn read_segment(src: &str, from: usize) -> String {
+    let end = src.len().min(from + 160);
+    let tail = &src[from..end];
+    let mut cut = tail.find(';').unwrap_or(tail.len());
+    if let Some(i) = tail.find(",\n") {
+        cut = cut.min(i);
+    }
+    if let Some(i) = tail.find("with.get") {
+        cut = cut.min(i);
+    }
+    tail[..cut].to_string()
+}
+
+/// The JSON type every `as_*` accessor in a read segment wants, or `None` when
+/// there is none (the read accepts anything) or they disagree.
+fn ty_in(seg: &str) -> Option<ReadTy> {
+    let r = rx();
+    let mut found: Option<ReadTy> = None;
+    for c in r.as_ty.captures_iter(seg) {
+        let t = match &c[1] {
+            "u64" => ReadTy::U64,
+            "i64" => ReadTy::I64,
+            "f64" => ReadTy::F64,
+            "str" => ReadTy::Str,
+            "bool" => ReadTy::Bool,
+            "array" => ReadTy::StrArray,
+            _ => ReadTy::Object,
+        };
+        match found {
+            None => found = Some(t),
+            Some(prev) if prev != t => return None,
+            _ => {}
+        }
+    }
+    found
+}

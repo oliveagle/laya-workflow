@@ -3299,6 +3299,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     call_chain.push(Value::Object(e));
                 }
                 guard_call_with(feature, &cap, &with, &call_chain, st.line)?;
+                guard_call_with_types(feature, &cap, &with, &call_chain, st.line)?;
                 guard_call_project(&project, &call_chain, st.line)?;
                 call_action = Some((cap, with, project));
             }
@@ -3760,6 +3761,58 @@ fn json_type_name(v: &Value) -> &'static str {
         Value::Array(_) => "an array",
         Value::Object(_) => "an object",
     }
+}
+
+/// Refuse a `call` step that hands a capability a `with.<key>` value whose JSON
+/// type its read site does not accept (P166).
+///
+/// P164 refused a `with.<key>` no kind reads; this is the *value* half. The engine
+/// reads each such key through a typed accessor (`as_i64` / `as_str` / `as_bool` …)
+/// and falls back to the definition's value or a default on any other JSON type -
+/// so `| with.amount | "600" |` or `| with.keep_open | 1 |` leaves the author's value
+/// **silently discarded** while `bdd build` stays green. The wanted type is read off
+/// the `with` read site itself ([`crate::capability::with_keys::with_value_rejected`]):
+/// a key read untyped anywhere (`get_text` runs the value through `stringify`,
+/// `.cloned()`, `json!`) is never judged, and neither is a `${state.x}` template,
+/// whose runtime type is whatever the referenced value is.
+fn guard_call_with_types(
+    feature: &Feature,
+    cap: &str,
+    with: &Map<String, Value>,
+    chain: &[Value],
+    line: usize,
+) -> Result<()> {
+    let caps = declared_capabilities(feature);
+    let check = |capname: &str, kv: &Map<String, Value>| -> Result<()> {
+        let Some(def) = caps.get(capname) else {
+            return Ok(());
+        };
+        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
+        for (k, v) in kv {
+            if matches!(v.as_str(), Some(s) if s.contains("${")) {
+                continue;
+            }
+            if let Some(want) = crate::capability::with_keys::with_value_rejected(kind, k, v) {
+                bail!(
+                    "line {line}: `call the capability {capname:?}` passes `with.{k}` as {}, but a \
+                     {kind:?} call reads it as {want} - the engine falls back to its default on any \
+                     other JSON type, so the value you set is silently discarded.",
+                    json_type_name(v)
+                );
+            }
+        }
+        Ok(())
+    };
+    check(cap, with)?;
+    for e in chain {
+        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(m) = e.get("with").and_then(Value::as_object) {
+            check(cn, m)?;
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a `call` step's `project` row the engine can only silently discard
