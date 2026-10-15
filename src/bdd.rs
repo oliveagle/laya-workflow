@@ -20,7 +20,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use regex_lite::Regex;
 use serde_json::{json, Map, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -10287,6 +10287,250 @@ pub fn live(o: &LiveOptions) -> Result<i32> {
         cdp: None,
     };
     run(&ro)
+}
+
+// ── Decision-scoped live gate (`laya-workflow bdd live-decisions`) ──────────
+//
+// `dsl smoke --base-url <url>` is the only way to drive the whole decision
+// corpus through a live System-1 backend, but it *also* gates on the offline
+// EXPECT table — and a live model's labels are mostly *meant* to differ from
+// the heuristic-shaped offline expectations (exact-arithmetic inputs, a fixed
+// role order, …). So a live `dsl smoke` reports noise, not signal.
+//
+// This is the decision-scoped live variant: drive every `@decision` workflow's
+// registered sample states through the live backend and ask the **structural**
+// question alone — did every state terminate, in-contract, with no backend
+// error? Label agreement with the offline expectation is measured and printed,
+// but it is *information*, never a failure: the gate target is "the whole
+// decision corpus walks cleanly through the deployed System-1 model", not "the
+// model reproduces offline labels".
+
+pub struct LiveDecisionsOptions {
+    /// Live laya-tch / soft-decider base URL (default $BDD_BASE_URL, else
+    /// http://127.0.0.1:18405 — the deployed decision service).
+    pub base_url: Option<String>,
+    /// Only walk features whose path or stem contains this substring.
+    pub filter: Option<String>,
+    /// Write the per-spec verdicts as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for LiveDecisionsOptions {
+    fn default() -> Self {
+        Self { base_url: None, filter: None, json: None }
+    }
+}
+
+/// Per-spec live verdict. `structural_error` is `None` when the whole spec
+/// walked cleanly (compiles, validates, every state terminated in-contract); a
+/// label that disagreed with the offline expectation is *not* an error.
+#[derive(Clone, Debug, Default)]
+pub struct SpecLiveResult {
+    pub rel: String,
+    pub structural_error: Option<String>,
+    pub states_run: u32,
+    pub states_agreed: u32,
+    pub states_skipped: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LiveSummary {
+    pub specs_total: u32,
+    pub specs_clean: u32,
+    pub states_run: u32,
+    pub states_agreed: u32,
+    pub states_skipped: u32,
+}
+
+/// Fold per-spec live verdicts into the gate's numbers. Pure, so the regression
+/// can pin the "a label mismatch is not a failure" rule without a live backend:
+/// `specs_clean` counts specs with **no** structural error — a clean spec whose
+/// labels all disagreed is still clean.
+pub fn summarize_live(per_spec: &[SpecLiveResult]) -> LiveSummary {
+    let mut s = LiveSummary { specs_total: per_spec.len() as u32, ..Default::default() };
+    for r in per_spec {
+        if r.structural_error.is_none() {
+            s.specs_clean += 1;
+        }
+        s.states_run += r.states_run;
+        s.states_agreed += r.states_agreed;
+        s.states_skipped += r.states_skipped;
+    }
+    s
+}
+
+fn load_bench_table(name: &str) -> Result<BTreeMap<String, Value>> {
+    let path = repo_root().join("bench").join(name);
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let parsed: Value = serde_json::from_str(&raw)
+        .with_context(|| format!("parse {}", path.display()))?;
+    match parsed {
+        Value::Object(m) => Ok(m.into_iter().collect()),
+        _ => bail!("{} must be a JSON object", path.display()),
+    }
+}
+
+pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
+    let root = repo_root();
+    let wf_root = root.join("bdd").join("workflows");
+    let mut features: Vec<PathBuf> = Vec::new();
+    if wf_root.is_dir() {
+        walk_features(&wf_root, &mut features);
+    }
+    features.sort();
+
+    let states = load_bench_table("dsl_smoke_states.json")?;
+    let expect = load_bench_table("dsl_smoke_expect.json")?;
+    // Guarantee the scratch env vars a decision spec may reference resolve, so
+    // `from_spec_with_dir` validates in a bare shell (same as `bdd round-trip`).
+    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in env_map {
+            std::env::set_var(k, v);
+        }
+        let _ = crate::capability::secret::init(None);
+    }
+
+    let base_url = o
+        .base_url
+        .clone()
+        .or_else(|| std::env::var("BDD_BASE_URL").ok())
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:18405".to_string());
+    let backend = crate::backend::LayaBackend::new(&base_url);
+
+    let mut per_spec: Vec<SpecLiveResult> = Vec::new();
+    for f in &features {
+        let text = std::fs::read_to_string(f)
+            .with_context(|| format!("reading {}", f.display()))?;
+        let feature = parse(&text, &f.to_string_lossy())?;
+        if !has_tag(&feature.tags, "decision") {
+            continue;
+        }
+        let rel = f
+            .strip_prefix(&wf_root)
+            .map(|p| p.to_string_lossy().trim_start_matches('/').to_string())
+            .unwrap_or_else(|_| f.to_string_lossy().into_owned());
+        let name = f
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if let Some(filt) = &o.filter {
+            if !rel.contains(filt.as_str()) && !name.contains(filt.as_str()) {
+                continue;
+            }
+        }
+
+        let spec = match compile_decision(&feature, &json!({})) {
+            Ok(s) => s,
+            Err(e) => {
+                per_spec.push(SpecLiveResult {
+                    rel,
+                    structural_error: Some(format!("compile: {e:#}")),
+                    ..Default::default()
+                });
+                continue;
+            }
+        };
+        let wf = match crate::spec::from_spec_with_dir(&spec, None, None) {
+            Ok(w) => w,
+            Err(e) => {
+                per_spec.push(SpecLiveResult {
+                    rel,
+                    structural_error: Some(format!("validate: {e:#}")),
+                    ..Default::default()
+                });
+                continue;
+            }
+        };
+        let Some(state_map) = states.get(&name).and_then(Value::as_object) else {
+            // validate-only is a clean walk: there was nothing to drive.
+            per_spec.push(SpecLiveResult { rel, ..Default::default() });
+            continue;
+        };
+
+        let mut res = SpecLiveResult { rel, ..Default::default() };
+        for (label, st) in state_map {
+            // A capability gated to another platform cannot run here; skip it
+            // (informational) rather than fail a spec this host cannot exercise.
+            if crate::dsl_smoke::platform_bound_here(&spec) {
+                res.states_skipped += 1;
+                continue;
+            }
+            match wf.run(&backend, st) {
+                Ok(out) => {
+                    res.states_run += 1;
+                    let want = expect
+                        .get(&name)
+                        .and_then(Value::as_object)
+                        .and_then(|m| m.get(label))
+                        .cloned();
+                    if let Some(want) = &want {
+                        if crate::dsl_smoke::check_expect(&out, want).is_empty() {
+                            res.states_agreed += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    // A spec whose declared *local* endpoints are unreachable is
+                    // an environment gap, not a model regression — skip it the
+                    // way `dsl smoke` does.
+                    if crate::dsl_smoke::network_bound_offline(&spec) {
+                        res.states_skipped += 1;
+                        continue;
+                    }
+                    res.states_run += 1;
+                    res.structural_error = Some(format!("{label}: {e}"));
+                    break;
+                }
+            }
+        }
+        per_spec.push(res);
+    }
+
+    let s = summarize_live(&per_spec);
+    for r in &per_spec {
+        if let Some(err) = &r.structural_error {
+            eprintln!("[FAIL] {}: {err}", r.rel);
+        }
+    }
+    println!(
+        "live decisions: {}/{} specs walked structurally clean; agreement {}/{} states ({} skipped); backend={}",
+        s.specs_clean, s.specs_total, s.states_agreed, s.states_run, s.states_skipped, base_url
+    );
+
+    if let Some(path) = &o.json {
+        let report = json!({
+            "base_url": base_url,
+            "summary": {
+                "specs_total": s.specs_total,
+                "specs_clean": s.specs_clean,
+                "states_run": s.states_run,
+                "states_agreed": s.states_agreed,
+                "states_skipped": s.states_skipped
+            },
+            "specs": per_spec.iter().map(|r| json!({
+                "feature": r.rel,
+                "clean": r.structural_error.is_none(),
+                "error": r.structural_error,
+                "states_run": r.states_run,
+                "states_agreed": r.states_agreed,
+                "states_skipped": r.states_skipped
+            })).collect::<Vec<_>>()
+        });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&report)?))?;
+    }
+
+    if s.specs_clean < s.specs_total {
+        return Ok(1);
+    }
+    Ok(0)
 }
 
 // ── BDD vs pure JSON DSL (`laya-workflow bdd compare`) ──────────────────────

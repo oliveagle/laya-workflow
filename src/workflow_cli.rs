@@ -529,6 +529,23 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Decision-scoped live gate: drive every `@decision` workflow's registered
+    /// sample states through a live System-1 backend and require the whole
+    /// corpus to walk **structurally clean** (terminates, in-contract, no
+    /// backend error). Label agreement with the offline expectation is printed
+    /// as information, never gated - a live model's labels are *meant* to
+    /// differ from the heuristic-shaped offline expects.
+    LiveDecisions {
+        /// Live backend base URL (default $BDD_BASE_URL, else http://127.0.0.1:18405).
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Only walk features whose path or stem contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Write the per-spec verdicts as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Round-trip gate: every @decision feature must compile back to the same
     /// decision-graph spec as its checked-in dsl/<cat>/<name>.json counterpart.
     RoundTrip {
@@ -2591,6 +2608,15 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             filter: filter.clone(),
             out: out.clone(),
             timeout_secs: *timeout_secs,
+            json: json.clone(),
+        })?,
+        BddCmd::LiveDecisions {
+            base_url,
+            filter,
+            json,
+        } => bdd::live_decisions(&bdd::LiveDecisionsOptions {
+            base_url: base_url.clone(),
+            filter: filter.clone(),
             json: json.clone(),
         })?,
         BddCmd::RoundTrip { json } => {

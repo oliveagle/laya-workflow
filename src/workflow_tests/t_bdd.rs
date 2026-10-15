@@ -6802,3 +6802,110 @@ pub fn test_dsl_smoke_tally(h: &mut Harness) {
     h.eq("dsl-smoke tally: mixed corpus ok", ok3, 1);
     h.eq("dsl-smoke tally: mixed corpus failed", failed3, 4);
 }
+
+/// P133: the decision-scoped live gate's accounting. A live model's labels are
+/// *meant* to differ from the heuristic-shaped offline expectations, so label
+/// agreement is information — only a structural error (a state that fails to
+/// terminate in-contract, or a compile/validate failure) may fail a spec. This
+/// pins that rule, plus the CLI wiring, without needing a live endpoint.
+pub fn test_bdd_live_decisions(h: &mut Harness) {
+    use laya_workflow::bdd::{summarize_live, SpecLiveResult};
+
+    // A clean spec whose labels all DISAGREE (states_run>0, states_agreed==0)
+    // is still clean — a mismatch is not a failure.
+    let clean_disagree = SpecLiveResult {
+        rel: "routing/a.feature".into(),
+        structural_error: None,
+        states_run: 2,
+        states_agreed: 0,
+        states_skipped: 0,
+    };
+    let clean_agree = SpecLiveResult {
+        rel: "routing/b.feature".into(),
+        structural_error: None,
+        states_run: 3,
+        states_agreed: 1,
+        states_skipped: 1,
+    };
+    let broken = SpecLiveResult {
+        rel: "routing/c.feature".into(),
+        structural_error: Some("label_x: backend 500".into()),
+        states_run: 1,
+        states_agreed: 0,
+        states_skipped: 0,
+    };
+    let validate_only = SpecLiveResult {
+        rel: "routing/d.feature".into(),
+        ..Default::default()
+    };
+
+    let s = summarize_live(&[
+        clean_disagree.clone(),
+        clean_agree.clone(),
+        broken.clone(),
+        validate_only.clone(),
+    ]);
+    h.check(
+        "bdd live-decisions: specs_total counts every walked spec",
+        s.specs_total == 4,
+    );
+    h.check(
+        "bdd live-decisions: a label mismatch is NOT a failure (spec stays clean)",
+        s.specs_clean == 3,
+    );
+    h.check(
+        "bdd live-decisions: a structural error fails its spec",
+        s.specs_clean < s.specs_total,
+    );
+    h.check(
+        "bdd live-decisions: states_run sums across specs",
+        s.states_run == 2 + 3 + 1,
+    );
+    h.check(
+        "bdd live-decisions: states_agreed sums across specs",
+        s.states_agreed == 1,
+    );
+    h.check(
+        "bdd live-decisions: states_skipped sums across specs",
+        s.states_skipped == 1,
+    );
+    h.check(
+        "bdd live-decisions: a validate-only spec is clean",
+        summarize_live(&[validate_only.clone()]).specs_clean == 1,
+    );
+    h.check(
+        "bdd live-decisions: an empty corpus is a clean 0/0 pass",
+        {
+            let z = summarize_live(&[]);
+            z.specs_total == 0 && z.specs_clean == 0
+        },
+    );
+
+    // CLI wiring: `bdd live-decisions` exists and, over a filter that matches
+    // nothing, walks an empty corpus cleanly (exit 0) while still printing the
+    // summary line. A dead base URL proves no live endpoint is required.
+    let root = bdd::repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let out = std::process::Command::new(&bin)
+        .args([
+            "bdd",
+            "live-decisions",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--filter",
+            "zzz_no_such_spec_133",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd live-decisions");
+    let text = String::from_utf8_lossy(&out.stdout);
+    h.check(
+        "bdd live-decisions: CLI accepts the subcommand and prints the summary",
+        out.status.success() && text.contains("live decisions:"),
+    );
+}
