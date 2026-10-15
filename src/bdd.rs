@@ -1076,6 +1076,13 @@ fn dec_then_table() -> &'static Vec<(Regex, &'static str)> {
                 "keep_state",
             ),
             (
+                // P143: `state.rename` (project_state's `{out: in}` map) had no
+                // feature-language spelling, so `import` could not reproduce it.
+                Regex::new(r#"^map the state key "(?P<out>[^"]+)" from "(?P<in>[^"]+)"$"#)
+                    .unwrap(),
+                "rename_state",
+            ),
+            (
                 Regex::new(r"^require confidence at least (?P<n>\d+(?:\.\d+)?)$").unwrap(),
                 "min_conf",
             ),
@@ -1318,6 +1325,7 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("then", "label \"<label>\" otherwise"),
         ("then", "keep the answer to \"<q>\""),
         ("then", "keep the state key \"<k>\""),
+        ("then", "map the state key \"<out>\" from \"<in>\""),
         ("then", "require confidence at least <n>"),
         ("then", "allow up to <n> retries"),
         ("then", "the primary question is \"<q>\""),
@@ -2677,6 +2685,7 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut rules: Vec<Value> = Vec::new();
     let mut copy_keys: Vec<String> = Vec::new();
     let mut keep: Vec<String> = Vec::new();
+    let mut rename: Map<String, Value> = Map::new();
     let mut min_confidence: Option<f64> = None;
     let mut max_retries: Option<usize> = None;
     let mut last_question: Option<String> = None;
@@ -3091,6 +3100,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
             }
             "copy_keys" => copy_keys.push(caps["q"].to_string()),
             "keep_state" => keep.push(caps["k"].to_string()),
+            "rename_state" => {
+                rename.insert(caps["out"].to_string(), json!(caps["in"].to_string()));
+            }
             "min_conf" => min_confidence = Some(caps["n"].to_string().parse()?),
             "max_retries" => max_retries = Some(caps["n"].to_string().parse()?),
             "sub_workflow" => sub_workflow = Some(caps["w"].to_string()),
@@ -3323,8 +3335,15 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     if let Some(a) = action {
         n["action"] = a;
     }
-    if !keep.is_empty() {
-        n["state"] = json!({"keep": keep});
+    if !keep.is_empty() || !rename.is_empty() {
+        let mut st = Map::new();
+        if !keep.is_empty() {
+            st.insert("keep".into(), json!(keep));
+        }
+        if !rename.is_empty() {
+            st.insert("rename".into(), Value::Object(rename));
+        }
+        n["state"] = Value::Object(st);
     }
     Ok(n)
 }
@@ -8423,30 +8442,26 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
         imp_action(&mut st, primary_q, a)?;
     }
     if let Some(state) = o.get("state").and_then(Value::as_object) {
-        // P142: `project_state` also reads `rename`, but the `@decision` feature
-        // language has no step for it yet, so `import` cannot reproduce it.
-        // Silently dropping the `rename` would make the recompiled spec send a
-        // *different* set of keys to the backend than the source spec did.
-        // Refuse loudly rather than lose the projection.
-        if state
-            .get("rename")
-            .and_then(Value::as_object)
-            .map(|m| !m.is_empty())
-            .unwrap_or(false)
-        {
-            bail!(
-                "cannot import: node state carries `rename` ({} key(s)), which the feature language cannot express yet — refusing rather than silently dropping the projection",
-                state.get("rename").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0)
-            );
+        // P143: both halves of the projection round-trip now. `keep` first, then
+        // `rename`; serde_json keys are sorted, so the emitted feature is stable.
+        if let Some(keep) = state.get("keep").and_then(Value::as_array) {
+            for k in keep {
+                let k = imp_str("state.keep[]", Some(k))?;
+                imp_line("state.keep[]", k)?;
+                st.push("then", format!("keep the state key \"{k}\""), vec![]);
+            }
         }
-        let keep = state
-            .get("keep")
-            .and_then(Value::as_array)
-            .ok_or_else(|| anyhow!("cannot import: node state has no keep array"))?;
-        for k in keep {
-            let k = imp_str("state.keep[]", Some(k))?;
-            imp_line("state.keep[]", k)?;
-            st.push("then", format!("keep the state key \"{k}\""), vec![]);
+        if let Some(rename) = state.get("rename").and_then(Value::as_object) {
+            for (to, from) in rename {
+                imp_tok("state.rename[] out", to)?;
+                let from = imp_str("state.rename[] in", Some(from))?;
+                imp_line("state.rename[] in", from)?;
+                st.push(
+                    "then",
+                    format!("map the state key \"{to}\" from \"{from}\""),
+                    vec![],
+                );
+            }
         }
     }
     if let Some(mc) = o.get("min_confidence").and_then(Value::as_f64) {
