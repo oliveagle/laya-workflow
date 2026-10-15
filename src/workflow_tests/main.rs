@@ -124,6 +124,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-string-options", t_validate::test_validate_option_string),
         ("validate-option-domains", t_validate::test_validate_option_domains),
         ("validate-option-clamps", t_validate::test_validate_option_clamps),
+        ("validate-option-attach", t_validate::test_validate_option_attach),
         ("validate-option-values", t_validate::test_validate_option_values),
         ("validate-option-values-2", t_validate::test_validate_option_values_2),
         ("validate-option-values-3", t_validate::test_validate_option_values_3),

@@ -418,6 +418,33 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
             }
         }
     }
+    // P176: `attach: true` returns from the runtime on the attach branch
+    // (`browser.rs`: `if c.attach { ... }`) before the launch path is ever
+    // entered, so every launch-only option is read by nobody: `launch` itself
+    // ("attach never spawns"), `profile_dir` (the profile the launch path
+    // creates), `chrome_binary` (the binary it spawns) and
+    // `startup_timeout_ms` (the spawn wait - the attach path bounds its own
+    // reachability probe by `timeout_ms` instead). A spec that sets them while
+    // attaching believes Laya will start Chrome; the runtime instead bails on
+    // an unreachable endpoint and never reads them. Refuse the dead pair rather
+    // than let a written setting be silently ignored.
+    if ckind == "browser" {
+        if obj.get("attach").and_then(Value::as_bool).unwrap_or(false) {
+            let dead = [
+                ("launch", obj.get("launch") == Some(&Value::Bool(true))),
+                ("profile_dir", obj.get("profile_dir").and_then(Value::as_str).is_some_and(|s| !s.is_empty())),
+                ("chrome_binary", obj.get("chrome_binary").and_then(Value::as_str).is_some_and(|s| !s.is_empty())),
+                ("startup_timeout_ms", obj.contains_key("startup_timeout_ms")),
+            ]
+            .into_iter()
+            .find(|(_, dead)| *dead);
+            if let Some((key, _)) = dead {
+                bail!(
+                    "capability {name:?} (kind {kind:?}) sets \"attach\": true together with {key:?} \u{2014} the runtime returns on the attach branch before it reads that option, so {key:?} never runs; with attach=true Laya does not launch a browser, it borrows one at the endpoint, so the launch setting is silently ignored (drop {key:?}, or set launch=true without attach)"
+                );
+            }
+        }
+    }
     Ok(())
 }
 

@@ -2440,3 +2440,107 @@ pub fn test_validate_option_clamps(h: &mut Harness) {
             && capability::clamp_owned_idle_ms(u64::MAX) == 86_400_000
             && capability::clamp_owned_idle_ms(300_000) == 300_000);
 }
+
+/// P176: `browser` with `attach: true` returns on the attach branch
+/// (`browser.rs`: `if c.attach { ... }`) before the launch path is ever entered,
+/// so `launch`, `profile_dir`, `chrome_binary` and `startup_timeout_ms` are read
+/// by nobody - `launch` itself because "attach never spawns", the other three
+/// because only the launch path consumes them (`profile_dir` builds the profile
+/// Chrome is spawned against, `chrome_binary` is the binary it spawns, and
+/// `startup_timeout_ms` is the spawn wait - the attach path bounds its own
+/// reachability probe by `timeout_ms`). A spec that sets them while attaching
+/// believes Laya will start Chrome; the runtime instead bails on an unreachable
+/// endpoint and never reads them. `validate` accepted the dead pair in silence.
+/// `launch: false` is the one exception - it agrees with what attach already
+/// does (never spawn), so it is not a value the engine discards.
+pub fn test_validate_option_attach(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+    let err = |cap: Value| -> String {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).err().map(|e| e.to_string()).unwrap_or_default()
+    };
+    let ep = "http://127.0.0.1:9222";
+
+    // positives - attach on its own, and the options the attach branch *does* read
+    h.check(
+        "validate: browser attach alone is OK",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true})),
+    );
+    h.check(
+        "validate: attach + launch:false is OK (attaching never spawns anyway)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "launch": false})),
+    );
+    h.check(
+        "validate: attach + timeout_ms is OK (the attach probe reads it)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "timeout_ms": 5000})),
+    );
+    h.check(
+        "validate: attach + extension_path is OK (the attach branch injects it)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "extension_path": "/tmp/ext"})),
+    );
+    h.check(
+        "validate: chrome_cdp alias attach alone is OK",
+        ok(json!({"kind": "chrome_cdp", "endpoint": ep, "attach": true})),
+    );
+    h.check(
+        "validate: the four launch-only options stay OK without attach",
+        ok(json!({"kind": "browser", "endpoint": ep, "launch": true, "profile_dir": "/tmp/p",
+                  "chrome_binary": "/usr/bin/chrome", "startup_timeout_ms": 30000})),
+    );
+
+    // negatives - attach + a launch-only option is a setting that never runs
+    h.check(
+        "validate: attach + launch:true rejected",
+        !ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "launch": true})),
+    );
+    h.check(
+        "validate: attach + profile_dir rejected",
+        !ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "profile_dir": "/tmp/p"})),
+    );
+    h.check(
+        "validate: attach + chrome_binary rejected",
+        !ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "chrome_binary": "/usr/bin/chrome"})),
+    );
+    h.check(
+        "validate: attach + startup_timeout_ms rejected",
+        !ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "startup_timeout_ms": 30000})),
+    );
+    h.check(
+        "validate: chrome_cdp alias attach + launch:true rejected",
+        !ok(json!({"kind": "chrome_cdp", "endpoint": ep, "attach": true, "launch": true})),
+    );
+    // an empty profile_dir is the default the launch path falls back to, not a value anybody wrote
+    h.check(
+        "validate: attach + empty profile_dir is OK (the default, not a setting)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "profile_dir": ""})),
+    );
+
+    // the message names the dead option, says it never runs, and says why
+    let m = err(json!({"kind": "browser", "endpoint": ep, "attach": true, "profile_dir": "/tmp/p"}));
+    h.check("validate: the attach error names the dead option", m.contains("profile_dir"));
+    h.check("validate: the attach error says the option never runs", m.contains("never runs"));
+    h.check("validate: the attach error names the swallow", m.contains("silently ignored"));
+    let m = err(json!({"kind": "browser", "endpoint": ep, "attach": true, "launch": true, "profile_dir": "/tmp/p"}));
+    h.check("validate: the attach error names the first dead option in order", m.contains("\"launch\""));
+
+    // the guard covers exactly the launch-only options: knobs both paths read survive
+    h.check(
+        "validate: attach + human is OK (the action path reads it)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "human": false})),
+    );
+    h.check(
+        "validate: attach + max_text is OK (not a launch-path option)",
+        ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "max_text": 100})),
+    );
+}
