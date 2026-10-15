@@ -419,7 +419,7 @@ pub fn test_validate_call_and_ui_contract(h: &mut Harness) {
 pub fn test_validate_action_question_type(h: &mut Harness) {
     let edge = json!({"condition": {}, "default": "STOP"});
     let choice_q = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}}});
-    let score_q = json!({"q": {"type": "score", "instructions": "?", "levels": 5}});
+    let score_q = json!({"q": {"type": "score", "instructions": "?", "criteria": ["0", "1", "2"]}});
     let mk = |qs: Value, primary: Value, action: Value| {
         let mut n = json!({"name": "a", "questions": qs, "edge": edge.clone(),
                            "min_confidence": 0.0, "max_retries": 1, "action": action});
@@ -445,7 +445,7 @@ pub fn test_validate_action_question_type(h: &mut Harness) {
     );
     let combine_qs = json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}},
                             "s": {"type": "noul", "instructions": "?", "criteria": {"truthy": "y", "falsy": "n"}},
-                            "sc": {"type": "score", "instructions": "?", "levels": 5}});
+                            "sc": {"type": "score", "instructions": "?", "criteria": ["0", "1", "2"]}});
     h.check(
         "validate: combine.choice on a score question rejected",
         mk(combine_qs.clone(), json!("sc"), json!({"kind": "combine", "choice": "sc", "signal": "s"})),
@@ -1290,4 +1290,47 @@ pub fn test_validate_node_keys(h: &mut Harness) {
         n["has_action"] = json!("yes");
         !ok(n)
     });
+}
+
+
+/// P146: a question object and its `heuristic` may only carry the keys the engine
+/// reads. A typo (`critera`, `answer_feild`) or a stray key is silently dropped, so
+/// `validate` passes while the question's options / offline read-out vanish. Same
+/// class as P145, one level deeper.
+pub fn test_validate_question_keys(h: &mut Harness) {
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let action = json!({"kind": "copy_keys", "keys": ["q"]});
+    let ok = |qs: Value| {
+        let n = json!({"name": "a", "primary_q": "q", "questions": qs,
+                       "edge": edge.clone(), "action": action.clone()});
+        spec::from_spec(&base_spec("a", json!([n]))).is_ok()
+    };
+
+    // positives — recognised question and heuristic keys
+    h.check("validate: a fully declared choice question is OK", ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
+        "heuristic": {"field": "text", "match_any": ["x"], "p_hit": 0.9, "p_miss": 0.1, "fallback": "B"}}})));
+    h.check("validate: question.violating is OK", ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "violating": ["B"]}})));
+    h.check("validate: question.truthy/falsy are OK", ok(json!({"q": {
+        "type": "noul", "instructions": "?", "truthy": "yes", "falsy": "no"}})));
+    h.check("validate: heuristic.answer is OK", ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "heuristic": {"answer": "A"}}})));
+
+    // negatives — unrecognised question keys
+    h.check("validate: question key typo `critera` rejected", !ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "critera": {"A": "a"}}})));
+    h.check("validate: a stray question key is rejected", !ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "notes": "x"}})));
+
+    // negatives — unrecognised heuristic keys
+    h.check("validate: heuristic key typo `answer_feild` rejected", !ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
+        "heuristic": {"answer_field": "text", "answer_feild": "x"}}})));
+    h.check("validate: heuristic key typo `matc_any` rejected", !ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
+        "heuristic": {"match_any": ["x"], "matc_any": ["y"]}}})));
+    h.check("validate: a stray heuristic key is rejected", !ok(json!({"q": {
+        "type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
+        "heuristic": {"field": "text", "weights": [1, 2]}}})));
 }

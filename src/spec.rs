@@ -1040,6 +1040,50 @@ fn validate_graph_semantics(
                 }
             }
         }
+        // P146: a question object and its `heuristic` are read by name too. The
+        // engine reads a question's `type` / `instructions` / `criteria` /
+        // `heuristic` (the rules engine also reads `violating` / `violating_from`),
+        // and the offline backend reads the heuristic keys listed below. Any *other*
+        // key is never touched, so a typo — `critera`, `answer_feild`, `matc_any` —
+        // silently drops the question's options or the offline read-out: the same
+        // class as P145's node/edge keys, one level deeper. `truthy` / `falsy` are
+        // compiler-emitted `noul` annotations (accepted, like `has_action`); `answer`
+        // is the compiler's `heur_answer` step (round-tripped by `bdd import`) though
+        // today only `default_choice`'s first-key fallback answers such a question.
+        const KNOWN_QUESTION_KEYS: &[&str] = &[
+            "type", "instructions", "criteria", "heuristic",
+            "truthy", "falsy", "violating", "violating_from",
+        ];
+        const KNOWN_HEURISTIC_KEYS: &[&str] = &[
+            "answer_field", "field", "extract_numeric", "match_any", "match_mid_any",
+            "match_regex", "match_rules", "fallback", "answer", "p_hit", "p_mid",
+            "p_miss", "p_fallback", "p_violated", "p_ok", "score_hit", "score_mid",
+            "score_miss",
+        ];
+        if let Some(qs) = n.get("questions").and_then(Value::as_object) {
+            let qn = n.get("name").and_then(Value::as_str).unwrap_or("?");
+            for (qid, q) in qs {
+                let Some(qo) = q.as_object() else { continue };
+                for k in qo.keys() {
+                    if !KNOWN_QUESTION_KEYS.contains(&k.as_str()) {
+                        bail!(
+                            "node {qn}: question {qid:?} carries an unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                            suggest(k, KNOWN_QUESTION_KEYS)
+                        );
+                    }
+                }
+                if let Some(h) = qo.get("heuristic").and_then(Value::as_object) {
+                    for k in h.keys() {
+                        if !KNOWN_HEURISTIC_KEYS.contains(&k.as_str()) {
+                            bail!(
+                                "node {qn}: question {qid:?} heuristic carries an unrecognised key {k:?}{} — the offline backend never reads it, so it is silently ignored",
+                                suggest(k, KNOWN_HEURISTIC_KEYS)
+                            );
+                        }
+                    }
+                }
+            }
+        }
         if n.get("workflow").is_some() {
             continue; // reference node; its expanded nodes are validated above
         }
