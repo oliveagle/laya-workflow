@@ -3479,6 +3479,19 @@ pub fn test_bdd_import(h: &mut Harness) {
         "bdd import: a non-object is an error",
         import_spec(&not_a_spec).is_err(),
     );
+    // P142: a node `state.rename` projection has no feature-language step, so it
+    // must be refused by name — silently dropping it would recompile to a spec
+    // that sends a different set of keys to the backend.
+    let with_rename = json!({"name":"x","start":"n","nodes":[{"name":"n","primary_q":"ok","questions":{"ok":{"type":"choice","instructions":"?","criteria":{"A":"a","B":"b"}}},"edge":{"condition":{"A":"STOP"},"default":"STOP"},"state":{"keep":["a"],"rename":{"out":"a"}},"action":{"kind":"copy_keys","keys":["ok"]}}]});
+    h.check(
+        "bdd import: a state.rename projection is refused, not silently dropped",
+        import_spec(&with_rename).is_err(),
+    );
+    let with_keep = json!({"name":"x","start":"n","nodes":[{"name":"n","primary_q":"ok","questions":{"ok":{"type":"choice","instructions":"?","criteria":{"A":"a","B":"b"}}},"edge":{"condition":{"A":"STOP"},"default":"STOP"},"state":{"keep":["a"]},"action":{"kind":"copy_keys","keys":["ok"]}}]});
+    h.check(
+        "bdd import: a plain state.keep projection still imports",
+        import_spec(&with_keep).is_ok(),
+    );
 }
 
 /// `bdd import --dir`: lift a whole tree of JSON workflows into `.feature`s, one

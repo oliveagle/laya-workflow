@@ -1178,3 +1178,39 @@ pub fn test_validate_rule_scope_coherence(h: &mut Harness) {
         spec::from_spec(&cross).is_err(),
     );
 }
+
+/// Regression (P142): the node's `state` projection must be a shape `project_state`
+/// actually reads (`{"keep": [<key>…], "rename": {<out>: <key>}}`). Anything else
+/// — a non-object `state`, a `keep` that is not a string array, a `rename` that is
+/// not a string→string map, an unrecognised key, or a `state` object that declares
+/// neither — is silently ignored, so the node sends the WHOLE state to the backend:
+/// a projection that never projects. `validate` must reject it up front.
+pub fn test_validate_state_contract(h: &mut Harness) {
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let qs = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}}});
+    let mk = |state: Value| {
+        let mut n = json!({"name": "a", "questions": qs.clone(), "edge": edge.clone(),
+                           "min_confidence": 0.0, "max_retries": 1,
+                           "action": {"kind": "copy_keys", "keys": ["q"]}});
+        n["state"] = state;
+        spec::from_spec(&base_spec("a", json!([n]))).is_err()
+    };
+
+    // negatives — each silently degrades to "send the whole state"
+    h.check("validate: non-object state rejected", mk(json!(5)));
+    h.check("validate: string state rejected", mk(json!("keep q")));
+    h.check("validate: array state rejected", mk(json!(["q"])));
+    h.check("validate: state.keep as a string rejected", mk(json!({"keep": "q"})));
+    h.check("validate: state.keep with a non-string entry rejected", mk(json!({"keep": [1, "q"]})));
+    h.check("validate: state with an unrecognised key rejected", mk(json!({"keeep": ["q"]})));
+    h.check("validate: state.rename as a non-object rejected", mk(json!({"rename": ["q"]})));
+    h.check("validate: state.rename with a non-string source rejected", mk(json!({"rename": {"out": 5}})));
+    h.check("validate: state declaring neither keep nor rename rejected", mk(json!({})));
+
+    // positives — the shapes `project_state` reads
+    h.check("validate: non-empty state.keep OK", !mk(json!({"keep": ["q"]})));
+    h.check("validate: empty state.keep OK (the compiled 'no keeps' encoding)", !mk(json!({"keep": []})));
+    h.check("validate: state.rename OK", !mk(json!({"rename": {"out": "q"}})));
+    h.check("validate: state keep + rename OK", !mk(json!({"keep": ["q"], "rename": {"out": "q"}})));
+    h.check("validate: null state OK (no projection)", !mk(json!(null)));
+}

@@ -8423,6 +8423,22 @@ fn imp_node(out: &mut String, node: &Value) -> Result<()> {
         imp_action(&mut st, primary_q, a)?;
     }
     if let Some(state) = o.get("state").and_then(Value::as_object) {
+        // P142: `project_state` also reads `rename`, but the `@decision` feature
+        // language has no step for it yet, so `import` cannot reproduce it.
+        // Silently dropping the `rename` would make the recompiled spec send a
+        // *different* set of keys to the backend than the source spec did.
+        // Refuse loudly rather than lose the projection.
+        if state
+            .get("rename")
+            .and_then(Value::as_object)
+            .map(|m| !m.is_empty())
+            .unwrap_or(false)
+        {
+            bail!(
+                "cannot import: node state carries `rename` ({} key(s)), which the feature language cannot express yet — refusing rather than silently dropping the projection",
+                state.get("rename").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0)
+            );
+        }
         let keep = state
             .get("keep")
             .and_then(Value::as_array)

@@ -792,6 +792,20 @@ fn thr_rule_is_catch_all(r: &Value) -> bool {
 ///     rule is an unconditional catch-all (else some score emits the literal
 ///     "unmatched"), no rule follows a catch-all (dead code), and no `when`
 ///     repeats (first match wins, so the repeat can never fire)
+/// The JSON kind of a value, for error messages ("a string", "an array", …).
+/// (P142: the `state` projection is validated by kind, so the message names the
+/// kind the author actually wrote.)
+fn json_kind_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "a boolean",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
 fn validate_graph_semantics(
     nodes: &[WorkflowNode],
     node_list: &[Value],
@@ -1052,6 +1066,73 @@ fn validate_graph_semantics(
                 bail!(
                     "node {name}: min_confidence {mc} is outside [0, 1] — routes below it escalate, and > 1 makes every route fail"
                 );
+            }
+        }
+        // P142: the node's `state` projection must mean what it says. `project_state`
+        // reads only `{"keep": [<state key>…], "rename": {<out>: <state key>}}`;
+        // anything else — a non-object `state`, a `keep` that is not a string array,
+        // a `rename` that is not a string→string map, an unrecognised key, or a
+        // `state` object that declares neither — is *silently ignored*, so the node
+        // sends the WHOLE state to the backend: a projection that never projects.
+        // Same class as P139/P141 — `validate` must reject a shape that can only
+        // quietly disagree with its declared intent.
+        if let Some(state) = n.get("state") {
+            if !state.is_null() {
+                let Some(st) = state.as_object() else {
+                    bail!(
+                        "node {name}: `state` must be an object (`{{\"keep\": […], \"rename\": {{…}}}}`) or null, not {} — a non-object `state` is silently ignored and the whole state is sent to the backend",
+                        json_kind_name(state)
+                    );
+                };
+                for k in st.keys() {
+                    if k != "keep" && k != "rename" {
+                        bail!(
+                            "node {name}: `state` carries the unrecognised key {k:?}{} — only `keep` and `rename` are read, so it is silently ignored (the whole state is sent)",
+                            suggest(k, &["keep", "rename"])
+                        );
+                    }
+                }
+                if let Some(keep) = st.get("keep") {
+                    match keep.as_array() {
+                        None => bail!(
+                            "node {name}: `state.keep` must be an array of state-key strings, not {} — a non-array `keep` is silently ignored",
+                            json_kind_name(keep)
+                        ),
+                        Some(a) => {
+                            for (i, v) in a.iter().enumerate() {
+                                if v.as_str().is_none() {
+                                    bail!(
+                                        "node {name}: `state.keep[{i}]` is {}, not a string — a non-string key is silently dropped from the projection",
+                                        json_kind_name(v)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(rename) = st.get("rename") {
+                    match rename.as_object() {
+                        None => bail!(
+                            "node {name}: `state.rename` must be an object mapping each output key to a source state key, not {} — a non-object `rename` is silently ignored",
+                            json_kind_name(rename)
+                        ),
+                        Some(m) => {
+                            for (to, from) in m {
+                                if from.as_str().is_none() {
+                                    bail!(
+                                        "node {name}: `state.rename[{to:?}]` is {}, not a string — a non-string source key is silently dropped",
+                                        json_kind_name(from)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                if !st.contains_key("keep") && !st.contains_key("rename") {
+                    bail!(
+                        "node {name}: `state` declares neither `keep` nor `rename` — it can never project anything, so the whole state is sent; omit `state` or add a projection"
+                    );
+                }
             }
         }
         if let Some(action) = n.get("action") {
