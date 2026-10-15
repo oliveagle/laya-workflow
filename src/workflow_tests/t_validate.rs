@@ -268,6 +268,93 @@ pub fn test_validate_combine_q(h: &mut Harness) {
     h.check("validate: combine signal question missing rejected", r.is_err());
 }
 
+/// Regression (P139): a spec that `validate`s clean must be *runnable*. An action
+/// whose answer question is unresolvable (threshold/gate/merge_open_probs with
+/// neither `action.question` nor a node `primary_q`) — or a rubric/combine action
+/// missing the fields the runtime reads — used to pass validation and then bail
+/// on the first walk (`action … needs 'question' or a primary_q`, `rubric
+/// dimension … needs 'levels'`, `action combine: needs 'choice'`, …). Each is now
+/// rejected up front; each shape with the field present still passes. The compiler
+/// always emits these fields, so this guards hand-written / imported specs.
+pub fn test_validate_action_answer_contract(h: &mut Harness) {
+    let q = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}});
+    let score_q = json!({"q": {"type": "score", "instructions": "?", "criteria": ["low", "high"]}});
+    let edge = json!({"condition": {}, "default": "STOP"});
+
+    // threshold / gate / merge_open_probs: the answer question must resolve.
+    let thr = |action: Value, extra: Value| {
+        let mut n = node("a", q.clone(), edge.clone(), action);
+        if let Some(m) = extra.as_object() {
+            for (k, v) in m {
+                n[k.as_str()] = v.clone();
+            }
+        }
+        spec::from_spec(&base_spec("a", json!([n]))).is_err()
+    };
+    h.check(
+        "validate: threshold action with no question and no primary_q rejected",
+        thr(json!({"kind": "threshold", "rules": [{"label": "X"}]}), json!({})),
+    );
+    h.check(
+        "validate: gate action with no question and no primary_q rejected",
+        thr(json!({"kind": "gate", "option": "B"}), json!({})),
+    );
+    h.check(
+        "validate: merge_open_probs with no question and no primary_q rejected",
+        thr(json!({"kind": "merge_open_probs"}), json!({})),
+    );
+    h.check(
+        "validate: threshold action OK when the node declares primary_q",
+        !thr(json!({"kind": "threshold", "rules": [{"label": "X"}]}), json!({"primary_q": "q"})),
+    );
+    h.check(
+        "validate: threshold action OK when the action names the question",
+        !thr(json!({"kind": "threshold", "question": "q", "rules": [{"label": "X"}]}), json!({})),
+    );
+
+    // rubric: dimensions must be a non-empty array of {question, levels}.
+    let rub = |dims: Value| {
+        spec::from_spec(&base_spec(
+            "a",
+            json!([node("a", score_q.clone(), edge.clone(), json!({"kind": "rubric", "dimensions": dims}))]),
+        ))
+        .is_err()
+    };
+    h.check("validate: rubric with no dimensions rejected", rub(json!(null)));
+    h.check("validate: rubric with an empty dimensions array rejected", rub(json!([])));
+    h.check(
+        "validate: rubric dimension with no question rejected",
+        rub(json!([{"levels": 3, "weight": 1.0}])),
+    );
+    h.check(
+        "validate: rubric dimension with no levels rejected",
+        rub(json!([{"question": "q", "weight": 1.0}])),
+    );
+    h.check(
+        "validate: rubric with a complete dimension OK",
+        !rub(json!([{"question": "q", "levels": 3, "weight": 1.0}])),
+    );
+
+    // combine: choice and signal must both be present (and declared).
+    let comb = |action: Value| {
+        let qs = json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}},
+                        "s": {"type": "noul", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}});
+        spec::from_spec(&base_spec("a", json!([node("a", qs, edge.clone(), action)]))).is_err()
+    };
+    h.check(
+        "validate: combine with no choice rejected",
+        comb(json!({"kind": "combine", "signal": "s"})),
+    );
+    h.check(
+        "validate: combine with no signal rejected",
+        comb(json!({"kind": "combine", "choice": "c"})),
+    );
+    h.check(
+        "validate: combine with choice + signal OK",
+        !comb(json!({"kind": "combine", "choice": "c", "signal": "s"})),
+    );
+}
+
 /// Regression: threshold rule `when` may only use known operators — an unknown
 /// key silently never matches at runtime.
 pub fn test_validate_when_operator(h: &mut Harness) {

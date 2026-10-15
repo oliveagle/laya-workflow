@@ -1020,6 +1020,18 @@ fn validate_graph_semantics(
                                     suggest(q, &q_candidates)
                                 );
                             }
+                        } else if n.get("primary_q").and_then(|v| v.as_str()).is_none() {
+                            // P139: the walk reads its answer from `action.question`,
+                            // else the node `primary_q`. With neither, `run_action`
+                            // bails `action {kind} needs 'question' or a primary_q`
+                            // — but that is only after `validate` said the spec was
+                            // fine. Reject it here instead: the same "validate must
+                            // imply runnable" rule P39 applies to an undeclared
+                            // capability. (The compiler always emits a primary_q, so
+                            // this only guards hand-written / imported specs.)
+                            bail!(
+                                "node {name}: action {kind:?} reads an answer but names no question — add `\"question\": \"<Q>\"` to the action or `primary_q` to the node (otherwise the walk bails `action {kind} needs 'question' or a primary_q`)"
+                            );
                         }
                     }
                     _ => {}
@@ -1113,16 +1125,36 @@ fn validate_graph_semantics(
                     }
                 }
                 if kind == "rubric" {
-                    if let Some(dims) = action.get("dimensions").and_then(|v| v.as_array()) {
-                        for dim in dims.iter().filter_map(|d| d.as_object()) {
-                            let dq = dim.get("question").and_then(|v| v.as_str());
-                            if let Some(q) = dq {
+                    // P139: the walk needs `dimensions` (a non-empty array) and, in
+                    // each, a declared `question` and a numeric `levels`; a missing
+                    // one only bails at runtime (`action rubric: missing
+                    // 'dimensions'` / `rubric dimension needs 'question'` /
+                    // `rubric dimension {q} needs 'levels'`) after `validate` lied.
+                    match action.get("dimensions").and_then(|v| v.as_array()) {
+                        None => bail!(
+                            "node {name}: rubric action has no `dimensions` array — the walk bails `action rubric: missing 'dimensions'`"
+                        ),
+                        Some(dims) if dims.is_empty() => bail!(
+                            "node {name}: rubric action has an empty `dimensions` array"
+                        ),
+                        Some(dims) => {
+                            for (i, dim) in dims.iter().enumerate() {
+                                let Some(q) = dim.get("question").and_then(|v| v.as_str()) else {
+                                    bail!(
+                                        "node {name}: rubric dimension #{i} has no `question` — the walk bails `rubric dimension needs 'question'`"
+                                    );
+                                };
                                 if !has_q(q)
                                     && n.get("primary_q").and_then(|v| v.as_str()) != Some(q)
                                 {
                                     bail!(
                                         "node {name}: rubric dimension references unknown question {q:?}{}",
                                         suggest(q, &q_candidates)
+                                    );
+                                }
+                                if dim.get("levels").and_then(|v| v.as_f64()).is_none() {
+                                    bail!(
+                                        "node {name}: rubric dimension {q:?} has no `levels` — the walk bails `rubric dimension {q:?} needs 'levels'`"
                                     );
                                 }
                             }
@@ -1178,13 +1210,19 @@ fn validate_graph_semantics(
                 }
                 if kind == "combine" {
                     for f in ["choice", "signal"] {
-                        if let Some(q) = action.get(f).and_then(|v| v.as_str()) {
-                            if !has_q(q) {
-                                bail!(
-                                    "node {name}: combine {f:?} references unknown question {q:?}{}",
-                                    suggest(q, &q_candidates)
-                                );
-                            }
+                        // P139: `choice` and `signal` are read directly at runtime
+                        // (`action combine: needs 'choice'` / `needs 'signal'`), so
+                        // a missing one is a spec that validates but can never run.
+                        let Some(q) = action.get(f).and_then(|v| v.as_str()) else {
+                            bail!(
+                                "node {name}: combine action has no `{f}` question — the walk bails `action combine: needs '{f}'`"
+                            );
+                        };
+                        if !has_q(q) {
+                            bail!(
+                                "node {name}: combine {f:?} references unknown question {q:?}{}",
+                                suggest(q, &q_candidates)
+                            );
                         }
                     }
                     // `fallback` is a value of the choice question; when the choice
