@@ -249,6 +249,153 @@ const OBJECT_OPTIONS: &[(&str, &str)] = &[
     ("web_fetch", "headers"),
 ];
 
+/// String options the parsers read with `Value::as_str` (every plain-string
+/// option the engine has). A present value of any *other* JSON type is silently
+/// replaced by the option's default (usually `""`), so a typo such as
+/// `"format": 5` or `"separator": ["-"]` leaves the capability running with a
+/// value nobody wrote — the declared value is thrown away and `validate` is
+/// still green. This is the last face of the P128/P149/P150/P151/P152/P153/P154
+/// family: those covered numeric domains, closed-set strings, booleans, string
+/// arrays and objects, but a plain string option had never had its *type*
+/// checked. Options whose value is validated as a closed set (P151) or
+/// special-cased (`metrics.what`, `csv.delimiter`) are deliberately absent here;
+/// (kind, option), compared through `canon_kind`.
+const STRING_OPTIONS: &[(&str, &str)] = &[
+    ("agent", "session"),
+    ("agent", "url"),
+    ("archive", "dest"),
+    ("archive", "path"),
+    ("browser", "chrome_binary"),
+    ("browser", "endpoint"),
+    ("browser", "extension_path"),
+    ("browser", "profile_dir"),
+    ("cache", "path"),
+    ("chat", "auth_header"),
+    ("chat", "auth_value"),
+    ("chat", "model"),
+    ("chat", "system"),
+    ("chat", "url"),
+    ("computer_use", "allowed_surface"),
+    ("cron", "expr"),
+    ("datetime", "format"),
+    ("db", "alias"),
+    ("db", "duckdb"),
+    ("db", "endpoint"),
+    ("db", "sqlite"),
+    ("exec", "cwd"),
+    ("goal_runner", "reports_dir"),
+    ("graphql", "auth_header"),
+    ("graphql", "auth_value"),
+    ("graphql", "query"),
+    ("graphql", "url"),
+    ("http", "url"),
+    ("kafka", "topic"),
+    ("kafka", "url"),
+    ("keyvalue", "key"),
+    ("keyvalue", "path"),
+    ("llm", "auth_header"),
+    ("llm", "auth_value"),
+    ("llm", "model"),
+    ("llm", "system"),
+    ("llm", "url"),
+    ("mcp", "tool"),
+    ("mcp", "url"),
+    ("metrics", "disk_path"),
+    ("mqtt", "client_id"),
+    ("mqtt", "host"),
+    ("nats", "host"),
+    ("needle", "cact"),
+    ("notify", "path"),
+    ("notify", "sound"),
+    ("notify", "subtitle"),
+    ("notify", "title"),
+    ("pdf", "path"),
+    ("plugin", "browser"),
+    ("plugin", "dir"),
+    ("plugin", "entry"),
+    ("plugin", "name"),
+    ("plugin", "plugin"),
+    ("prom", "url"),
+    ("prometheus", "url"),
+    ("queue", "path"),
+    ("redis", "host"),
+    ("redis", "password"),
+    ("rpc", "method"),
+    ("rpc", "url"),
+    ("s3", "bucket"),
+    ("s3", "endpoint"),
+    ("s3", "prefix"),
+    ("script", "browser"),
+    ("script", "dir"),
+    ("script", "entry"),
+    ("script", "name"),
+    ("script", "plugin"),
+    ("shell", "command"),
+    ("shell", "cwd"),
+    ("sql", "dsn"),
+    ("smtp", "from"),
+    ("smtp", "host"),
+    ("smtp", "password"),
+    ("smtp", "username"),
+    ("sqlite", "db"),
+    ("sse", "url"),
+    ("tcp", "host"),
+    ("tcp", "until"),
+    ("text", "pattern"),
+    ("text", "replacement"),
+    ("text", "separator"),
+    ("udp", "host"),
+    ("vector", "collection"),
+    ("vector", "url"),
+    ("web_fetch", "body_field"),
+    ("web_fetch", "endpoint"),
+    ("web_fetch", "result_path"),
+    ("web_fetch", "text_field"),
+    ("web_fetch", "title_field"),
+    ("web_search", "endpoint"),
+    ("web_search", "query_param"),
+    ("web_search", "results_path"),
+    ("web_search", "snippet_field"),
+    ("web_search", "title_field"),
+    ("web_search", "url_field"),
+    ("webhook", "sign_header"),
+    ("webhook", "sign_secret"),
+    ("webhook", "url"),
+    ("xml", "tag"),
+];
+
+/// Signed-integer options the parsers read with `Value::as_i64`; a present value
+/// of any other type is silently defaulted, so `"offset_secs": "60"` quietly
+/// means `0` (P159).
+const I64_OPTIONS: &[(&str, &str)] =
+    &[("cache", "ttl_secs"), ("datetime", "offset_secs"), ("rpc", "id")];
+
+/// Every `(kind, option, type)` the per-kind option-*type* tables declare, with
+/// `type` the JSON type the engine reads the option as. Exposed so the
+/// regression can prove each entry is still live against the parser the tables
+/// describe: a hand-maintained table that drifts from the code is exactly the
+/// failure P128/P131 exist to catch — an entry for an option its kind no longer
+/// reads would sit here silently and give the illusion of coverage.
+pub(crate) fn option_type_sites() -> Vec<(&'static str, &'static str, &'static str)> {
+    let mut v: Vec<(&'static str, &'static str, &'static str)> = Vec::new();
+    for (k, o) in BOOL_OPTIONS {
+        v.push((k, o, "bool"));
+    }
+    for (k, o) in STRING_ARRAY_OPTIONS {
+        v.push((k, o, "str_array"));
+    }
+    for (k, o) in OBJECT_OPTIONS {
+        v.push((k, o, "object"));
+    }
+    for (k, o) in STRING_OPTIONS {
+        v.push((k, o, "string"));
+    }
+    for (k, o) in I64_OPTIONS {
+        v.push((k, o, "i64"));
+    }
+    v
+}
+
 fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     let Some(obj) = def.as_object() else {
         return Ok(());
@@ -297,6 +444,23 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
         if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_object).is_none() {
             bail!(
                 "capability {name:?} (kind {kind:?}) option {opt:?} must be a JSON object — the engine reads it as a map and ignores a non-object value, so the whole declaration is silently dropped"
+            );
+        }
+    }
+    for (k, opt) in STRING_OPTIONS {
+        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_str).is_none() {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {opt:?} must be a string — the engine reads it with `as_str()` and falls back to its default on any other JSON type, so the declared value is silently discarded"
+            );
+        }
+    }
+    for (k, opt) in I64_OPTIONS {
+        if *k == ckind
+            && obj.contains_key(*opt)
+            && obj.get(*opt).and_then(Value::as_i64).is_none()
+        {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {opt:?} must be an integer — the engine reads it with `as_i64()` and falls back to its default on any other JSON type, so the declared value is silently discarded"
             );
         }
     }
@@ -872,12 +1036,20 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         // ── workflow-authored script plugins ──
         "plugin" | "script" => Ok(Capability::Plugin(plugin::PluginCap {
-            plugin: f
-                .get("plugin")
-                .or_else(|| f.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            plugin: {
+                // Read *both* keys unconditionally. The chain this replaced —
+                // `f.get("plugin").or_else(|| f.get("name"))` — called
+                // `get("name")` only when `plugin` was absent, so
+                // `Fields::read` never saw it and a definition that set *both*
+                // (the two names the docs give for the same thing) was refused
+                // by the P128 "declares option(s) this engine never reads"
+                // check, with `name` named as though it were a typo. The
+                // semantics are unchanged: `plugin` decides when it is present.
+                let present = f.get("plugin").is_some();
+                let named = f.get("plugin").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let alias = f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if present { named } else { alias }
+            },
             dir: f.get("dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             entry: f.get("entry").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             op: f.get("op").and_then(|v| v.as_str()).unwrap_or("").to_string(),

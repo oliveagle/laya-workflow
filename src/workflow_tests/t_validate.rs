@@ -1860,6 +1860,25 @@ pub fn test_validate_capability_plugin(h: &mut Harness) {
     h.check("validate: plugin `name` alias is OK", ok(json!({"kind": "plugin", "name": "goofish"})));
     h.check("validate: plugin `dir` is OK", ok(json!({"kind": "script", "dir": "dsl/capabilities/hello.rhai"})));
     h.check("validate: plugin script `entry` is OK", ok(json!({"kind": "plugin", "entry": "run.rhai"})));
+    // P159: `plugin` and its `name` alias are the same thing under two names, so
+    // a definition that gives both is redundant, not wrong. The parser read the
+    // alias with `get("plugin").or_else(|| get("name"))`, which called
+    // `get("name")` only when `plugin` was *absent* -- so the P128 "declares
+    // option(s) this engine never reads" check never saw it and refused the
+    // pair, naming `name` as though it were a typo. Both keys are now read
+    // unconditionally and `plugin` still decides.
+    h.check(
+        "validate: plugin id + `name` alias together OK",
+        ok(json!({"kind": "plugin", "plugin": "alphaxiv", "name": "alphaxiv"})),
+    );
+    h.check(
+        "validate: script id + `name` alias together OK",
+        ok(json!({"kind": "script", "plugin": "p", "name": "p", "dir": "d.rhai"})),
+    );
+    h.check(
+        "validate: plugin id wins over the `name` alias",
+        ok(json!({"kind": "plugin", "plugin": "alphaxiv", "name": "goofish"})),
+    );
 
     // negatives — the definition can never run (runtime bails `... needs ...`)
     h.check("validate: plugin with no identity rejected", !ok(json!({"kind": "plugin"})));
@@ -1882,5 +1901,230 @@ pub fn test_validate_capability_plugin(h: &mut Harness) {
             h.check("validate: the plugin error explains the run failure", m.contains("fails at run"));
         }
         Ok(_) => h.check("validate: expected a plugin-identity error", false),
+    }
+}
+
+/// P159: every option the engine reads has a declared JSON *type*, and the type
+/// tables are provably still in step with the parser.
+///
+/// P150 closed the numeric domain, P151 the closed-set string, P152 the boolean,
+/// P153 the comma list / one-character string / fixed runner, P154 the string
+/// array and the object container. What was left is the plainest case of all: a
+/// **string** option (and a signed-integer one) given a value of some other JSON
+/// type. `as_str()` returns `None`, the parser falls back to its default, and
+/// `validate` stays green — `"format": 5` on a `datetime` capability quietly
+/// means the empty format nobody wrote. Same "a declared value the engine throws
+/// away" class, now about the last two JSON shapes: `string` and `i64`.
+pub fn test_validate_option_string(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+    let err_of = |cap: Value| -> String {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        match spec::from_spec(&s) {
+            Ok(_) => String::new(),
+            Err(e) => format!("{e:#}"),
+        }
+    };
+
+    // positives — the declared value is the type the engine reads
+    h.check(
+        "validate: text pattern/replacement/separator strings OK",
+        ok(json!({"kind": "text", "op": "replace", "pattern": "a", "replacement": "b", "separator": ","})),
+    );
+    h.check(
+        "validate: datetime format string OK",
+        ok(json!({"kind": "datetime", "op": "format", "format": "%Y-%m-%d"})),
+    );
+    h.check("validate: exec cwd string OK", ok(json!({"kind": "exec", "argv": ["pwd"], "cwd": "/tmp"})));
+    h.check(
+        "validate: datetime offset_secs integer OK",
+        ok(json!({"kind": "datetime", "op": "now", "offset_secs": 3600})),
+    );
+    h.check(
+        "validate: cache ttl_secs integer OK",
+        ok(json!({"kind": "cache", "op": "get", "path": "p", "ttl_secs": 60})),
+    );
+    h.check(
+        "validate: sysinfo (alias of metrics) disk_path string OK",
+        ok(json!({"kind": "sysinfo", "what": "disk", "disk_path": "/"})),
+    );
+    h.check(
+        "validate: object_store (alias) prefix string OK",
+        ok(json!({"kind": "object_store", "endpoint": "http://x", "bucket": "b", "prefix": "logs/"})),
+    );
+    h.check(
+        "validate: fetch_url (alias) text_field string OK",
+        ok(json!({"kind": "fetch_url", "endpoint": "http://x", "text_field": "body"})),
+    );
+    h.check(
+        "validate: shell command/cwd strings OK",
+        ok(json!({"kind": "shell", "command": "echo hi", "cwd": "/tmp"})),
+    );
+    h.check("validate: rpc id integer OK", ok(json!({"kind": "rpc", "url": "http://x", "id": 7})));
+
+    // negatives — a non-string is silently discarded by `as_str`
+    h.check(
+        "validate: text separator as a number rejected",
+        !ok(json!({"kind": "text", "op": "split", "separator": 5})),
+    );
+    h.check(
+        "validate: text separator as an array rejected",
+        !ok(json!({"kind": "text", "op": "split", "separator": ["\n"]})),
+    );
+    h.check(
+        "validate: datetime format as a number rejected",
+        !ok(json!({"kind": "datetime", "op": "format", "format": 5})),
+    );
+    h.check(
+        "validate: exec cwd as a bool rejected",
+        !ok(json!({"kind": "exec", "argv": ["pwd"], "cwd": true})),
+    );
+    h.check(
+        "validate: sysinfo disk_path as an array rejected",
+        !ok(json!({"kind": "sysinfo", "what": "disk", "disk_path": ["/"]})),
+    );
+    h.check(
+        "validate: object_store prefix as a number rejected",
+        !ok(json!({"kind": "object_store", "endpoint": "http://x", "bucket": "b", "prefix": 5})),
+    );
+    h.check(
+        "validate: fetch_url text_field as a number rejected",
+        !ok(json!({"kind": "fetch_url", "endpoint": "http://x", "text_field": 5})),
+    );
+    h.check(
+        "validate: shell cwd as a number rejected",
+        !ok(json!({"kind": "shell", "command": "echo", "cwd": 5})),
+    );
+    h.check(
+        "validate: plugin name as a number rejected",
+        !ok(json!({"kind": "plugin", "plugin": "x", "name": 5})),
+    );
+    h.check(
+        "validate: tcp until as a number rejected",
+        !ok(json!({"kind": "tcp", "host": "127.0.0.1", "port": 80, "until": 5})),
+    );
+
+    // negatives — a non-integer is silently discarded by `as_i64`
+    h.check(
+        "validate: datetime offset_secs as a string rejected",
+        !ok(json!({"kind": "datetime", "op": "now", "offset_secs": "60"})),
+    );
+    h.check(
+        "validate: cache ttl_secs as a string rejected",
+        !ok(json!({"kind": "cache", "op": "get", "path": "p", "ttl_secs": "60"})),
+    );
+    h.check(
+        "validate: rpc id as a string rejected",
+        !ok(json!({"kind": "rpc", "url": "http://x", "id": "7"})),
+    );
+
+    // the messages name the option, the type, and the silent fallback
+    let m = err_of(json!({"kind": "datetime", "op": "format", "format": 5}));
+    h.check("validate: the string error names the option", m.contains("\"format\""));
+    h.check("validate: the string error says must be a string", m.contains("must be a string"));
+    h.check("validate: the string error names the as_str fallback", m.contains("as_str()"));
+    let m2 = err_of(json!({"kind": "cache", "op": "get", "path": "p", "ttl_secs": "60"}));
+    h.check(
+        "validate: the integer error says must be an integer",
+        m2.contains("must be an integer"),
+    );
+    h.check("validate: the integer error names the as_i64 fallback", m2.contains("as_i64()"));
+
+    // ── drift guard: the type tables must still describe the parser ───────
+    // Each `(kind, option)` the tables name is probed with a value of the wrong
+    // JSON type. Two things must hold: the engine refuses it, and the refusal
+    // names that option (the type error does, and so does the "needs <field>"
+    // error when the option is one the kind *requires* — a required option is
+    // therefore caught twice over). A `never reads` hint means the table names
+    // an option that kind no longer reads: the drift this guard exists for.
+    let probe_extras = |kind: &str| -> Value {
+        let mut e = serde_json::Map::new();
+        match kind {
+            "http" | "rpc" | "graphql" | "llm" | "chat" | "vector" | "webhook" | "sse"
+            | "prometheus" | "prom" | "kafka" | "agent" => {
+                e.insert("url".into(), json!("http://probe"));
+            }
+            "mcp" => {
+                e.insert("tool".into(), json!("t"));
+                e.insert("url".into(), json!("http://probe"));
+            }
+            "web_search" => {
+                e.insert("endpoint".into(), json!("http://probe"));
+            }
+            "s3" => {
+                e.insert("endpoint".into(), json!("http://probe"));
+                e.insert("bucket".into(), json!("b"));
+            }
+            "sql" => {
+                e.insert("dsn".into(), json!("sqlite3://p"));
+            }
+            "sqlite" => {
+                e.insert("db".into(), json!("/tmp/p.db"));
+            }
+            "tcp" | "udp" => {
+                e.insert("host".into(), json!("127.0.0.1"));
+                e.insert("port".into(), json!(80));
+            }
+            "exec" => {
+                e.insert("argv".into(), json!(["probe"]));
+            }
+            "shell" => {
+                e.insert("command".into(), json!("probe"));
+            }
+            "plugin" | "script" => {
+                e.insert("plugin".into(), json!("probe"));
+                e.insert("name".into(), json!("probe"));
+                e.insert("dir".into(), json!("probe"));
+                e.insert("entry".into(), json!("probe"));
+            }
+            _ => {}
+        }
+        Value::Object(e)
+    };
+    let mut drifted: Vec<String> = Vec::new();
+    let mut probed = 0usize;
+    for (kind, opt, ty) in crate::capability::option_type_sites() {
+        let wrong = match ty {
+            "bool" => json!("false"),
+            "str_array" | "object" | "string" => json!(5),
+            "i64" => json!("60"),
+            _ => continue,
+        };
+        let mut cap = probe_extras(kind);
+        cap["kind"] = json!(kind);
+        cap[opt] = wrong;
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        probed += 1;
+        match spec::from_spec(&s) {
+            Ok(_) => drifted.push(format!("{kind}.{opt} ({ty}) was accepted")),
+            Err(e) => {
+                let m = format!("{e:#}");
+                if m.contains("never reads") {
+                    drifted.push(format!("{kind}.{opt} ({ty}): {m}"));
+                } else if !m.contains(opt) {
+                    drifted.push(format!("{kind}.{opt} ({ty}) is not named by its own error: {m}"));
+                }
+            }
+        }
+    }
+    h.check(
+        &format!("validate: every option-type table entry is live ({probed} probed)"),
+        drifted.is_empty(),
+    );
+    if !drifted.is_empty() {
+        for d in drifted.iter().take(8) {
+            h.check(&format!("validate: option-type drift {d}"), false);
+        }
     }
 }

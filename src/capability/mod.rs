@@ -34,7 +34,16 @@ pub mod human;
 pub mod local;
 pub mod math;
 pub mod net;
-mod parse;
+pub(crate) mod parse;
+
+/// The `(kind, option, JSON type)` triples the per-kind option-type tables
+/// declare, for the regression that proves each entry is still live against the
+/// parser it describes (P159). `parse` stays private; this is the one window the
+/// `laya-workflow-tests` bin needs, because a hand-maintained table that drifts
+/// from the code is exactly the failure P128/P131 exist to catch.
+pub fn option_type_sites() -> Vec<(&'static str, &'static str, &'static str)> {
+    parse::option_type_sites()
+}
 pub mod plugin;
 pub mod proto;
 pub mod secret;
