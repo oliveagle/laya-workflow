@@ -1691,3 +1691,77 @@ pub fn test_validate_option_values_2(h: &mut Harness) {
         h.check("validate: expected a fallback-value error", false);
     }
 }
+
+/// Regression (P153): the last "a declared value the engine throws away" holes
+/// on a capability option —
+///  * `metrics.what` / `sysinfo.what` is a comma-separated subset of a fixed
+///    vocabulary; an unknown token is silently dropped (`want.contains` never
+///    matches it), so the metric you asked for is missing from the result;
+///  * `csv.delimiter` is read via `chars().next()`, so a multi-character value
+///    is silently truncated to its first character;
+///  * `goal_runner.runner` is a fixed two-entry set; an unknown name makes the
+///    run bail (`resolve_runner`), so validate refuses it here.
+pub fn test_validate_option_values_3(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — a member of each closed set / a valid list / a single char
+    h.check("validate: metrics what mem,load,disk OK", ok(json!({"kind": "metrics", "what": "mem,load,disk"})));
+    h.check("validate: metrics what single mem OK", ok(json!({"kind": "metrics", "what": "mem"})));
+    h.check("validate: metrics what empty OK (engine defaults)", ok(json!({"kind": "metrics", "what": ""})));
+    h.check("validate: metrics what with whitespace OK", ok(json!({"kind": "metrics", "what": " mem , load "})));
+    h.check("validate: sysinfo (alias) what cpu OK", ok(json!({"kind": "sysinfo", "what": "cpu"})));
+    h.check("validate: goal_runner runner cxgo OK", ok(json!({"kind": "goal_runner", "runner": "cxgo"})));
+    h.check("validate: goal_runner runner cmdgo OK", ok(json!({"kind": "goal_runner", "runner": "cmdgo"})));
+    h.check("validate: goal_runner runner empty OK (engine defaults to cxgo)", ok(json!({"kind": "goal_runner", "runner": ""})));
+    h.check("validate: agent_goal (alias) runner cxgo OK", ok(json!({"kind": "agent_goal", "runner": "cxgo"})));
+    h.check("validate: csv delimiter | OK", ok(json!({"kind": "csv", "delimiter": "|"})));
+    h.check("validate: csv delimiter ; OK", ok(json!({"kind": "csv", "delimiter": ";"})));
+    h.check("validate: csv delimiter tab OK", ok(json!({"kind": "csv", "delimiter": "\t"})));
+    h.check("validate: csv delimiter empty OK (engine defaults to ',')", ok(json!({"kind": "csv", "delimiter": ""})));
+    h.check("validate: csv delimiter multibyte single char OK", ok(json!({"kind": "csv", "delimiter": "╎"})));
+
+    // negatives — an unknown token is silently dropped / a multi-char truncates
+    h.check("validate: metrics what momery rejected", !ok(json!({"kind": "metrics", "what": "momery"})));
+    h.check("validate: metrics what mem,momery rejected", !ok(json!({"kind": "metrics", "what": "mem,momery"})));
+    h.check("validate: metrics what cupy rejected", !ok(json!({"kind": "metrics", "what": "cupy"})));
+    h.check("validate: sysinfo (alias) what bad rejected", !ok(json!({"kind": "sysinfo", "what": "momery"})));
+    h.check("validate: goal_runner runner bogus rejected", !ok(json!({"kind": "goal_runner", "runner": "bogus"})));
+    h.check("validate: agent_goal (alias) runner bad rejected", !ok(json!({"kind": "agent_goal", "runner": "bogus"})));
+    h.check("validate: csv delimiter || rejected (truncates)", !ok(json!({"kind": "csv", "delimiter": "||"})));
+    h.check("validate: csv delimiter tab,tab rejected (truncates)", !ok(json!({"kind": "csv", "delimiter": "\t\t"})));
+
+    // a non-string value is silently dropped, like P151/P152
+    h.check("validate: metrics what as number rejected", !ok(json!({"kind": "metrics", "what": 5})));
+    h.check("validate: csv delimiter as number rejected", !ok(json!({"kind": "csv", "delimiter": 9})));
+
+    // the messages name the offending value and the reason
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "metrics", "what": "mem,momery"}});
+    if let Err(e) = spec::from_spec(&s) {
+        let m = e.to_string();
+        h.check("validate: the metrics error names the bad token", m.contains("\"momery\""));
+        h.check("validate: the metrics error says silently dropped", m.contains("silently dropped"));
+    } else {
+        h.check("validate: expected a metrics-list error", false);
+    }
+
+    let mut s2 = base_spec("a", nodes.clone());
+    s2["capabilities"] = json!({"c": {"kind": "csv", "delimiter": "||"}});
+    if let Err(e) = spec::from_spec(&s2) {
+        let m = e.to_string();
+        h.check("validate: the delimiter error says first character", m.contains("keeps only the first character"));
+        h.check("validate: the delimiter error counts the chars", m.contains("2 characters"));
+    } else {
+        h.check("validate: expected a delimiter error", false);
+    }
+}

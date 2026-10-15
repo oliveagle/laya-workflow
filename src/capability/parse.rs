@@ -199,6 +199,12 @@ const BOOL_OPTIONS: &[(&str, &str)] = &[
     ("web_fetch", "body_urls_array"),
 ];
 
+/// `metrics.what` is a comma-separated subset of this fixed vocabulary; the
+/// runtime splits on `,` and `want.contains(&tok)` never matches an unknown
+/// token, so a typo (`momery`, `cupy`) is silently dropped — the metric you
+/// asked for is simply missing from the result (P153).
+const METRICS_WHAT: &[&str] = &["mem", "load", "uptime", "cpu", "disk"];
+
 fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     let Some(obj) = def.as_object() else {
         return Ok(());
@@ -223,6 +229,39 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
             bail!(
                 "capability {name:?} (kind {kind:?}) option {opt:?} must be true or false — the engine reads it as a boolean, so a non-boolean value (e.g. the string \"false\") is silently replaced by the default"
             );
+        }
+    }
+    if ckind == "metrics" {
+        if let Some(v) = obj.get("what") {
+            let Some(s) = v.as_str() else {
+                bail!(
+                    "capability {name:?} (kind {kind:?}) option \"what\" must be a comma-separated string — the engine reads it as a string and ignores a non-string value"
+                );
+            };
+            for tok in s.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+                if !METRICS_WHAT.contains(&tok) {
+                    let list = METRICS_WHAT.iter().map(|m| format!("{m:?}")).collect::<Vec<_>>().join(" | ");
+                    bail!(
+                        "capability {name:?} (kind {kind:?}) option \"what\" has {tok:?}, which the engine never reads ({list}) — it is silently dropped, so the metric you asked for is missing from the result"
+                    );
+                }
+            }
+        }
+    }
+    if ckind == "csv" {
+        if let Some(v) = obj.get("delimiter") {
+            let Some(s) = v.as_str() else {
+                bail!(
+                    "capability {name:?} (kind {kind:?}) option \"delimiter\" must be a single-character string — the engine reads it via `chars().next()`, so a non-string value is silently replaced by the default (',')"
+                );
+            };
+            let n = s.chars().count();
+            if n > 1 {
+                let first = s.chars().next().unwrap();
+                bail!(
+                    "capability {name:?} (kind {kind:?}) option \"delimiter\" is {s:?} ({n} characters) — the engine keeps only the first character ({first:?}) via `chars().next()`, so the rest is silently dropped"
+                );
+            }
         }
     }
     if PORT_KINDS.contains(&kind) {
@@ -318,6 +357,9 @@ const CLOSED_SETS: &[(&str, &str, &[&str], bool, Option<&str>)] = &[
     ("pdf", "op", &["text", "info"], true, Some("text")),
     ("web_fetch", "format", &["text", "raw", "markdown"], true, Some("text")),
     ("web_search", "method", &["GET", "POST"], true, Some("GET")),
+    // P153: `goal_runner.runner` is a fixed two-entry set; an unknown name is
+    // rejected at run (`resolve_runner` bails), so validate refuses it here.
+    ("goal_runner", "runner", &["cxgo", "cmdgo"], true, None),
 ];
 
 /// Fold a kind alias to the canonical name the closed-set table uses.
@@ -334,6 +376,8 @@ fn canon_kind(k: &str) -> &str {
         "chrome_cdp" => "browser",
         "fetch_url" => "web_fetch",
         "search" => "web_search",
+        "sysinfo" => "metrics",
+        "agent_goal" => "goal_runner",
         other => other,
     }
 }

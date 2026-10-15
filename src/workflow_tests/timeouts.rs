@@ -587,20 +587,19 @@ pub fn test_capability_timeouts(h: &mut Harness) {
 
             let mut ok_pol = no_exec.clone();
             ok_pol.allow_exec = true;
-            // Unknown runner is refused by name, so a spec cannot point this at
-            // an arbitrary binary.
+            // Unknown runner is now refused at *parse* time (P153): a spec
+            // cannot even declare a runner outside the known set, let alone
+            // point this at an arbitrary binary.
             let reg_bad = capability::registry_from(
                 &[("g", json!({"kind": "goal_runner", "runner": "rm -rf /"}))],
                 Some(ok_pol.clone()),
-            )
-            .unwrap();
-            let e2 = reg_bad
-                .call("g", &json!({"goal": doc.to_string_lossy()}), &json!({}))
-                .unwrap_err()
-                .to_string();
+            );
             h.check(
-                "goal_runner: refuses an unknown runner",
-                e2.contains("unknown runner"),
+                "goal_runner: refuses an unknown runner at parse time",
+                match &reg_bad {
+                    Err(e) => e.to_string().contains("never honoured"),
+                    Ok(_) => false,
+                },
             );
 
             // A doc outside allow_paths is denied.
