@@ -355,6 +355,58 @@ pub fn test_validate_action_answer_contract(h: &mut Harness) {
     );
 }
 
+/// Regression (P140): the *rest* of the "validate must imply runnable" contract —
+/// a `call` action must name a capability (`run_call_action` bails `action
+/// kind=call needs 'capability'`), each `chain` step must name one (`chain step
+/// {i} needs 'capability'`), and a `ui_proposal` must declare the questions it
+/// reads by name (`ui_proposal: no answer {name}`; the names default to
+/// operation/field/amount). Each shape with the field present still passes.
+pub fn test_validate_call_and_ui_contract(h: &mut Harness) {
+    let q = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}});
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let with_caps = |caps: Value, action: Value| {
+        let mut spec = base_spec("a", json!([node("a", q.clone(), edge.clone(), action)]));
+        spec["capabilities"] = caps;
+        spec
+    };
+
+    h.check(
+        "validate: call action with no capability rejected",
+        spec::from_spec(&with_caps(json!({}), json!({"kind": "call"}))).is_err(),
+    );
+    h.check(
+        "validate: call chain step with no capability rejected",
+        spec::from_spec(&with_caps(
+            json!({"shell": {"kind": "datetime"}}),
+            json!({"kind": "call", "capability": "shell", "chain": [{"as": "x"}]}),
+        ))
+        .is_err(),
+    );
+    h.check(
+        "validate: call action with a declared capability OK",
+        spec::from_spec(&with_caps(json!({"shell": {"kind": "datetime"}}), json!({"kind": "call", "capability": "shell"}))).is_ok(),
+    );
+
+    let ui = |action: Value| spec::from_spec(&base_spec("a", json!([node("a", q.clone(), edge.clone(), action)]))).is_err();
+    h.check(
+        "validate: ui_proposal whose questions are undeclared rejected",
+        ui(json!({"kind": "ui_proposal"})),
+    );
+    let q3 = json!({
+        "operation": {"type": "choice", "instructions": "?", "criteria": {"fill": 1, "done": 1, "wait": 1, "blocked": 1}},
+        "field": {"type": "choice", "instructions": "?", "criteria": {"a": 1, "b": 1}},
+        "amount": {"type": "choice", "instructions": "?", "criteria": {"none": 1, "full": 1}},
+    });
+    let ok_ui = base_spec(
+        "a",
+        json!([node("a", q3, edge.clone(), json!({"kind": "ui_proposal", "operation": "operation", "field": "field", "amount": "amount"}))]),
+    );
+    h.check(
+        "validate: ui_proposal with operation/field/amount declared OK",
+        spec::from_spec(&ok_ui).is_ok(),
+    );
+}
+
 /// Regression: threshold rule `when` may only use known operators — an unknown
 /// key silently never matches at runtime.
 pub fn test_validate_when_operator(h: &mut Harness) {

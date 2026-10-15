@@ -1187,24 +1187,52 @@ fn validate_graph_semantics(
                     let mut cap_candidates: Vec<&str> =
                         declared_caps.iter().map(|s| s.as_str()).collect();
                     cap_candidates.sort_unstable();
-                    if let Some(cap) = action.get("capability").and_then(|v| v.as_str()) {
-                        if !declared_caps.contains(cap) {
-                            bail!(
-                                "node {name}: action calls undeclared capability {cap:?}{}",
-                                suggest(cap, &cap_candidates)
-                            );
-                        }
+                    let Some(cap) = action.get("capability").and_then(|v| v.as_str()) else {
+                        // P140: `run_call_action` bails `action kind=call needs
+                        // 'capability'` — a missing name is a spec that validates
+                        // but can never run.
+                        bail!(
+                            "node {name}: `call` action has no `capability` — the walk bails `action kind=call needs 'capability'`"
+                        );
+                    };
+                    if !declared_caps.contains(cap) {
+                        bail!(
+                            "node {name}: action calls undeclared capability {cap:?}{}",
+                            suggest(cap, &cap_candidates)
+                        );
                     }
                     if let Some(chain) = action.get("chain").and_then(|v| v.as_array()) {
-                        for step in chain.iter().filter_map(|v| v.as_object()) {
-                            if let Some(cap) = step.get("capability").and_then(|v| v.as_str()) {
-                                if !declared_caps.contains(cap) {
-                                    bail!(
-                                        "node {name}: action chain step calls undeclared capability {cap:?}{}",
-                                        suggest(cap, &cap_candidates)
-                                    );
-                                }
+                        for (i, step) in chain.iter().enumerate() {
+                            let Some(step) = step.as_object() else {
+                                bail!("node {name}: action chain step #{i} is not an object");
+                            };
+                            let Some(cap) = step.get("capability").and_then(|v| v.as_str()) else {
+                                // P140: `run_call_action` bails `chain step {i} needs
+                                // 'capability'`.
+                                bail!(
+                                    "node {name}: action chain step #{i} has no `capability` — the walk bails `chain step {i} needs 'capability'`"
+                                );
+                            };
+                            if !declared_caps.contains(cap) {
+                                bail!(
+                                    "node {name}: action chain step calls undeclared capability {cap:?}{}",
+                                    suggest(cap, &cap_candidates)
+                                );
                             }
+                        }
+                    }
+                }
+                if kind == "ui_proposal" {
+                    // P140: the walk reads the operation/field/amount answers by
+                    // name (`ui_proposal: no answer {name:?}`), defaulting the
+                    // names to "operation"/"field"/"amount" when unset. A node that
+                    // does not declare them validates but can never run.
+                    for (fld, dflt) in [("operation", "operation"), ("field", "field"), ("amount", "amount")] {
+                        let q = action.get(fld).and_then(|v| v.as_str()).unwrap_or(dflt);
+                        if !has_q(q) && n.get("primary_q").and_then(|v| v.as_str()) != Some(q) {
+                            bail!(
+                                "node {name}: ui_proposal reads question {q:?} (from `.{fld}`), which is not declared on this node — the walk bails `ui_proposal: no answer {q:?}`"
+                            );
                         }
                     }
                 }
