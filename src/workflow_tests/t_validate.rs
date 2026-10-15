@@ -2713,3 +2713,156 @@ pub fn test_validate_call_with(h: &mut Harness) {
         okc("raw", json!({"token": "x", "n": 1}), json!([])),
     );
 }
+
+/// P178: a hand-written / side-loaded JSON spec is held to the same `call`-step
+/// `project` contract the BDD compile path enforces (P165) - a pointer the engine
+/// skips (it reads a pointer with `as_str()`, so any other JSON type leaves the
+/// state key unwritten), an empty projection key, or a `chain` row keyed by an
+/// explicit empty alias. Those three checks first lived only in `bdd.rs`, so a
+/// `validate --spec` on hand-written JSON dropped them all with exit 0. The
+/// decision is now shared (`capability::call_project::project_step_issue`), with
+/// the BDD path prefixing `line N:` and this one `node <name>:`.
+pub fn test_validate_call_project(h: &mut Harness) {
+    use crate::capability::call_project::{project_issue_body, project_step_issue, ProjectIssue};
+    // A `clock` (`datetime`) call carrying a `project` table and an optional
+    // `chain`; only the `project` half is under test here.
+    let spec = |project: Value, chain: Value| -> Value {
+        let mut s = base_spec(
+            "a",
+            json!([
+                node(
+                    "a",
+                    json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+                    json!({"condition": {}, "default": "STOP"}),
+                    json!({"kind": "call", "capability": "clock", "project": project, "chain": chain})
+                )
+            ]),
+        );
+        s["capabilities"] = json!({ "clock": {"kind": "datetime", "op": "now"} });
+        s
+    };
+    let ok = |project: Value, chain: Value| spec::from_spec(&spec(project, chain)).is_ok();
+    let err = |project: Value, chain: Value| -> String {
+        spec::from_spec(&spec(project, chain))
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+    };
+
+    // ── the clean cases stay clean ──
+    h.check(
+        "validate call-project: a string pointer is OK",
+        ok(json!({"now": "/epoch"}), json!([])),
+    );
+    h.check(
+        "validate call-project: an empty projection table is OK",
+        ok(json!({}), json!([])),
+    );
+    h.check(
+        "validate call-project: a string pointer on a chain entry is OK",
+        ok(
+            json!({"now": "/epoch"}),
+            json!([{"as": "x", "capability": "clock", "project": {"base": "/offset_secs"}}]),
+        ),
+    );
+    // a chain entry with *no* `as` is legal in a spec: the engine falls back to
+    // the capability name, so nothing is filed under a dead key.
+    h.check(
+        "validate call-project: a chain entry with no `as` is OK (falls back to the cap name)",
+        ok(
+            json!({"now": "/epoch"}),
+            json!([{"capability": "clock", "project": {"base": "/offset_secs"}}]),
+        ),
+    );
+
+    // ── a pointer of any non-string JSON type is skipped ──
+    let m = err(json!({"count": 3}), json!([]));
+    h.check("validate call-project: a numeric pointer is refused", !m.is_empty());
+    h.check("validate call-project: the error names the node", m.contains("node a:"));
+    h.check("validate call-project: the error names the row", m.contains("project.count"));
+    h.check(
+        "validate call-project: the error names the state key it would never write",
+        m.contains("state.count"),
+    );
+    h.check(
+        "validate call-project: the error says the pointer is not a JSON string",
+        m.contains("not a JSON string"),
+    );
+    h.check(
+        "validate call-project: a boolean pointer is refused",
+        !err(json!({"ok": true}), json!([])).is_empty(),
+    );
+    h.check(
+        "validate call-project: a null pointer is refused",
+        !err(json!({"v": null}), json!([])).is_empty(),
+    );
+
+    // ── an empty projection key writes a state key nothing can name ──
+    let m = err(json!({"": "/epoch"}), json!([]));
+    h.check("validate call-project: an empty projection key is refused", !m.is_empty());
+    h.check("validate call-project: the empty-key error says empty name", m.contains("empty name"));
+
+    // ── a chain row keyed by an explicit empty alias ──
+    let m = err(json!({"now": "/epoch"}), json!([{"as": "", "capability": "clock"}]));
+    h.check("validate call-project: an explicit empty chain alias is refused", !m.is_empty());
+    h.check("validate call-project: the empty-alias error says empty alias", m.contains("empty alias"));
+    h.check(
+        "validate call-project: the empty alias is refused before its project rows",
+        err(
+            json!({"now": "/epoch"}),
+            json!([{"as": "", "capability": "clock", "project": {"k": 3}}]),
+        )
+        .contains("empty alias"),
+    );
+
+    // ── a pointer on a *chain* entry is judged like the action's own ──
+    let m = err(
+        json!({"now": "/epoch"}),
+        json!([{"as": "x", "capability": "clock", "project": {"ok": true}}]),
+    );
+    h.check("validate call-project: a non-string chain pointer is refused", !m.is_empty());
+    h.check(
+        "validate call-project: the chain error names the chain row",
+        m.contains("chain.x.project.ok"),
+    );
+
+    // ── the shared decision itself (no drift between the two paths) ──
+    let proj = |v: Value| -> serde_json::Map<String, Value> {
+        serde_json::from_value(v).unwrap()
+    };
+    let issue = project_step_issue(&proj(json!({"count": 3})), &[]).expect("non-string pointer");
+    h.check(
+        "validate call-project: project_step_issue reports the non-string pointer",
+        matches!(issue, ProjectIssue::NotString { ref row, ref key, .. } if row == "project.count" && key == "count"),
+    );
+    h.check(
+        "validate call-project: project_issue_body is the one message both paths print",
+        project_issue_body(&issue).contains("not a JSON string"),
+    );
+    h.check(
+        "validate call-project: an empty key is reported as an empty key",
+        matches!(
+            project_step_issue(&proj(json!({"": "/x"})), &[]),
+            Some(ProjectIssue::EmptyKey { .. })
+        ),
+    );
+    h.check(
+        "validate call-project: an explicit empty `as` is reported as an empty alias",
+        matches!(
+            project_step_issue(&proj(json!({})), &[json!({"as": "", "capability": "clock"})]),
+            Some(ProjectIssue::EmptyAlias { .. })
+        ),
+    );
+    h.check(
+        "validate call-project: a chain entry with no `as` yields no issue",
+        project_step_issue(
+            &proj(json!({})),
+            &[json!({"capability": "clock", "project": {"base": "/x"}})],
+        )
+        .is_none(),
+    );
+    h.check(
+        "validate call-project: a clean call yields no issue",
+        project_step_issue(&proj(json!({"now": "/epoch"})), &[]).is_none(),
+    );
+}
