@@ -136,6 +136,24 @@ fn check_required_options(name: &str, kind: &str, def: &Value) -> Result<()> {
                 missing.push("command");
             }
         }
+        "plugin" | "script" => {
+            // The plugin's identity is `plugin`/`name` (a search-layer id),
+            // `dir` (an explicit path) or a script `entry`. `load_sources` needs
+            // at least one; with none of the three the engine has nothing to
+            // load -- every call bails "needs 'plugin' (a name), 'dir', or a
+            // script 'entry'". A definition like that is dead the same way a
+            // `rpc` without `url` is (P149): runnable only via the missing field,
+            // which the definition never supplies.
+            if !(nonempty_str("plugin")
+                || nonempty_str("name")
+                || nonempty_str("dir")
+                || nonempty_str("entry"))
+            {
+                bail!(
+                    "capability {name:?} (kind {kind:?}) names no plugin — none of `plugin`/`name` (a search-layer id), `dir` (a path) or a script `entry` is set, so the engine has nothing to load: the capability `validate`s but every call fails at run (`plugin capability needs 'plugin' (a name), 'dir', or a script 'entry'`)"
+                );
+            }
+        }
         _ => {}
     }
     if !missing.is_empty() {

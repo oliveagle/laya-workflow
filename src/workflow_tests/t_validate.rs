@@ -1835,3 +1835,52 @@ pub fn test_validate_option_values_4(h: &mut Harness) {
         h.check("validate: expected an object-shape error", false);
     }
 }
+
+/// P156: a `plugin`/`script` capability names its plugin one of three ways --
+/// `plugin`/`name` (a search-layer id), `dir` (an explicit path), or a script
+/// `entry`. `load_sources` needs at least one; with none of the three the engine
+/// has nothing to load, so the capability `validate`s but every call bails
+/// "plugin capability needs 'plugin' (a name), 'dir', or a script 'entry'". This
+/// is the plugin sibling of P149's "a `rpc` without `url` can never run".
+pub fn test_validate_capability_plugin(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — any one of the three identities is enough
+    h.check("validate: plugin id is OK", ok(json!({"kind": "plugin", "plugin": "alphaxiv"})));
+    h.check("validate: plugin `name` alias is OK", ok(json!({"kind": "plugin", "name": "goofish"})));
+    h.check("validate: plugin `dir` is OK", ok(json!({"kind": "script", "dir": "dsl/capabilities/hello.rhai"})));
+    h.check("validate: plugin script `entry` is OK", ok(json!({"kind": "plugin", "entry": "run.rhai"})));
+
+    // negatives — the definition can never run (runtime bails `... needs ...`)
+    h.check("validate: plugin with no identity rejected", !ok(json!({"kind": "plugin"})));
+    h.check("validate: script with no identity rejected", !ok(json!({"kind": "script"})));
+    h.check(
+        "validate: plugin with only unrelated keys rejected",
+        !ok(json!({"kind": "plugin", "op": "run", "timeout_ms": 5000})),
+    );
+    // a present-but-empty identity is the same as absent
+    h.check("validate: plugin with empty id rejected", !ok(json!({"kind": "plugin", "plugin": "  "})));
+    h.check("validate: plugin with empty dir rejected", !ok(json!({"kind": "plugin", "dir": "", "entry": ""})));
+
+    // the message names the three identities and why it fails at run
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "plugin"}});
+    match spec::from_spec(&s) {
+        Err(e) => {
+            let m = e.to_string();
+            h.check("validate: the plugin error names `plugin`/`dir`/`entry`", m.contains("plugin") && m.contains("dir") && m.contains("entry"));
+            h.check("validate: the plugin error explains the run failure", m.contains("fails at run"));
+        }
+        Ok(_) => h.check("validate: expected a plugin-identity error", false),
+    }
+}
