@@ -726,6 +726,20 @@ pub fn isolation_audit(repo_root: &Path) -> Vec<String> {
     problems
 }
 
+/// Split a per-spec failure tally into `(specs_ok, specs_failed, failing_checks)`.
+///
+/// The `N/M specs OK` line counts spec *documents* that passed, so it must come
+/// from the specs, never from `total - failing_checks`: a spec has many states and
+/// checks, so subtracting per-check failures from a per-spec total underflows the
+/// u32 the moment any state fails (a live run once printed `4294967265/1` instead
+/// of how many specs passed). Pure, so the regression can pin it without a corpus.
+pub fn tally(per_spec_fail_counts: &[u32]) -> (u32, u32, u32) {
+    let specs_ok = per_spec_fail_counts.iter().filter(|c| **c == 0).count() as u32;
+    let specs_failed = per_spec_fail_counts.len() as u32 - specs_ok;
+    let failing_checks: u32 = per_spec_fail_counts.iter().sum();
+    (specs_ok, specs_failed, failing_checks)
+}
+
 pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let root: PathBuf = match &opts.dsl_dir {
         Some(d) => PathBuf::from(d),
@@ -774,6 +788,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
 
     let mut total: u32 = 0;
     let mut fails: u32 = 0;
+    let mut per_spec_fail_counts: Vec<u32> = Vec::new();
     let mut skipped: u32 = 0;
     for spec in &specs {
         let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
@@ -783,6 +798,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             }
         }
         total += 1;
+        let spec_fails_before = fails;
 
         // validate (cheap check: load_file parses + checks version)
         let wf = match crate::spec::load_file(&spec.to_string_lossy()) {
@@ -790,6 +806,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             Err(e) => {
                 fails += 1;
                 eprintln!("[FAIL] {}: validate failed\n  {e}", spec.display());
+                per_spec_fail_counts.push(1);
                 continue;
             }
         };
@@ -802,9 +819,12 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             if !opts.quiet {
                 println!("       (no sample states registered; validate only)");
             }
+            // validate-only is a pass for this spec: there was nothing to run.
+            per_spec_fail_counts.push(0);
             continue;
         };
         let Some(state_map) = sample_states.as_object() else {
+            per_spec_fail_counts.push(0);
             continue;
         };
         // The raw spec drives offline detection: when a network-bound spec's
@@ -934,8 +954,13 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                 eprintln!("       [FAIL] {msg}");
             }
         }
+        // Count a spec as OK only when none of its states/checks failed. The old
+        // `total - fails` subtracted *per-state* failures from a *per-spec* total,
+        // so any failing state underflowed the u32 and a live run printed a
+        // garbage count like `4294967265/1` instead of how many specs passed.
+        per_spec_fail_counts.push(fails - spec_fails_before);
     }
-    let ok = total - fails;
+    let (ok, failed_specs, _failing_checks) = tally(&per_spec_fail_counts);
     println!("\n{ok}/{total} specs OK");
     if skipped > 0 {
         println!("({skipped} state(s) skipped offline because a network endpoint was unreachable; they run in the integration job / with the local mocks up)");
@@ -968,7 +993,8 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     if fails > 0 || !ledger_problems.is_empty() || !iso_problems.is_empty() {
         // callers (CI) want a non-zero exit
         bail!(
-            "{fails} spec run(s) failed; {} coverage-ledger problem(s); {} isolation problem(s)",
+            "{} spec(s) failed ({fails} failing check(s)); {} coverage-ledger problem(s); {} isolation problem(s)",
+            failed_specs,
             ledger_problems.len(),
             iso_problems.len()
         );

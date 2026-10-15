@@ -6778,3 +6778,27 @@ pub fn test_bdd_features_check(h: &mut Harness) {
         feature_bucket("bdd/workflows/examples/login_smoke.feature", &feat(&[])) == Some("examples"),
     );
 }
+
+
+/// The `dsl smoke` tally: `N/M specs OK` counts spec *documents* that passed,
+/// never `total - failing_checks`. The per-spec counting is the fix for the live
+/// run that printed `4294967265/1` (a u32 underflow the moment any state failed).
+pub fn test_dsl_smoke_tally(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::tally;
+    h.eq("dsl-smoke tally: empty corpus", tally(&[]), (0u32, 0u32, 0u32));
+    h.eq("dsl-smoke tally: all specs pass", tally(&[0, 0, 0]), (3, 0, 0));
+    let (ok, failed, checks) = tally(&[0, 0, 5]);
+    h.eq("dsl-smoke tally: specs_ok counts specs, not checks", ok, 2);
+    h.eq("dsl-smoke tally: the failing spec is named", failed, 1);
+    h.eq("dsl-smoke tally: failing checks are summed", checks, 5);
+    // The historical bug shape: one spec whose states produced far more failing
+    // checks than there are specs. `total - fails` would underflow; the count
+    // must simply be 0 of 1.
+    let (ok2, failed2, checks2) = tally(&[32]);
+    h.eq("dsl-smoke tally: one spec with 32 failing checks -> 0 of 1", ok2, 0);
+    h.eq("dsl-smoke tally: still reports the one failed spec", failed2, 1);
+    h.eq("dsl-smoke tally: the 32 checks survive", checks2, 32);
+    let (ok3, failed3, _) = tally(&[1, 1, 0, 2, 1]);
+    h.eq("dsl-smoke tally: mixed corpus ok", ok3, 1);
+    h.eq("dsl-smoke tally: mixed corpus failed", failed3, 4);
+}
