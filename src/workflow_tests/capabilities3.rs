@@ -368,15 +368,13 @@ pub fn test_capabilities_batch3(h: &mut Harness) {
                 .unwrap_or(true),
         );
         h.eq(
-            "sql rejects unknown driver",
+            "sql rejects unknown driver at parse",
             {
-                let bad = capability::registry_from(
+                capability::registry_from(
                     &[("s", json!({"kind":"sql","driver":"oracle","dsn":"x"}))],
                     Some(p3.clone()),
                 )
-                .unwrap();
-                bad.call("s", &json!({"sql": "select 1"}), &json!({}))
-                    .is_err()
+                .is_err()
             },
             true,
         );

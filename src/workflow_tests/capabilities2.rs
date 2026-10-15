@@ -89,11 +89,8 @@ pub fn test_capabilities_batch2(h: &mut Harness) {
         1,
     );
     h.check(
-        "json bad op rejected",
-        capability::registry_from(&[("bad", json!({"kind":"json","op":"nope"}))], None)
-            .unwrap()
-            .call("bad", &json!({}), &json!({}))
-            .is_err(),
+        "json bad op rejected at parse",
+        capability::registry_from(&[("bad", json!({"kind":"json","op":"nope"}))], None).is_err(),
     );
 
     // csv
@@ -291,11 +288,8 @@ pub fn test_capabilities_batch2(h: &mut Harness) {
         reg.call("h_fnv", &json!({"text": "x"}), &json!({})).is_ok(),
     );
     h.check(
-        "hash bad op rejected",
-        capability::registry_from(&[("bad", json!({"kind":"hash","op":"md5"}))], None)
-            .unwrap()
-            .call("bad", &json!({"text":"x"}), &json!({}))
-            .is_err(),
+        "hash bad op rejected at parse",
+        capability::registry_from(&[("bad", json!({"kind":"hash","op":"md5"}))], None).is_err(),
     );
 
     // graph

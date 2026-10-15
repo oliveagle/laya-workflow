@@ -408,11 +408,8 @@ pub fn test_capabilities_extra(h: &mut Harness) {
         1790380800,
     );
     h.check(
-        "datetime bad op rejected",
-        capability::registry_from(&[("bad", json!({"kind":"datetime","op":"nope"}))], None)
-            .unwrap()
-            .call("bad", &json!({}), &json!({}))
-            .is_err(),
+        "datetime bad op rejected at parse",
+        capability::registry_from(&[("bad", json!({"kind":"datetime","op":"nope"}))], None).is_err(),
     );
 
     // text: all ops
@@ -524,11 +521,8 @@ pub fn test_capabilities_extra(h: &mut Harness) {
         7,
     );
     h.check(
-        "text bad op rejected",
-        capability::registry_from(&[("bad", json!({"kind":"text","op":"nope"}))], None)
-            .unwrap()
-            .call("bad", &json!({"text":"x"}), &json!({}))
-            .is_err(),
+        "text bad op rejected at parse",
+        capability::registry_from(&[("bad", json!({"kind":"text","op":"nope"}))], None).is_err(),
     );
     h.check(
         "text missing input rejected",

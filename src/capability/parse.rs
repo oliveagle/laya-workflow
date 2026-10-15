@@ -210,6 +210,132 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Closed-set string options: the runtime's own dispatch accepts only a fixed
+/// set of values, so a declared value outside it is never honoured — the call
+/// bails (`text op "len" unsupported …`) or silently substitutes a default.
+/// `validate` refuses it instead: the same "a declared value the engine throws
+/// away" class as P128/P149/P150, now about a *string* option's value.
+///
+/// `allow_empty` mirrors the engine exactly: `""` is accepted only where it
+/// already resolves to a member (an explicit `if empty { default }` in the
+/// runtime or an `effective_op` fallback equal to the kind's documented
+/// default). Where `""` would bail, it is refused here too.
+///
+/// (kind, option, accepted values, allow_empty)
+const CLOSED_SETS: &[(&str, &str, &[&str], bool)] = &[
+    ("db", "op", &["query", "exec", "analytics", "sync", "tables"], true),
+    ("db", "mode", &["embed", "server"], true),
+    ("db", "format", &["json", "csv", "md", "markdown"], true),
+    ("datetime", "op", &["now", "add", "format", "parse"], true),
+    (
+        "text",
+        "op",
+        &[
+            "length", "upper", "lower", "trim", "split", "extract", "spans", "replace", "hash",
+            "base64_encode", "base64_decode", "json_get",
+        ],
+        false,
+    ),
+    ("text", "hash", &["fnv1a64"], true),
+    ("file", "op", &["read", "write", "append", "stat", "list"], false),
+    (
+        "json",
+        "op",
+        &["pick", "merge", "patch", "path_set", "flatten", "sort_keys", "pick_by"],
+        true,
+    ),
+    ("csv", "op", &["parse", "generate"], false),
+    ("xml", "op", &["tags", "text", "attrs"], false),
+    ("markdown", "op", &["headings", "code_blocks", "links", "outline"], false),
+    ("diff", "op", &["lines", "json"], false),
+    ("hash", "op", &["sha256", "sha256_hex", "fnv1a64", "crc32"], false),
+    ("graph", "op", &["reachable", "bfs", "toposort"], false),
+    ("tokenize", "op", &["count", "split"], false),
+    ("math", "op", &["eval", "stats"], true),
+    ("vector", "op", &["upsert", "search"], true),
+    ("keyvalue", "op", &["get", "has", "set", "del", "incr", "list"], false),
+    ("cache", "op", &["get", "set", "ttl", "purge"], false),
+    ("queue", "op", &["push", "pop", "peek", "length", "clear"], true),
+    ("archive", "op", &["list", "extract"], false),
+    ("sqlite", "op", &["query", "exec"], false),
+    ("sql", "driver", &["sqlite3", "psql", "mysql"], true),
+    (
+        "needle",
+        "op",
+        &[
+            "extract", "needle_extract", "embed", "needle_embed", "complete", "needle_complete",
+        ],
+        false,
+    ),
+    ("computer_use", "op", &["fingerprint", "step", "verify"], true),
+    ("mcp", "transport", &["http", "stdio"], false),
+    ("agent", "transport", &["http", "stdio"], false),
+    (
+        "notify",
+        "channel",
+        &["log", "file", "macos", "os", "osx", "notification", "both", "auto"],
+        true,
+    ),
+    ("http", "method", &["GET", "POST", "PUT", "DELETE", "PATCH"], false),
+];
+
+/// Fold a kind alias to the canonical name the closed-set table uses.
+fn canon_kind(k: &str) -> &str {
+    match k {
+        "md" => "markdown",
+        "tokens" => "tokenize",
+        "kv" => "keyvalue",
+        "database" => "sql",
+        "computer-use" => "computer_use",
+        "notify_local" => "notify",
+        "mail_send" => "smtp",
+        "app_server" => "agent",
+        other => other,
+    }
+}
+
+fn check_option_values(name: &str, kind: &str, def: &Value) -> Result<()> {
+    let Some(obj) = def.as_object() else {
+        return Ok(());
+    };
+    let kind = canon_kind(kind);
+    for (k, option, allowed, allow_empty) in CLOSED_SETS {
+        if *k != kind {
+            continue;
+        }
+        let Some(v) = obj.get(*option) else {
+            continue;
+        };
+        if v.is_null() {
+            continue;
+        }
+        let Some(s) = v.as_str() else {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {option:?} must be a string — the engine reads it as a string and ignores a non-string value, so `validate` would be green while the option is silently dropped"
+            );
+        };
+        let value = if *k == "http" && *option == "method" {
+            s.to_uppercase()
+        } else {
+            s.to_string()
+        };
+        if value.is_empty() && *allow_empty {
+            continue;
+        }
+        if !allowed.contains(&value.as_str()) {
+            let list = allowed
+                .iter()
+                .map(|a| format!("{a:?}"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {option:?} value {s:?} is not one this engine accepts ({list}) — a value outside the set is never honoured: the call bails, or a default is silently substituted"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
     let kind = def
         .get("kind")
@@ -244,6 +370,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
         );
     }
     check_option_domains(name, kind, def)?;
+    check_option_values(name, kind, def)?;
     Ok(cap)
 }
 

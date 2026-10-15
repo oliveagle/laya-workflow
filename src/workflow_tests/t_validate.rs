@@ -1521,3 +1521,101 @@ pub fn test_validate_option_domains(h: &mut Harness) {
         h.check("validate: expected a timeout error", false);
     }
 }
+
+/// P151: a *string* option whose value falls outside the closed set the runtime
+/// accepts is the same "a declared value the engine throws away" bug as P128
+/// (unread key) / P149 (missing target) / P150 (numeric domain). The runtime's
+/// dispatch accepts only a fixed set (`op`, `mode`, `driver`, `format`,
+/// `transport`, `channel`, `method`, `hash`), so a value outside it is never
+/// honoured — the call bails (`text op "len" unsupported …`) or a default is
+/// silently substituted. `validate` refuses it instead (`check_option_values`),
+/// mirroring the engine's own empty-string handling via `allow_empty`.
+pub fn test_validate_option_values(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — a member of each kind's closed set
+    h.check("validate: db op analytics OK", ok(json!({"kind": "db", "op": "analytics"})));
+    h.check("validate: db mode server OK", ok(json!({"kind": "db", "mode": "server"})));
+    h.check("validate: db format csv OK", ok(json!({"kind": "db", "format": "csv"})));
+    h.check("validate: datetime op format OK", ok(json!({"kind": "datetime", "op": "format"})));
+    h.check("validate: text op hash OK", ok(json!({"kind": "text", "op": "hash"})));
+    h.check("validate: hash op crc32 OK", ok(json!({"kind": "hash", "op": "crc32"})));
+    h.check("validate: math op stats OK", ok(json!({"kind": "math", "op": "stats"})));
+    h.check("validate: http method get (lowercase) OK", ok(json!({"kind": "http", "url": "http://x", "method": "get"})));
+    h.check("validate: computer_use op verify OK", ok(json!({"kind": "computer_use", "op": "verify"})));
+    h.check("validate: notify channel macos OK", ok(json!({"kind": "notify", "channel": "macos"})));
+    h.check("validate: sql driver psql OK", ok(json!({"kind": "sql", "dsn": "x", "driver": "psql"})));
+    h.check("validate: vector op upsert OK", ok(json!({"kind": "vector", "url": "http://x", "op": "upsert"})));
+    h.check("validate: queue op peek OK", ok(json!({"kind": "queue", "op": "peek"})));
+    h.check("validate: needle op embed OK", ok(json!({"kind": "needle", "op": "embed"})));
+    h.check("validate: mcp transport stdio OK", ok(json!({"kind": "mcp", "tool": "t", "transport": "stdio", "command": ["x"]})));
+
+    // negatives — a value outside the set is never honoured
+    h.check("validate: db op qurey rejected", !ok(json!({"kind": "db", "op": "qurey"})));
+    h.check("validate: db mode cluster rejected", !ok(json!({"kind": "db", "mode": "cluster"})));
+    h.check("validate: db format yaml rejected", !ok(json!({"kind": "db", "format": "yaml"})));
+    h.check("validate: datetime op todate rejected", !ok(json!({"kind": "datetime", "op": "todate"})));
+    h.check("validate: text op len rejected", !ok(json!({"kind": "text", "op": "len"})));
+    h.check("validate: text hash md5 rejected", !ok(json!({"kind": "text", "hash": "md5"})));
+    h.check("validate: file op cat rejected", !ok(json!({"kind": "file", "op": "cat"})));
+    h.check("validate: json op flat rejected", !ok(json!({"kind": "json", "op": "flat"})));
+    h.check("validate: csv op gen rejected", !ok(json!({"kind": "csv", "op": "gen"})));
+    h.check("validate: hash op sha1 rejected", !ok(json!({"kind": "hash", "op": "sha1"})));
+    h.check("validate: math op mean rejected", !ok(json!({"kind": "math", "op": "mean"})));
+    h.check("validate: http method FETCH rejected", !ok(json!({"kind": "http", "url": "http://x", "method": "FETCH"})));
+    h.check("validate: computer_use op snap rejected", !ok(json!({"kind": "computer_use", "op": "snap"})));
+    h.check("validate: notify channel slack rejected", !ok(json!({"kind": "notify", "channel": "slack"})));
+    h.check("validate: sql driver oracle rejected", !ok(json!({"kind": "sql", "dsn": "x", "driver": "oracle"})));
+    h.check("validate: vector op delete rejected", !ok(json!({"kind": "vector", "url": "http://x", "op": "delete"})));
+    h.check("validate: queue op enqueue rejected", !ok(json!({"kind": "queue", "op": "enqueue"})));
+    h.check("validate: needle op guess rejected", !ok(json!({"kind": "needle", "op": "guess"})));
+    h.check("validate: archive op zip rejected", !ok(json!({"kind": "archive", "op": "zip"})));
+    h.check("validate: sqlite op exec2 rejected", !ok(json!({"kind": "sqlite", "op": "exec2"})));
+
+    // an alias folds to the canonical kind (`database` -> sql, `md` -> markdown)
+    h.check("validate: database (alias) driver psql OK", ok(json!({"kind": "database", "dsn": "x", "driver": "psql"})));
+    h.check("validate: md (alias) op outline OK", ok(json!({"kind": "md", "op": "outline"})));
+    h.check("validate: md (alias) op bogus rejected", !ok(json!({"kind": "md", "op": "bogus"})));
+
+    // empty mirrors the engine: accepted where it already resolves to a member,
+    // rejected where the runtime would bail
+    h.check("validate: db op empty OK (engine defaults to query)", ok(json!({"kind": "db", "op": ""})));
+    h.check("validate: text hash empty OK (engine defaults to fnv1a64)", ok(json!({"kind": "text", "hash": ""})));
+    h.check("validate: notify channel empty OK (engine defaults to log)", ok(json!({"kind": "notify", "channel": ""})));
+    h.check("validate: text op empty rejected (engine would bail)", !ok(json!({"kind": "text", "op": ""})));
+    h.check("validate: http method empty rejected (engine would bail)", !ok(json!({"kind": "http", "url": "http://x", "method": ""})));
+    h.check("validate: mcp transport empty rejected (engine would bail)", !ok(json!({"kind": "mcp", "tool": "t", "transport": "", "url": "http://x", "command": ["x"]})));
+
+    // a present option of the wrong type is silently dropped, like P150's numbers
+    h.check("validate: text op as number rejected", !ok(json!({"kind": "text", "op": 5})));
+
+    // the messages name the offending value, the accepted set and the reason
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "text", "op": "len"}});
+    if let Err(e) = spec::from_spec(&s) {
+        let m = e.to_string();
+        h.check("validate: the value error names the value", m.contains("\"len\""));
+        h.check("validate: the value error names the accepted set", m.contains("\"length\""));
+        h.check("validate: the value error explains the silent-substitute/bail", m.contains("never honoured"));
+    } else {
+        h.check("validate: expected a value error", false);
+    }
+
+    let mut s2 = base_spec("a", nodes.clone());
+    s2["capabilities"] = json!({"c": {"kind": "text", "op": 5}});
+    if let Err(e) = spec::from_spec(&s2) {
+        h.check("validate: the non-string error says must be a string", e.to_string().contains("must be a string"));
+    } else {
+        h.check("validate: expected a non-string error", false);
+    }
+}

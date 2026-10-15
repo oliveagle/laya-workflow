@@ -1088,10 +1088,12 @@ pub fn test_capability_timeouts(h: &mut Harness) {
             std::fs::write(&f, b"CORRUPT{{{").unwrap();
             let mut p = capability::Policy::default();
             p.allow_paths = vec![std::env::temp_dir().to_string_lossy().to_string()];
+            // the write op is per-kind: `queue` writes with `push`, not `set`.
+            let write_op = if kind == "queue" { "push" } else { "set" };
             let reg = capability::registry_from(
                 &[(
                     "s",
-                    json!({"kind": kind, "op": "set", "path": f.to_string_lossy()}),
+                    json!({"kind": kind, "op": write_op, "path": f.to_string_lossy()}),
                 )],
                 Some(p),
             )
