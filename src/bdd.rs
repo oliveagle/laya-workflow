@@ -2432,8 +2432,96 @@ fn merge(dst: &mut Value, src: &Value) {
 
 /// Compile one scenario into a full spec (public shape + `_bdd` metadata).
 
+/// The tag names the toolchain reads a **payload** from: the tags that carry a
+/// declaration in parentheses rather than a bare flag. Everything in this set
+/// is a *contract* the compiler looks up by exact name, so a payload tag written
+/// almost right is a declaration nothing reads and the build stays green (P169).
+///
+/// The set is pinned by a drift test (`bdd-payload-tags`) that scans `bdd.rs` for
+/// the readers themselves — a literal `strip_prefix("<name>(")` and every
+/// `tag_reason(scenario, <name>)` call, with `<name>` resolved through its
+/// `const`/`let` binding — and requires each name it finds to be covered here. A
+/// new payload reader therefore cannot be added without landing in this table.
+pub const PAYLOAD_TAGS: [&str; 2] = ["outputs", "expected_failure"];
+
+/// True when `a` and `b` are within two edits — a substitution, an insertion or a
+/// deletion — of each other, which is what a keying slip looks like. Unlike a
+/// similarity score this catches a transposition (`@outptus` scores only 0.54 by
+/// dice, but is two substitutions away) while *not* refusing a name that is
+/// merely similar (`@expected_thing` shares seven bigrams with
+/// `expected_failure`, but is five edits away). A wrong refusal is worse than a
+/// missed typo, so the test is spelled out as an edit count rather than tuned
+/// with a threshold.
+fn within_two_edits(a: &str, b: &str) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > 2 {
+        return false;
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur: Vec<usize> = vec![0; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()] <= 2
+}
+
+/// A plausible mis-spelling of one of [`PAYLOAD_TAGS`], or `None`.
+fn near_payload_tag(name: &str) -> Option<&'static str> {
+    PAYLOAD_TAGS
+        .iter()
+        .copied()
+        .find(|k| *k != name && within_two_edits(name, k))
+}
+
+/// Refuse a payload tag written with nothing in it. The parser drops an empty
+/// parenthetical, so `@outputs`, `@outputs()`, `@outputs( )` and
+/// `@expected_failure` all arrive here as a bare name — and each of them used to
+/// mean "declare nothing" while the build stayed green.
+fn empty_payload_message(name: &str, tag: &str) -> String {
+    match name {
+        "outputs" => format!(
+            "@{tag} declares no outputs - the @outputs(...) contract gate then has nothing to \
+             check, so the promise the tag was there to make disappears without a word. Write \
+             @outputs(<state key>, ...) with at least one state key (a bare @outputs, \
+             @outputs() and @outputs(,) are all empty)."
+        ),
+        _ => format!(
+            "@{tag} declares no reason. Without one, any non-zero exit counts - including a \
+             typo'd Given, a Chrome that would not start, or a 404 from the fixture - so the \
+             xfail would pass on a run that failed for the wrong reason. Write \
+             @expected_failure(<text the failure must contain>)."
+        ),
+    }
+}
+
+/// Refuse a payload tag in a mode whose reader never runs: a `@decision` feature
+/// compiles to a spec that `bdd run` never executes (and `bdd run` is the only
+/// reader of an xfail), and only a browser Scenario turns `@outputs(...)` into a
+/// checked contract. Such a tag is a declaration the toolchain silently drops,
+/// in the same sense the empty ones above are.
+fn decision_payload_message(name: &str, tag: &str) -> String {
+    match name {
+        "outputs" => format!(
+            "@{tag} is not compiled for a @decision feature: only a browser Scenario turns \
+             @outputs(...) into a checked contract, and a decision workflow's observable \
+             result is its final label. Drop the tag, or declare the outputs on the browser \
+             Scenario that produces the keys."
+        ),
+        _ => format!(
+            "@{tag} is not compiled for a @decision feature: only `bdd run` (the browser \
+             corpus) honours an xfail, and a decision feature compiles to a spec that runner \
+             never executes. Drop the tag."
+        ),
+    }
+}
+
 /// Problems with a feature's *payload* tags — the tags that carry a declaration
-/// in parentheses rather than a bare flag (P169).
+/// in parentheses rather than a bare flag (P169, P170).
 ///
 /// `@outputs(...)` is a contract: the compiler looks it up by the literal prefix
 /// `outputs(` and turns it into the `_bdd.outputs` list the `@outputs` gate then
@@ -2444,13 +2532,15 @@ fn merge(dst: &mut Value, src: &Value) {
 ///   * a bare `@outputs` — which is also what `@outputs()` and `@outputs( )`
 ///     parse into, because the parser drops an empty parenthetical — and a list
 ///     with no items (`@outputs(,)`) both yield *zero* declared outputs, so the
-///     gate has nothing to check and the promise disappears;
+///     gate has nothing to check and the promise disappears; for
+///     `@expected_failure` the same shape means an xfail that passes on the
+///     wrong reason;
 ///   * `@outptus(title)` / `@output(...)` are stored as ordinary tags, so
 ///     `bdd build` succeeds and the caller discovers at run time that the state
 ///     key it was promised is not there;
-///   * in a `@decision` feature every `@outputs(...)` is dropped on the floor:
-///     only a browser Scenario compiles the tag, and a decision workflow's
-///     observable result is its final `label`.
+///   * in a `@decision` feature every `@outputs(...)` / `@expected_failure(...)`
+///     is dropped on the floor: only a browser Scenario compiles the one, and
+///     only `bdd run` reads the other.
 ///
 /// `decision` says which mode the caller compiles in. Returned as a list so the
 /// guard can be exercised on tag vectors directly (the same shape as
@@ -2462,39 +2552,25 @@ pub fn tag_shape_problems(tags: &[String], decision: bool) -> Vec<String> {
             Some(i) if t.ends_with(')') => (&t[..i], Some(&t[i + 1..t.len() - 1])),
             _ => (t.as_str(), None),
         };
-        if name == "outputs" {
+        if let Some(k) = PAYLOAD_TAGS.iter().copied().find(|k| *k == name) {
             if decision {
-                problems.push(format!(
-                    "@{t} is not compiled for a @decision feature: only a browser Scenario \
-                     turns @outputs(...) into a checked contract, and a decision workflow's \
-                     observable result is its final label. Drop the tag, or declare the \
-                     outputs on the browser Scenario that produces the keys."
-                ));
+                problems.push(decision_payload_message(k, t));
             } else if payload
                 .map(|p| p.split(',').all(|x| x.trim().is_empty()))
                 .unwrap_or(true)
             {
-                problems.push(format!(
-                    "@{t} declares no outputs - the @outputs(...) contract gate then has \
-                     nothing to check, so the promise the tag was there to make disappears \
-                     without a word. Write @outputs(<state key>, ...) with at least one state \
-                     key (a bare @outputs, @outputs() and @outputs(,) are all empty)."
-                ));
+                problems.push(empty_payload_message(k, t));
             }
             continue;
         }
-        // A *payload* tag whose name is a near-miss of `outputs`: the author meant
-        // the contract, the compiler reads no such tag. Only names that could be a
-        // typo of it (same length +-2, close spelling) are reported, so an
-        // unrelated `@issue(PROJ-1)` style tag is left alone.
-        if payload.is_some()
-            && name.len().abs_diff("outputs".len()) <= 2
-            && crate::spec::str_similarity(name, "outputs") >= 0.5
-        {
+        if let Some(k) = near_payload_tag(name) {
+            let what = match k {
+                "outputs" => "the output contract",
+                _ => "the xfail",
+            };
             problems.push(format!(
                 "@{t} is not a tag the compiler reads, so it declares nothing - did you mean \
-                 @outputs(...)? Write @outputs(<state key>, ...) if you meant the output \
-                 contract."
+                 @{k}(...)? Write @{k}(...) if you meant {what}, or drop the tag."
             ));
         }
     }

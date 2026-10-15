@@ -8693,3 +8693,137 @@ pub fn test_bdd_outputs_tag_shape(h: &mut Harness) {
         );
     }
 }
+
+pub fn test_bdd_payload_tags(h: &mut Harness) {
+    // P170: the payload-tag guard covers *every* tag the toolchain reads a payload
+    // from, and it cannot drift away from the readers (the P159/P160 drift-guard
+    // shape, applied to tags).
+    let probs = |tags: &[&str], decision: bool| -> Vec<String> {
+        let v: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
+        bdd::tag_shape_problems(&v, decision)
+    };
+    let has = |p: &[String], needle: &str| p.iter().any(|m| m.contains(needle));
+
+    // ── the drift scan: the readers themselves decide what the table must cover ──
+    let src = include_str!("../bdd.rs");
+    let mut readers: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let lit = regex_lite::Regex::new(r#"strip_prefix\("([a-z_][a-z0-9_]*)\("\)"#).unwrap();
+    for c in lit.captures_iter(src) {
+        readers.insert(c[1].to_string());
+    }
+    // `tag_reason(scenario, <ident>)`, with `<ident>` resolved through its binding.
+    let mut bound: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for rx in [
+        r#"const\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&str\s*=\s*"([a-z_][a-z0-9_]*)""#,
+        r#"let\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([a-z_][a-z0-9_]*)""#,
+    ] {
+        let rx = regex_lite::Regex::new(rx).unwrap();
+        for c in rx.captures_iter(src) {
+            bound.insert(c[1].to_string(), c[2].to_string());
+        }
+    }
+    let call = regex_lite::Regex::new(
+        r#"tag_reason\(\s*[A-Za-z_][A-Za-z0-9_:.]*\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"#,
+    )
+    .unwrap();
+    let mut unresolved: Vec<String> = Vec::new();
+    for c in call.captures_iter(src) {
+        let ident = c[1].to_string();
+        match bound.get(&ident) {
+            Some(name) => {
+                readers.insert(name.clone());
+            }
+            None => unresolved.push(ident),
+        }
+    }
+    h.check(
+        "bdd payload tags: every `tag_reason` call resolves to a literal name",
+        unresolved.is_empty(),
+    );
+    if !unresolved.is_empty() {
+        h.check(&format!("  (unresolved: {unresolved:?})"), false);
+    }
+    let covered: std::collections::BTreeSet<String> =
+        bdd::PAYLOAD_TAGS.iter().map(|s| s.to_string()).collect();
+    h.check(
+        "bdd payload tags: PAYLOAD_TAGS is exactly the set of payload readers",
+        readers == covered,
+    );
+    if readers != covered {
+        h.check(
+            &format!("  (readers={readers:?} covered={covered:?})"),
+            false,
+        );
+    }
+
+    // ── the guard's behaviour on the names the scan found ──
+    h.check(
+        "bdd payload tags: a bare @expected_failure is refused",
+        has(&probs(&["expected_failure"], false), "declares no reason"),
+    );
+    h.check(
+        "bdd payload tags: `@expected_failure()` is empty too",
+        probs(&["expected_failure()"], false).len() == 1,
+    );
+    h.check(
+        "bdd payload tags: a transposed @expected_failur is refused",
+        has(
+            &probs(&["expected_failur(bdd.assert: FAIL)"], false),
+            "did you mean @expected_failure",
+        ),
+    );
+    h.check(
+        "bdd payload tags: a reason makes it legal",
+        probs(&["expected_failure(bdd.assert: FAIL equals)"], false).is_empty(),
+    );
+    let d = probs(&["expected_failure(x)"], true);
+    h.check(
+        "bdd payload tags: @decision refuses an xfail it never reads",
+        d.len() == 1 && has(&d, "@decision"),
+    );
+    h.check(
+        "bdd payload tags: @decision refuses a bare @expected_failure too",
+        probs(&["expected_failure"], true).len() == 1,
+    );
+
+    // ── a wrong refusal is worse than a missed typo: similar names stay legal ──
+    h.check(
+        "bdd payload tags: a merely similar name is not refused",
+        probs(
+            &[
+                "inputs(seed)",
+                "options(a, b)",
+                "objects(x)",
+                "expected_thing(y)",
+                "output_dir(z)",
+                "decision",
+                "production",
+                "smoke",
+            ],
+            false,
+        )
+        .is_empty(),
+    );
+
+    // ── end to end: the compiler refuses the empty one, the proper one compiles ──
+    let mk = |tag: &str| {
+        format!(
+            "Feature: xf\n  {tag}\n  Scenario: s\n    When I run the command \"true\"\n    Then the exit code is 0\n"
+        )
+    };
+    let good = bdd::parse(&mk("@expected_failure(bdd.assert: FAIL equals)"), "<xf-good>")
+        .expect("parse good xfail");
+    h.check(
+        "bdd payload tags: a browser scenario with a reason still compiles",
+        bdd::compile_scenario(&good, &good.scenarios[0], &json!({}), "chrome-headless.sh").is_ok(),
+    );
+    let bad = bdd::parse(&mk("@expected_failure"), "<xf-bad>").expect("parse bare xfail");
+    let e = bdd::compile_scenario(&bad, &bad.scenarios[0], &json!({}), "chrome-headless.sh")
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd payload tags: a bare @expected_failure fails the compile",
+        e.contains("declares no reason"),
+    );
+}

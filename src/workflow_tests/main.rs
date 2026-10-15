@@ -206,6 +206,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-decision-vocab-check", t_bdd::test_bdd_decision_vocab_check),
         ("bdd-decision-e2e-output-assert", t_bdd::test_bdd_decision_e2e_output_assert),
         ("bdd-outputs-tag-shape", t_bdd::test_bdd_outputs_tag_shape),
+        ("bdd-payload-tags", t_bdd::test_bdd_payload_tags),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
