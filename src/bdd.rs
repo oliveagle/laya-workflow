@@ -10216,6 +10216,128 @@ pub fn round_trip(o: &RoundTripOptions) -> Result<i32> {
     Ok(rc)
 }
 
+/// The verdict of an app-parity walk: how many reference cases exist, how many
+/// reproduced the app's expected label through their BDD port, and every case
+/// that did not.
+#[derive(Debug, Clone, Default)]
+pub struct AppParityReport {
+    pub total: usize,
+    pub matched: usize,
+    pub problems: Vec<String>,
+    pub verdicts: Vec<Value>,
+}
+
+pub struct AppParityOptions {
+    /// Write the per-case verdicts as JSON here.
+    pub json: Option<String>,
+}
+
+impl Default for AppParityOptions {
+    fn default() -> Self {
+        Self { json: None }
+    }
+}
+
+/// Replay every built-in app's reference case (`crate::apps::all_reference_cases`,
+/// the same 25 cases `laya-workflow apps` scores) end to end through the app's
+/// checked-in BDD port spec, and require the label the engine projects to match
+/// the app's expectation.
+///
+/// The port is the app's routing re-expressed as *data*; the app is *code*. This
+/// holds the two together case-for-case, offline (no Chrome, no model), so a port
+/// that silently drifts from the app it claims to reproduce fails here rather than
+/// passing unnoticed. `root` anchors the port paths (`dsl/...`) so a test can point
+/// it at a mutated copy and prove the gate actually reads the spec.
+pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
+    let backend = crate::backend::HeuristicBackend;
+    let mut report = AppParityReport::default();
+    for c in crate::apps::all_reference_cases() {
+        report.total += 1;
+        let path = root.join(c.bdd_spec);
+        let wf = match crate::spec::load_file(&path.to_string_lossy()) {
+            Ok(wf) => wf,
+            Err(e) => {
+                report.problems.push(format!(
+                    "{}: cannot load port spec {}: {e:#}",
+                    c.app, c.bdd_spec
+                ));
+                report.verdicts.push(json!({
+                    "app": c.app, "port": c.bdd_spec, "input": c.state,
+                    "expected": c.expected, "ok": false,
+                    "reason": format!("load: {e:#}"),
+                }));
+                continue;
+            }
+        };
+        let (label, ok) = match wf.run(&backend, &c.state) {
+            Ok(out) => {
+                let j = out.to_json();
+                let label = crate::bdd_mcp::decision_label(
+                    j.get("result").unwrap_or(&Value::Null),
+                    out.final_action(),
+                );
+                let ok = c.expected.split('|').any(|e| e.trim() == label);
+                (label, ok)
+            }
+            Err(e) => {
+                report.problems.push(format!(
+                    "{}: port {} run error on {}: {e:#}",
+                    c.app, c.bdd_spec, c.state
+                ));
+                report.verdicts.push(json!({
+                    "app": c.app, "port": c.bdd_spec, "input": c.state,
+                    "expected": c.expected, "ok": false,
+                    "reason": format!("run: {e:#}"),
+                }));
+                continue;
+            }
+        };
+        if ok {
+            report.matched += 1;
+        } else {
+            report.problems.push(format!(
+                "{}: port {} produced `{label}`, expected `{}` for state {}",
+                c.app, c.bdd_spec, c.expected, c.state
+            ));
+        }
+        report.verdicts.push(json!({
+            "app": c.app, "port": c.bdd_spec, "input": c.state,
+            "label": label, "expected": c.expected, "ok": ok,
+        }));
+    }
+    Ok(report)
+}
+
+/// CLI gate over [`app_parity_impl`]: exits non-zero if any reference case
+/// diverges. The 25 cases live in `crate::apps`; the port paths are checked in
+/// under `dsl/`.
+pub fn app_parity_check(o: &AppParityOptions) -> Result<i32> {
+    let root = repo_root();
+    let report = app_parity_impl(&root)?;
+    if let Some(p) = &o.json {
+        let out = root.join(p);
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&report.verdicts)?)?;
+    }
+    println!(
+        "bdd app-parity: {}/{} reference cases reproduce the app's label through their BDD port spec",
+        report.matched, report.total
+    );
+    for p in &report.problems {
+        println!("  {p}");
+    }
+    if !report.problems.is_empty() {
+        eprintln!(
+            "bdd app-parity: FAIL - {} of {} cases diverged",
+            report.problems.len(),
+            report.total
+        );
+    }
+    Ok(if report.problems.is_empty() { 0 } else { 1 })
+}
+
 /// Recursively collect `*.feature` files under a directory.
 fn walk_features(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
     if let Ok(rd) = std::fs::read_dir(dir) {

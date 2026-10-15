@@ -553,6 +553,15 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// App-parity gate: replay every built-in app's reference case (`laya-workflow
+    /// apps`, 25 cases) end to end through the app's checked-in BDD port spec and
+    /// require the engine's label to match the app's expectation. The port is the
+    /// app's routing as *data*; this holds the two together, offline.
+    AppParity {
+        /// Write the per-case verdicts as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+    },
     /// Prove a cross-repo conversion is closed: every upstream scenario has a
     /// BDD port (a `@decision` feature and a checked-in spec) and every port has
     /// an upstream source. The checked-in seal under `bench/bdd/port_pins/`
@@ -2621,6 +2630,9 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
         })?,
         BddCmd::RoundTrip { json } => {
             bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?
+        }
+        BddCmd::AppParity { json } => {
+            bdd::app_parity_check(&bdd::AppParityOptions { json: json.clone() })?
         }
         BddCmd::PortCheck {
             sources,

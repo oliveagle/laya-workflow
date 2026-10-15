@@ -637,6 +637,9 @@ pub struct ReferenceCase {
     pub app: &'static str,
     pub state: Value,
     pub expected: &'static str,
+    /// The checked-in BDD port spec that re-expresses this app's routing, so the
+    /// case can be replayed end to end through the engine (`bdd app-parity`).
+    pub bdd_spec: &'static str,
 }
 
 /// Every app's reference cases in one list, with the state each app's router
@@ -648,6 +651,7 @@ pub fn all_reference_cases() -> Vec<ReferenceCase> {
     for (command, intent, expected) in agent_gate::cases() {
         out.push(ReferenceCase {
             app: "agent_gate",
+            bdd_spec: "dsl/guards/agent_command_gate.json",
             state: json!({"command": command, "intent": intent, "cwd": "/"}),
             expected,
         });
@@ -656,6 +660,7 @@ pub fn all_reference_cases() -> Vec<ReferenceCase> {
     for (subject, body, sender, expected) in email_triage::cases() {
         out.push(ReferenceCase {
             app: "email_triage",
+            bdd_spec: "dsl/apps/email_triage.json",
             state: json!({"subject": subject, "body": body, "sender": sender}),
             expected,
         });
@@ -664,6 +669,7 @@ pub fn all_reference_cases() -> Vec<ReferenceCase> {
     for (text, expected) in content_moderation::cases() {
         out.push(ReferenceCase {
             app: "content_moderation",
+            bdd_spec: "dsl/guards/content_policy_gate.json",
             state: json!({"text": text, "source": "inbox"}),
             expected,
         });
@@ -672,6 +678,7 @@ pub fn all_reference_cases() -> Vec<ReferenceCase> {
     for (text, audience, expected) in draft_scorer::cases() {
         out.push(ReferenceCase {
             app: "draft_scorer",
+            bdd_spec: "dsl/apps/draft_scorer.json",
             state: json!({"text": text, "audience": audience}),
             expected,
         });

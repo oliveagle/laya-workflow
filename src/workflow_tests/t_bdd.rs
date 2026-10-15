@@ -7318,3 +7318,61 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         out.status.success() && text.contains("live decisions:"),
     );
 }
+
+/// P137: the app-parity gate — every built-in app's reference case replayed end
+/// to end through the app's checked-in BDD port spec. The port is the app's
+/// routing as *data*; the app is *code*. This pins that the two agree on all 25
+/// cases AND that the gate actually depends on the port spec (a mutated copy
+/// diverges), so a silently drifted port fails here instead of passing.
+pub fn test_bdd_app_parity(h: &mut Harness) {
+    use laya_workflow::bdd::{app_parity_impl, repo_root};
+
+    let root = repo_root();
+    let report = app_parity_impl(&root).unwrap();
+    h.eq(
+        "bdd app-parity: the reference set is the 25 app cases",
+        report.total,
+        laya_workflow::apps::all_reference_cases().len(),
+    );
+    h.check(
+        &format!(
+            "bdd app-parity: every case reproduces its label ({}/{} case(s))",
+            report.matched, report.total
+        ),
+        report.problems.is_empty() && report.matched == report.total && report.total == 25,
+    );
+    for p in &report.problems {
+        h.check(&format!("bdd app-parity: divergence — {p}"), false);
+    }
+
+    // Flip test: point the gate at a copy whose port spec has been mutated, and
+    // prove it now diverges. Without this, a gate that read nothing (or a fixed
+    // answer) would look green above.
+    let ports = [
+        "dsl/guards/agent_command_gate.json",
+        "dsl/apps/email_triage.json",
+        "dsl/guards/content_policy_gate.json",
+        "dsl/apps/draft_scorer.json",
+    ];
+    let tmp = std::env::temp_dir().join(format!("laya_app_parity_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    for rel in ports {
+        let dst = tmp.join(rel);
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        let mut text = std::fs::read_to_string(root.join(rel)).unwrap();
+        // Break the catch-all ALLOW in the command gate so its ALLOW cases diverge.
+        if rel.ends_with("agent_command_gate.json") {
+            assert_eq!(text.matches("\"label\": \"ALLOW\"").count(), 1);
+            text = text.replacen("\"label\": \"ALLOW\"", "\"label\": \"NOPE\"", 1);
+            std::fs::write(&dst, text).unwrap();
+        } else {
+            std::fs::write(&dst, text).unwrap();
+        }
+    }
+    let broken = app_parity_impl(&tmp).unwrap();
+    h.check(
+        "bdd app-parity: a mutated port diverges (the gate reads the spec)",
+        !broken.problems.is_empty() && broken.matched < broken.total,
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
