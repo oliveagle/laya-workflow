@@ -191,13 +191,17 @@ fn build() -> BTreeMap<String, BTreeSet<String>> {
         if OPEN.contains(&ck) {
             continue; // an open kind is absent from the map
         }
-        let keys = match var2fn.get(var) {
-            Some((_, f)) => {
-                let mut seen: BTreeSet<String> = BTreeSet::new();
-                reads_for(f, &funcs, &mut seen)
-            }
-            None => BTreeSet::new(),
+        // A variant with no dispatch fn of the `Capability::X(c) => f(c, ..)`
+        // shape is not a set the sources can give us: the unit variant
+        // `Passthrough` (kinds `passthrough` / `noop`) returns the whole expanded
+        // `with`, so *every* key is read and any key is legal. Leaving it absent
+        // from the map is the same as an open kind - an empty set would make the
+        // guard refuse a key it cannot prove is unread.
+        let Some((_, f)) = var2fn.get(var) else {
+            continue;
         };
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let keys = reads_for(f, &funcs, &mut seen);
         out.entry(ck.to_string()).or_default().extend(keys);
     }
     for k in OPEN {
@@ -760,4 +764,301 @@ fn band_segment(src: &str, from: usize) -> String {
 fn is_alias_read(before: &str) -> bool {
     let t: String = before.chars().filter(|c| !c.is_whitespace()).collect();
     t.ends_with("or_else(||")
+}
+
+// ───────────────────────────── P177 ─────────────────────────────
+// The one decision both guards share. P164/P166/P175 first lived only on the BDD
+// compile path (`bdd.rs`), so a hand-written or side-loaded JSON spec reached
+// `validate` with none of them: a `with.<key>` no call of the kind reads, or a
+// value of the wrong type / outside the read site's band, passed
+// `laya-workflow validate --spec` with exit 0. Rather than keep two copies - which
+// drift the day a read site changes - the decision lives here once and both
+// callers ([`with_step_issue`] + [`with_issue_body`]) format its verdict.
+
+/// Every `X` a value names with a `${with.X}` reference, at any depth. A key that
+/// *is* referenced (from another `with` value, or from the capability's own
+/// definition - `${with.text}` inside a `body`) counts as read even when no
+/// `with.get` literal names it.
+pub fn with_refs_in(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::String(s) => {
+            let mut rest = s.as_str();
+            while let Some(i) = rest.find("${with.") {
+                let after = &rest[i + "${with.".len()..];
+                let name: String = after
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if name.is_empty() {
+                    if after.is_empty() {
+                        break;
+                    }
+                    rest = &after[1..];
+                } else {
+                    rest = &after[name.len()..];
+                    out.insert(name);
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                with_refs_in(x, out);
+            }
+        }
+        Value::Object(o) => {
+            for x in o.values() {
+                with_refs_in(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `true` when `a` and `b` are one edit apart (a transposition counts, so
+/// `moed`/`mode` is caught too).
+pub fn one_apart(a: &str, b: &str) -> bool {
+    if a == b {
+        return false;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (n, m) = (a.len(), b.len());
+    if n.abs_diff(m) > 1 {
+        return false;
+    }
+    if n == m {
+        let diff: Vec<usize> = (0..n).filter(|&i| a[i] != b[i]).collect();
+        return diff.len() == 1
+            || (diff.len() == 2
+                && diff[1] == diff[0] + 1
+                && a[diff[0]] == b[diff[1]]
+                && a[diff[1]] == b[diff[0]]);
+    }
+    let (s, l) = if n < m { (a, b) } else { (b, a) };
+    let (mut i, mut j) = (0, 0);
+    let mut skipped = false;
+    while i < s.len() && j < l.len() {
+        if s[i] == l[j] {
+            i += 1;
+            j += 1;
+        } else if skipped {
+            return false;
+        } else {
+            skipped = true;
+            j += 1;
+        }
+    }
+    true
+}
+
+/// The `with.<key>` names `kind` reads, unioned with every name the capability
+/// `def` names as `${with.X}` and every name the step names (`step_refs`).
+/// `None` when the kind is not judged at all (open, or no read set).
+pub fn read_with_keys(
+    kind: &str,
+    def: &Value,
+    step_refs: &BTreeSet<String>,
+) -> Option<BTreeSet<String>> {
+    if is_open(kind) {
+        return None;
+    }
+    let set = kind_reads(kind)?;
+    let mut used: BTreeSet<String> = set.iter().cloned().collect();
+    with_refs_in(def, &mut used);
+    used.extend(step_refs.iter().cloned());
+    Some(used)
+}
+
+/// Name a JSON value's type the way the guard messages do.
+pub fn json_type_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(b) => {
+            if *b {
+                "`true`"
+            } else {
+                "`false`"
+            }
+        }
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "an array",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// The first `with` problem a `call` step has, with everything its message
+/// needs. [`with_issue_body`] renders it; the caller prefixes `line N:` (BDD) or
+/// `node <name>:` (`validate`).
+pub enum WithIssue {
+    /// A key no call of the kind reads (P164).
+    Unread {
+        cap: String,
+        kind: String,
+        key: String,
+        reads: Vec<String>,
+        hint: Option<String>,
+    },
+    /// A value whose JSON type the read site does not accept (P166).
+    WrongType {
+        cap: String,
+        kind: String,
+        key: String,
+        want: &'static str,
+        got: &'static str,
+    },
+    /// A number the read site clamps to a band (P175).
+    OutOfBand {
+        cap: String,
+        kind: String,
+        key: String,
+        value: String,
+        band: String,
+    },
+}
+
+/// The first `with` problem a call step has, in the order the guards report them:
+/// an unread key (P164), then a wrong type (P166), then an out-of-band number
+/// (P175). `caps` maps capability name to its definition; `with` / `chain` are
+/// the step's tables. `None` when the step is clean or its kind is not judged.
+pub fn with_step_issue(
+    caps: &serde_json::Map<String, Value>,
+    cap: &str,
+    with: &serde_json::Map<String, Value>,
+    chain: &[Value],
+) -> Option<WithIssue> {
+    let mut refs: BTreeSet<String> = BTreeSet::new();
+    with_refs_in(&Value::Object(with.clone()), &mut refs);
+    for e in chain {
+        with_refs_in(e, &mut refs);
+    }
+    // The outer call first, then each chain entry - the order the messages use.
+    let mut steps: Vec<(&str, &serde_json::Map<String, Value>)> = vec![(cap, with)];
+    for e in chain {
+        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(m) = e.get("with").and_then(Value::as_object) {
+            steps.push((cn, m));
+        }
+    }
+    let kind_of = |capname: &str| -> String {
+        caps.get(capname)
+            .and_then(|d| d.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    // 1. a key no call of the kind reads
+    for (capname, kv) in &steps {
+        let Some(def) = caps.get(*capname) else {
+            continue;
+        };
+        let kind = kind_of(capname);
+        let Some(used) = read_with_keys(&kind, def, &refs) else {
+            continue;
+        };
+        for k in kv.keys() {
+            if used.contains(k) {
+                continue;
+            }
+            let reads: Vec<String> = kind_reads(&kind)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            let hint = reads
+                .iter()
+                .find(|cand| one_apart(cand, k))
+                .map(|c| format!(" Did you mean `with.{c}`?"));
+            return Some(WithIssue::Unread {
+                cap: (*capname).to_string(),
+                kind,
+                key: k.clone(),
+                reads,
+                hint,
+            });
+        }
+    }
+    // 2. a value of the wrong type
+    for (capname, kv) in &steps {
+        let kind = kind_of(capname);
+        for (k, v) in kv.iter() {
+            if matches!(v.as_str(), Some(s) if s.contains("${")) {
+                continue;
+            }
+            if let Some(want) = with_value_rejected(&kind, k, v) {
+                return Some(WithIssue::WrongType {
+                    cap: (*capname).to_string(),
+                    kind,
+                    key: k.clone(),
+                    want,
+                    got: json_type_name(v),
+                });
+            }
+        }
+    }
+    // 3. a number the read site clamps
+    for (capname, kv) in &steps {
+        let kind = kind_of(capname);
+        for (k, v) in kv.iter() {
+            if matches!(v.as_str(), Some(s) if s.contains("${")) {
+                continue;
+            }
+            if let Some(band) = with_range_rejected(&kind, k, v) {
+                return Some(WithIssue::OutOfBand {
+                    cap: (*capname).to_string(),
+                    kind,
+                    key: k.clone(),
+                    value: v.to_string(),
+                    band,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Render a [`WithIssue`] as the message body the guards print (the caller adds
+/// the `line N:` / `node X:` locator).
+pub fn with_issue_body(issue: &WithIssue) -> String {
+    match issue {
+        WithIssue::Unread {
+            cap,
+            kind,
+            key,
+            reads,
+            hint,
+        } => {
+            let reads = if reads.is_empty() {
+                format!("A {kind:?} capability reads no `with` key by name; it only sees the keys its own definition names as `${{with.X}}`.")
+            } else {
+                let shown = if reads.len() <= 24 {
+                    reads.join(", ")
+                } else {
+                    format!("{} and {} more", reads[..12].join(", "), reads.len() - 12)
+                };
+                format!("The keys a {kind:?} capability reads: {shown}.")
+            };
+            let hint = hint.as_deref().unwrap_or("");
+            format!(
+                "`call the capability {cap:?}` passes `with.{key}`, but no {kind:?} call reads that key - the engine ignores it and the call runs with the default, so the value you set is silently dropped.{hint} {reads}"
+            )
+        }
+        WithIssue::WrongType {
+            cap,
+            kind,
+            key,
+            want,
+            got,
+        } => format!(
+            "`call the capability {cap:?}` passes `with.{key}` as {got}, but a {kind:?} call reads it as {want} - the engine falls back to its default on any other JSON type, so the value you set is silently discarded."
+        ),
+        WithIssue::OutOfBand {
+            cap,
+            kind,
+            key,
+            value,
+            band,
+        } => format!(
+            "`call the capability {cap:?}` passes `with.{key}` as {value}, but a {kind:?} call clamps it to {band} - a value outside that band is silently replaced at the read site, so the setting that runs is not the one written."
+        ),
+    }
 }

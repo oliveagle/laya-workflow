@@ -981,6 +981,47 @@ fn json_kind_name(v: &Value) -> &'static str {
     }
 }
 
+/// P177: the `with` contract of every `call` step in a spec, for the paths that
+/// never go through the BDD compiler (`validate --spec`, `Registry::from_spec`, a
+/// side-loaded JSON). P164/P166/P175 applied their three checks only while
+/// compiling a `.feature`, so a hand-written spec reached `validate` with none of
+/// them - a `with.<key>` no call of the kind reads, a value of the wrong type, or
+/// a number outside the read site's band all passed with exit 0. The decision is
+/// shared with `bdd.rs` ([`crate::capability::with_keys::with_step_issue`]) so the
+/// two paths cannot drift; only the locator differs (`node <name>:` here,
+/// `line N:` there).
+fn guard_call_with_spec(caps: &Map<String, Value>, node_list: &[Value]) -> Result<()> {
+    for n in node_list {
+        let Some(obj) = n.as_object() else { continue };
+        let Some(action) = obj.get("action").and_then(Value::as_object) else {
+            continue;
+        };
+        if action.get("kind").and_then(Value::as_str) != Some("call") {
+            continue;
+        }
+        let nm = obj.get("name").and_then(Value::as_str).unwrap_or("?");
+        let cap = action.get("capability").and_then(Value::as_str).unwrap_or("");
+        let with = action
+            .get("with")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let chain: Vec<Value> = action
+            .get("chain")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(issue) = crate::capability::with_keys::with_step_issue(caps, cap, &with, &chain)
+        {
+            bail!(
+                "node {nm}: {}",
+                crate::capability::with_keys::with_issue_body(&issue)
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_graph_semantics(
     nodes: &[WorkflowNode],
     node_list: &[Value],
@@ -2209,6 +2250,14 @@ fn from_spec_with_dir_cycle(
         }
     }
     validate_graph_semantics(&nodes, node_list, &start, &declared_caps)?;
+    // P177: hold a hand-written / side-loaded JSON spec to the same `with`
+    // contract the BDD compile path enforces (P164 key / P166 type / P175 range).
+    let cap_defs: Map<String, Value> = spec
+        .get("capabilities")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+    guard_call_with_spec(&cap_defs, node_list)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
     if let Some(v) = spec.get("max_iterations").and_then(|v| v.as_u64()) {

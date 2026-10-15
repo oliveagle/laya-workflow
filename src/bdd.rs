@@ -3617,8 +3617,6 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     call_chain.push(Value::Object(e));
                 }
                 guard_call_with(feature, &cap, &with, &call_chain, st.line)?;
-                guard_call_with_types(feature, &cap, &with, &call_chain, st.line)?;
-                guard_call_with_ranges(feature, &cap, &with, &call_chain, st.line)?;
                 guard_call_project(&project, &call_chain, st.line)?;
                 call_action = Some((cap, with, project));
             }
@@ -3906,93 +3904,19 @@ fn declared_capabilities(feature: &Feature) -> Map<String, Value> {
     out
 }
 
-/// Every `X` a value names with a `${with.X}` reference, at any depth. Used to
-/// treat a key that *is* referenced (from another `with` value, or from the
-/// capability's own definition — `${with.text}` inside a `body`) as read, even
-/// when no `with.get` literal names it (P164).
-fn with_refs(v: &Value, out: &mut BTreeSet<String>) {
-    match v {
-        Value::String(s) => {
-            let mut rest = s.as_str();
-            while let Some(i) = rest.find("${with.") {
-                let after = &rest[i + "${with.".len()..];
-                let name: String = after
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect();
-                if name.is_empty() {
-                    if after.is_empty() {
-                        break;
-                    }
-                    rest = &after[1..];
-                } else {
-                    rest = &after[name.len()..];
-                    out.insert(name);
-                }
-            }
-        }
-        Value::Array(a) => {
-            for x in a {
-                with_refs(x, out);
-            }
-        }
-        Value::Object(o) => {
-            for x in o.values() {
-                with_refs(x, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// `true` when `a` and `b` are one edit apart (a transposition counts, so
-/// `moed`/`mode` is caught too).
-fn one_apart(a: &str, b: &str) -> bool {
-    if a == b {
-        return false;
-    }
-    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
-    let (n, m) = (a.len(), b.len());
-    if n.abs_diff(m) > 1 {
-        return false;
-    }
-    if n == m {
-        let diff: Vec<usize> = (0..n).filter(|&i| a[i] != b[i]).collect();
-        return diff.len() == 1
-            || (diff.len() == 2 && diff[1] == diff[0] + 1 && a[diff[0]] == b[diff[1]] && a[diff[1]] == b[diff[0]]);
-    }
-    let (s, l) = if n < m { (a, b) } else { (b, a) };
-    let (mut i, mut j) = (0, 0);
-    let mut skipped = false;
-    while i < s.len() && j < l.len() {
-        if s[i] == l[j] {
-            i += 1;
-            j += 1;
-        } else if skipped {
-            return false;
-        } else {
-            skipped = true;
-            j += 1;
-        }
-    }
-    true
-}
-
-/// Refuse a `call` step that hands a capability a `with.<key>` no call of that
-/// kind reads (P164).
+/// Refuse a `call` step whose `with` table the engine can only silently drop:
+/// a key no call of the kind reads (P164), a value of the wrong type (P166), or
+/// a number outside the read site's band (P175).
 ///
 /// The engine reads a fixed set of keys out of `with` and ignores the rest, so a
 /// mistyped key (`with.modes` for `mode`, or a key copied from another kind) is a
-/// **silent no-op**: the value the author set is dropped and the call runs with
-/// the default. Unlike P128 (an option nobody reads) this cannot be caught in the
-/// definition - the key is just data in a JSON object the compiler never looks
-/// inside. So read the key set off the sources ([`with_keys`]) and refuse a key
-/// outside it, naming the capability and the closest key it *does* read.
-///
-/// The read set is `kind_reads(kind)` unioned with every key the step's values
-/// (or the capability's own definition) name as `${with.X}`, plus the keys the
-/// kind is *open* to (`plugin` / `agent` - any key is legal, so those are left
-/// alone). `project.<key>` is a JSON pointer, not a `with` key, so it is untouched.
+/// silent no-op; a value of the wrong JSON type leaves the read site on its
+/// default; and a number outside the band the read site clamps to runs as the
+/// clamped value, not the one written. None is visible to `validate` because the
+/// key is just data in a JSON object - so the decision lives once, in
+/// [`crate::capability::with_keys::with_step_issue`], shared with the `spec.rs`
+/// guard so a hand-written JSON spec and a `@decision` feature are held to the
+/// same contract (and cannot drift apart).
 fn guard_call_with(
     feature: &Feature,
     cap: &str,
@@ -4001,187 +3925,11 @@ fn guard_call_with(
     line: usize,
 ) -> Result<()> {
     let caps = declared_capabilities(feature);
-    // Every key this step names as `${with.X}`, anywhere, is treated as read -
-    // one `with` value may derive from another (`decision = "${with.dec}"`).
-    let mut refs: BTreeSet<String> = BTreeSet::new();
-    with_refs(&Value::Object(with.clone()), &mut refs);
-    for e in chain {
-        with_refs(e, &mut refs);
-    }
-    let check = |capname: &str, keys: &[String]| -> Result<()> {
-        let Some(def) = caps.get(capname) else {
-            return Ok(());
-        };
-        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
-        if crate::capability::with_keys::is_open(kind) {
-            return Ok(());
-        }
-        let Some(set) = crate::capability::with_keys::kind_reads(kind) else {
-            return Ok(());
-        };
-        let mut used: BTreeSet<String> = set.iter().cloned().collect();
-        with_refs(def, &mut used);
-        used.extend(refs.iter().cloned());
-        for k in keys {
-            if used.contains(k) {
-                continue;
-            }
-            let known: Vec<&str> = set.iter().map(String::as_str).collect();
-            let reads = if known.is_empty() {
-                format!("A {kind:?} capability reads no `with` key by name; it only sees the keys its own definition names as `${{with.X}}`.")
-            } else {
-                let shown = if known.len() <= 24 {
-                    known.join(", ")
-                } else {
-                    format!("{} and {} more", known[..12].join(", "), known.len() - 12)
-                };
-                format!("The keys a {kind:?} capability reads: {shown}.")
-            };
-            let hint = set
-                .iter()
-                .find(|cand| one_apart(cand, k))
-                .map(|cand| format!(" Did you mean `with.{cand}`?"))
-                .unwrap_or_default();
-            bail!(
-                "line {line}: `call the capability {capname:?}` passes `with.{k}`, but no {kind:?} call reads that key - the engine ignores it and the call runs with the default, so the value you set is silently dropped.{hint} {reads}"
-            );
-        }
-        Ok(())
-    };
-    let outer: Vec<String> = with.keys().cloned().collect();
-    check(cap, &outer)?;
-    for e in chain {
-        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
-            continue;
-        };
-        let keys: Vec<String> = e
-            .get("with")
-            .and_then(Value::as_object)
-            .map(|m| m.keys().cloned().collect())
-            .unwrap_or_default();
-        check(cn, &keys)?;
-    }
-    Ok(())
-}
-
-/// Name a JSON value's type the way the guard messages do.
-fn json_type_name(v: &Value) -> &'static str {
-    match v {
-        Value::Null => "null",
-        Value::Bool(b) => {
-            if *b {
-                "`true`"
-            } else {
-                "`false`"
-            }
-        }
-        Value::Number(_) => "a number",
-        Value::String(_) => "a string",
-        Value::Array(_) => "an array",
-        Value::Object(_) => "an object",
-    }
-}
-
-/// Refuse a `call` step that hands a capability a `with.<key>` value whose JSON
-/// type its read site does not accept (P166).
-///
-/// P164 refused a `with.<key>` no kind reads; this is the *value* half. The engine
-/// reads each such key through a typed accessor (`as_i64` / `as_str` / `as_bool` …)
-/// and falls back to the definition's value or a default on any other JSON type -
-/// so `| with.amount | "600" |` or `| with.keep_open | 1 |` leaves the author's value
-/// **silently discarded** while `bdd build` stays green. The wanted type is read off
-/// the `with` read site itself ([`crate::capability::with_keys::with_value_rejected`]):
-/// a key read untyped anywhere (`get_text` runs the value through `stringify`,
-/// `.cloned()`, `json!`) is never judged, and neither is a `${state.x}` template,
-/// whose runtime type is whatever the referenced value is.
-fn guard_call_with_types(
-    feature: &Feature,
-    cap: &str,
-    with: &Map<String, Value>,
-    chain: &[Value],
-    line: usize,
-) -> Result<()> {
-    let caps = declared_capabilities(feature);
-    let check = |capname: &str, kv: &Map<String, Value>| -> Result<()> {
-        let Some(def) = caps.get(capname) else {
-            return Ok(());
-        };
-        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
-        for (k, v) in kv {
-            if matches!(v.as_str(), Some(s) if s.contains("${")) {
-                continue;
-            }
-            if let Some(want) = crate::capability::with_keys::with_value_rejected(kind, k, v) {
-                bail!(
-                    "line {line}: `call the capability {capname:?}` passes `with.{k}` as {}, but a \
-                     {kind:?} call reads it as {want} - the engine falls back to its default on any \
-                     other JSON type, so the value you set is silently discarded.",
-                    json_type_name(v)
-                );
-            }
-        }
-        Ok(())
-    };
-    check(cap, with)?;
-    for e in chain {
-        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
-            continue;
-        };
-        if let Some(m) = e.get("with").and_then(Value::as_object) {
-            check(cn, m)?;
-        }
-    }
-    Ok(())
-}
-
-/// Refuse a `call` step whose `with.<key>` number the engine replaces with a
-/// clamped one (P175).
-///
-/// P164 refused a key no kind reads, P166 the wrong *type*. This is the *range*:
-/// the read site clamps the value (`with.result_count` to `1..=20`,
-/// `with.min_score` to `0..=1`, `with.tab_concurrency` to `1..=10`,
-/// `with.limit` to `1..=1000`, `with.max_open` to `at most 30`), so
-/// `| with.result_count | 50 |` runs as 20 and `| with.min_score | 1.5 |` - set
-/// to filter harder - runs as 1.0, which filters nothing. The band is read off
-/// the read site ([`crate::capability::with_keys::with_range_rejected`]); a key
-/// the module reads at more than one place (`with.max_text` is clamped by
-/// `research` and capped by `snapshot` with different bands) has no single band
-/// the compiler can hold the author to, so it is left alone.
-fn guard_call_with_ranges(
-    feature: &Feature,
-    cap: &str,
-    with: &Map<String, Value>,
-    chain: &[Value],
-    line: usize,
-) -> Result<()> {
-    let caps = declared_capabilities(feature);
-    let check = |capname: &str, kv: &Map<String, Value>| -> Result<()> {
-        let Some(def) = caps.get(capname) else {
-            return Ok(());
-        };
-        let kind = def.get("kind").and_then(Value::as_str).unwrap_or("");
-        for (k, v) in kv {
-            if matches!(v.as_str(), Some(s) if s.contains("${")) {
-                continue;
-            }
-            if let Some(band) = crate::capability::with_keys::with_range_rejected(kind, k, v) {
-                bail!(
-                    "line {line}: `call the capability {capname:?}` passes `with.{k}` as {v}, but a \
-                     {kind:?} call clamps it to {band} - a value outside that band is silently \
-                     replaced at the read site, so the setting that runs is not the one written."
-                );
-            }
-        }
-        Ok(())
-    };
-    check(cap, with)?;
-    for e in chain {
-        let Some(cn) = e.get("capability").and_then(Value::as_str) else {
-            continue;
-        };
-        if let Some(m) = e.get("with").and_then(Value::as_object) {
-            check(cn, m)?;
-        }
+    if let Some(issue) = crate::capability::with_keys::with_step_issue(&caps, cap, with, chain) {
+        bail!(
+            "line {line}: {}",
+            crate::capability::with_keys::with_issue_body(&issue)
+        );
     }
     Ok(())
 }
@@ -4215,7 +3963,7 @@ fn guard_call_project(project: &Map<String, Value>, chain: &[Value], line: usize
                  with `as_str()` and skips any other type, so `state.{key}` is never written and \
                  any `@outputs` naming it is silently broken. Write the pointer as a string \
                  (e.g. `/count`).",
-                json_type_name(val)
+                crate::capability::with_keys::json_type_name(val)
             );
         }
         Ok(())

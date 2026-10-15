@@ -8438,6 +8438,10 @@ Feature: chain_key
             && kind_reads("exec").expect("exec").is_empty()
             && is_open("plugin")
             && is_open("agent")
+            // `passthrough` / `noop` return the whole expanded `with`, so every
+            // key is read - open, not an empty closed set.
+            && is_open("passthrough")
+            && is_open("noop")
             && kind_reads("datetime").expect("datetime").contains("epoch"),
     );
 }

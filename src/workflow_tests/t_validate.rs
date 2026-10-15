@@ -2544,3 +2544,172 @@ pub fn test_validate_option_attach(h: &mut Harness) {
         ok(json!({"kind": "browser", "endpoint": ep, "attach": true, "max_text": 100})),
     );
 }
+
+/// P177: a hand-written / side-loaded JSON spec is held to the same `call`-step
+/// `with` contract the BDD compile path enforces - a key no call of the kind
+/// reads (P164), a value of the wrong type (P166), or a number outside the read
+/// site's band (P175). Those three guards first lived only in `bdd.rs`, so a
+/// `validate --spec` on hand-written JSON passed all of them with exit 0. The
+/// decision is now shared (`capability::with_keys::with_step_issue`), with the
+/// BDD path prefixing `line N:` and this one `node <name>:`.
+pub fn test_validate_call_with(h: &mut Harness) {
+    use crate::capability::with_keys::{is_open, kind_reads, with_issue_body, with_step_issue, WithIssue};
+    // A chrome (`chrome_cdp`) call whose `with` is clean, plus a `plugin` call
+    // (open kind - any key is legal).
+    let spec_with_caps = |with: Value, chain: Value| -> Value {
+        let mut s = base_spec(
+            "a",
+            json!([
+                node(
+                    "a",
+                    json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+                    json!({"condition": {}, "default": "STOP"}),
+                    json!({"kind": "call", "capability": "chrome", "with": with, "chain": chain})
+                )
+            ]),
+        );
+        s["capabilities"] = json!({
+            "chrome": {"kind": "chrome_cdp", "endpoint": "http://127.0.0.1:9222"},
+            "plug": {"kind": "plugin", "plugin": "websites/x"},
+            "raw": {"kind": "passthrough"}
+        });
+        s
+    };
+    let ok = |with: Value, chain: Value| spec::from_spec(&spec_with_caps(with, chain)).is_ok();
+    let err = |with: Value, chain: Value| -> String {
+        spec::from_spec(&spec_with_caps(with, chain))
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default()
+    };
+    // the same spec with the outer action retargeted at another capability
+    let okc = |cap: &str, with: Value, chain: Value| {
+        let mut s = spec_with_caps(with, chain);
+        s["nodes"][0]["action"]["capability"] = json!(cap);
+        spec::from_spec(&s).is_ok()
+    };
+
+    // ── the clean cases stay clean ──
+    h.check(
+        "validate call-with: a key the kind reads is OK",
+        ok(json!({"op": "open", "url": "http://127.0.0.1:9222"}), json!([])),
+    );
+    h.check(
+        "validate call-with: a `${state.x}` template is not judged",
+        ok(json!({"op": "open", "url": "${state.url}"}), json!([])),
+    );
+    h.check(
+        "validate call-with: a `${state.x}` template is OK on a numeric read",
+        ok(json!({"op": "snapshot", "result_count": "${state.n}"}), json!([])),
+    );
+    h.check(
+        "validate call-with: a key named only by a `${with.X}` sibling counts as read",
+        ok(json!({"op": "click", "selector": "${with.targetId}", "targetId": "#a"}), json!([])),
+    );
+    h.check(
+        "validate call-with: an open kind (plugin) accepts any key",
+        okc("plug", json!({"op": "run", "whatever": 1}), json!([])),
+    );
+    h.check(
+        "validate call-with: a chain sub-call on an open kind is not judged",
+        ok(
+            json!({"op": "open"}),
+            json!([{"as": "x", "capability": "plug", "with": {"anything": 1}}]),
+        ),
+    );
+    h.check(
+        "validate call-with: an empty `with` is OK",
+        ok(json!({}), json!([])),
+    );
+    // a template whose *value* is a string but names a with-ref is not a wrong type
+    h.check(
+        "validate call-with: a `${with.X}` string is not a wrong-typed number",
+        ok(json!({"op": "snapshot", "result_count": "${with.n}", "n": 3}), json!([])),
+    );
+
+    // ── P164: a key no call of the kind reads ──
+    let m = err(json!({"op": "open", "modes": "search"}), json!([]));
+    h.check("validate call-with: an unread key is refused", !m.is_empty());
+    h.check("validate call-with: the unread-key error names the node", m.contains("node a:"));
+    h.check("validate call-with: the unread-key error names the key", m.contains("with.modes"));
+    h.check(
+        "validate call-with: the unread-key error says the value is silently dropped",
+        m.contains("silently dropped"),
+    );
+    h.check(
+        "validate call-with: the unread-key error suggests the near miss",
+        err(json!({"op": "snapshot", "result_counts": 3}), json!([]))
+            .contains("Did you mean `with.result_count`?"),
+    );
+    h.check(
+        "validate call-with: an unread key in a chain entry is refused",
+        err(
+            json!({"op": "open"}),
+            json!([{"as": "x", "capability": "chrome", "with": {"nope": 1}}]),
+        )
+        .contains("with.nope"),
+    );
+
+    // ── P166: a value of the wrong type ──
+    let m = err(json!({"op": "snapshot", "result_count": "twenty"}), json!([]));
+    h.check("validate call-with: a wrong-typed value is refused", !m.is_empty());
+    h.check(
+        "validate call-with: the wrong-type error says the value is discarded",
+        m.contains("silently discarded"),
+    );
+    h.check("validate call-with: the wrong-type error names the read type", m.contains("reads it as"));
+
+    // ── P175: a number outside the read site's band ──
+    let m = err(json!({"op": "snapshot", "result_count": 50}), json!([]));
+    h.check("validate call-with: an out-of-band number is refused", !m.is_empty());
+    h.check("validate call-with: the band error names the band", m.contains("1..=20"));
+    h.check(
+        "validate call-with: the band error says the value is replaced at the read site",
+        m.contains("silently replaced at the read site"),
+    );
+    h.check(
+        "validate call-with: an in-band number is OK",
+        ok(json!({"op": "snapshot", "result_count": 20}), json!([])),
+    );
+
+    // ── the shared decision itself (no drift between the two paths) ──
+    let caps: serde_json::Map<String, Value> = serde_json::from_value(json!({
+        "chrome": {"kind": "chrome_cdp"}
+    }))
+    .unwrap();
+    let with: serde_json::Map<String, Value> =
+        serde_json::from_value(json!({"modes": "x"})).unwrap();
+    let issue = with_step_issue(&caps, "chrome", &with, &[]).expect("unread key");
+    h.check(
+        "validate call-with: with_step_issue reports the unread key",
+        matches!(issue, WithIssue::Unread { ref key, .. } if key == "modes"),
+    );
+    h.check(
+        "validate call-with: with_issue_body is the one message both paths print",
+        with_issue_body(&issue).contains("no \"chrome_cdp\" call reads that key"),
+    );
+    h.check(
+        "validate call-with: an open kind yields no issue",
+        with_step_issue(
+            &serde_json::from_value::<serde_json::Map<String, Value>>(
+                json!({"p": {"kind": "plugin"}}),
+            )
+            .unwrap(),
+            "p",
+            &with,
+            &[],
+        )
+        .is_none(),
+    );
+    // P177: `passthrough` (and its alias `noop`) returns the whole expanded
+    // `with`, so every key is read - it is an open kind, and a guard that judged
+    // it would refuse a key it cannot prove is unread.
+    h.check(
+        "validate call-with: passthrough and noop are open kinds",
+        is_open("passthrough") && is_open("noop") && kind_reads("passthrough").is_none(),
+    );
+    h.check(
+        "validate call-with: a passthrough call accepts any `with` key",
+        okc("raw", json!({"token": "x", "n": 1}), json!([])),
+    );
+}
