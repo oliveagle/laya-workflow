@@ -82,13 +82,9 @@ pub fn test_capabilities_batch3(h: &mut Harness) {
             "tcp records recv_bytes",
             r["recv_bytes"].as_u64().unwrap() > 0,
         );
-        h.check("tcp refuses empty host", {
-            let bad = capability::registry_from(
-                &[("t", json!({"kind":"tcp","port":1}))],
-                Some(p3.clone()),
-            )
-            .unwrap();
-            bad.call("t", &json!({}), &json!({})).is_err()
+        // P149: a host-less tcp can never run, so it is rejected at *parse*.
+        h.check("tcp refuses empty host (rejected at parse)", {
+            capability::registry_from(&[("t", json!({"kind":"tcp","port":1}))], Some(p3.clone())).is_err()
         });
 
         // udp echo
@@ -99,13 +95,9 @@ pub fn test_capabilities_batch3(h: &mut Harness) {
             "udp receives echo",
             r["reply"].as_str().unwrap_or("").contains("echo:ping-udp"),
         );
-        h.check("udp refuses missing port", {
-            let bad = capability::registry_from(
-                &[("u", json!({"kind":"udp","host":"127.0.0.1"}))],
-                Some(p3.clone()),
-            )
-            .unwrap();
-            bad.call("u", &json!({"send":"x"}), &json!({})).is_err()
+        // P149: a port-less udp can never run, so it is rejected at *parse*.
+        h.check("udp refuses missing port (rejected at parse)", {
+            capability::registry_from(&[("u", json!({"kind":"udp","host":"127.0.0.1"}))], Some(p3.clone())).is_err()
         });
 
         // redis: set/get/incr/keys

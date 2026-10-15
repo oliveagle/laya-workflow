@@ -1407,3 +1407,62 @@ pub fn test_validate_spec_keys(h: &mut Harness) {
     badbdd["_bdd"] = json!({"featur": "f"});
     h.check("validate: `_bdd` key typo `featur` rejected", !ok(badbdd));
 }
+
+
+/// P149: a capability *definition* must be runnable. P128 refuses options a kind
+/// never reads; this refuses a kind whose mandatory target field is missing —
+/// `rpc` without `url`, `s3` without `bucket`, `tcp` without `port`, … still
+/// `validate` green, but the runtime only `expand`s *into* the configured string
+/// (an empty template stays empty), so every call bails `"<kind> needs …"`. The
+/// fields a call may instead supply via `with` (`pdf.path`, `db.sqlite`,
+/// `cron.expr`, `computer_use.allowed_surface`) stay legal empty.
+pub fn test_validate_capability_runnable(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — a definition that carries its target field runs
+    h.check("validate: rpc with url is OK", ok(json!({"kind": "rpc", "url": "http://x"})));
+    h.check("validate: s3 with endpoint+bucket is OK", ok(json!({"kind": "s3", "endpoint": "http://x", "bucket": "b"})));
+    h.check("validate: tcp with host+port is OK", ok(json!({"kind": "tcp", "host": "127.0.0.1", "port": 9})));
+    h.check("validate: mcp http with url+tool is OK", ok(json!({"kind": "mcp", "transport": "http", "url": "http://x", "tool": "t"})));
+    h.check("validate: agent stdio with command is OK", ok(json!({"kind": "agent", "transport": "stdio", "command": ["x"]})));
+
+    // negatives — the definition can never run (runtime bails `... needs ...`)
+    h.check("validate: rpc without url rejected", !ok(json!({"kind": "rpc"})));
+    h.check("validate: graphql without url rejected", !ok(json!({"kind": "graphql"})));
+    h.check("validate: llm without url rejected", !ok(json!({"kind": "llm"})));
+    h.check("validate: s3 without bucket rejected", !ok(json!({"kind": "s3", "endpoint": "http://x"})));
+    h.check("validate: tcp without port rejected", !ok(json!({"kind": "tcp", "host": "127.0.0.1"})));
+    h.check("validate: mcp http without url rejected", !ok(json!({"kind": "mcp", "transport": "http", "tool": "t"})));
+    h.check("validate: mcp without tool rejected", !ok(json!({"kind": "mcp", "transport": "http", "url": "http://x"})));
+    h.check("validate: agent http without url rejected", !ok(json!({"kind": "agent", "transport": "http"})));
+    h.check("validate: sqlite without db rejected", !ok(json!({"kind": "sqlite"})));
+    h.check("validate: web_search without endpoint rejected", !ok(json!({"kind": "web_search"})));
+
+    // boundary — fields the *call* may supply via `with` stay legal empty
+    h.check("validate: pdf without path is OK (with supplies it)", ok(json!({"kind": "pdf"})));
+    h.check("validate: db without sqlite is OK (with supplies it)", ok(json!({"kind": "db"})));
+    h.check("validate: cron without expr is OK (with supplies it)", ok(json!({"kind": "cron"})));
+    h.check("validate: computer_use without surface is OK (with supplies it)", ok(json!({"kind": "computer_use"})));
+
+    // the message names the missing option and why
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "rpc"}});
+    match spec::from_spec(&s) {
+        Err(e) => {
+            let m = e.to_string();
+            h.check("validate: the error names the missing option", m.contains("url"));
+            h.check("validate: the error explains the run failure", m.contains("fails at run"));
+        }
+        Ok(_) => h.check("validate: expected an error", false),
+    }
+}

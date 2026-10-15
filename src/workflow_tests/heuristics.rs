@@ -144,21 +144,21 @@ pub fn test_heuristic_fixes(h: &mut Harness) {
 
             // A server that is not reachable still fails loudly (not silently),
             // and the config error for a missing url is explicit.
-            let reg = capability::registry_from(
+            // P149: a url-less mcp can never run, so it is now rejected at
+            // *parse* (validate/build), not deferred to a run-time call error.
+            let e = match capability::registry_from(
                 &[(
                     "mcp_no_url",
                     json!({"kind": "mcp", "transport": "http", "tool": "t"}),
                 )],
                 Some(npol.clone()),
-            )
-            .unwrap();
-            let e = reg
-                .call("mcp_no_url", &json!({}), &json!({}))
-                .unwrap_err()
-                .to_string();
+            ) {
+                Ok(_) => String::new(),
+                Err(err) => err.to_string(),
+            };
             h.check(
-                "fix: mcp http without a url errors clearly",
-                e.contains("needs 'url'"),
+                "fix: mcp http without a url is rejected up front",
+                e.contains("needs \"url\""),
             );
 
             // Headers are part of the parsed capability, so an authenticated

@@ -48,6 +48,109 @@ impl<'a> Fields<'a> {
 /// transpiler and the docs carry through.
 const OPTIONS_READ_ELSEWHERE: &[&str] = &["platforms", "description"];
 
+/// Kinds whose *definition* must carry a non-empty target field to ever run.
+///
+/// Mirrors each kind\'s own runtime `bail!("<kind> … needs \'<field>\'")`: a
+/// capability declared without the field still `validate`s, but every call fails
+/// at run — and the target can never be supplied later, because the runtime only
+/// `expand`s *into* the configured string (an empty template stays empty). A
+/// field the runtime instead lets a call\'s `with` supply (`graphql.query`,
+/// `kafka.topic`, `pdf.path`, `archive.path`, `db.*`, `cron.expr`,
+/// `computer_use.allowed_surface`, `web_fetch`) is deliberately **not** required
+/// here — such a capability *is* runnable via `with`. This is the capability
+/// analogue of P128\'s "a declared option nobody reads": a capability whose
+/// definition can never run is the same latent bug, one level up (P149).
+fn check_required_options(name: &str, kind: &str, def: &Value) -> Result<()> {
+    let nonempty_str = |k: &str| {
+        def.get(k)
+            .and_then(Value::as_str)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    };
+    let port_set =
+        |k: &str| def.get(k).and_then(Value::as_u64).map(|p| p != 0).unwrap_or(false);
+    let command_set = || {
+        def.get("command")
+            .and_then(Value::as_array)
+            .map(|a| !a.is_empty())
+            .unwrap_or(false)
+    };
+    let mut missing: Vec<&str> = Vec::new();
+    match kind {
+        "rpc" | "graphql" | "llm" | "chat" | "vector" | "webhook" | "sse" | "prometheus"
+        | "prom" | "kafka" => {
+            if !nonempty_str("url") {
+                missing.push("url");
+            }
+        }
+        "web_search" | "search" => {
+            if !nonempty_str("endpoint") {
+                missing.push("endpoint");
+            }
+        }
+        "s3" | "object_store" => {
+            for k in ["endpoint", "bucket"] {
+                if !nonempty_str(k) {
+                    missing.push(k);
+                }
+            }
+        }
+        "sql" | "database" => {
+            if !nonempty_str("dsn") {
+                missing.push("dsn");
+            }
+        }
+        "sqlite" => {
+            if !nonempty_str("db") {
+                missing.push("db");
+            }
+        }
+        "tcp" | "udp" => {
+            if !nonempty_str("host") {
+                missing.push("host");
+            }
+            if !port_set("port") {
+                missing.push("port");
+            }
+        }
+        "agent" | "app_server" | "mcp" => {
+            if kind == "mcp" && !nonempty_str("tool") {
+                missing.push("tool");
+            }
+            let transport = def
+                .get("transport")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if def.get("command").is_some() {
+                        "stdio".to_string()
+                    } else {
+                        "http".to_string()
+                    }
+                });
+            if transport == "http" {
+                if !nonempty_str("url") {
+                    missing.push("url");
+                }
+            } else if !command_set() {
+                missing.push("command");
+            }
+        }
+        _ => {}
+    }
+    if !missing.is_empty() {
+        let list = missing
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        bail!(
+            "capability {name:?} (kind {kind:?}) needs {list} (non-empty) — the engine reads it as an empty value, so the capability `validate`s but every call fails at run (`{kind} needs {list}`)"
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
     let kind = def
         .get("kind")
@@ -55,6 +158,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
         .ok_or_else(|| anyhow!("capability {name:?} missing 'kind'"))?;
     let mut fields = Fields::new(def);
     let cap = parse_kind(name, kind, &mut fields)?;
+    check_required_options(name, kind, def)?;
     // Every option the spec declares must be one this kind reads.
     let unknown: Vec<String> = def
         .as_object()

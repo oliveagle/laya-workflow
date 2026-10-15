@@ -119,6 +119,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-question-keys", t_validate::test_validate_question_keys),
         ("validate-action-keys", t_validate::test_validate_action_keys),
         ("validate-spec-keys", t_validate::test_validate_spec_keys),
+        ("validate-capability-runnable", t_validate::test_validate_capability_runnable),
         ("validate-when-operator", t_validate::test_validate_when_operator),
         ("validate-edge-key", t_validate::test_validate_edge_key),
         ("validate-sub-continue", t_validate::test_validate_sub_continue),
