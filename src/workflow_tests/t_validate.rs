@@ -1765,3 +1765,73 @@ pub fn test_validate_option_values_3(h: &mut Harness) {
         h.check("validate: expected a delimiter error", false);
     }
 }
+
+/// Regression (P154): the last "a declared value the engine throws away" hole —
+/// an option the engine reads as a `Vec<String>` (from a JSON array, keeping
+/// only the string elements) or as a JSON object. A non-string array element
+/// (`["--max-turns", 8]` — an unquoted number) or a non-array value is silently
+/// dropped; a non-object `headers`/`env` drops the whole map. `validate` now
+/// refuses both.
+pub fn test_validate_option_values_4(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+
+    // positives — every element a string, or a real JSON object
+    h.check("validate: exec argv all strings OK", ok(json!({"kind": "exec", "argv": ["echo", "A", "5", "B"]})));
+    h.check("validate: exec argv empty OK", ok(json!({"kind": "exec", "argv": []})));
+    h.check("validate: goal_runner args all strings OK", ok(json!({"kind": "goal_runner", "args": ["--max-turns", "8", "--fresh"]})));
+    h.check("validate: agent command all strings (http) OK", ok(json!({"kind": "agent", "transport": "http", "url": "http://x", "command": ["cmd", "-x"]})));
+    h.check("validate: mcp command all strings (stdio) OK", ok(json!({"kind": "mcp", "tool": "t", "transport": "stdio", "command": ["cmd"]})));
+    h.check("validate: computer_use allowed_fields all strings OK", ok(json!({"kind": "computer_use", "allowed_fields": ["a", "b"]})));
+    h.check("validate: file allow_roots all strings OK", ok(json!({"kind": "file", "allow_roots": ["/tmp"]})));
+    h.check("validate: http headers object OK", ok(json!({"kind": "http", "url": "http://x", "headers": {"accept": "application/json"}})));
+    h.check("validate: http headers empty object OK", ok(json!({"kind": "http", "url": "http://x", "headers": {}})));
+    h.check("validate: exec env object OK", ok(json!({"kind": "exec", "argv": ["x"], "env": {"A": "1"}})));
+    h.check("validate: object_store (alias) headers object OK", ok(json!({"kind": "object_store", "endpoint": "http://x", "bucket": "b", "headers": {"a": "1"}})));
+
+    // negatives — a non-string element is silently dropped
+    h.check("validate: exec argv with a number rejected", !ok(json!({"kind": "exec", "argv": ["echo", "hi", 5]})));
+    h.check("validate: exec argv with a bool rejected", !ok(json!({"kind": "exec", "argv": ["echo", true]})));
+    h.check("validate: goal_runner args with a number rejected", !ok(json!({"kind": "goal_runner", "args": ["--max-turns", 8]})));
+    h.check("validate: goal_runner args non-array rejected", !ok(json!({"kind": "goal_runner", "args": "--max-turns 8"})));
+    h.check("validate: agent command with a number rejected", !ok(json!({"kind": "agent", "transport": "http", "url": "http://x", "command": ["cmd", 3]})));
+    h.check("validate: mcp command with a bool rejected", !ok(json!({"kind": "mcp", "tool": "t", "transport": "stdio", "command": ["cmd", true]})));
+    h.check("validate: computer_use allowed_fields with a number rejected", !ok(json!({"kind": "computer_use", "allowed_fields": ["a", 1]})));
+    h.check("validate: file allow_roots with a number rejected", !ok(json!({"kind": "file", "allow_roots": [1]})));
+
+    // negatives — a non-object container drops the whole map
+    h.check("validate: http headers as array rejected", !ok(json!({"kind": "http", "url": "http://x", "headers": ["x"]})));
+    h.check("validate: http headers as string rejected", !ok(json!({"kind": "http", "url": "http://x", "headers": "accept: x"})));
+    h.check("validate: exec env as array rejected", !ok(json!({"kind": "exec", "argv": ["x"], "env": ["A=1"]})));
+    h.check("validate: object_store (alias) headers as array rejected", !ok(json!({"kind": "object_store", "endpoint": "http://x", "bucket": "b", "headers": [1]})));
+
+    // the messages name the element / the reason
+    let mut s = base_spec("a", nodes.clone());
+    s["capabilities"] = json!({"c": {"kind": "goal_runner", "args": ["--max-turns", 8]}});
+    if let Err(e) = spec::from_spec(&s) {
+        let m = e.to_string();
+        h.check("validate: the array error names the non-string element", m.contains("non-string element 8"));
+        h.check("validate: the array error says silently dropped", m.contains("silently dropped"));
+    } else {
+        h.check("validate: expected an array-element error", false);
+    }
+
+    let mut s2 = base_spec("a", nodes.clone());
+    s2["capabilities"] = json!({"c": {"kind": "http", "url": "http://x", "headers": ["x"]}});
+    if let Err(e) = spec::from_spec(&s2) {
+        let m = e.to_string();
+        h.check("validate: the object error says must be a JSON object", m.contains("must be a JSON object"));
+        h.check("validate: the object error names the option", m.contains("headers"));
+    } else {
+        h.check("validate: expected an object-shape error", false);
+    }
+}

@@ -205,6 +205,32 @@ const BOOL_OPTIONS: &[(&str, &str)] = &[
 /// asked for is simply missing from the result (P153).
 const METRICS_WHAT: &[&str] = &["mem", "load", "uptime", "cpu", "disk"];
 
+/// Options the engine reads as a `Vec<String>` from a JSON array, keeping only
+/// the string elements (`filter_map(|x| x.as_str())`). A non-string element — the
+/// usual cause is an unquoted number (`"--max-turns", 8`) or bool — is silently
+/// dropped, so the command runs without it; a non-array value drops the whole
+/// list. `validate` refuses both (P154).
+const STRING_ARRAY_OPTIONS: &[(&str, &str)] = &[
+    ("exec", "argv"),
+    ("agent", "command"),
+    ("mcp", "command"),
+    ("goal_runner", "args"),
+    ("file", "allow_roots"),
+    ("computer_use", "allowed_fields"),
+];
+
+/// Options the engine reads as a JSON object (`as_object`), keeping nothing on a
+/// non-object value — the whole declaration (headers, env) is silently dropped
+/// (P154).
+const OBJECT_OPTIONS: &[(&str, &str)] = &[
+    ("http", "headers"),
+    ("exec", "env"),
+    ("mcp", "headers"),
+    ("s3", "headers"),
+    ("web_search", "headers"),
+    ("web_fetch", "headers"),
+];
+
 fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     let Some(obj) = def.as_object() else {
         return Ok(());
@@ -228,6 +254,31 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
         if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_bool).is_none() {
             bail!(
                 "capability {name:?} (kind {kind:?}) option {opt:?} must be true or false — the engine reads it as a boolean, so a non-boolean value (e.g. the string \"false\") is silently replaced by the default"
+            );
+        }
+    }
+    for (k, opt) in STRING_ARRAY_OPTIONS {
+        if *k == ckind {
+            if let Some(v) = obj.get(*opt) {
+                match v.as_array() {
+                    None => bail!(
+                        "capability {name:?} (kind {kind:?}) option {opt:?} must be an array of strings — the engine reads it as a string list and ignores a non-array value, so the whole list is silently dropped"
+                    ),
+                    Some(arr) => {
+                        if let Some(bad) = arr.iter().find(|x| !x.is_string()) {
+                            bail!(
+                                "capability {name:?} (kind {kind:?}) option {opt:?} has a non-string element {bad} — the engine keeps only the string elements, so this one is silently dropped (a quoted number such as 8 is the usual cause)"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (k, opt) in OBJECT_OPTIONS {
+        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_object).is_none() {
+            bail!(
+                "capability {name:?} (kind {kind:?}) option {opt:?} must be a JSON object — the engine reads it as a map and ignores a non-object value, so the whole declaration is silently dropped"
             );
         }
     }
@@ -376,6 +427,7 @@ fn canon_kind(k: &str) -> &str {
         "chrome_cdp" => "browser",
         "fetch_url" => "web_fetch",
         "search" => "web_search",
+        "object_store" => "s3",
         "sysinfo" => "metrics",
         "agent_goal" => "goal_runner",
         other => other,
