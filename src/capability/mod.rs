@@ -187,6 +187,30 @@ pub const POLICY_MAX_TIMEOUT_MS: u64 = 600_000;
 pub const POLICY_MAX_OUTPUT: u64 = 64 << 20; // 64 MiB
 pub const POLICY_MAX_RETRIES: u64 = 5;
 
+/// Bounds the `browser` capability clamps at load: `max_owned_pages` to
+/// `OWNED_PAGES_MIN..=OWNED_PAGES_MAX`, `owned_idle_ms` to
+/// `OWNED_IDLE_MS_MIN..=OWNED_IDLE_MS_MAX`. A value outside them is *silently*
+/// replaced, so `check_option_domains` refuses it by name - and the clamp reads
+/// these same constants, so the guard's bounds and the runtime's bounds cannot
+/// drift apart (P174, the range side of P150's type check).
+pub const OWNED_PAGES_MIN: u64 = 1;
+pub const OWNED_PAGES_MAX: u64 = 500;
+pub const OWNED_IDLE_MS_MIN: u64 = 1_000;
+pub const OWNED_IDLE_MS_MAX: u64 = 24 * 60 * 60_000;
+
+/// Clamp the `browser` capability's two numeric knobs to the engine's band.
+/// `parse_kind` builds `BrowserCap` through these, so the value the engine runs
+/// is checked against the very bounds `parse::check_option_domains` refuses a
+/// spec for exceeding (P174: the range side of P150's type check). The guard and
+/// the clamp name the same constants, so neither can move without the other.
+pub fn clamp_owned_pages(max_owned_pages: u64) -> usize {
+    max_owned_pages.clamp(OWNED_PAGES_MIN, OWNED_PAGES_MAX) as usize
+}
+
+pub fn clamp_owned_idle_ms(owned_idle_ms: u64) -> u64 {
+    owned_idle_ms.clamp(OWNED_IDLE_MS_MIN, OWNED_IDLE_MS_MAX)
+}
+
 /// Runtime safety envelope, overridable from the spec (with hard ceilings).
 #[derive(Clone, Debug)]
 pub struct Policy {

@@ -7,8 +7,9 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
 use super::{
-    browser, computer_use, data, db, goal, local, net, plugin, proto, service, store, sys,
-    web, AgentCap, Capability, ExecCap, HttpCap,
+    browser, clamp_owned_idle_ms, clamp_owned_pages, computer_use, data, db, goal, local, net, plugin,
+    proto, service, store, sys, web, AgentCap, Capability, ExecCap, HttpCap, OWNED_IDLE_MS_MAX,
+    OWNED_IDLE_MS_MIN, OWNED_PAGES_MAX, OWNED_PAGES_MIN,
 };
 
 /// The JSON type a read site reads an option as. When a declared value has a
@@ -395,6 +396,25 @@ fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
                 _ => bail!(
                     "capability {name:?} (kind {kind:?}) option \"port\" must be a TCP/UDP port in 1..=65535 — it is cast to `u16`, so a larger value wraps to a different port (70000 -> 4464)"
                 ),
+            }
+        }
+    }
+    // P174: the browser capability clamps two numeric knobs at load, so a value
+    // outside its band is never the one that runs (a `max_owned_pages` of 1000
+    // runs as 500; an `owned_idle_ms` of 500 - "reclaim almost immediately" -
+    // runs as 1000). P150 asserts the *type*; this asserts the *range*, from the
+    // same constants the clamp uses.
+    if ckind == "browser" {
+        for (key, lo, hi, what) in [
+            ("max_owned_pages", OWNED_PAGES_MIN, OWNED_PAGES_MAX, "Laya-owned pages"),
+            ("owned_idle_ms", OWNED_IDLE_MS_MIN, OWNED_IDLE_MS_MAX, "idle-reclaim timeout in ms"),
+        ] {
+            if let Some(n) = obj.get(key).and_then(Value::as_u64) {
+                if !(lo..=hi).contains(&n) {
+                    bail!(
+                        "capability {name:?} (kind {kind:?}) option {key:?} is {n}, but the engine clamps it to {lo}..={hi} ({what}) — a value outside that band is silently replaced at load, so the setting that runs is not the one written"
+                    );
+                }
             }
         }
     }
@@ -878,14 +898,11 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             startup_timeout_ms: f.u64("startup_timeout_ms").unwrap_or(15_000),
             timeout_ms: f.u64("timeout_ms").unwrap_or(20_000),
             max_text: f.u64("max_text").unwrap_or(6_000) as usize,
-            max_owned_pages: f
-                .u64("max_owned_pages")
-                .unwrap_or(32)
-                .clamp(1, 500) as usize,
-            owned_idle_ms: f
-                .u64("owned_idle_ms")
-                .unwrap_or(5 * 60_000)
-                .clamp(1_000, 24 * 60 * 60_000),
+            // The two bounded knobs go through the shared clamps (P174), so the
+            // guard that refuses an out-of-band value and the value that runs
+            // cannot disagree.
+            max_owned_pages: clamp_owned_pages(f.u64("max_owned_pages").unwrap_or(32)),
+            owned_idle_ms: clamp_owned_idle_ms(f.u64("owned_idle_ms").unwrap_or(5 * 60_000)),
             human: f.b("human").unwrap_or(true),
         })),
         "web_search" | "search" => Ok(Capability::WebSearch(web::WebSearchCap {

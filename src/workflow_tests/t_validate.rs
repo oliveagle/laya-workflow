@@ -2359,3 +2359,84 @@ pub fn test_validate_option_string(h: &mut Harness) {
         ok(json!({"kind": "graphql", "url": "http://x", "variables": {"a": 1}})),
     );
 }
+
+
+/// P174: the `browser` capability clamps two numeric knobs at load, so a value
+/// outside the band is never the one that runs - a `max_owned_pages` of 1000
+/// runs as 500, and an `owned_idle_ms` of 500 ("reclaim almost immediately")
+/// runs as 1000. `validate` accepted both in silence. P150 asserted the *type*
+/// of these options; this asserts their *range*, from the same constants the
+/// clamp uses, so the two cannot drift apart.
+pub fn test_validate_option_clamps(h: &mut Harness) {
+    let nodes = json!([node(
+        "a",
+        json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a"}}}),
+        json!({"condition": {}, "default": "STOP"}),
+        json!({"kind": "copy_keys", "keys": ["q"]})
+    )]);
+    let ok = |cap: Value| {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).is_ok()
+    };
+    let err = |cap: Value| -> String {
+        let mut s = base_spec("a", nodes.clone());
+        s["capabilities"] = json!({ "c": cap });
+        spec::from_spec(&s).err().map(|e| e.to_string()).unwrap_or_default()
+    };
+
+    // positives — inside the band, on the canonical kind and on its alias
+    h.check("validate: browser max_owned_pages 1 is OK", ok(json!({"kind": "browser", "max_owned_pages": 1})));
+    h.check("validate: browser max_owned_pages 500 is OK", ok(json!({"kind": "browser", "max_owned_pages": 500})));
+    h.check("validate: browser owned_idle_ms 1000 is OK", ok(json!({"kind": "browser", "owned_idle_ms": 1000})));
+    h.check("validate: chrome_cdp owned_idle_ms 86400000 is OK",
+        ok(json!({"kind": "chrome_cdp", "owned_idle_ms": 86_400_000u64})));
+
+    // negatives — outside the band the runtime runs a different value
+    h.check("validate: browser max_owned_pages 501 rejected",
+        !ok(json!({"kind": "browser", "max_owned_pages": 501})));
+    h.check("validate: browser max_owned_pages 0 rejected",
+        !ok(json!({"kind": "browser", "max_owned_pages": 0})));
+    h.check("validate: browser owned_idle_ms 999 rejected",
+        !ok(json!({"kind": "browser", "owned_idle_ms": 999})));
+    h.check("validate: chrome_cdp owned_idle_ms 86400001 rejected",
+        !ok(json!({"kind": "chrome_cdp", "owned_idle_ms": 86_400_001u64})));
+
+    // the message names the band, the option and the silent replacement
+    let m = err(json!({"kind": "chrome_cdp", "max_owned_pages": 1000}));
+    h.check("validate: the clamp error names the band", m.contains("1..=500"));
+    h.check("validate: the clamp error names the option", m.contains("max_owned_pages"));
+    h.check("validate: the clamp error says the value is silently replaced",
+        m.contains("silently replaced"));
+    let m = err(json!({"kind": "browser", "owned_idle_ms": 250}));
+    h.check("validate: the idle-band error names its bounds", m.contains("1000..=86400000"));
+
+    // ── the guard's band IS the runtime's band ──
+    // `check_option_domains` refuses a value outside `OWNED_PAGES_MIN..=OWNED_PAGES_MAX`
+    // / `OWNED_IDLE_MS_MIN..=OWNED_IDLE_MS_MAX`, and `parse_kind` builds the cap through
+    // `clamp_owned_pages` / `clamp_owned_idle_ms`, which clamp against those same
+    // constants. So an in-band pair survives parse untouched and an out-of-band value
+    // lands exactly on the bound the error named. If either side moved alone, one of
+    // these disagrees.
+    let inband = |cap: Value| -> (usize, u64) {
+        let s = json!({"name": "c", "start": "a", "nodes": [],
+                       "capabilities": {"c": cap}});
+        let reg = capability::Registry::from_spec(&s)
+            .expect("registry accepts an in-band browser cap");
+        match reg.get("c").expect("cap") {
+            capability::Capability::Browser(b) => (b.max_owned_pages, b.owned_idle_ms),
+            _ => panic!("expected a browser capability"),
+        }
+    };
+    h.check("validate: an in-band pair survives parse as written",
+        inband(json!({"kind": "browser", "max_owned_pages": 32, "owned_idle_ms": 300000}))
+            == (32, 300_000));
+    h.check("validate: the runtime clamp is the band the guard names (pages)",
+        capability::clamp_owned_pages(1000) == 500
+            && capability::clamp_owned_pages(0) == 1
+            && capability::clamp_owned_pages(32) == 32);
+    h.check("validate: the runtime clamp is the band the guard names (idle ms)",
+        capability::clamp_owned_idle_ms(500) == 1_000
+            && capability::clamp_owned_idle_ms(u64::MAX) == 86_400_000
+            && capability::clamp_owned_idle_ms(300_000) == 300_000);
+}
