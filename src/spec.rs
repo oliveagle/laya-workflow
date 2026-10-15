@@ -1182,6 +1182,40 @@ fn guard_spec_value_types(spec: &Value, node_list: &[Value]) -> Result<()> {
     Ok(())
 }
 
+/// P180: a node/spec value in the wrong *range* is silently obeyed with a
+/// nonsense outcome — the twin of P179 (wrong type), and the same "a declared
+/// value does not mean what it says" class as P168/P173 for the policy numbers.
+/// The two convergence knobs are the ones the engine reads without a floor:
+///   * `convergence_window: 0` makes the convergence test slice an **empty**
+///     window (`score_history[len - 0..]`), whose fold is `mn = +inf, mx = -inf`,
+///     so `mx - mn = -inf <= eps` is always true: the run reports
+///     `final_action: "converged"` and stops after the very **first** node,
+///     whatever the workflow is. A window of at least 1 is the smallest thing
+///     that can mean "look at the last N scores".
+///   * `convergence_eps < 0` can never be met (`mx - mn` is never negative), so
+///     the convergence guard never fires and the workflow runs to
+///     `max_iterations`. A tolerance must be `>= 0`.
+/// (`max_iterations >= 1` is checked next to the parse; `min_confidence ∈ [0, 1]`
+/// in `validate_graph_semantics`; `state` / `policy` ranges have their own gates.)
+fn guard_spec_value_ranges(spec: &Value) -> Result<()> {
+    let Some(obj) = spec.as_object() else { return Ok(()) };
+    if let Some(v) = obj.get("convergence_window").and_then(Value::as_u64) {
+        if v == 0 {
+            bail!(
+                "spec `convergence_window` is 0 — a zero-length window folds an empty slice, so `mx - mn` is -inf and the run stops after the very first node claiming `final_action: \"converged\"`; use at least 1"
+            );
+        }
+    }
+    if let Some(v) = obj.get("convergence_eps").and_then(Value::as_f64) {
+        if v < 0.0 {
+            bail!(
+                "spec `convergence_eps` is {v} — a negative tolerance can never be met (`mx - mn` is never negative), so the convergence guard never fires and the workflow runs to `max_iterations`; a tolerance must be >= 0"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_graph_semantics(
     nodes: &[WorkflowNode],
     node_list: &[Value],
@@ -2423,6 +2457,8 @@ fn from_spec_with_dir_cycle(
     // P179: a node/spec value of the wrong type is silently replaced by the engine
     // default (see `guard_spec_value_types`) — reject it instead.
     guard_spec_value_types(spec, node_list)?;
+    // P180: a value in the wrong *range* is the twin of the wrong *type* above.
+    guard_spec_value_ranges(spec)?;
 
     let mut wf = ResilientWorkflow::new(nodes, &start);
     if let Some(v) = spec.get("max_iterations").and_then(|v| v.as_u64()) {

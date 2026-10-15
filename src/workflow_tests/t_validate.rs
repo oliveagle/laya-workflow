@@ -3000,3 +3000,57 @@ pub fn test_validate_spec_value_types(h: &mut Harness) {
         !err(&base(pnode(json!({"primary_q": 5})))).is_empty(),
     );
 }
+
+/// P180: a node/spec value in the wrong *range* is silently obeyed with a nonsense
+/// outcome — the twin of P179's wrong-type guard. `convergence_window: 0` makes the
+/// engine's convergence test fold an **empty** window (`mx - mn = -inf <= eps`), so
+/// the run stops after the first node claiming `final_action: "converged"`; a
+/// negative `convergence_eps` can never be met, so the guard never fires and the run
+/// goes to `max_iterations`. Both are rejected; the legal values are untouched (the
+/// corpus uses only `convergence_window` 3/5 and positive `convergence_eps`).
+pub fn test_validate_spec_value_ranges(h: &mut Harness) {
+    let base = |extra: Value| -> Value {
+        let mut s = json!({"name": "probe", "start": "a", "nodes": [json!({
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "STOP", "B": "STOP"}}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}},
+        })]});
+        if let (Some(m), Some(e)) = (s.as_object_mut(), extra.as_object()) {
+            for (k, v) in e {
+                m.insert(k.clone(), v.clone());
+            }
+        }
+        s
+    };
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+
+    h.check(
+        "validate value-ranges: a plain spec (no convergence knobs) is OK",
+        ok(&base(json!({}))),
+    );
+    h.check(
+        "validate value-ranges: convergence_window 1 is OK",
+        ok(&base(json!({"convergence_window": 1}))),
+    );
+    h.check(
+        "validate value-ranges: convergence_window 5 is OK",
+        ok(&base(json!({"convergence_window": 5}))),
+    );
+    h.check(
+        "validate value-ranges: convergence_eps 0 is OK (exact-match convergence)",
+        ok(&base(json!({"convergence_eps": 0}))),
+    );
+    h.check(
+        "validate value-ranges: convergence_eps 1e-4 is OK",
+        ok(&base(json!({"convergence_eps": 0.0001}))),
+    );
+    h.check(
+        "validate value-ranges: convergence_window 0 is rejected and names the window",
+        err(&base(json!({"convergence_window": 0}))).contains("`convergence_window` is 0"),
+    );
+    h.check(
+        "validate value-ranges: a negative convergence_eps is rejected",
+        err(&base(json!({"convergence_eps": -0.5}))).contains("`convergence_eps`"),
+    );
+}
