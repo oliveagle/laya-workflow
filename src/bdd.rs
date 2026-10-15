@@ -10322,8 +10322,12 @@ impl Default for LiveDecisionsOptions {
 }
 
 /// Per-spec live verdict. `structural_error` is `None` when the whole spec
-/// walked cleanly (compiles, validates, every state terminated in-contract); a
-/// label that disagreed with the offline expectation is *not* an error.
+/// walked cleanly (compiles, validates, AND every state **terminated** — the
+/// engine returns `Ok` even when a walk hits its safety valve, see
+/// [`walk_outcome_clean`]); a label that disagreed with the offline expectation
+/// is *not* an error. `states_nonterminating` counts walks that ended at the
+/// safety valve (a structural failure); `states_looped` counts walks the engine's
+/// revisit guard observed (informational — some graphs loop on purpose).
 #[derive(Clone, Debug, Default)]
 pub struct SpecLiveResult {
     pub rel: String,
@@ -10331,6 +10335,19 @@ pub struct SpecLiveResult {
     pub states_run: u32,
     pub states_agreed: u32,
     pub states_skipped: u32,
+    pub states_nonterminating: u32,
+    pub states_looped: u32,
+}
+
+/// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
+/// `Ok` in every case — including when the walk hits the engine's safety valve —
+/// so a structural gate cannot read `Ok` as "clean". A `final_action` of
+/// `max_iterations` (the iteration cap was reached) or `error_node_missing`
+/// (a routed node was not in the graph) means the walk never reached a real
+/// terminal (`stop` / `escalate`) or a convergence stop (`converged`), so it is
+/// **not** a clean walk. Pure, so the regression can pin the rule.
+pub fn walk_outcome_clean(final_action: &str) -> bool {
+    final_action != "max_iterations" && final_action != "error_node_missing"
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -10340,6 +10357,8 @@ pub struct LiveSummary {
     pub states_run: u32,
     pub states_agreed: u32,
     pub states_skipped: u32,
+    pub states_nonterminating: u32,
+    pub states_looped: u32,
 }
 
 /// Fold per-spec live verdicts into the gate's numbers. Pure, so the regression
@@ -10349,12 +10368,14 @@ pub struct LiveSummary {
 pub fn summarize_live(per_spec: &[SpecLiveResult]) -> LiveSummary {
     let mut s = LiveSummary { specs_total: per_spec.len() as u32, ..Default::default() };
     for r in per_spec {
-        if r.structural_error.is_none() {
+        if r.structural_error.is_none() && r.states_nonterminating == 0 {
             s.specs_clean += 1;
         }
         s.states_run += r.states_run;
         s.states_agreed += r.states_agreed;
         s.states_skipped += r.states_skipped;
+        s.states_nonterminating += r.states_nonterminating;
+        s.states_looped += r.states_looped;
     }
     s
 }
@@ -10460,7 +10481,22 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             }
             match wf.run(&backend, st) {
                 Ok(out) => {
+                    // `run` returns Ok even at the safety valve (see
+                    // `walk_outcome_clean`), so "returned" is not "terminated":
+                    // a walk that ended at `max_iterations` / `error_node_missing`
+                    // is a structural failure, not a clean walk.
+                    let fa = out.trace.final_action.clone();
+                    if !walk_outcome_clean(&fa) {
+                        res.states_run += 1;
+                        res.states_nonterminating += 1;
+                        res.structural_error =
+                            Some(format!("{label}: the walk did not terminate (final_action={fa})"));
+                        break;
+                    }
                     res.states_run += 1;
+                    if out.trace.loop_detected {
+                        res.states_looped += 1;
+                    }
                     let want = expect
                         .get(&name)
                         .and_then(Value::as_object)
@@ -10496,8 +10532,9 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         }
     }
     println!(
-        "live decisions: {}/{} specs walked structurally clean; agreement {}/{} states ({} skipped); backend={}",
-        s.specs_clean, s.specs_total, s.states_agreed, s.states_run, s.states_skipped, base_url
+        "live decisions: {}/{} specs walked structurally clean; agreement {}/{} states ({} skipped, {} loop-guard, {} non-terminating); backend={}",
+        s.specs_clean, s.specs_total, s.states_agreed, s.states_run, s.states_skipped,
+        s.states_looped, s.states_nonterminating, base_url
     );
 
     if let Some(path) = &o.json {
@@ -10508,7 +10545,9 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                 "specs_clean": s.specs_clean,
                 "states_run": s.states_run,
                 "states_agreed": s.states_agreed,
-                "states_skipped": s.states_skipped
+                "states_skipped": s.states_skipped,
+                "states_nonterminating": s.states_nonterminating,
+                "states_looped": s.states_looped
             },
             "specs": per_spec.iter().map(|r| json!({
                 "feature": r.rel,
@@ -10516,7 +10555,9 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                 "error": r.structural_error,
                 "states_run": r.states_run,
                 "states_agreed": r.states_agreed,
-                "states_skipped": r.states_skipped
+                "states_skipped": r.states_skipped,
+                "states_nonterminating": r.states_nonterminating,
+                "states_looped": r.states_looped
             })).collect::<Vec<_>>()
         });
         if let Some(parent) = Path::new(path).parent() {

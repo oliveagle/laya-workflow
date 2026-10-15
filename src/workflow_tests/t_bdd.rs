@@ -6803,13 +6803,24 @@ pub fn test_dsl_smoke_tally(h: &mut Harness) {
     h.eq("dsl-smoke tally: mixed corpus failed", failed3, 4);
 }
 
-/// P133: the decision-scoped live gate's accounting. A live model's labels are
-/// *meant* to differ from the heuristic-shaped offline expectations, so label
-/// agreement is information — only a structural error (a state that fails to
-/// terminate in-contract, or a compile/validate failure) may fail a spec. This
-/// pins that rule, plus the CLI wiring, without needing a live endpoint.
+/// P133/P134: the decision-scoped live gate's accounting. A live model's labels
+/// are *meant* to differ from the heuristic-shaped offline expectations, so label
+/// agreement is information — only a structural error (a compile/validate failure,
+/// or a walk that does not TERMINATE: `ResilientWorkflow::run` returns `Ok` even at
+/// its safety valve) may fail a spec. This pins that rule, plus the CLI wiring,
+/// without needing a live endpoint.
 pub fn test_bdd_live_decisions(h: &mut Harness) {
-    use laya_workflow::bdd::{summarize_live, SpecLiveResult};
+    use laya_workflow::bdd::{summarize_live, walk_outcome_clean, SpecLiveResult};
+
+    // P134: "returned" is not "terminated" — the engine returns Ok at its safety valve.
+    h.check(
+        "bdd live-decisions: a real terminal (stop/escalate) is a clean walk",
+        walk_outcome_clean("stop") && walk_outcome_clean("escalate") && walk_outcome_clean("converged"),
+    );
+    h.check(
+        "bdd live-decisions: the safety valve is NOT a clean walk",
+        !walk_outcome_clean("max_iterations") && !walk_outcome_clean("error_node_missing"),
+    );
 
     // A clean spec whose labels all DISAGREE (states_run>0, states_agreed==0)
     // is still clean — a mismatch is not a failure.
@@ -6819,6 +6830,7 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         states_run: 2,
         states_agreed: 0,
         states_skipped: 0,
+        ..Default::default()
     };
     let clean_agree = SpecLiveResult {
         rel: "routing/b.feature".into(),
@@ -6826,6 +6838,8 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         states_run: 3,
         states_agreed: 1,
         states_skipped: 1,
+        states_looped: 1,
+        ..Default::default()
     };
     let broken = SpecLiveResult {
         rel: "routing/c.feature".into(),
@@ -6833,6 +6847,18 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         states_run: 1,
         states_agreed: 0,
         states_skipped: 0,
+        ..Default::default()
+    };
+    // A non-terminating walk fails the spec even when `structural_error` is unset —
+    // `summarize_live` must not count it clean on the strength of a missing error.
+    let nonterm = SpecLiveResult {
+        rel: "routing/e.feature".into(),
+        structural_error: None,
+        states_run: 1,
+        states_agreed: 0,
+        states_skipped: 0,
+        states_nonterminating: 1,
+        ..Default::default()
     };
     let validate_only = SpecLiveResult {
         rel: "routing/d.feature".into(),
@@ -6843,11 +6869,12 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         clean_disagree.clone(),
         clean_agree.clone(),
         broken.clone(),
+        nonterm.clone(),
         validate_only.clone(),
     ]);
     h.check(
         "bdd live-decisions: specs_total counts every walked spec",
-        s.specs_total == 4,
+        s.specs_total == 5,
     );
     h.check(
         "bdd live-decisions: a label mismatch is NOT a failure (spec stays clean)",
@@ -6858,8 +6885,12 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
         s.specs_clean < s.specs_total,
     );
     h.check(
+        "bdd live-decisions: a non-terminating walk fails its spec even with no error string",
+        summarize_live(&[nonterm.clone()]).specs_clean == 0,
+    );
+    h.check(
         "bdd live-decisions: states_run sums across specs",
-        s.states_run == 2 + 3 + 1,
+        s.states_run == 2 + 3 + 1 + 1,
     );
     h.check(
         "bdd live-decisions: states_agreed sums across specs",
@@ -6868,6 +6899,14 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
     h.check(
         "bdd live-decisions: states_skipped sums across specs",
         s.states_skipped == 1,
+    );
+    h.check(
+        "bdd live-decisions: states_nonterminating sums across specs",
+        s.states_nonterminating == 1,
+    );
+    h.check(
+        "bdd live-decisions: states_looped sums across specs",
+        s.states_looped == 1,
     );
     h.check(
         "bdd live-decisions: a validate-only spec is clean",
