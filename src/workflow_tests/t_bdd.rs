@@ -4710,6 +4710,62 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
         }),
     );
 
+    // P157: the `call the capability` table dialect (with./project./chain.) is a
+    // central agentic shape - a parameterised call, a state projection and a
+    // chained sub-call - but it was only in prose, not in the machine-readable
+    // grammar. It is now advertised next to the dynamic-criteria one, and this
+    // proves the advertised rows really compile (a dialect nobody can use is a lie).
+    h.check(
+        "bdd_vocabulary: exposes the call capability table dialect",
+        dialects.iter().any(|d| {
+            d["step"].as_str().map(|s| s == "call the capability \"<cap>\"").unwrap_or(false)
+                && d["table"]
+                    .as_array()
+                    .map(|rows| rows.iter().any(|r| r.as_str() == Some("| with.<key> | <value> |")))
+                    .unwrap_or(false)
+                && d["table"]
+                    .as_array()
+                    .map(|rows| rows.iter().any(|r| r.as_str().map(|s| s.starts_with("| chain.")).unwrap_or(false)))
+                    .unwrap_or(false)
+        }),
+    );
+    {
+        let call_src = r#"
+@decision
+Feature: call_dialect_probe
+  Background:
+    Given the capabilities
+      | digest | {"kind": "text", "op": "length"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | yes | y |
+      | no  | n |
+    When the answer "yes" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "digest"
+      | with.text | ${state.text} |
+      | project.count | /count |
+      | chain.again.capability | digest |
+      | chain.again.with.text | ${state.text} |
+      | chain.again.project.n | /count |
+    Then allow up to 1 retries
+"#;
+        let feat = bdd::parse(call_src, "<call-dialect>").expect("call-dialect feature parses");
+        let spec = bdd::compile_decision(&feat, &json!({})).expect("call-dialect feature compiles");
+        let act = &spec["nodes"][0]["action"];
+        h.eq("bdd_vocabulary: the advertised call dialect compiles (project)", act["project"]["count"].clone(), json!("/count"));
+        h.eq(
+            "bdd_vocabulary: the advertised call dialect compiles (chain)",
+            act["chain"][0]["capability"].clone(),
+            json!("digest"),
+        );
+        h.check(
+            "bdd_vocabulary: the advertised call dialect validates",
+            crate::spec::from_spec(&spec).is_ok(),
+        );
+    }
+
     // ── CLI `bdd vocabulary --json` and the human form ────────────────
     let root = bdd::repo_root();
     let mut bin = std::env::current_exe().expect("test binary path");
@@ -4759,6 +4815,103 @@ pub fn test_bdd_vocabulary(h: &mut Harness) {
         text.contains("table dialects")
             && text.contains("from_state")
             && text.contains("id_key"),
+    );
+    h.check(
+        "bdd vocabulary: human form names the call-capability table dialect",
+        text.contains("with.<key>") && text.contains("chain.<as>.capability"),
+    );
+}
+
+/// P158: a Scenario carries at most one action.
+///
+/// Every action-carrying `Then` step compiles to a different action kind, and
+/// the assembly in `compile_decision_node` is a priority chain, so a second
+/// action used to be dropped in silence: `bdd build` on a feature with both a
+/// `Then label …` and a `Then call the capability …` exited 0 with the `call`
+/// simply absent from the emitted spec. Refuse the mix instead, by name, and
+/// refuse a repeated singleton action (a second `gate` / `call` / … overwrites
+/// the first). Several `label …` rules are one threshold action and stay legal.
+pub fn test_bdd_single_action(h: &mut Harness) {
+    // The failing shape: a `call the capability` sharing a Scenario with a
+    // `label` threshold. Both are actions; only the threshold used to survive.
+    let mixed = r#"
+@decision
+Feature: two_actions
+  Background:
+    Given the capabilities
+      | digest | {"kind": "text", "op": "length"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | yes | y |
+      | no  | n |
+    When the answer "yes" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "digest"
+      | with.text | ${state.text} |
+    Then label "done" otherwise
+    Then allow up to 1 retries
+"#;
+    let feat = bdd::parse(mixed, "<mixed>").expect("mixed feature parses");
+    let err = match bdd::compile_decision(&feat, &json!({})) {
+        Ok(_) => String::new(),
+        Err(e) => format!("{e:#}"),
+    };
+    h.check(
+        "bdd single action: refuses a scenario that mixes two actions",
+        err.contains("carries at most one action")
+            && err.contains("call")
+            && err.contains("threshold"),
+    );
+
+    // A repeated singleton action is the same loss in a different guise: the
+    // second `call` overwrites the first. Refuse it too.
+    let twice = r#"
+@decision
+Feature: two_calls
+  Background:
+    Given the capabilities
+      | digest | {"kind": "text", "op": "length"} |
+  Scenario: root
+    Given a choice question "go" asks "go?"
+      | answer | meaning |
+      | yes | y |
+      | no  | n |
+    When the answer "yes" goes to "STOP"
+    And any other answer goes to "STOP"
+    Then call the capability "digest"
+      | with.text | ${state.text} |
+    Then call the capability "digest"
+      | with.text | ${state.text} |
+"#;
+    let feat = bdd::parse(twice, "<twice>").expect("two-call feature parses");
+    let err = match bdd::compile_decision(&feat, &json!({})) {
+        Ok(_) => String::new(),
+        Err(e) => format!("{e:#}"),
+    };
+    h.check(
+        "bdd single action: refuses a repeated call step",
+        err.contains("second `call` action"),
+    );
+
+    // Several rules of the *same* kind are one threshold action - they must
+    // still compile, or every real corpus feature would break.
+    let same = r#"
+@decision
+Feature: one_action
+  Scenario: root
+    Given a choice question "intent" asks "Which intent?"
+      | answer  | meaning             |
+      | ok      | normal              |
+      | stuffing | credential stuffing |
+    When any other answer goes to "STOP"
+    Then label "DENY" when the answer to "intent" is one of "stuffing"
+    And label "ALLOW" otherwise
+"#;
+    let feat = bdd::parse(same, "<same>").expect("single-action feature parses");
+    h.check(
+        "bdd single action: several rules of one kind are still one action",
+        bdd::compile_decision(&feat, &json!({})).is_ok(),
     );
 }
 

@@ -1397,6 +1397,18 @@ pub fn vocabulary_dialects() -> Value {
                 "| none | <text for the no-candidate option> |"
             ],
             "note": "with `from_state`, the sibling keys must be exactly from_state/id_key/value_key/none; the engine materialises one option per candidate id from `state[<state array key>]` at decide time and always adds `none` (the fail-closed no-candidate answer). See `bdd scaffold --pattern dynamic`."
+        },
+        {
+            "step": "call the capability \"<cap>\"",
+            "dialect": "parameterised capability call + state projection + chained sub-calls (same step, special table rows)",
+            "table": [
+                "| with.<key> | <value> |",
+                "| project.<state key> | <dotted pointer into the call result> |",
+                "| chain.<as>.capability | <capability name> |",
+                "| chain.<as>.with.<key> | <value> |",
+                "| chain.<as>.project.<state key> | <dotted pointer> |"
+            ],
+            "note": "every row must start with `with.`, `project.` or `chain.`; a row that starts with anything else is refused by name. `with.<key>` passes an argument (a JSON literal, a plain string, or a `${state.x}` / `${env.X}` template); `project.<key>` stores a dotted pointer from the call result (e.g. `/body/html`) under a state key; `chain.<as>.…` adds a sub-call the engine runs after the primary one - each distinct `<as>` is one nested call, in the order its rows appear. Compiles to `{kind: call, capability, with, project, chain: [{capability, with, project}]}`."
         }
     ])
 }
@@ -2700,10 +2712,33 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
     let mut ui_proposal_action: Option<Map<String, Value>> = None;
     let mut sub_workflow: Option<String> = None;
     let mut sub_continue: Option<String> = None;
+    // P158: every action-carrying `Then` step seen in this Scenario, in source
+    // order, as `(kind, line)`. Used below to refuse a Scenario that declares
+    // more than one action (see the note at the assembly).
+    let mut action_steps: Vec<(String, usize)> = Vec::new();
 
     for st in &scenario.steps {
         let (caps, tag) = dec_match(&st.kind, &st.text)
             .with_context(|| format!("line {}: {}", st.line, st.text))?;
+        // P158: which action does this step declare, if any? `threshold` is the
+        // only kind that legitimately spans several steps (one rule per step);
+        // `copy_keys` accumulates; the rest hold a single action per node.
+        let action_kind = match tag {
+            "gate" => Some("gate"),
+            "merge_open_probs" => Some("merge_open_probs"),
+            "combine" => Some("combine"),
+            "rubric" => Some("rubric"),
+            "ui_proposal" => Some("ui_proposal"),
+            "copy_keys" => Some("copy_keys"),
+            "call" => Some("call"),
+            "label_all" | "label_eq" | "label_eq_in" | "label_eq_implicit" | "label_opt_gte"
+            | "label_opt_lt" | "label_opt_gte_implicit" | "label_gte" | "label_lt"
+            | "label_always" => Some("threshold"),
+            _ => None,
+        };
+        if let Some(k) = action_kind {
+            action_steps.push((k.to_string(), st.line));
+        }
         match tag {
             "choice" | "score" | "noul" => {
                 let q = caps["q"].to_string();
@@ -3265,6 +3300,50 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
         .clone()
         .or(primary_q)
         .unwrap_or_else(|| "ok".to_string());
+
+    // P158: a Scenario carries at most one action.
+    //
+    // Every action-carrying `Then` step compiles to a different action kind, and
+    // the assembly below is a priority chain (`if !rules.is_empty() { … } else if …`),
+    // so a second action used to be dropped in silence: `bdd build` on a feature
+    // with both a `Then label …` and a `Then call the capability …` exited 0 with
+    // the `call` simply absent from the emitted spec. Refuse the mix by name, and
+    // refuse a repeated singleton action (a second `gate` / `call` / … overwrites
+    // the first) rather than losing it. `threshold`, `copy_keys` accumulate, so
+    // several `label …` / `keep the answer to …` steps stay legal.
+    let mut seen_kinds: Vec<(&str, usize)> = Vec::new();
+    let mut repeated: Option<(&str, usize, usize)> = None;
+    for (k, line) in &action_steps {
+        match seen_kinds.iter().find(|(s, _)| s == k) {
+            None => seen_kinds.push((k.as_str(), *line)),
+            Some((_, first)) => {
+                let singleton = matches!(
+                    k.as_str(),
+                    "gate" | "merge_open_probs" | "combine" | "rubric" | "ui_proposal" | "call"
+                );
+                if singleton && repeated.is_none() {
+                    repeated = Some((k.as_str(), *first, *line));
+                }
+            }
+        }
+    }
+    if seen_kinds.len() > 1 {
+        bail!(
+            "line {}: this scenario declares {} actions ({}) - a decision node carries at most one action, and the engine assembles them in a fixed priority order, so all but the first would be silently dropped; keep one action-carrying `Then` step and move the others to their own scenario",
+            seen_kinds[1].1,
+            seen_kinds.len(),
+            seen_kinds
+                .iter()
+                .map(|(k, l)| format!("{k} (line {l})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    if let Some((k, first, second)) = repeated {
+        bail!(
+            "line {second}: this scenario declares a second `{k}` action (the first is at line {first}) - a decision node keeps one `{k}` action, so the earlier one would be silently dropped; keep one `{k}` step and move the other to its own scenario"
+        );
+    }
 
     let action = if !rules.is_empty() {
         Some(json!({
