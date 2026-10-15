@@ -2141,12 +2141,16 @@ pub fn test_validate_option_string(h: &mut Harness) {
     );
 
     // 2. `any(k)` skips the type check, so its type must be owned elsewhere: an
-    //    opaque JSON value, the domain check, or the closed-set table. Adding an
-    //    entry here is the deliberate act the guard exists to force.
+    //    opaque JSON value, or the domain check (`port`/`what`/`delimiter`).
+    //    Adding an entry here is the deliberate act the guard exists to force.
+    //    The closed-set options (`op`, `method`, `format`, `mode`, `hash`,
+    //    `channel`, `driver`, `runner`, `transport`) are no longer here — P167
+    //    typed them, so the `as_str()` value table can no longer be handed a
+    //    non-string and skip the check (a `{"kind":"datetime","op":4}` used to
+    //    compile to the default `op:"now"`).
     const JUSTIFIED_UNTYPED: &[&str] = &[
         "body", "expected", "variables", // opaque JSON, consumed as-is
         "port", "what", "delimiter", // owned by check_option_domains
-        "op", "method", "transport", "format", "mode", "hash", "channel", "driver", "runner", // owned by CLOSED_SETS
     ];
     let any_n = sites.iter().filter(|(_, _, a)| a == "any").count();
     let unjustified: Vec<String> = sites
@@ -2157,6 +2161,18 @@ pub fn test_validate_option_string(h: &mut Harness) {
     h.check(
         &format!("validate: every `.any(..)` read is justified ({any_n} of them)"),
         unjustified.is_empty(),
+    );
+    //    and the reverse — no justification is left behind for a key that is now
+    //    read only through a typed accessor, which would hide a future `any(..)`.
+    let mut unused: Vec<String> = Vec::new();
+    for k in JUSTIFIED_UNTYPED {
+        if !sites.iter().any(|(_, key, a)| a == "any" && key.as_str() == *k) {
+            unused.push((*k).to_string());
+        }
+    }
+    h.check(
+        &format!("validate: no unused `.any(..)` justification ({unused:?})"),
+        unused.is_empty(),
     );
 
     // 3. `has(k)` is a presence test, so the same key must also be read with a
@@ -2228,4 +2244,68 @@ pub fn test_validate_option_string(h: &mut Harness) {
             h.check(&format!("validate: typed-read drift {d}"), false);
         }
     }
+
+    // ── P167: the *definition* side of the same silent no-op ────────────────
+    // The `with.<key>` value table (P166) read the option with `as_str()`, so a
+    // non-string value silently fell back to the default. P167 typed the read
+    // sites of every closed-set option, so the type is refused before the value
+    // table ever sees it. A `{"kind":"datetime","op":4}` used to compile to
+    // `op:"now"`.
+    h.check(
+        "P167: datetime op as a number rejected (was silently op:\"now\")",
+        !ok(json!({"kind": "datetime", "op": 4})),
+    );
+    let m = err_of(json!({"kind": "datetime", "op": 4}));
+    h.check("P167: the error names the option", m.contains("\"op\""));
+    h.check("P167: the error says must be a string", m.contains("must be a string"));
+    h.check("P167: the error names the as_str fallback", m.contains("as_str()"));
+    h.check("P167: db op as a number rejected", !ok(json!({"kind": "db", "op": 4})));
+    h.check(
+        "P167: cache op as a bool rejected",
+        !ok(json!({"kind": "cache", "op": true, "path": "p"})),
+    );
+    h.check(
+        "P167: sqlite op as a number rejected (required db supplied)",
+        !ok(json!({"kind": "sqlite", "db": "/tmp/p.db", "op": 4})),
+    );
+    h.check(
+        "P167: http method as a number rejected",
+        !ok(json!({"kind": "http", "method": 4, "url": "http://x"})),
+    );
+    h.check(
+        "P167: mcp transport as a number rejected (was silently http)",
+        !ok(json!({"kind": "mcp", "tool": "t", "url": "http://x", "transport": 4})),
+    );
+    h.check(
+        "P167: agent transport as a number rejected",
+        !ok(json!({"kind": "agent", "url": "http://x", "transport": 4})),
+    );
+    h.check(
+        "P167: sql driver as a number rejected",
+        !ok(json!({"kind": "sql", "dsn": "sqlite3://p", "driver": 4})),
+    );
+    h.check(
+        "P167: goal_runner runner as a number rejected",
+        !ok(json!({"kind": "goal_runner", "runner": 4})),
+    );
+    // the value table still owns the *value*: a string typo is still refused,
+    // and a correct value still compiles — the type gate added a layer, it did
+    // not replace the closed-set check.
+    h.check(
+        "P167: a string op outside the closed set is still refused by the table",
+        !ok(json!({"kind": "datetime", "op": "noww"})),
+    );
+    h.check(
+        "P167: a correct closed-set op still compiles",
+        ok(json!({"kind": "datetime", "op": "now"})),
+    );
+    // opaque JSON options are untouched: still any type
+    h.check(
+        "P167: http body stays opaque (any JSON)",
+        ok(json!({"kind": "http", "url": "http://x", "body": 5})),
+    );
+    h.check(
+        "P167: graphql variables stays opaque (any JSON)",
+        ok(json!({"kind": "graphql", "url": "http://x", "variables": {"a": 1}})),
+    );
 }

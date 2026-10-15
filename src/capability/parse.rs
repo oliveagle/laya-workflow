@@ -153,10 +153,15 @@ impl<'a> Fields<'a> {
     }
 
     /// A read whose type is *not* asserted here: the value is consumed opaquely
-    /// (`body`, `expected`, `variables`), or another check owns it — the
-    /// closed-set values (`op`, `method`, `format`, …), `port`, `metrics.what`
-    /// and `csv.delimiter`. Recorded as read so the P128 "never reads" check
-    /// still sees it.
+    /// (`body`, `expected`, `variables`), or a value check owns it and already
+    /// refuses a non-string (`port`, `metrics.what`, `csv.delimiter`). Recorded
+    /// as read so the P128 "never reads" check still sees it.
+    ///
+    /// The closed-set options (`op`, `method`, `format`, `mode`, `hash`,
+    /// `channel`, `driver`, `runner`, `transport`) used to be read here too;
+    /// P167 typed them, because the value table reads the option with `as_str()`
+    /// and so a `{"kind":"datetime","op":4}` slipped past it and compiled to the
+    /// default `op:"now"`.
     fn any(&mut self, key: &str) -> Option<&'a Value> {
         self.seen.push(key.to_string());
         self.def.get(key)
@@ -592,7 +597,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
 fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
     match kind {
         "http" => Ok(Capability::Http(HttpCap {
-            method: f.any("method").and_then(|v| v.as_str()).unwrap_or("POST").to_uppercase(),
+            method: f.s("method").unwrap_or("POST").to_uppercase(),
             url: f
                 .s("url")
                 .ok_or_else(|| anyhow!("capability {name:?} (http) missing 'url'"))?
@@ -616,8 +621,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             max_output: f.u64("max_output").unwrap_or(256 << 10) as usize,
         })),
         "agent" | "app_server" => Ok(Capability::Agent(AgentCap {
-            transport: f
-                .any("transport").and_then(|v| v.as_str())
+            transport: f.s("transport")
                 .unwrap_or(if f.has("command") { "stdio" } else { "http" })
                 .to_string(),
             url: f.s("url").map(str::to_string),
@@ -630,19 +634,19 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         // ── local / pure ──
         "datetime" => Ok(Capability::Datetime(local::DatetimeCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("now").to_string(),
+            op: f.s("op").unwrap_or("now").to_string(),
             format: f.s("format").unwrap_or("").to_string(),
             offset_secs: f.i64("offset_secs").unwrap_or(0),
         })),
         "text" => Ok(Capability::Text(local::TextCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
+            op: f.s("op").unwrap_or("length").to_string(),
             pattern: f.s("pattern").unwrap_or("").to_string(),
             replacement: f.s("replacement").unwrap_or("").to_string(),
             separator: f.s("separator").unwrap_or("").to_string(),
-            hash: f.any("hash").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            hash: f.s("hash").unwrap_or("").to_string(),
         })),
         "file" => Ok(Capability::File(local::FileCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("read").to_string(),
+            op: f.s("op").unwrap_or("read").to_string(),
             allow_roots: f
                 .arr("allow_roots")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(std::path::PathBuf::from)).collect())
@@ -651,7 +655,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "sqlite" => Ok(Capability::Sqlite(local::SqliteCap {
             db: f.s("db").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
+            op: f.s("op").unwrap_or("query").to_string(),
             readonly: f.b("readonly").unwrap_or(true),
             timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
         })),
@@ -659,10 +663,10 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             sqlite: f.s("sqlite").unwrap_or("").to_string(),
             duckdb: f.s("duckdb").unwrap_or("").to_string(),
             alias: f.s("alias").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
+            op: f.s("op").unwrap_or("query").to_string(),
             readonly: f.b("readonly").unwrap_or(true),
-            format: f.any("format").and_then(|v| v.as_str()).unwrap_or("json").to_string(),
-            mode: f.any("mode").and_then(|v| v.as_str()).unwrap_or("embed").to_string(),
+            format: f.s("format").unwrap_or("json").to_string(),
+            mode: f.s("mode").unwrap_or("embed").to_string(),
             endpoint: f.s("endpoint").unwrap_or("").to_string(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(60_000),
         })),
@@ -701,8 +705,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "mcp" => Ok(Capability::Mcp(net::McpCap {
             headers: f.obj("headers").cloned().unwrap_or_default(),
-            transport: f
-                .any("transport").and_then(|v| v.as_str())
+            transport: f.s("transport")
                 .unwrap_or(if f.has("command") { "stdio" } else { "http" })
                 .to_string(),
             url: f.s("url").map(str::to_string),
@@ -714,7 +717,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "vector" => Ok(Capability::Vector(net::VectorCap {
             url: f.s("url").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("search").to_string(),
+            op: f.s("op").unwrap_or("search").to_string(),
             collection: f.s("collection").unwrap_or("").to_string(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
         })),
@@ -731,10 +734,10 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "passthrough" | "noop" => Ok(Capability::Passthrough),
         "json" => Ok(Capability::Json(data::JsonCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("pick").to_string(),
+            op: f.s("op").unwrap_or("pick").to_string(),
         })),
         "csv" => Ok(Capability::Csv(data::CsvCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("parse").to_string(),
+            op: f.s("op").unwrap_or("parse").to_string(),
             delimiter: f
                 .any("delimiter").and_then(|v| v.as_str())
                 .and_then(|s| s.chars().next())
@@ -743,26 +746,26 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "xml" => Ok(Capability::Xml(data::XmlCap {
             tag: f.s("tag").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("tags").to_string(),
+            op: f.s("op").unwrap_or("tags").to_string(),
         })),
         "markdown" | "md" => Ok(Capability::Markdown(data::MarkdownCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("headings").to_string(),
+            op: f.s("op").unwrap_or("headings").to_string(),
         })),
         "diff" => Ok(Capability::Diff(data::DiffCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("lines").to_string(),
+            op: f.s("op").unwrap_or("lines").to_string(),
         })),
         "validate" | "schema" => Ok(Capability::Validate(data::ValidateCap)),
         "math" => Ok(Capability::Math(data::MathCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("eval").to_string(),
+            op: f.s("op").unwrap_or("eval").to_string(),
         })),
         "hash" => Ok(Capability::Hash(data::HashCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("sha256").to_string(),
+            op: f.s("op").unwrap_or("sha256").to_string(),
         })),
         "graph" => Ok(Capability::Graph(data::GraphCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("reachable").to_string(),
+            op: f.s("op").unwrap_or("reachable").to_string(),
         })),
         "tokenize" | "tokens" => Ok(Capability::Tokenize(data::TokenizeCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("count").to_string(),
+            op: f.s("op").unwrap_or("count").to_string(),
             chars_per_token: f.f64("chars_per_token").unwrap_or(4.0),
         })),
         "cron" => Ok(Capability::Cron(data::CronCap {
@@ -770,17 +773,17 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "keyvalue" | "kv" => Ok(Capability::KeyValue(store::KeyValueCap {
             path: f.s("path").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
+            op: f.s("op").unwrap_or("get").to_string(),
             key: f.s("key").unwrap_or("").to_string(),
         })),
         "cache" => Ok(Capability::Cache(store::CacheCap {
             path: f.s("path").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
+            op: f.s("op").unwrap_or("get").to_string(),
             ttl_secs: f.i64("ttl_secs").unwrap_or(0),
         })),
         "queue" => Ok(Capability::Queue(store::QueueCap {
             path: f.s("path").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
+            op: f.s("op").unwrap_or("length").to_string(),
         })),
         "metrics" | "sysinfo" => Ok(Capability::Metrics(sys::MetricsCap {
             what: f.any("what").and_then(|v| v.as_str()).unwrap_or("").to_string(),
@@ -790,7 +793,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             path: f.s("path").unwrap_or("").to_string(),
             bell: f.b("bell").unwrap_or(false),
             timestamp: f.b("timestamp").unwrap_or(true),
-            channel: f.any("channel").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            channel: f.s("channel").unwrap_or("").to_string(),
             title: f.s("title").unwrap_or("").to_string(),
             subtitle: f.s("subtitle").unwrap_or("").to_string(),
             sound: f.s("sound").unwrap_or("").to_string(),
@@ -834,7 +837,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "archive" => Ok(Capability::Archive(proto::ArchiveCap {
             path: f.s("path").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("list").to_string(),
+            op: f.s("op").unwrap_or("list").to_string(),
             dest: f.s("dest").unwrap_or("").to_string(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
@@ -856,11 +859,11 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "pdf" => Ok(Capability::Pdf(service::PdfCap {
             path: f.s("path").unwrap_or("").to_string(),
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+            op: f.s("op").unwrap_or("text").to_string(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         "sql" | "database" => Ok(Capability::Sql(service::SqlCap {
-            driver: f.any("driver").and_then(|v| v.as_str()).unwrap_or("sqlite3").to_string(),
+            driver: f.s("driver").unwrap_or("sqlite3").to_string(),
             dsn: f.s("dsn").unwrap_or("").to_string(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
@@ -887,7 +890,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
         })),
         "web_search" | "search" => Ok(Capability::WebSearch(web::WebSearchCap {
             endpoint: f.s("endpoint").unwrap_or("").to_string(),
-            method: f.any("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase(),
+            method: f.s("method").unwrap_or("GET").to_uppercase(),
             headers: f.obj("headers").cloned().unwrap_or_default(),
             results_path: f.s("results_path").unwrap_or("").to_string(),
             query_param: f.s("query_param").unwrap_or("").to_string(),
@@ -899,7 +902,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             max_bytes: f.u64("max_bytes").unwrap_or(256 << 10) as usize,
         })),
         "goal_runner" | "agent_goal" => Ok(Capability::GoalRunner(goal::GoalRunnerCap {
-            runner: f.any("runner").and_then(|v| v.as_str()).unwrap_or("cxgo").to_string(),
+            runner: f.s("runner").unwrap_or("cxgo").to_string(),
             args: f
                 .arr("args")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
@@ -937,13 +940,12 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             timeout_ms: f.u64("timeout_ms").unwrap_or(0),
         })),
         "needle" => Ok(Capability::Needle(super::needle::NeedleCap {
-            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("extract").to_string(),
+            op: f.s("op").unwrap_or("extract").to_string(),
             cact: f.s("cact").map(|s| s.to_string()),
         })),
         "computer_use" | "computer-use" => Ok(Capability::ComputerUse(
             computer_use::ComputerUseCap {
-                op: f
-                    .any("op").and_then(|v| v.as_str())
+                op: f.s("op")
                     .unwrap_or("fingerprint")
                     .to_string(),
                 allowed_surface: f
@@ -963,7 +965,7 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
             },
         )),
         "web_fetch" | "fetch_url" => Ok(Capability::WebFetch(web::WebFetchCap {
-            format: f.any("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+            format: f.s("format").unwrap_or("text").to_string(),
             headers: f.obj("headers").cloned().unwrap_or_default(),
             timeout_ms: f.u64("timeout_ms").unwrap_or(20_000),
             max_bytes: f.u64("max_bytes").unwrap_or(256 << 10) as usize,
