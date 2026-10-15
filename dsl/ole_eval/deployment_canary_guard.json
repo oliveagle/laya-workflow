@@ -60,8 +60,7 @@
           { "when": { "value_gte": 30.0 }, "label": "ESCALATE" },
           { "when": { "always": true }, "label": "APPROVE" }
         ]
-      },
-      "state": { "keep": ["request_id", "service_name"] }
+      }
     }
   ]
 }

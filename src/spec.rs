@@ -1916,8 +1916,40 @@ pub fn node_from_spec_with(n: &Value, registry: Option<Registry>) -> Result<Work
     if let Some(r) = n.get("max_retries").and_then(|v| v.as_u64()) {
         node = node.with_max_retries(r as usize);
     }
+    // P144: a node's `state` projection must retain the keys the node *reads*.
+    // The backend answers a question from `heuristic.answer_field` — a state key —
+    // so that key must survive the projection even when the author did not list it
+    // under `keep`. Pre-P144 the runtime fell back to the whole state whenever the
+    // projection matched nothing, which hid the gap (and leaked every other key).
+    // Fold the read keys into `keep` here so the projection is complete and never
+    // has to fall back. (`criteria.from_state` is expanded from the *raw* state by
+    // the engine before the backend sees the projected state, so it is not folded.)
+    let read_keys = answer_field_keys(n.get("questions"));
     if let Some(state_v) = n.get("state") {
-        let state = state_v.clone();
+        if state_v.is_null() {
+            node = node.with_state_fn(move |s: &Value| project_state(s, &Value::Null));
+        } else {
+            let mut state = state_v.clone();
+            if !read_keys.is_empty() {
+                if let Some(o) = state.as_object_mut() {
+                    let keep = o.entry("keep").or_insert_with(|| json!([]));
+                    if let Some(arr) = keep.as_array_mut() {
+                        for k in &read_keys {
+                            if !arr.iter().any(|v| v.as_str() == Some(k.as_str())) {
+                                arr.push(json!(k));
+                            }
+                        }
+                    }
+                }
+            }
+            node = node.with_state_fn(move |s: &Value| project_state(s, &state));
+        }
+    } else if !read_keys.is_empty() {
+        // The node reads state keys but declared no projection: retain exactly
+        // those keys — never the whole state.
+        let mut st = Map::new();
+        st.insert("keep".into(), json!(read_keys));
+        let state = Value::Object(st);
         node = node.with_state_fn(move |s: &Value| project_state(s, &state));
     }
     if let Some(action) = n.get("action") {
@@ -1940,14 +1972,46 @@ pub fn node_from_spec_with(n: &Value, registry: Option<Registry>) -> Result<Work
     Ok(node)
 }
 
+/// The state keys a node's questions read directly: every
+/// `heuristic.answer_field`. Deduplicated, in question order (serde_json keys
+/// are sorted, so the order is deterministic). `project_state` folds these into
+/// the projection so a node always sees what it reads (P144).
+fn answer_field_keys(questions: Option<&Value>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if let Some(qs) = questions.and_then(Value::as_object) {
+        for q in qs.values() {
+            if let Some(f) = q.pointer("/heuristic/answer_field").and_then(Value::as_str) {
+                if !out.iter().any(|k| k == f) {
+                    out.push(f.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 /// `state` projection: `{"keep": [...], "rename": {out: in}}` — a data-level
 /// `state_fn` so a spec can shape what the backend sees.
+///
+/// P144 — a projection that names keys but matches none must project *nothing*,
+/// not the whole state. The pre-P144 fallback was `if out.is_empty() { state.clone() }`,
+/// so a `keep: ["missing_key"]` (or a `rename` whose source is absent) silently
+/// sent every *other* key — secrets, unrelated blobs — to the backend. The empty
+/// case is now split: a spec that named ≥1 key but found none yields `{}` (fail
+/// closed); a spec that named no keys at all (an absent/null `state`, or the
+/// compiler's `{"keep": []}` "keeps nothing in particular" encoding) stays identity.
 fn project_state(state: &Value, spec: &Value) -> Value {
     if spec.is_null() {
         return state.clone();
     }
     let mut out = Map::new();
+    // Did the spec *name* any state key? An empty declaration (`keep: []`,
+    // `rename: {}`) is the compiler's encoding of "no projection to apply", so
+    // it must not be conflated with a declaration that named keys the state
+    // does not carry.
+    let mut named = false;
     if let Some(keep) = spec.get("keep").and_then(|v| v.as_array()) {
+        named |= !keep.is_empty();
         for k in keep.iter().filter_map(|v| v.as_str()) {
             if let Some(v) = state.get(k) {
                 out.insert(k.to_string(), v.clone());
@@ -1955,6 +2019,7 @@ fn project_state(state: &Value, spec: &Value) -> Value {
         }
     }
     if let Some(renames) = spec.get("rename").and_then(|v| v.as_object()) {
+        named |= !renames.is_empty();
         for (to, from) in renames {
             if let Some(src) = from.as_str() {
                 if let Some(v) = state.get(src) {
@@ -1963,10 +2028,14 @@ fn project_state(state: &Value, spec: &Value) -> Value {
             }
         }
     }
-    if out.is_empty() {
-        state.clone()
-    } else {
+    if !out.is_empty() {
         Value::Object(out)
+    } else if named {
+        // Named keys, none present: project nothing (never the whole state).
+        Value::Object(Map::new())
+    } else {
+        // No keys named at all: identity.
+        state.clone()
     }
 }
 

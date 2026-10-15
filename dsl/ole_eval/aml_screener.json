@@ -45,8 +45,7 @@
           { "when": { "value_gte": 25.0 }, "label": "REVIEW" },
           { "when": { "always": true }, "label": "CLEAR" }
         ]
-      },
-      "state": { "keep": ["request_id", "transaction_id"] }
+      }
     }
   ]
 }

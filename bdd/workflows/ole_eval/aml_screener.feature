@@ -33,6 +33,4 @@ Feature: aml_screener
     And label "REVIEW" when "aml_risk" is at least 25
     And label "CLEAR" otherwise
     Then the primary question is "aml_risk"
-    And keep the state key "request_id"
-    And keep the state key "transaction_id"
 

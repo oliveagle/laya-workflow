@@ -66,8 +66,7 @@
           { "when": { "value_gte": 50.0 }, "label": "REVIEW" },
           { "when": { "always": true }, "label": "ALLOW" }
         ]
-      },
-      "state": { "keep": ["request_id", "content_case_id"] }
+      }
     }
   ]
 }

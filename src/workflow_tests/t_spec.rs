@@ -895,3 +895,94 @@ pub fn test_spec_layers(h: &mut Harness) {
     spec::clear_dsl_dir();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// P144: a node's `state` projection is what the *backend* sees (`backend_state`).
+/// A projection that names keys the state does not carry used to fall back to the
+/// **whole** state — so `keep: ["missing_key"]` leaked every other key (secrets,
+/// unrelated blobs) to the model. It must project *nothing* instead. The one shape
+/// that stays identity is a spec that names no keys at all — an absent `state`, or
+/// the compiler's `{"keep": []}` "keeps nothing in particular" encoding.
+pub fn test_spec_state_projection_runtime(h: &mut Harness) {
+    let seen = json!({"a": 1, "b": 2, "secret": "hunter2"});
+    let seen_in = seen.clone();
+
+    // node -> the state the backend is handed for a decision.
+    let projected = |state_spec: Value| {
+        let mut node = json!({"name": "n"});
+        node["state"] = state_spec;
+        spec::node_from_spec(&node).unwrap().backend_state(&seen_in)
+    };
+
+    // named-but-absent: project nothing, never the whole state.
+    h.eq(
+        "projection: keep names one absent key -> {} (not the whole state)",
+        projected(json!({"keep": ["missing"]})),
+        json!({}),
+    );
+    h.eq(
+        "projection: keep names several absent keys -> {}",
+        projected(json!({"keep": ["missing", "also_missing"]})),
+        json!({}),
+    );
+    h.eq(
+        "projection: rename source absent -> {}",
+        projected(json!({"rename": {"out": "missing"}})),
+        json!({}),
+    );
+    h.eq(
+        "projection: keep + rename both absent -> {}",
+        projected(json!({"keep": ["missing"], "rename": {"out": "gone"}})),
+        json!({}),
+    );
+
+    // named-and-present: project exactly what was named.
+    h.eq(
+        "projection: keep names a present key -> just that key",
+        projected(json!({"keep": ["a"]})),
+        json!({"a": 1}),
+    );
+    h.eq(
+        "projection: keep present + rename absent -> the kept key, no leak",
+        projected(json!({"keep": ["a"], "rename": {"out": "gone"}})),
+        json!({"a": 1}),
+    );
+    h.eq(
+        "projection: rename a present source -> the renamed key only",
+        projected(json!({"rename": {"out": "a"}})),
+        json!({"out": 1}),
+    );
+    h.eq(
+        "projection: keep absent + rename present -> the renamed key only",
+        projected(json!({"keep": ["missing"], "rename": {"out": "b"}})),
+        json!({"out": 2}),
+    );
+    h.eq(
+        "projection: rename overrides keep for the same output key",
+        projected(json!({"keep": ["a"], "rename": {"a": "b"}})),
+        json!({"a": 2}),
+    );
+
+    // nothing named at all: identity (the compiled "keeps nothing in particular").
+    h.eq(
+        "projection: keep: [] is identity (compiled 'no keeps')",
+        projected(json!({"keep": []})),
+        seen.clone(),
+    );
+    h.eq(
+        "projection: rename: {} is identity too",
+        projected(json!({"rename": {}})),
+        seen.clone(),
+    );
+    h.eq(
+        "projection: state: null is identity",
+        projected(Value::Null),
+        seen.clone(),
+    );
+    h.eq(
+        "projection: absent state is identity",
+        spec::node_from_spec(&json!({"name": "n"}))
+            .unwrap()
+            .backend_state(&seen),
+        seen,
+    );
+}

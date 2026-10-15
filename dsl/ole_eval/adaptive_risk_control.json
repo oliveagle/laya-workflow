@@ -56,8 +56,7 @@
           { "when": { "value_gte": 20.0 }, "label": "CHALLENGE" },
           { "when": { "always": true }, "label": "ALLOW" }
         ]
-      },
-      "state": { "keep": ["request_id", "actor_id"] }
+      }
     }
   ]
 }

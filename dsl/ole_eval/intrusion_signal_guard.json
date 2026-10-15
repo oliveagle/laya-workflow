@@ -62,8 +62,7 @@
           { "when": { "question": "intrusion_verdict", "answer": "allow" }, "label": "allow" },
           { "when": { "always": true }, "label": "allow" }
         ]
-      },
-      "state": { "keep": ["request_id", "event_id"] }
+      }
     }
   ]
 }

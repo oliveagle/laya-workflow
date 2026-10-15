@@ -43,6 +43,4 @@ Feature: intrusion_signal_guard
     Then label "allow" when the answer to "intrusion_verdict" is "allow"
     And label "allow" otherwise
     Then the primary question is "intrusion_verdict"
-    And keep the state key "request_id"
-    And keep the state key "event_id"
 

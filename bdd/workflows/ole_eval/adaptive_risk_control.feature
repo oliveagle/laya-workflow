@@ -39,6 +39,4 @@ Feature: adaptive_risk_control
     And label "CHALLENGE" when "composite_risk" is at least 20
     And label "ALLOW" otherwise
     Then the primary question is "composite_risk"
-    And keep the state key "request_id"
-    And keep the state key "actor_id"
 

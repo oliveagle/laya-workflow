@@ -46,6 +46,4 @@ Feature: deployment_canary_guard
     And label "ESCALATE" when "canary_risk" is at least 30
     And label "APPROVE" otherwise
     Then the primary question is "canary_risk"
-    And keep the state key "request_id"
-    And keep the state key "service_name"
 

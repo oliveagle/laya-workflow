@@ -56,5 +56,3 @@ Feature: content_safety_guard
     And label "REVIEW" when the answer to "context_review" is "B"
     And label "REVIEW" when "effective_severity" is at least 50
     And label "ALLOW" otherwise
-    And keep the state key "request_id"
-    And keep the state key "content_case_id"
