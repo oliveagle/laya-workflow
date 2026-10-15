@@ -3054,3 +3054,74 @@ pub fn test_validate_spec_value_ranges(h: &mut Harness) {
         err(&base(json!({"convergence_eps": -0.5}))).contains("`convergence_eps`"),
     );
 }
+
+/// P181: a question's `type` is read with `unwrap_or("choice")` (backend.rs /
+/// workflow.rs / bdd.rs / bdd_mcp.rs) and `unwrap_or("boolean")` (rules.rs), so an
+/// unrecognised or missing value is silently replaced by `choice`. The question is
+/// then answered and routed as a choice — its answer keys the node's edge condition —
+/// and the tooling reports the type as `choice`, so the author never sees the slip.
+/// Measured (real run, `t_scor` vs `t_score`): a `score`-shaped question mis-typed
+/// `scor` made `run` route on the *answer string* (`a` -> `b`) where the real `score`
+/// answer (a number) matched no edge and stopped at `a`; both `validate` calls exited 0.
+pub fn test_validate_question_type(h: &mut Harness) {
+    let base = |qt: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": qt},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}},
+        }]})
+    };
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+
+    // ── every type the engine knows stays accepted ──
+    h.check(
+        "validate question-type: `choice` is OK",
+        ok(&base(json!({"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}}))),
+    );
+    h.check(
+        "validate question-type: `score` is OK",
+        ok(&base(json!({"type": "score", "instructions": "?", "criteria": ["A", "B"]}))),
+    );
+    h.check(
+        "validate question-type: `noul` is OK",
+        ok(&base(json!({"type": "noul", "instructions": "?", "truthy": "yes", "falsy": "no"}))),
+    );
+    h.check(
+        "validate question-type: `boolean` (the rules backend) is OK",
+        ok(&{
+            let mut s = base(json!({"type": "boolean", "instructions": "?", "criteria": {"true": "y", "false": "n"}}));
+            s["nodes"][0]["edge"]["condition"] = json!({"true": "STOP", "false": "STOP"});
+            s
+        }),
+    );
+    h.check(
+        "validate question-type: a typed question with a heuristic is OK",
+        ok(&base(json!({"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"},
+            "heuristic": {"match_any": ["x"], "p_hit": 0.9}}))),
+    );
+
+    // ── a typo or a missing type is rejected, naming the value and the fix ──
+    let e = err(&base(json!({"type": "chocie", "instructions": "?", "criteria": {"A": "a", "B": "b"}})));
+    h.check(
+        "validate question-type: `chocie` is rejected",
+        e.contains("chocie") && e.contains("silently replaced by `choice`"),
+    );
+    h.check(
+        "validate question-type: the typo gets a did-you-mean hint",
+        e.contains("did you mean") && e.contains("choice"),
+    );
+    h.check(
+        "validate question-type: `scor` is rejected and named",
+        err(&base(json!({"type": "scor", "instructions": "?", "criteria": ["A", "B"]}))).contains("scor"),
+    );
+    h.check(
+        "validate question-type: a missing `type` is rejected as the same silent default",
+        err(&base(json!({"instructions": "?", "criteria": {"A": "a", "B": "b"}})))
+            .contains("declares no `type`"),
+    );
+    h.check(
+        "validate question-type: a non-string `type` is rejected",
+        !err(&base(json!({"type": 5, "instructions": "?", "criteria": {"A": "a", "B": "b"}}))).is_empty(),
+    );
+}

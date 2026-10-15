@@ -1474,6 +1474,27 @@ fn validate_graph_semantics(
             let qn = n.get("name").and_then(Value::as_str).unwrap_or("?");
             for (qid, q) in qs {
                 let Some(qo) = q.as_object() else { continue };
+                // P181: a question's `type` is read with `unwrap_or("choice")`
+                // (backend.rs / workflow.rs / bdd.rs / bdd_mcp.rs) and
+                // `unwrap_or("boolean")` (rules.rs), so an unrecognised or missing
+                // value is silently replaced by `choice`: the question is then
+                // answered and routed as a choice (its answer keys the node's edge
+                // condition) and the tooling reports the type as `choice` too, so
+                // the author never sees the slip. Measured: a `score`-shaped question
+                // mis-typed `scor` made `run` route on the *answer string* (`a` -> `b`)
+                // where the real `score` answer (a number) matched no edge and stopped
+                // at `a`. Both the unknown value and the missing key are rejected.
+                const KNOWN_QUESTION_TYPES: &[&str] = &["choice", "score", "noul", "boolean"];
+                match qo.get("type") {
+                    None => bail!(
+                        "node {qn}: question {qid:?} declares no `type` — the engine reads a missing type as `choice`, so the question is silently answered and routed as a choice; add \"type\": \"choice\" / \"score\" / \"noul\""
+                    ),
+                    Some(v) if v.as_str().is_some_and(|t| KNOWN_QUESTION_TYPES.contains(&t)) => {}
+                    Some(v) => bail!(
+                        "node {qn}: question {qid:?} declares type {v} — the engine reads only `choice` / `score` / `noul` (and `boolean` in the rules backend), and any other value is silently replaced by `choice` (the answer then keys the node's edge condition and the tooling reports a choice){}",
+                        v.as_str().map(|t| suggest(t, KNOWN_QUESTION_TYPES)).unwrap_or_default()
+                    ),
+                }
                 for k in qo.keys() {
                     if !KNOWN_QUESTION_KEYS.contains(&k.as_str()) {
                         bail!(
