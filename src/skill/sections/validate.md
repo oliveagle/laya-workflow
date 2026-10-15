@@ -10,6 +10,11 @@
   `allow_hosts`, `max_timeout_ms`, `max_output`, `retries`)
 * required secret **names** and whether they're ready (never their values)
 * a warning if the spec hard-codes what looks like a secret
+* a `policy` value the runtime would **not keep as written**: a wrong type, or an
+  integer above its hard ceiling (`max_timeout_ms` 600000, `max_output` 64 MiB,
+  `retries` 5). A larger value is silently clamped at load, so `validate` refuses it
+  and names the ceiling instead of letting the budget that runs differ from the one
+  written.
 
 ## Example
 

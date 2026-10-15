@@ -9044,3 +9044,124 @@ pub fn test_bdd_selector_placement(h: &mut Harness) {
         de.contains("selects nothing on a @decision feature"),
     );
 }
+
+
+pub fn test_bdd_policy_ceilings(h: &mut Harness) {
+    // P173: a `policy` integer above its hard ceiling is silently clamped at load
+    // (`capability::Registry::from_spec`) - `{"max_timeout_ms": 999999999}` runs at
+    // 600000 and the validator prints that - so the budget that runs is not the one
+    // written. P168 closed the *type*; this closes the *range*, on both the
+    // compiler's `Given the policy` table and a hand-written / sidecar `policy`
+    // block. The ceiling is read from the same const the clamp uses, so they cannot
+    // drift apart.
+    use laya_workflow::capability::{
+        Registry, POLICY_MAX_OUTPUT, POLICY_MAX_RETRIES, POLICY_MAX_TIMEOUT_MS,
+    };
+
+    // ── the clamp itself: the guard's ceiling must be the runtime's ceiling ──
+    let clamp = |pol: serde_json::Value| -> (u64, u64, u64) {
+        let spec = json!({"name": "c", "start": "a", "nodes": [], "policy": pol});
+        let reg = Registry::from_spec(&spec).expect("registry");
+        let p = reg.policy();
+        (p.max_timeout_ms, p.max_output as u64, p.retries as u64)
+    };
+    let (t, o, r) = clamp(json!({
+        "max_timeout_ms": 9_999_999_999i64,
+        "max_output": 9_999_999_999i64,
+        "retries": 42
+    }));
+    h.eq(
+        "bdd policy ceilings: the runtime clamps max_timeout_ms to the ceiling",
+        t,
+        POLICY_MAX_TIMEOUT_MS,
+    );
+    h.eq(
+        "bdd policy ceilings: the runtime clamps max_output to the ceiling",
+        o,
+        POLICY_MAX_OUTPUT,
+    );
+    h.eq(
+        "bdd policy ceilings: the runtime clamps retries to the ceiling",
+        r,
+        POLICY_MAX_RETRIES,
+    );
+    h.eq(
+        "bdd policy ceilings: an in-range value is kept as written",
+        clamp(json!({"max_timeout_ms": 8000, "max_output": 65536, "retries": 1})),
+        (8000u64, 65536u64, 1u64),
+    );
+
+    // ── the compiler side: a `Given the policy` table cell above the ceiling ──
+    let with_policy = |rows: &str| {
+        format!(
+            "@decision\nFeature: p173\n\n  Background:\n    Given the policy\n{rows}\n\
+             \n  Scenario: a\n    Given a choice question \"q\" asks \"ok?\"\n      \
+             | answer | meaning |\n      | A      | yes     |\n    \
+             When any other answer goes to \"STOP\"\n"
+        )
+    };
+    let policy_err = |rows: &str| -> String {
+        match bdd::parse(&with_policy(rows), "<p173>")
+            .and_then(|f| bdd::compile_decision(&f, &json!({})))
+        {
+            Ok(_) => String::new(),
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    let m = policy_err(&format!("      | max_timeout_ms | {} |", POLICY_MAX_TIMEOUT_MS + 1));
+    h.check(
+        "bdd policy ceilings: a max_timeout_ms above the ceiling is refused by name",
+        !m.is_empty() && m.contains("max_timeout_ms") && m.contains(&POLICY_MAX_TIMEOUT_MS.to_string()),
+    );
+    let m = policy_err(&format!("      | retries | {} |", POLICY_MAX_RETRIES + 1));
+    h.check(
+        "bdd policy ceilings: a retries above the ceiling is refused by name",
+        !m.is_empty() && m.contains("retries") && m.contains(&POLICY_MAX_RETRIES.to_string()),
+    );
+    let m = policy_err(&format!("      | max_output | {} |", POLICY_MAX_OUTPUT + 1));
+    h.check(
+        "bdd policy ceilings: a max_output above the ceiling is refused",
+        !m.is_empty() && m.contains("max_output"),
+    );
+    let m = policy_err("      | retries | -1 |");
+    h.check(
+        "bdd policy ceilings: a negative retries is refused (the engine never reads it)",
+        !m.is_empty() && m.contains("retries") && m.contains("negative"),
+    );
+    h.check(
+        "bdd policy ceilings: the ceiling itself is allowed",
+        policy_err(&format!("      | max_timeout_ms | {} |", POLICY_MAX_TIMEOUT_MS)).is_empty(),
+    );
+    h.check(
+        "bdd policy ceilings: an in-range row compiles as written",
+        policy_err("      | retries | 3 |").is_empty(),
+    );
+
+    // ── the validate side: a hand-written / sidecar `policy` block ──
+    let vk = |pol: serde_json::Value| -> String {
+        let spec = json!({"name": "v", "start": "a", "nodes": [], "policy": pol});
+        match laya_workflow::spec::validate_spec_keys(&spec) {
+            Ok(()) => String::new(),
+            Err(e) => format!("{e:#}"),
+        }
+    };
+    let m = vk(json!({"max_timeout_ms": 9_999_999_999i64}));
+    h.check(
+        "bdd policy ceilings: spec max_timeout_ms above the ceiling is rejected by validate",
+        !m.is_empty() && m.contains("max_timeout_ms") && m.contains(&POLICY_MAX_TIMEOUT_MS.to_string()),
+    );
+    let m = vk(json!({"retries": 42}));
+    h.check(
+        "bdd policy ceilings: spec retries above the ceiling is rejected by validate",
+        !m.is_empty() && m.contains("retries"),
+    );
+    h.check(
+        "bdd policy ceilings: an at-ceiling spec policy passes validate",
+        vk(json!({"max_timeout_ms": 600000, "max_output": 67108864, "retries": 5})).is_empty(),
+    );
+    let m = vk(json!({"max_timeout_ms": "60000"}));
+    h.check(
+        "bdd policy ceilings: a wrong type still hits the type message, not the range one",
+        !m.is_empty() && m.contains("non-negative integer"),
+    );
+}

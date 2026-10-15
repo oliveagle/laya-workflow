@@ -179,6 +179,14 @@ pub struct AgentCap {
     pub max_output: usize,
 }
 
+/// Hard ceilings the runtime clamps a spec's `policy` to (`Registry::from_spec`).
+/// A value above one is *silently reduced* at load, so the validator refuses it by
+/// name instead of letting the budget that runs differ from the one written - and
+/// reads the ceiling from these same constants so the two cannot drift apart.
+pub const POLICY_MAX_TIMEOUT_MS: u64 = 600_000;
+pub const POLICY_MAX_OUTPUT: u64 = 64 << 20; // 64 MiB
+pub const POLICY_MAX_RETRIES: u64 = 5;
+
 /// Runtime safety envelope, overridable from the spec (with hard ceilings).
 #[derive(Clone, Debug)]
 pub struct Policy {
@@ -245,13 +253,13 @@ impl Registry {
                 policy.allow_paths = paths;
             }
             if let Some(v) = p.get("max_timeout_ms").and_then(|v| v.as_u64()) {
-                policy.max_timeout_ms = v.min(600_000);
+                policy.max_timeout_ms = v.min(POLICY_MAX_TIMEOUT_MS);
             }
             if let Some(v) = p.get("max_output").and_then(|v| v.as_u64()) {
-                policy.max_output = (v as usize).min(64 << 20);
+                policy.max_output = (v as usize).min(POLICY_MAX_OUTPUT as usize);
             }
             if let Some(v) = p.get("retries").and_then(|v| v.as_u64()) {
-                policy.retries = (v as usize).min(5);
+                policy.retries = (v as usize).min(POLICY_MAX_RETRIES as usize);
             }
         }
 

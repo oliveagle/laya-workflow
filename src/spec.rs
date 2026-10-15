@@ -933,6 +933,39 @@ fn policy_value_error(k: &str, v: &Value) -> Option<String> {
             "`policy` key {k:?} is {}, but it must be a non-negative integer — the engine reads it with `as_u64()` and silently keeps its default on any other value",
             json_kind_name(v)
         )),
+        // P173: the type above is the *shape*; this is the *range*. The runtime
+        // clamps each of these to a hard ceiling at load (`capability::Registry`),
+        // so `{"max_timeout_ms": 999999999}` runs at 600000 and prints it — the
+        // budget that runs is not the one written. The ceiling comes from the same
+        // constant the clamp uses, so the two cannot drift.
+        "max_timeout_ms" | "max_output" | "retries" => v.as_u64().and_then(|n| {
+            let (ceil, what) = policy_ceiling(k)?;
+            (n > ceil).then(|| {
+                format!(
+                    "`policy` key {k:?} is {n}, but the runtime clamps it to {ceil} ({what}) — a value above the ceiling is silently reduced at load, so the budget that runs is not the one written; lower it to {ceil} or below"
+                )
+            })
+        }),
+        _ => None,
+    }
+}
+
+/// The hard ceiling the runtime clamps a numeric `policy` key to, and a short
+/// phrase naming what it bounds. `None` for keys that are not clamped.
+fn policy_ceiling(k: &str) -> Option<(u64, &'static str)> {
+    match k {
+        "max_timeout_ms" => Some((
+            crate::capability::POLICY_MAX_TIMEOUT_MS,
+            "the hard ceiling for any capability timeout",
+        )),
+        "max_output" => Some((
+            crate::capability::POLICY_MAX_OUTPUT,
+            "the hard ceiling for captured output bytes",
+        )),
+        "retries" => Some((
+            crate::capability::POLICY_MAX_RETRIES,
+            "the hard ceiling for transport retries",
+        )),
         _ => None,
     }
 }

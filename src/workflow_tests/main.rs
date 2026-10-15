@@ -153,6 +153,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-decision-heuristics2", t_bdd::test_bdd_decision_heuristics2),
         ("bdd-sub-workflow-continue", t_bdd::test_bdd_sub_workflow_continue),
         ("bdd-decision-policy", t_bdd::test_bdd_decision_policy),
+        ("bdd-policy-ceilings", t_bdd::test_bdd_policy_ceilings),
         ("bdd-decision-ui-proposal", t_bdd::test_bdd_decision_ui_proposal),
         ("bdd-decision-roundtrip-vocab", t_bdd::test_bdd_decision_roundtrip_vocab),
         ("bdd-transpile-decision", t_bdd::test_bdd_transpile_decision),

@@ -2911,6 +2911,41 @@ fn quoted_tokens(text: &str) -> Vec<String> {
     re.captures_iter(text).map(|c| c[1].to_string()).collect()
 }
 
+/// P173: a `policy` integer the runtime will not keep as written. Two ways the
+/// engine quietly overrides an author's value: it clamps it to a hard ceiling at
+/// load (`capability::POLICY_MAX_*`), and it reads the key with `as_u64()`, so a
+/// negative number is not read at all and the default applies. Both mean the
+/// budget that runs is not the one written; refuse them where the raw cell is
+/// still in hand, naming the ceiling the clamp actually uses.
+fn policy_int_error(key: &str, n: i64, line: usize) -> Option<String> {
+    let (ceil, what) = match key {
+        "max_timeout_ms" => (
+            crate::capability::POLICY_MAX_TIMEOUT_MS as i64,
+            "the hard ceiling for any capability timeout",
+        ),
+        "max_output" => (
+            crate::capability::POLICY_MAX_OUTPUT as i64,
+            "the hard ceiling for captured output bytes",
+        ),
+        "retries" => (
+            crate::capability::POLICY_MAX_RETRIES as i64,
+            "the hard ceiling for transport retries",
+        ),
+        _ => return None,
+    };
+    if n < 0 {
+        return Some(format!(
+            "line {line}: policy key {key:?} is {n} — the engine reads it with `as_u64()`, so a negative value is not read at all and its default applies; write 0 or more, up to {ceil} ({what})"
+        ));
+    }
+    if n > ceil {
+        return Some(format!(
+            "line {line}: policy key {key:?} is {n}, but the runtime clamps it to {ceil} ({what}) — a value above the ceiling is silently reduced at load, so the budget that runs is not the one written"
+        ));
+    }
+    None
+}
+
 /// The part of a policy list cell that the quoted-token splitter *drops*:
 /// everything outside a `"…"` span, with `\"` / `\\` honoured inside a span
 /// exactly as [`quoted_tokens_escaped`] reads it. A caller refuses the row when
@@ -4255,14 +4290,24 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
                             }
                             json!(quoted_tokens_escaped(raw))
                         }
-                        "max_timeout_ms" | "max_output" | "retries" => json!(
-                            raw.parse::<i64>().map_err(|e| {
+                        "max_timeout_ms" | "max_output" | "retries" => {
+                            let n = raw.parse::<i64>().map_err(|e| {
                                 anyhow!(
                                     "line {}: policy key {key:?} expects an integer, got {raw:?}: {e}",
                                     st.line
                                 )
-                            })?
-                        ),
+                            })?;
+                            // P173: the integer is well-typed here, but the
+                            // runtime still clamps it to a hard ceiling at load
+                            // (and never reads a negative one), so a written value
+                            // can be one the engine quietly ignores. Refuse it in
+                            // the raw text, naming the same ceiling constant the
+                            // clamp reads.
+                            if let Some(p) = policy_int_error(key, n, st.line) {
+                                bail!("{p}");
+                            }
+                            json!(n)
+                        }
                         _ => json!(raw),
                     };
                     p.insert(key.to_string(), val);
