@@ -2040,13 +2040,8 @@ pub fn test_validate_option_string(h: &mut Harness) {
     );
     h.check("validate: the integer error names the as_i64 fallback", m2.contains("as_i64()"));
 
-    // ── drift guard: the type tables must still describe the parser ───────
-    // Each `(kind, option)` the tables name is probed with a value of the wrong
-    // JSON type. Two things must hold: the engine refuses it, and the refusal
-    // names that option (the type error does, and so does the "needs <field>"
-    // error when the option is one the kind *requires* — a required option is
-    // therefore caught twice over). A `never reads` hint means the table names
-    // an option that kind no longer reads: the drift this guard exists for.
+    // A minimal valid definition of `kind`, so probing one option with a value
+    // of the wrong type is not short-circuited by a missing required field.
     let probe_extras = |kind: &str| -> Value {
         let mut e = serde_json::Map::new();
         match kind {
@@ -2091,18 +2086,124 @@ pub fn test_validate_option_string(h: &mut Harness) {
         }
         Value::Object(e)
     };
+
+    // ── structural guard: the read site is the source of truth (P160) ───────
+    // The JSON type an option is read as is now declared *at the read site*, so
+    // there is no side table that can drift from the parser. What remains is the
+    // opposite risk — a read that bypasses the typed accessors — so this scans
+    // the real parser (the flattened text, so a receiver on its own line still
+    // counts) and holds four invariants.
+    let src = include_str!("../capability/parse.rs");
+    let body = &src[src.find("\nfn parse_kind(").expect("parse_kind fn")..];
+    let flat = regex_lite::Regex::new(r"\n\s*\.").unwrap().replace_all(body, ".");
+    let arm_re =
+        regex_lite::Regex::new(r#"(?m)^        ("[^"]+"(?:\s*\|\s*"[^"]+")*)\s*=>"#).unwrap();
+    let call_re =
+        regex_lite::Regex::new(r#"f\.(any|has|arr|obj|s|u64|i64|f64|b)\("([A-Za-z_0-9]+)"\)"#)
+            .unwrap();
+    let arms: Vec<(usize, String)> = arm_re
+        .captures_iter(&flat)
+        .map(|c| {
+            let kind = c.get(1).unwrap().as_str();
+            (c.get(0).unwrap().start(), kind.split('|').next().unwrap().trim().trim_matches('"').to_string())
+        })
+        .collect();
+    // (kind, key, accessor) for every read in the parser
+    let sites: Vec<(String, String, String)> = call_re
+        .captures_iter(&flat)
+        .map(|c| {
+            let at = c.get(0).unwrap().start();
+            let acc = c.get(1).unwrap().as_str().to_string();
+            let key = c.get(2).unwrap().as_str().to_string();
+            let kind = arms
+                .iter()
+                .rev()
+                .find(|(p, _)| *p < at)
+                .map(|(_, k)| k.clone())
+                .unwrap_or_default();
+            (kind, key, acc)
+        })
+        .collect();
+
+    // 1. every read is an accessor call — no raw `f.get(..)` survives (comments
+    //    stripped: the P156 comment quotes the chain it replaced)
+    let raw = flat
+        .lines()
+        .map(|l| match l.find("//") {
+            Some(i) => &l[..i],
+            None => l,
+        })
+        .filter(|l| l.contains("f.get("))
+        .count();
+    h.check(
+        &format!("validate: no untyped `f.get(` read left in parse_kind ({raw} found)"),
+        raw == 0,
+    );
+
+    // 2. `any(k)` skips the type check, so its type must be owned elsewhere: an
+    //    opaque JSON value, the domain check, or the closed-set table. Adding an
+    //    entry here is the deliberate act the guard exists to force.
+    const JUSTIFIED_UNTYPED: &[&str] = &[
+        "body", "expected", "variables", // opaque JSON, consumed as-is
+        "port", "what", "delimiter", // owned by check_option_domains
+        "op", "method", "transport", "format", "mode", "hash", "channel", "driver", "runner", // owned by CLOSED_SETS
+    ];
+    let any_n = sites.iter().filter(|(_, _, a)| a == "any").count();
+    let unjustified: Vec<String> = sites
+        .iter()
+        .filter(|(_, k, a)| a == "any" && !JUSTIFIED_UNTYPED.contains(&k.as_str()))
+        .map(|(kind, k, _)| format!("{kind}.{k}"))
+        .collect();
+    h.check(
+        &format!("validate: every `.any(..)` read is justified ({any_n} of them)"),
+        unjustified.is_empty(),
+    );
+
+    // 3. `has(k)` is a presence test, so the same key must also be read with a
+    //    type somewhere in that arm
+    let has_n = sites.iter().filter(|(_, _, a)| a == "has").count();
+    let mut unbacked: Vec<String> = Vec::new();
+    for (kind, key, acc) in &sites {
+        if acc != "has" {
+            continue;
+        }
+        let typed = sites
+            .iter()
+            .any(|(k2, key2, a2)| k2 == kind && key2 == key && a2 != "any" && a2 != "has");
+        if !typed {
+            unbacked.push(format!("{kind}.{key}"));
+        }
+    }
+    h.check(
+        &format!("validate: every `has(..)` presence test is backed by a typed read ({has_n} of them)"),
+        unbacked.is_empty(),
+    );
+
+    // 4. behaviour: every typed read site refuses a value of the wrong JSON type,
+    //    and its error names that option (the type error does; so does the "needs
+    //    <field>" error when the option is required). A `never reads` hint means
+    //    the site names an option its kind does not read — drift.
     let mut drifted: Vec<String> = Vec::new();
     let mut probed = 0usize;
-    for (kind, opt, ty) in crate::capability::option_type_sites() {
+    for (kind, opt, acc) in &sites {
+        let ty = match acc.as_str() {
+            "s" => "string",
+            "u64" => "u64",
+            "i64" => "i64",
+            "f64" => "f64",
+            "b" => "bool",
+            "arr" => "str_array",
+            "obj" => "object",
+            _ => continue,
+        };
         let wrong = match ty {
             "bool" => json!("false"),
             "str_array" | "object" | "string" => json!(5),
-            "i64" => json!("60"),
-            _ => continue,
+            _ => json!("60"),
         };
         let mut cap = probe_extras(kind);
         cap["kind"] = json!(kind);
-        cap[opt] = wrong;
+        cap[opt.as_str()] = wrong;
         let mut s = base_spec("a", nodes.clone());
         s["capabilities"] = json!({ "c": cap });
         probed += 1;
@@ -2112,19 +2213,19 @@ pub fn test_validate_option_string(h: &mut Harness) {
                 let m = format!("{e:#}");
                 if m.contains("never reads") {
                     drifted.push(format!("{kind}.{opt} ({ty}): {m}"));
-                } else if !m.contains(opt) {
+                } else if !m.contains(opt.as_str()) {
                     drifted.push(format!("{kind}.{opt} ({ty}) is not named by its own error: {m}"));
                 }
             }
         }
     }
     h.check(
-        &format!("validate: every option-type table entry is live ({probed} probed)"),
+        &format!("validate: every typed read site refuses a wrong-typed value ({probed} probed)"),
         drifted.is_empty(),
     );
     if !drifted.is_empty() {
         for d in drifted.iter().take(8) {
-            h.check(&format!("validate: option-type drift {d}"), false);
+            h.check(&format!("validate: typed-read drift {d}"), false);
         }
     }
 }

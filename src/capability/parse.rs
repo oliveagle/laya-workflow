@@ -11,6 +11,74 @@ use super::{
     web, AgentCap, Capability, ExecCap, HttpCap,
 };
 
+/// The JSON type a read site reads an option as. When a declared value has a
+/// different type, the engine silently falls back to a default and the
+/// declaration becomes a no-op — the whole P128/P149/P150/P151/P152/P153/P154
+/// family. Declaring the type *at the read site* (P160) is what keeps the check
+/// from drifting from the parser: there is no separate table to stay complete,
+/// and a key may legitimately need a different type per kind (`csv.headers` is a
+/// boolean, `http.headers` an object) because the read site knows which one it
+/// is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OptType {
+    Str,
+    U64,
+    I64,
+    F64,
+    Bool,
+    StrArray,
+    Object,
+}
+
+impl OptType {
+    fn accepts(self, v: &Value) -> bool {
+        match self {
+            OptType::Str => v.is_string(),
+            OptType::U64 => v.as_u64().is_some(),
+            OptType::I64 => v.as_i64().is_some(),
+            OptType::F64 => v.as_f64().is_some(),
+            OptType::Bool => v.is_boolean(),
+            OptType::StrArray => v.as_array().is_some(),
+            OptType::Object => v.is_object(),
+        }
+    }
+
+    /// Why a mismatch is refused, in the same words the P150–P159 tables used:
+    /// the message names the read (`as_str()` …) and the silent fallback.
+    fn mismatch(self) -> &'static str {
+        match self {
+            OptType::Str => "must be a string — the engine reads it with `as_str()` and falls back to its default on any other JSON type, so the declared value is silently discarded",
+            OptType::U64 => "must be a non-negative integer — the engine reads it as an unsigned number, so a fractional / negative / non-numeric value is silently replaced by the default",
+            OptType::I64 => "must be an integer — the engine reads it with `as_i64()` and falls back to its default on any other JSON type, so the declared value is silently discarded",
+            OptType::F64 => "must be a number — the engine reads it as a float, so a non-numeric value is silently replaced by the default",
+            OptType::Bool => "must be true or false — the engine reads it as a boolean, so a non-boolean value (e.g. the string \"false\") is silently replaced by the default",
+            OptType::StrArray => "must be an array of strings — the engine reads it as a string list and ignores a non-array value, so the whole list is silently dropped",
+            OptType::Object => "must be a JSON object — the engine reads it as a map and ignores a non-object value, so the whole declaration is silently dropped",
+        }
+    }
+
+    /// The order the P150–P159 tables checked in, kept so that a spec with
+    /// several wrong-typed options still reports the same one first.
+    fn rank(self) -> u8 {
+        match self {
+            OptType::U64 => 0,
+            OptType::F64 => 1,
+            OptType::Bool => 2,
+            OptType::StrArray => 3,
+            OptType::Object => 4,
+            OptType::Str => 5,
+            OptType::I64 => 6,
+        }
+    }
+}
+
+/// A declared value whose JSON type is not the one its read site expects.
+/// Recorded while the kind is parsed; [`report_wrong_types`] refuses the spec.
+enum Wrong {
+    Type { key: String, want: OptType },
+    Elem { key: String, bad: String },
+}
+
 /// Records which option keys a kind's parser actually read, so [`parse_cap`] can
 /// refuse a declared option nobody reads.
 ///
@@ -19,22 +87,86 @@ use super::{
 /// `$PATH`, and nothing says so. Same rule as P126's "a declared heuristic field
 /// with no value is a clean miss": a declaration nobody reads is a comment, not
 /// config (P128).
+///
+/// Every read goes through a typed accessor (P160), so a declared value of the
+/// wrong JSON type is refused as well — see [`OptType`].
 struct Fields<'a> {
     def: &'a Value,
     seen: Vec<String>,
+    wrong: Vec<Wrong>,
 }
 
 impl<'a> Fields<'a> {
     fn new(def: &'a Value) -> Self {
-        Self { def, seen: Vec::new() }
+        Self { def, seen: Vec::new(), wrong: Vec::new() }
     }
 
-    /// `def.get(key)`, recording `key` as read. The returned reference borrows
+    /// Records `key` as read and asserts its value is the JSON type the read
+    /// site declares. On a mismatch the site keeps its own `unwrap_or` fallback
+    /// (the engine's behaviour is unchanged), but the mismatch is recorded so
+    /// [`report_wrong_types`] refuses the spec. The returned reference borrows
     /// the spec (`'a`), not `self`, so call sites keep their
     /// `and_then`/`unwrap_or` chains unchanged.
-    fn get(&mut self, key: &str) -> Option<&'a Value> {
+    fn typed(&mut self, key: &str, want: OptType) -> Option<&'a Value> {
+        self.seen.push(key.to_string());
+        let v = self.def.get(key)?;
+        if want.accepts(v) {
+            Some(v)
+        } else {
+            self.wrong.push(Wrong::Type { key: key.to_string(), want });
+            None
+        }
+    }
+
+    fn s(&mut self, key: &str) -> Option<&'a str> {
+        self.typed(key, OptType::Str)?.as_str()
+    }
+
+    fn u64(&mut self, key: &str) -> Option<u64> {
+        self.typed(key, OptType::U64)?.as_u64()
+    }
+
+    fn i64(&mut self, key: &str) -> Option<i64> {
+        self.typed(key, OptType::I64)?.as_i64()
+    }
+
+    fn f64(&mut self, key: &str) -> Option<f64> {
+        self.typed(key, OptType::F64)?.as_f64()
+    }
+
+    fn b(&mut self, key: &str) -> Option<bool> {
+        self.typed(key, OptType::Bool)?.as_bool()
+    }
+
+    fn obj(&mut self, key: &str) -> Option<&'a serde_json::Map<String, Value>> {
+        self.typed(key, OptType::Object)?.as_object()
+    }
+
+    /// A string list. A non-string element is recorded too, because the engine's
+    /// `filter_map(|x| x.as_str())` silently drops it (P154).
+    fn arr(&mut self, key: &str) -> Option<&'a Vec<Value>> {
+        let a = self.typed(key, OptType::StrArray)?.as_array()?;
+        if let Some(bad) = a.iter().find(|x| !x.is_string()) {
+            self.wrong.push(Wrong::Elem { key: key.to_string(), bad: format!("{bad}") });
+        }
+        Some(a)
+    }
+
+    /// A read whose type is *not* asserted here: the value is consumed opaquely
+    /// (`body`, `expected`, `variables`), or another check owns it — the
+    /// closed-set values (`op`, `method`, `format`, …), `port`, `metrics.what`
+    /// and `csv.delimiter`. Recorded as read so the P128 "never reads" check
+    /// still sees it.
+    fn any(&mut self, key: &str) -> Option<&'a Value> {
         self.seen.push(key.to_string());
         self.def.get(key)
+    }
+
+    /// Whether the spec declares `key` — a presence test, not a read. The key's
+    /// type is asserted where it is actually read (`command`, `plugin`).
+    fn has(&mut self, key: &str) -> bool {
+        self.seen.push(key.to_string());
+        self.def.get(key).is_some()
     }
 
     fn read(&self, key: &str) -> bool {
@@ -169,53 +301,9 @@ fn check_required_options(name: &str, kind: &str, def: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Numeric options the parsers read via `Value::as_u64`. A *present* value that
-/// is not a non-negative integer (`-1`, `1.5`, `"9000"`, `true`) is silently
-/// replaced by the option\'s default — the capability then runs with a timeout /
-/// limit nobody chose. Same "a declared value the engine throws away" class as
-/// P128/P149, now about the value\'s *domain* rather than its key (P150).
-const U64_OPTIONS: &[&str] = &[
-    "max_bytes",
-    "max_events",
-    "max_operations",
-    "max_output",
-    "max_owned_pages",
-    "max_results",
-    "max_text",
-    "max_tokens",
-    "owned_idle_ms",
-    "startup_timeout_ms",
-    "timeout_ms",
-];
-
-/// Numeric options the parsers read via `Value::as_f64`; a present value that is
-/// not a JSON number is silently defaulted (e.g. `"0.9"` leaves a computer-use
-/// node at a 0.8 floor).
-const F64_OPTIONS: &[&str] = &["chars_per_token", "min_confidence", "temperature"];
-
 /// Kinds whose `port` is stored as `u16`: any value above 65535 wraps, so
 /// `70000` quietly connects to `4464`. The port must be a real port.
 const PORT_KINDS: &[&str] = &["tcp", "udp", "redis", "nats", "mqtt", "smtp", "mail_send"];
-
-/// Boolean options the parsers read via `Value::as_bool`. A present value that
-/// is not a JSON boolean (`"false"`, `0`, `"yes"`) is silently replaced by the
-/// option's default — the classic footgun where `"false"` (a truthy string in
-/// most languages) silently keeps `readonly` / `human` at their defaults (P152).
-/// `headers` is a boolean only for `csv` (elsewhere it is an object), so this
-/// table is (kind, option), not a flat name list.
-const BOOL_OPTIONS: &[(&str, &str)] = &[
-    ("http", "expect_json"),
-    ("http", "allow_error_status"),
-    ("sqlite", "readonly"),
-    ("db", "readonly"),
-    ("csv", "headers"),
-    ("notify", "bell"),
-    ("notify", "timestamp"),
-    ("browser", "launch"),
-    ("browser", "attach"),
-    ("browser", "human"),
-    ("web_fetch", "body_urls_array"),
-];
 
 /// `metrics.what` is a comma-separated subset of this fixed vocabulary; the
 /// runtime splits on `,` and `want.contains(&tok)` never matches an unknown
@@ -223,247 +311,45 @@ const BOOL_OPTIONS: &[(&str, &str)] = &[
 /// asked for is simply missing from the result (P153).
 const METRICS_WHAT: &[&str] = &["mem", "load", "uptime", "cpu", "disk"];
 
-/// Options the engine reads as a `Vec<String>` from a JSON array, keeping only
-/// the string elements (`filter_map(|x| x.as_str())`). A non-string element — the
-/// usual cause is an unquoted number (`"--max-turns", 8`) or bool — is silently
-/// dropped, so the command runs without it; a non-array value drops the whole
-/// list. `validate` refuses both (P154).
-const STRING_ARRAY_OPTIONS: &[(&str, &str)] = &[
-    ("exec", "argv"),
-    ("agent", "command"),
-    ("mcp", "command"),
-    ("goal_runner", "args"),
-    ("file", "allow_roots"),
-    ("computer_use", "allowed_fields"),
-];
-
-/// Options the engine reads as a JSON object (`as_object`), keeping nothing on a
-/// non-object value — the whole declaration (headers, env) is silently dropped
-/// (P154).
-const OBJECT_OPTIONS: &[(&str, &str)] = &[
-    ("http", "headers"),
-    ("exec", "env"),
-    ("mcp", "headers"),
-    ("s3", "headers"),
-    ("web_search", "headers"),
-    ("web_fetch", "headers"),
-];
-
-/// String options the parsers read with `Value::as_str` (every plain-string
-/// option the engine has). A present value of any *other* JSON type is silently
-/// replaced by the option's default (usually `""`), so a typo such as
-/// `"format": 5` or `"separator": ["-"]` leaves the capability running with a
-/// value nobody wrote — the declared value is thrown away and `validate` is
-/// still green. This is the last face of the P128/P149/P150/P151/P152/P153/P154
-/// family: those covered numeric domains, closed-set strings, booleans, string
-/// arrays and objects, but a plain string option had never had its *type*
-/// checked. Options whose value is validated as a closed set (P151) or
-/// special-cased (`metrics.what`, `csv.delimiter`) are deliberately absent here;
-/// (kind, option), compared through `canon_kind`.
-const STRING_OPTIONS: &[(&str, &str)] = &[
-    ("agent", "session"),
-    ("agent", "url"),
-    ("archive", "dest"),
-    ("archive", "path"),
-    ("browser", "chrome_binary"),
-    ("browser", "endpoint"),
-    ("browser", "extension_path"),
-    ("browser", "profile_dir"),
-    ("cache", "path"),
-    ("chat", "auth_header"),
-    ("chat", "auth_value"),
-    ("chat", "model"),
-    ("chat", "system"),
-    ("chat", "url"),
-    ("computer_use", "allowed_surface"),
-    ("cron", "expr"),
-    ("datetime", "format"),
-    ("db", "alias"),
-    ("db", "duckdb"),
-    ("db", "endpoint"),
-    ("db", "sqlite"),
-    ("exec", "cwd"),
-    ("goal_runner", "reports_dir"),
-    ("graphql", "auth_header"),
-    ("graphql", "auth_value"),
-    ("graphql", "query"),
-    ("graphql", "url"),
-    ("http", "url"),
-    ("kafka", "topic"),
-    ("kafka", "url"),
-    ("keyvalue", "key"),
-    ("keyvalue", "path"),
-    ("llm", "auth_header"),
-    ("llm", "auth_value"),
-    ("llm", "model"),
-    ("llm", "system"),
-    ("llm", "url"),
-    ("mcp", "tool"),
-    ("mcp", "url"),
-    ("metrics", "disk_path"),
-    ("mqtt", "client_id"),
-    ("mqtt", "host"),
-    ("nats", "host"),
-    ("needle", "cact"),
-    ("notify", "path"),
-    ("notify", "sound"),
-    ("notify", "subtitle"),
-    ("notify", "title"),
-    ("pdf", "path"),
-    ("plugin", "browser"),
-    ("plugin", "dir"),
-    ("plugin", "entry"),
-    ("plugin", "name"),
-    ("plugin", "plugin"),
-    ("prom", "url"),
-    ("prometheus", "url"),
-    ("queue", "path"),
-    ("redis", "host"),
-    ("redis", "password"),
-    ("rpc", "method"),
-    ("rpc", "url"),
-    ("s3", "bucket"),
-    ("s3", "endpoint"),
-    ("s3", "prefix"),
-    ("script", "browser"),
-    ("script", "dir"),
-    ("script", "entry"),
-    ("script", "name"),
-    ("script", "plugin"),
-    ("shell", "command"),
-    ("shell", "cwd"),
-    ("sql", "dsn"),
-    ("smtp", "from"),
-    ("smtp", "host"),
-    ("smtp", "password"),
-    ("smtp", "username"),
-    ("sqlite", "db"),
-    ("sse", "url"),
-    ("tcp", "host"),
-    ("tcp", "until"),
-    ("text", "pattern"),
-    ("text", "replacement"),
-    ("text", "separator"),
-    ("udp", "host"),
-    ("vector", "collection"),
-    ("vector", "url"),
-    ("web_fetch", "body_field"),
-    ("web_fetch", "endpoint"),
-    ("web_fetch", "result_path"),
-    ("web_fetch", "text_field"),
-    ("web_fetch", "title_field"),
-    ("web_search", "endpoint"),
-    ("web_search", "query_param"),
-    ("web_search", "results_path"),
-    ("web_search", "snippet_field"),
-    ("web_search", "title_field"),
-    ("web_search", "url_field"),
-    ("webhook", "sign_header"),
-    ("webhook", "sign_secret"),
-    ("webhook", "url"),
-    ("xml", "tag"),
-];
-
-/// Signed-integer options the parsers read with `Value::as_i64`; a present value
-/// of any other type is silently defaulted, so `"offset_secs": "60"` quietly
-/// means `0` (P159).
-const I64_OPTIONS: &[(&str, &str)] =
-    &[("cache", "ttl_secs"), ("datetime", "offset_secs"), ("rpc", "id")];
-
-/// Every `(kind, option, type)` the per-kind option-*type* tables declare, with
-/// `type` the JSON type the engine reads the option as. Exposed so the
-/// regression can prove each entry is still live against the parser the tables
-/// describe: a hand-maintained table that drifts from the code is exactly the
-/// failure P128/P131 exist to catch — an entry for an option its kind no longer
-/// reads would sit here silently and give the illusion of coverage.
-pub(crate) fn option_type_sites() -> Vec<(&'static str, &'static str, &'static str)> {
-    let mut v: Vec<(&'static str, &'static str, &'static str)> = Vec::new();
-    for (k, o) in BOOL_OPTIONS {
-        v.push((k, o, "bool"));
+/// Refuses the first declared option whose value has the wrong JSON type at its
+/// read site (P160). Ordered like the P150–P159 tables it replaces (`U64`
+/// first, then `F64`, …) so a spec with several wrong values still reports the
+/// same option first.
+fn report_wrong_types(name: &str, kind: &str, wrong: &[Wrong]) -> Result<()> {
+    fn rank(w: &Wrong) -> u8 {
+        match w {
+            Wrong::Type { want, .. } => want.rank(),
+            Wrong::Elem { .. } => OptType::StrArray.rank(),
+        }
     }
-    for (k, o) in STRING_ARRAY_OPTIONS {
-        v.push((k, o, "str_array"));
+    let mut best: Option<&Wrong> = None;
+    for w in wrong {
+        if best.is_none_or(|b| rank(w) < rank(b)) {
+            best = Some(w);
+        }
     }
-    for (k, o) in OBJECT_OPTIONS {
-        v.push((k, o, "object"));
+    let Some(w) = best else {
+        return Ok(());
+    };
+    match w {
+        Wrong::Type { key, want } => bail!(
+            "capability {name:?} (kind {kind:?}) option {key:?} {}",
+            (*want).mismatch()
+        ),
+        Wrong::Elem { key, bad } => bail!(
+            "capability {name:?} (kind {kind:?}) option {key:?} has a non-string element {bad} — the engine keeps only the string elements, so this one is silently dropped (a quoted number such as 8 is the usual cause)"
+        ),
     }
-    for (k, o) in STRING_OPTIONS {
-        v.push((k, o, "string"));
-    }
-    for (k, o) in I64_OPTIONS {
-        v.push((k, o, "i64"));
-    }
-    v
 }
 
+/// The option *domains* no plain type check can express: `metrics.what` has a
+/// fixed vocabulary, `csv.delimiter` must be one character, and `port` must fit
+/// in a `u16`. The types themselves are asserted at each read site (P160).
 fn check_option_domains(name: &str, kind: &str, def: &Value) -> Result<()> {
     let Some(obj) = def.as_object() else {
         return Ok(());
     };
-    for k in U64_OPTIONS {
-        if obj.contains_key(*k) && obj.get(*k).and_then(Value::as_u64).is_none() {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {k:?} must be a non-negative integer — the engine reads it as an unsigned number, so a fractional / negative / non-numeric value is silently replaced by the default"
-            );
-        }
-    }
-    for k in F64_OPTIONS {
-        if obj.contains_key(*k) && obj.get(*k).and_then(Value::as_f64).is_none() {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {k:?} must be a number — the engine reads it as a float, so a non-numeric value is silently replaced by the default"
-            );
-        }
-    }
     let ckind = canon_kind(kind);
-    for (k, opt) in BOOL_OPTIONS {
-        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_bool).is_none() {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {opt:?} must be true or false — the engine reads it as a boolean, so a non-boolean value (e.g. the string \"false\") is silently replaced by the default"
-            );
-        }
-    }
-    for (k, opt) in STRING_ARRAY_OPTIONS {
-        if *k == ckind {
-            if let Some(v) = obj.get(*opt) {
-                match v.as_array() {
-                    None => bail!(
-                        "capability {name:?} (kind {kind:?}) option {opt:?} must be an array of strings — the engine reads it as a string list and ignores a non-array value, so the whole list is silently dropped"
-                    ),
-                    Some(arr) => {
-                        if let Some(bad) = arr.iter().find(|x| !x.is_string()) {
-                            bail!(
-                                "capability {name:?} (kind {kind:?}) option {opt:?} has a non-string element {bad} — the engine keeps only the string elements, so this one is silently dropped (a quoted number such as 8 is the usual cause)"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-    for (k, opt) in OBJECT_OPTIONS {
-        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_object).is_none() {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {opt:?} must be a JSON object — the engine reads it as a map and ignores a non-object value, so the whole declaration is silently dropped"
-            );
-        }
-    }
-    for (k, opt) in STRING_OPTIONS {
-        if *k == ckind && obj.contains_key(*opt) && obj.get(*opt).and_then(Value::as_str).is_none() {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {opt:?} must be a string — the engine reads it with `as_str()` and falls back to its default on any other JSON type, so the declared value is silently discarded"
-            );
-        }
-    }
-    for (k, opt) in I64_OPTIONS {
-        if *k == ckind
-            && obj.contains_key(*opt)
-            && obj.get(*opt).and_then(Value::as_i64).is_none()
-        {
-            bail!(
-                "capability {name:?} (kind {kind:?}) option {opt:?} must be an integer — the engine reads it with `as_i64()` and falls back to its default on any other JSON type, so the declared value is silently discarded"
-            );
-        }
-    }
     if ckind == "metrics" {
         if let Some(v) = obj.get("what") {
             let Some(s) = v.as_str() else {
@@ -695,6 +581,7 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
             hints.join(", ")
         );
     }
+    report_wrong_types(name, kind, &fields.wrong)?;
     check_option_domains(name, kind, def)?;
     check_option_values(name, kind, def)?;
     Ok(cap)
@@ -705,334 +592,321 @@ pub(super) fn parse_cap(name: &str, def: &Value) -> Result<Capability> {
 fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
     match kind {
         "http" => Ok(Capability::Http(HttpCap {
-            method: f.get("method").and_then(|v| v.as_str()).unwrap_or("POST").to_uppercase(),
+            method: f.any("method").and_then(|v| v.as_str()).unwrap_or("POST").to_uppercase(),
             url: f
-                .get("url")
-                .and_then(|v| v.as_str())
+                .s("url")
                 .ok_or_else(|| anyhow!("capability {name:?} (http) missing 'url'"))?
                 .to_string(),
-            headers: f.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
-            body: f.get("body").cloned(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            expect_json: f.get("expect_json").and_then(|v| v.as_bool()).unwrap_or(true),
+            headers: f.obj("headers").cloned().unwrap_or_default(),
+            body: f.any("body").cloned(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
+            expect_json: f.b("expect_json").unwrap_or(true),
             allow_error_status: f
-                .get("allow_error_status")
-                .and_then(|v| v.as_bool())
+                .b("allow_error_status")
                 .unwrap_or(false),
         })),
         "exec" => Ok(Capability::Exec(ExecCap {
             argv: f
-                .get("argv")
-                .and_then(|v| v.as_array())
+                .arr("argv")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .ok_or_else(|| anyhow!("capability {name:?} (exec) missing 'argv'"))?,
-            cwd: f.get("cwd").and_then(|v| v.as_str()).map(str::to_string),
-            env: f.get("env").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
-            max_output: f.get("max_output").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
+            cwd: f.s("cwd").map(str::to_string),
+            env: f.obj("env").cloned().unwrap_or_default(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
+            max_output: f.u64("max_output").unwrap_or(256 << 10) as usize,
         })),
         "agent" | "app_server" => Ok(Capability::Agent(AgentCap {
             transport: f
-                .get("transport")
-                .and_then(|v| v.as_str())
-                .unwrap_or(if f.get("command").is_some() { "stdio" } else { "http" })
+                .any("transport").and_then(|v| v.as_str())
+                .unwrap_or(if f.has("command") { "stdio" } else { "http" })
                 .to_string(),
-            url: f.get("url").and_then(|v| v.as_str()).map(str::to_string),
+            url: f.s("url").map(str::to_string),
             command: f
-                .get("command")
-                .and_then(|v| v.as_array())
+                .arr("command")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
-            session: f.get("session").and_then(|v| v.as_str()).map(str::to_string),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
-            max_output: f.get("max_output").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
+            session: f.s("session").map(str::to_string),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
+            max_output: f.u64("max_output").unwrap_or(256 << 10) as usize,
         })),
         // ── local / pure ──
         "datetime" => Ok(Capability::Datetime(local::DatetimeCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("now").to_string(),
-            format: f.get("format").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            offset_secs: f.get("offset_secs").and_then(|v| v.as_i64()).unwrap_or(0),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("now").to_string(),
+            format: f.s("format").unwrap_or("").to_string(),
+            offset_secs: f.i64("offset_secs").unwrap_or(0),
         })),
         "text" => Ok(Capability::Text(local::TextCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
-            pattern: f.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            replacement: f.get("replacement").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            separator: f.get("separator").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            hash: f.get("hash").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
+            pattern: f.s("pattern").unwrap_or("").to_string(),
+            replacement: f.s("replacement").unwrap_or("").to_string(),
+            separator: f.s("separator").unwrap_or("").to_string(),
+            hash: f.any("hash").and_then(|v| v.as_str()).unwrap_or("").to_string(),
         })),
         "file" => Ok(Capability::File(local::FileCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("read").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("read").to_string(),
             allow_roots: f
-                .get("allow_roots")
-                .and_then(|v| v.as_array())
+                .arr("allow_roots")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(std::path::PathBuf::from)).collect())
                 .unwrap_or_default(),
-            max_bytes: f.get("max_bytes").and_then(|v| v.as_u64()).unwrap_or(1 << 20) as usize,
+            max_bytes: f.u64("max_bytes").unwrap_or(1 << 20) as usize,
         })),
         "sqlite" => Ok(Capability::Sqlite(local::SqliteCap {
-            db: f.get("db").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
-            readonly: f.get("readonly").and_then(|v| v.as_bool()).unwrap_or(true),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
+            db: f.s("db").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
+            readonly: f.b("readonly").unwrap_or(true),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
         })),
         "db" => Ok(Capability::Db(db::DbCap {
-            sqlite: f.get("sqlite").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            duckdb: f.get("duckdb").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            alias: f.get("alias").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
-            readonly: f.get("readonly").and_then(|v| v.as_bool()).unwrap_or(true),
-            format: f.get("format").and_then(|v| v.as_str()).unwrap_or("json").to_string(),
-            mode: f.get("mode").and_then(|v| v.as_str()).unwrap_or("embed").to_string(),
-            endpoint: f.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(60_000),
+            sqlite: f.s("sqlite").unwrap_or("").to_string(),
+            duckdb: f.s("duckdb").unwrap_or("").to_string(),
+            alias: f.s("alias").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("query").to_string(),
+            readonly: f.b("readonly").unwrap_or(true),
+            format: f.any("format").and_then(|v| v.as_str()).unwrap_or("json").to_string(),
+            mode: f.any("mode").and_then(|v| v.as_str()).unwrap_or("embed").to_string(),
+            endpoint: f.s("endpoint").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(60_000),
         })),
         "shell" => Ok(Capability::Shell(local::ShellCap {
             command: f
-                .get("command")
-                .and_then(|v| v.as_str())
+                .s("command")
                 .ok_or_else(|| anyhow!("capability {name:?} (shell) missing 'command'"))?
                 .to_string(),
-            cwd: f.get("cwd").and_then(|v| v.as_str()).map(str::to_string),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            cwd: f.s("cwd").map(str::to_string),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         // ── network ──
         "rpc" => Ok(Capability::Rpc(net::RpcCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            method: f.get("method").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            id: f.get("id").and_then(|v| v.as_i64()),
+            url: f.s("url").unwrap_or("").to_string(),
+            method: f.s("method").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
+            id: f.i64("id"),
         })),
         "graphql" => Ok(Capability::Graphql(net::GraphqlCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            query: f.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            variables: f.get("variables").cloned().unwrap_or_else(|| json!({})),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            auth_header: f.get("auth_header").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            auth_value: f.get("auth_value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            url: f.s("url").unwrap_or("").to_string(),
+            query: f.s("query").unwrap_or("").to_string(),
+            variables: f.any("variables").cloned().unwrap_or_else(|| json!({})),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
+            auth_header: f.s("auth_header").unwrap_or("").to_string(),
+            auth_value: f.s("auth_value").unwrap_or("").to_string(),
         })),
         "llm" | "chat" => Ok(Capability::Llm(net::LlmCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            model: f.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            system: f.get("system").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            max_tokens: f.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(256),
-            temperature: f.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.0),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
-            auth_header: f.get("auth_header").and_then(|v| v.as_str()).unwrap_or("authorization").to_string(),
-            auth_value: f.get("auth_value").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            url: f.s("url").unwrap_or("").to_string(),
+            model: f.s("model").unwrap_or("").to_string(),
+            system: f.s("system").unwrap_or("").to_string(),
+            max_tokens: f.u64("max_tokens").unwrap_or(256),
+            temperature: f.f64("temperature").unwrap_or(0.0),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
+            auth_header: f.s("auth_header").unwrap_or("authorization").to_string(),
+            auth_value: f.s("auth_value").unwrap_or("").to_string(),
         })),
         "mcp" => Ok(Capability::Mcp(net::McpCap {
-            headers: f.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
+            headers: f.obj("headers").cloned().unwrap_or_default(),
             transport: f
-                .get("transport")
-                .and_then(|v| v.as_str())
-                .unwrap_or(if f.get("command").is_some() { "stdio" } else { "http" })
+                .any("transport").and_then(|v| v.as_str())
+                .unwrap_or(if f.has("command") { "stdio" } else { "http" })
                 .to_string(),
-            url: f.get("url").and_then(|v| v.as_str()).map(str::to_string),
+            url: f.s("url").map(str::to_string),
             command: f
-                .get("command")
-                .and_then(|v| v.as_array())
+                .arr("command")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
-            tool: f.get("tool").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            tool: f.s("tool").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         "vector" => Ok(Capability::Vector(net::VectorCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("search").to_string(),
-            collection: f.get("collection").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
+            url: f.s("url").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("search").to_string(),
+            collection: f.s("collection").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
         })),
         "webhook" => Ok(Capability::Webhook(net::WebhookCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
-            sign_header: f.get("sign_header").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            sign_secret: f.get("sign_secret").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            url: f.s("url").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
+            sign_header: f.s("sign_header").unwrap_or("").to_string(),
+            sign_secret: f.s("sign_secret").unwrap_or("").to_string(),
         })),
         "sse" => Ok(Capability::Sse(net::SseCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            max_events: f.get("max_events").and_then(|v| v.as_u64()).unwrap_or(100) as usize,
+            url: f.s("url").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
+            max_events: f.u64("max_events").unwrap_or(100) as usize,
         })),
         "passthrough" | "noop" => Ok(Capability::Passthrough),
         "json" => Ok(Capability::Json(data::JsonCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("pick").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("pick").to_string(),
         })),
         "csv" => Ok(Capability::Csv(data::CsvCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("parse").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("parse").to_string(),
             delimiter: f
-                .get("delimiter")
-                .and_then(|v| v.as_str())
+                .any("delimiter").and_then(|v| v.as_str())
                 .and_then(|s| s.chars().next())
                 .unwrap_or(','),
-            headers: f.get("headers").and_then(|v| v.as_bool()).unwrap_or(true),
+            headers: f.b("headers").unwrap_or(true),
         })),
         "xml" => Ok(Capability::Xml(data::XmlCap {
-            tag: f.get("tag").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("tags").to_string(),
+            tag: f.s("tag").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("tags").to_string(),
         })),
         "markdown" | "md" => Ok(Capability::Markdown(data::MarkdownCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("headings").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("headings").to_string(),
         })),
         "diff" => Ok(Capability::Diff(data::DiffCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("lines").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("lines").to_string(),
         })),
         "validate" | "schema" => Ok(Capability::Validate(data::ValidateCap)),
         "math" => Ok(Capability::Math(data::MathCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("eval").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("eval").to_string(),
         })),
         "hash" => Ok(Capability::Hash(data::HashCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("sha256").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("sha256").to_string(),
         })),
         "graph" => Ok(Capability::Graph(data::GraphCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("reachable").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("reachable").to_string(),
         })),
         "tokenize" | "tokens" => Ok(Capability::Tokenize(data::TokenizeCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("count").to_string(),
-            chars_per_token: f.get("chars_per_token").and_then(|v| v.as_f64()).unwrap_or(4.0),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("count").to_string(),
+            chars_per_token: f.f64("chars_per_token").unwrap_or(4.0),
         })),
         "cron" => Ok(Capability::Cron(data::CronCap {
-            expr: f.get("expr").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            expr: f.s("expr").unwrap_or("").to_string(),
         })),
         "keyvalue" | "kv" => Ok(Capability::KeyValue(store::KeyValueCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
-            key: f.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            path: f.s("path").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
+            key: f.s("key").unwrap_or("").to_string(),
         })),
         "cache" => Ok(Capability::Cache(store::CacheCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
-            ttl_secs: f.get("ttl_secs").and_then(|v| v.as_i64()).unwrap_or(0),
+            path: f.s("path").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("get").to_string(),
+            ttl_secs: f.i64("ttl_secs").unwrap_or(0),
         })),
         "queue" => Ok(Capability::Queue(store::QueueCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
+            path: f.s("path").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("length").to_string(),
         })),
         "metrics" | "sysinfo" => Ok(Capability::Metrics(sys::MetricsCap {
-            what: f.get("what").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            disk_path: f.get("disk_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            what: f.any("what").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            disk_path: f.s("disk_path").unwrap_or("").to_string(),
         })),
         "notify" | "notify_local" => Ok(Capability::NotifyLocal(sys::NotifyLocalCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            bell: f.get("bell").and_then(|v| v.as_bool()).unwrap_or(false),
-            timestamp: f.get("timestamp").and_then(|v| v.as_bool()).unwrap_or(true),
-            channel: f.get("channel").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            title: f.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            subtitle: f.get("subtitle").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            sound: f.get("sound").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
+            path: f.s("path").unwrap_or("").to_string(),
+            bell: f.b("bell").unwrap_or(false),
+            timestamp: f.b("timestamp").unwrap_or(true),
+            channel: f.any("channel").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: f.s("title").unwrap_or("").to_string(),
+            subtitle: f.s("subtitle").unwrap_or("").to_string(),
+            sound: f.s("sound").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
         })),
         "tcp" => Ok(Capability::Tcp(proto::TcpCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(5000),
-            until: f.get("until").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            host: f.s("host").unwrap_or("").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
+            timeout_ms: f.u64("timeout_ms").unwrap_or(5000),
+            until: f.s("until").unwrap_or("").to_string(),
         })),
         "udp" => Ok(Capability::Udp(proto::UdpCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(3000),
+            host: f.s("host").unwrap_or("").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
+            timeout_ms: f.u64("timeout_ms").unwrap_or(3000),
         })),
         "redis" => Ok(Capability::Redis(proto::RedisCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(6379) as u16,
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(5000),
-            password: f.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            host: f.s("host").unwrap_or("127.0.0.1").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(6379) as u16,
+            timeout_ms: f.u64("timeout_ms").unwrap_or(5000),
+            password: f.s("password").unwrap_or("").to_string(),
         })),
         "nats" => Ok(Capability::Nats(proto::NatsCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(4222) as u16,
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(5000),
+            host: f.s("host").unwrap_or("127.0.0.1").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(4222) as u16,
+            timeout_ms: f.u64("timeout_ms").unwrap_or(5000),
         })),
         "mqtt" => Ok(Capability::Mqtt(proto::MqttCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(1883) as u16,
-            client_id: f.get("client_id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(5000),
+            host: f.s("host").unwrap_or("127.0.0.1").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(1883) as u16,
+            client_id: f.s("client_id").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(5000),
         })),
         "smtp" | "mail_send" => Ok(Capability::Smtp(proto::SmtpCap {
-            host: f.get("host").and_then(|v| v.as_str()).unwrap_or("127.0.0.1").to_string(),
-            port: f.get("port").and_then(|v| v.as_u64()).unwrap_or(25) as u16,
-            from: f.get("from").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(8000),
-            username: f.get("username").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            password: f.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            host: f.s("host").unwrap_or("127.0.0.1").to_string(),
+            port: f.any("port").and_then(|v| v.as_u64()).unwrap_or(25) as u16,
+            from: f.s("from").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(8000),
+            username: f.s("username").unwrap_or("").to_string(),
+            password: f.s("password").unwrap_or("").to_string(),
         })),
         "archive" => Ok(Capability::Archive(proto::ArchiveCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("list").to_string(),
-            dest: f.get("dest").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            path: f.s("path").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("list").to_string(),
+            dest: f.s("dest").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         "s3" | "object_store" => Ok(Capability::S3(service::S3Cap {
-            endpoint: f.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            bucket: f.get("bucket").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            prefix: f.get("prefix").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
-            headers: f.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
+            endpoint: f.s("endpoint").unwrap_or("").to_string(),
+            bucket: f.s("bucket").unwrap_or("").to_string(),
+            prefix: f.s("prefix").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
+            headers: f.obj("headers").cloned().unwrap_or_default(),
         })),
         "prometheus" | "prom" => Ok(Capability::Prometheus(service::PrometheusCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(8000),
+            url: f.s("url").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(8000),
         })),
         "kafka" => Ok(Capability::Kafka(service::KafkaCap {
-            url: f.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            topic: f.get("topic").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(10_000),
+            url: f.s("url").unwrap_or("").to_string(),
+            topic: f.s("topic").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(10_000),
         })),
         "pdf" => Ok(Capability::Pdf(service::PdfCap {
-            path: f.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            path: f.s("path").unwrap_or("").to_string(),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         "sql" | "database" => Ok(Capability::Sql(service::SqlCap {
-            driver: f.get("driver").and_then(|v| v.as_str()).unwrap_or("sqlite3").to_string(),
-            dsn: f.get("dsn").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000),
+            driver: f.any("driver").and_then(|v| v.as_str()).unwrap_or("sqlite3").to_string(),
+            dsn: f.s("dsn").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(30_000),
         })),
         // ── singleton Chrome / CDP ──
         "browser" | "chrome_cdp" => Ok(Capability::Browser(browser::BrowserCap {
-            endpoint: f.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            chrome_binary: f.get("chrome_binary").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            profile_dir: f.get("profile_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            extension_path: f.get("extension_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            launch: f.get("launch").and_then(|v| v.as_bool()).unwrap_or(false),
-            attach: f.get("attach").and_then(|v| v.as_bool()).unwrap_or(false),
-            startup_timeout_ms: f.get("startup_timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000),
-            max_text: f.get("max_text").and_then(|v| v.as_u64()).unwrap_or(6_000) as usize,
+            endpoint: f.s("endpoint").unwrap_or("").to_string(),
+            chrome_binary: f.s("chrome_binary").unwrap_or("").to_string(),
+            profile_dir: f.s("profile_dir").unwrap_or("").to_string(),
+            extension_path: f.s("extension_path").unwrap_or("").to_string(),
+            launch: f.b("launch").unwrap_or(false),
+            attach: f.b("attach").unwrap_or(false),
+            startup_timeout_ms: f.u64("startup_timeout_ms").unwrap_or(15_000),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(20_000),
+            max_text: f.u64("max_text").unwrap_or(6_000) as usize,
             max_owned_pages: f
-                .get("max_owned_pages")
-                .and_then(|v| v.as_u64())
+                .u64("max_owned_pages")
                 .unwrap_or(32)
                 .clamp(1, 500) as usize,
             owned_idle_ms: f
-                .get("owned_idle_ms")
-                .and_then(|v| v.as_u64())
+                .u64("owned_idle_ms")
                 .unwrap_or(5 * 60_000)
                 .clamp(1_000, 24 * 60 * 60_000),
-            human: f.get("human").and_then(|v| v.as_bool()).unwrap_or(true),
+            human: f.b("human").unwrap_or(true),
         })),
         "web_search" | "search" => Ok(Capability::WebSearch(web::WebSearchCap {
-            endpoint: f.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            method: f.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase(),
-            headers: f.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
-            results_path: f.get("results_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            query_param: f.get("query_param").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            title_field: f.get("title_field").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            url_field: f.get("url_field").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            snippet_field: f.get("snippet_field").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(15_000),
-            max_results: f.get("max_results").and_then(|v| v.as_u64()).unwrap_or(10) as usize,
-            max_bytes: f.get("max_bytes").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
+            endpoint: f.s("endpoint").unwrap_or("").to_string(),
+            method: f.any("method").and_then(|v| v.as_str()).unwrap_or("GET").to_uppercase(),
+            headers: f.obj("headers").cloned().unwrap_or_default(),
+            results_path: f.s("results_path").unwrap_or("").to_string(),
+            query_param: f.s("query_param").unwrap_or("").to_string(),
+            title_field: f.s("title_field").unwrap_or("").to_string(),
+            url_field: f.s("url_field").unwrap_or("").to_string(),
+            snippet_field: f.s("snippet_field").unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(15_000),
+            max_results: f.u64("max_results").unwrap_or(10) as usize,
+            max_bytes: f.u64("max_bytes").unwrap_or(256 << 10) as usize,
         })),
         "goal_runner" | "agent_goal" => Ok(Capability::GoalRunner(goal::GoalRunnerCap {
-            runner: f.get("runner").and_then(|v| v.as_str()).unwrap_or("cxgo").to_string(),
+            runner: f.any("runner").and_then(|v| v.as_str()).unwrap_or("cxgo").to_string(),
             args: f
-                .get("args")
-                .and_then(|v| v.as_array())
+                .arr("args")
                 .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                 .unwrap_or_default(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(1_800_000),
-            max_output: f.get("max_output").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
-            reports_dir: f.get("reports_dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(1_800_000),
+            max_output: f.u64("max_output").unwrap_or(256 << 10) as usize,
+            reports_dir: f.s("reports_dir").unwrap_or("").to_string(),
         })),
         // ── workflow-authored script plugins ──
         "plugin" | "script" => Ok(Capability::Plugin(plugin::PluginCap {
@@ -1045,68 +919,62 @@ fn parse_kind(name: &str, kind: &str, f: &mut Fields) -> Result<Capability> {
                 // by the P128 "declares option(s) this engine never reads"
                 // check, with `name` named as though it were a typo. The
                 // semantics are unchanged: `plugin` decides when it is present.
-                let present = f.get("plugin").is_some();
-                let named = f.get("plugin").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let alias = f.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let present = f.has("plugin");
+                let named = f.s("plugin").unwrap_or("").to_string();
+                let alias = f.s("name").unwrap_or("").to_string();
                 if present { named } else { alias }
             },
-            dir: f.get("dir").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            entry: f.get("entry").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            dir: f.s("dir").unwrap_or("").to_string(),
+            entry: f.s("entry").unwrap_or("").to_string(),
+            op: f.s("op").unwrap_or("").to_string(),
             browser: f
-                .get("browser")
-                .and_then(|v| v.as_str())
+                .s("browser")
                 .unwrap_or("")
                 .to_string(),
             max_operations: f
-                .get("max_operations")
-                .and_then(|v| v.as_u64())
+                .u64("max_operations")
                 .unwrap_or(0),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(0),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(0),
         })),
         "needle" => Ok(Capability::Needle(super::needle::NeedleCap {
-            op: f.get("op").and_then(|v| v.as_str()).unwrap_or("extract").to_string(),
-            cact: f.get("cact").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            op: f.any("op").and_then(|v| v.as_str()).unwrap_or("extract").to_string(),
+            cact: f.s("cact").map(|s| s.to_string()),
         })),
         "computer_use" | "computer-use" => Ok(Capability::ComputerUse(
             computer_use::ComputerUseCap {
                 op: f
-                    .get("op")
-                    .and_then(|v| v.as_str())
+                    .any("op").and_then(|v| v.as_str())
                     .unwrap_or("fingerprint")
                     .to_string(),
                 allowed_surface: f
-                    .get("allowed_surface")
-                    .and_then(|v| v.as_str())
+                    .s("allowed_surface")
                     .unwrap_or("")
                     .to_string(),
                 allowed_fields: f
-                    .get("allowed_fields")
-                    .and_then(|v| v.as_array())
+                    .arr("allowed_fields")
                     .map(|a| {
                         a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()
                     })
                     .unwrap_or_default(),
-                expected: f.get("expected").cloned().unwrap_or(Value::Null),
+                expected: f.any("expected").cloned().unwrap_or(Value::Null),
                 min_confidence: f
-                    .get("min_confidence")
-                    .and_then(|v| v.as_f64())
+                    .f64("min_confidence")
                     .unwrap_or(0.8),
             },
         )),
         "web_fetch" | "fetch_url" => Ok(Capability::WebFetch(web::WebFetchCap {
-            format: f.get("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
-            headers: f.get("headers").and_then(|v| v.as_object()).cloned().unwrap_or_default(),
-            timeout_ms: f.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(20_000),
-            max_bytes: f.get("max_bytes").and_then(|v| v.as_u64()).unwrap_or(256 << 10) as usize,
-            endpoint: f.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            method: f.get("method").and_then(|v| v.as_str()).unwrap_or("POST").to_uppercase(),
-            body_field: f.get("body_field").and_then(|v| v.as_str()).unwrap_or("url").to_string(),
-            body_urls_array: f.get("body_urls_array").and_then(|v| v.as_bool()).unwrap_or(false),
-            body: f.get("body").cloned().unwrap_or(Value::Null),
-            result_path: f.get("result_path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            text_field: f.get("text_field").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            title_field: f.get("title_field").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            format: f.any("format").and_then(|v| v.as_str()).unwrap_or("text").to_string(),
+            headers: f.obj("headers").cloned().unwrap_or_default(),
+            timeout_ms: f.u64("timeout_ms").unwrap_or(20_000),
+            max_bytes: f.u64("max_bytes").unwrap_or(256 << 10) as usize,
+            endpoint: f.s("endpoint").unwrap_or("").to_string(),
+            method: f.s("method").unwrap_or("POST").to_uppercase(),
+            body_field: f.s("body_field").unwrap_or("url").to_string(),
+            body_urls_array: f.b("body_urls_array").unwrap_or(false),
+            body: f.any("body").cloned().unwrap_or(Value::Null),
+            result_path: f.s("result_path").unwrap_or("").to_string(),
+            text_field: f.s("text_field").unwrap_or("").to_string(),
+            title_field: f.s("title_field").unwrap_or("").to_string(),
         })),
         other => bail!(
             "capability {name:?}: unknown kind {other:?} (see docs/benchmarks/laya_workflow_capabilities_*.md)"
