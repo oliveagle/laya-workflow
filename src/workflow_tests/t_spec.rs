@@ -434,7 +434,7 @@ pub fn test_spec_nesting(h: &mut Harness) {
     let inline_parent = json!({
         "name": "inline_parent", "start": "go",
         "nodes": [
-            {"name": "go", "workflow": {"inline": sub.clone()}, "edge_default": "STOP"}
+            {"name": "go", "workflow": {"inline": sub.clone()}, "edge": {"condition": {}, "default": "STOP"}}
         ]
     });
     let iwf = spec::from_spec(&inline_parent).unwrap();

@@ -995,7 +995,51 @@ fn validate_graph_semantics(
         "question", "always", "all", "answer", "answer_in", "option", "gte",
         "lt", "value_gte", "value_lt",
     ];
+    // P145: the keys `node_from_spec_with` actually reads off a node object and
+    // its `edge`. Anything else is never touched by the parser or the engine, so a
+    // misspelling — `questoins`, `actoin`, `primmary_q`, a stray `condtion` on the
+    // edge — is silently dropped: `validate` passes yet the declared behaviour is
+    // gone (no questions / no action / no routing). Same class as P142's `state`
+    // (there a silent fallback sent the whole state); here a silent drop *deletes*
+    // the node's questions, action or routing. `has_action` is the one derived key
+    // (emitted by describe / round-trip), so it is recognised but must *agree* with
+    // the presence of `action`.
+    const KNOWN_NODE_KEYS: &[&str] = &[
+        "name", "questions", "edge", "min_confidence", "primary_q",
+        "max_retries", "state", "action", "workflow", "has_action",
+    ];
+    const KNOWN_EDGE_KEYS: &[&str] = &["condition", "default", "min_confidence"];
     for n in node_list {
+        if let Some(obj) = n.as_object() {
+            let nm = obj.get("name").and_then(Value::as_str).unwrap_or("?");
+            for k in obj.keys() {
+                if !KNOWN_NODE_KEYS.contains(&k.as_str()) {
+                    bail!(
+                        "node {nm}: unrecognised key {k:?}{} — the engine never reads it, so it is silently ignored",
+                        suggest(k, KNOWN_NODE_KEYS)
+                    );
+                }
+            }
+            if let Some(ha) = obj.get("has_action") {
+                let has = obj.contains_key("action");
+                if ha.as_bool() != Some(has) {
+                    bail!(
+                        "node {nm}: `has_action` is {ha} but the node {} — `has_action` is derived from `action` and must agree",
+                        if has { "declares an `action`" } else { "declares no `action`" }
+                    );
+                }
+            }
+            if let Some(edge) = obj.get("edge").and_then(Value::as_object) {
+                for k in edge.keys() {
+                    if !KNOWN_EDGE_KEYS.contains(&k.as_str()) {
+                        bail!(
+                            "node {nm}: edge carries an unrecognised key {k:?}{} — only `condition`, `default` and `min_confidence` are read, so it is silently ignored",
+                            suggest(k, KNOWN_EDGE_KEYS)
+                        );
+                    }
+                }
+            }
+        }
         if n.get("workflow").is_some() {
             continue; // reference node; its expanded nodes are validated above
         }

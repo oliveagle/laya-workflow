@@ -1214,3 +1214,80 @@ pub fn test_validate_state_contract(h: &mut Harness) {
     h.check("validate: state keep + rename OK", !mk(json!({"keep": ["q"], "rename": {"out": "q"}})));
     h.check("validate: null state OK (no projection)", !mk(json!(null)));
 }
+
+
+/// P145: a node (and its `edge`) may only carry the keys the engine actually
+/// reads. Any other key — a misspelling (`questoins`, `actoin`, `primmary_q`) or
+/// a stray field — is never touched by the parser or the engine, so it is
+/// silently dropped while `validate` still passes (the declared questions /
+/// action / routing quietly vanish). `has_action` is the one derived key: it is
+/// emitted by describe / round-trip, so it is recognised but must agree with the
+/// presence of `action`.
+pub fn test_validate_node_keys(h: &mut Harness) {
+    let edge = json!({"condition": {}, "default": "STOP"});
+    let qs = json!({"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}}});
+    let action = json!({"kind": "copy_keys", "keys": ["q"]});
+    let ok = |n: Value| spec::from_spec(&base_spec("a", json!([n]))).is_ok();
+    let full = || {
+        json!({"name": "a", "questions": qs.clone(), "edge": edge.clone(),
+               "min_confidence": 0.0, "max_retries": 1, "primary_q": "q",
+               "action": action.clone()})
+    };
+
+    // positives — every recognised key on the node and on the edge
+    h.check("validate: a fully declared node is OK", ok(full()));
+    h.check("validate: edge.min_confidence is OK", {
+        let mut n = full();
+        n["edge"] = json!({"condition": {}, "default": "STOP", "min_confidence": 0.5});
+        ok(n)
+    });
+    h.check("validate: a `state` projection is OK", {
+        let mut n = full();
+        n["state"] = json!({"keep": ["q"]});
+        ok(n)
+    });
+    h.check("validate: has_action:true agreeing with `action` is OK", {
+        let mut n = full();
+        n["has_action"] = json!(true);
+        ok(n)
+    });
+    h.check("validate: has_action:false with no action is OK", ok(json!({
+        "name": "a", "questions": qs.clone(), "edge": edge.clone(), "has_action": false
+    })));
+
+    // negatives — an unrecognised node key, silently dropped by the parser
+    let with_key = |k: &str| {
+        let mut n = full();
+        n[k] = json!("x");
+        !ok(n)
+    };
+    h.check("validate: node key typo `questoins` rejected", with_key("questoins"));
+    h.check("validate: node key typo `actoin` rejected", with_key("actoin"));
+    h.check("validate: node key typo `primmary_q` rejected", with_key("primmary_q"));
+    h.check("validate: a stray node key (e.g. `notes`) rejected", with_key("notes"));
+
+    // negatives — an unrecognised key on the edge object
+    h.check("validate: edge key typo `condtion` rejected", {
+        let mut n = full();
+        n["edge"] = json!({"condition": {}, "default": "STOP", "condtion": {}});
+        !ok(n)
+    });
+
+    // negatives — `has_action` is derived; it must agree with `action`
+    h.check("validate: has_action:true without an action rejected", {
+        let mut n = full();
+        n.as_object_mut().unwrap().remove("action");
+        n["has_action"] = json!(true);
+        !ok(n)
+    });
+    h.check("validate: has_action:false with an action rejected", {
+        let mut n = full();
+        n["has_action"] = json!(false);
+        !ok(n)
+    });
+    h.check("validate: a non-boolean has_action rejected", {
+        let mut n = full();
+        n["has_action"] = json!("yes");
+        !ok(n)
+    });
+}
