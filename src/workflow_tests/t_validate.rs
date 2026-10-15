@@ -3125,3 +3125,98 @@ pub fn test_validate_question_type(h: &mut Harness) {
         !err(&base(json!({"type": 5, "instructions": "?", "criteria": {"A": "a", "B": "b"}}))).is_empty(),
     );
 }
+/// P182: a question's `criteria` has a per-type *shape*. `choice` reads it with
+/// `as_object()` (its option table, or the `from_state` control object); `score`
+/// reads its level names with `as_array()`. A wrong shape is silently dropped:
+/// `validate` stays green, the offline backend fabricates an `{A, B}` pair, and
+/// the node's edge-condition keys are no longer checked against the real options,
+/// so a branch keyed on them silently dies. These specs pin each shape down.
+pub fn test_validate_question_criteria_shape(h: &mut Harness) {
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    // A one-node spec; `q` is the question object. `cond` is the edge condition
+    // (always `STOP` on both sides), kept separate so a case can also drop it.
+    let spec_of = |q: Value, cond: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": q},
+            "edge": {"condition": cond, "default": "STOP"},
+        }]})
+    };
+    let no_cond = |q: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": q},
+            "edge": {"default": "STOP"},
+        }]})
+    };
+
+    // ── the shapes the engine actually reads stay accepted ──
+    h.check(
+        "validate question-criteria: a `choice` object of options is OK",
+        ok(&spec_of(
+            json!({"type": "choice", "instructions": "?", "criteria": {"approve": "ok", "deny": "no"}}),
+            json!({"approve": "STOP", "deny": "STOP"}),
+        )),
+    );
+    h.check(
+        "validate question-criteria: a `choice` `from_state` control object is OK",
+        ok(&no_cond(json!({"type": "choice", "instructions": "?",
+            "criteria": {"from_state": "items", "id_key": "id"}}))),
+    );
+    h.check(
+        "validate question-criteria: a `score` array of level names is OK",
+        ok(&no_cond(json!({"type": "score", "instructions": "?", "criteria": ["poor", "ok", "good"]}))),
+    );
+    h.check(
+        "validate question-criteria: a `score` with no `criteria` is OK",
+        ok(&no_cond(json!({"type": "score", "instructions": "?"}))),
+    );
+    h.check(
+        "validate question-criteria: a `noul` with no `criteria` is OK",
+        ok(&no_cond(json!({"type": "noul", "instructions": "?", "truthy": "yes", "falsy": "no"}))),
+    );
+    h.check(
+        "validate question-criteria: a `boolean` with no `criteria` is OK",
+        ok(&no_cond(json!({"type": "boolean", "instructions": "?"}))),
+    );
+
+    // ── a wrong shape for the declared type is rejected, naming the fix ──
+    let e = err(&no_cond(json!({"type": "choice", "instructions": "?", "criteria": "approve or deny"})));
+    h.check(
+        "validate question-criteria: a `choice` whose `criteria` is a string is rejected",
+        e.contains("as_object()") && e.contains("silently dropped"),
+    );
+    h.check(
+        "validate question-criteria: a `choice` array of answers is rejected (the edge keys can match, yet the offline backend ignores it)",
+        err(&spec_of(
+            json!({"type": "choice", "instructions": "?", "criteria": ["A", "B"]}),
+            json!({"A": "STOP", "B": "STOP"}),
+        ))
+        .contains("write `criteria` as an object"),
+    );
+    h.check(
+        "validate question-criteria: a `choice` with an empty `criteria` object is rejected",
+        err(&no_cond(json!({"type": "choice", "instructions": "?", "criteria": {}})))
+            .contains("empty `criteria` object"),
+    );
+    h.check(
+        "validate question-criteria: a `choice` with no `criteria` is rejected",
+        err(&no_cond(json!({"type": "choice", "instructions": "?"}))).contains("no `criteria`"),
+    );
+    h.check(
+        "validate question-criteria: a `score` whose `criteria` is a string is rejected",
+        err(&no_cond(json!({"type": "score", "instructions": "?", "criteria": "good"})))
+            .contains("array of level names"),
+    );
+    h.check(
+        "validate question-criteria: a `score` with an empty `criteria` array is rejected",
+        err(&no_cond(json!({"type": "score", "instructions": "?", "criteria": []})))
+            .contains("array of level names"),
+    );
+    h.check(
+        "validate question-criteria: a `score` level that is not a string is rejected",
+        err(&no_cond(json!({"type": "score", "instructions": "?", "criteria": ["ok", 3]})))
+            .contains("array of level names"),
+    );
+}

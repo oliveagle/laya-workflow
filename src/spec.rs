@@ -1495,6 +1495,48 @@ fn validate_graph_semantics(
                         v.as_str().map(|t| suggest(t, KNOWN_QUESTION_TYPES)).unwrap_or_default()
                     ),
                 }
+                // P182: `criteria` is not free-form — its *shape* is read with a
+                // specific accessor per type, and a wrong shape is silently dropped.
+                // `choice` reads it with `as_object()` (the option table, or the
+                // `from_state` control object); anything else makes the offline
+                // backend fabricate a `{A: ..., B: ...}` pair (`default_choice`) and
+                // makes the answer-space check below skip *entirely*, so a branch
+                // keyed on the real options silently dies while `validate` stays
+                // green. Measured: a choice question whose `criteria` was the string
+                // "approve or deny" left `validate` at exit 0 (edge keys
+                // `approve`/`deny` unchecked) and `run` answered the fabricated "A"
+                // that matched no edge, so the `approve -> b` branch never fired.
+                // `score` reads its level names with `as_array()`; a non-array (or a
+                // non-string / empty one) drops the levels the same way.
+                match qo.get("type").and_then(Value::as_str) {
+                    Some("choice") => match qo.get("criteria") {
+                        Some(Value::Object(m)) if !m.is_empty() => {}
+                        Some(Value::Object(_)) => bail!(
+                            "node {qn}: question {qid:?} is a `choice` with an empty `criteria` object — it offers no option, so no answer can key its edge and the offline backend fabricates an `{{A, B}}` pair instead"
+                        ),
+                        None => bail!(
+                            "node {qn}: question {qid:?} is a `choice` with no `criteria` — the options *are* `criteria` (an object `{{\"<answer>\": \"<what it means>\"}}`, or `{{\"from_state\": …}}` for a dynamic question); without it the engine reads no option and the offline backend fabricates an `{{A, B}}` pair, so a branch keyed on the real options silently dies"
+                        ),
+                        Some(v) => bail!(
+                            "node {qn}: question {qid:?} is a `choice` but its `criteria` is {} — the engine reads a choice's options with `as_object()`, so this is silently dropped (the offline backend then fabricates an `{{A, B}}` pair) and the edge-condition-key check is skipped; write `criteria` as an object",
+                            json_kind_name(v)
+                        ),
+                    },
+                    Some("score") => {
+                        if let Some(v) = qo.get("criteria") {
+                            let ok = v.as_array().is_some_and(|a| {
+                                !a.is_empty() && a.iter().all(Value::is_string)
+                            });
+                            if !ok {
+                                bail!(
+                                    "node {qn}: question {qid:?} is a `score` but its `criteria` is {} — a score's levels are an array of level names (e.g. [\"poor\", \"ok\", \"good\"]), so anything else is silently dropped and the levels disappear from the question contract",
+                                    json_kind_name(v)
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
                 for k in qo.keys() {
                     if !KNOWN_QUESTION_KEYS.contains(&k.as_str()) {
                         bail!(
