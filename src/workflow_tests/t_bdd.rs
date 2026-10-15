@@ -8947,3 +8947,100 @@ pub fn test_bdd_selector_tags(h: &mut Harness) {
         bdd::compile_scenario(&ok, &ok.scenarios[0], &json!({}), "chrome-headless.sh").is_ok(),
     );
 }
+
+
+pub fn test_bdd_selector_placement(h: &mut Harness) {
+    // P172: a selector tag placed where its reader never looks selects nothing.
+    // The production profile filters on *Scenario* tags only (`bdd build`/`bdd run`
+    // both read `scenario.tags`), so a Feature-level `@production` is silently
+    // inert - verified: it compiles locally at 100% coverage yet contributes zero
+    // production-IT to a `--profile production` build that still exits 0. And a
+    // `@decision` feature never runs as a browser integration test at all, so any
+    // `@production` on it selects nothing either.
+    let probs = |feature_tags: &[&str], all: &[&str], decision: bool| -> Vec<String> {
+        let ft: Vec<String> = feature_tags.iter().map(|s| s.to_string()).collect();
+        let at: Vec<String> = all.iter().map(|s| s.to_string()).collect();
+        bdd::selector_placement_problems(&ft, &at, decision)
+    };
+    let has = |p: &[String], needle: &str| p.iter().any(|m| m.contains(needle));
+
+    // ── the Feature line is not where the selector reads ──
+    h.check(
+        "bdd selector placement: @production on the Feature line is refused",
+        has(
+            &probs(&["production"], &["production"], false),
+            "on the Feature line selects nothing",
+        ),
+    );
+    // ── the Scenario line is exactly where the selector reads ──
+    h.check(
+        "bdd selector placement: @production on a Scenario stays legal",
+        probs(&[], &["production"], false).is_empty(),
+    );
+    h.check(
+        "bdd selector placement: a plain browser scenario is unaffected",
+        probs(&[], &["smoke"], false).is_empty(),
+    );
+    h.check(
+        "bdd selector placement: a non-selector feature tag is not refused",
+        probs(&["decision"], &["decision"], false).is_empty(),
+    );
+
+    // ── a @decision feature never runs as a browser IT ──
+    h.check(
+        "bdd selector placement: @production on a @decision feature is refused",
+        has(
+            &probs(&[], &["production"], true),
+            "selects nothing on a @decision feature",
+        ),
+    );
+    h.check(
+        "bdd selector placement: a payload-carrying @production on a @decision feature is refused",
+        has(
+            &probs(&["production(x)"], &["production(x)"], true),
+            "selects nothing on a @decision feature",
+        ),
+    );
+    h.check(
+        "bdd selector placement: a @decision feature with no selector tag is unaffected",
+        probs(&[], &["decision"], true).is_empty(),
+    );
+
+    // ── end to end: the compiler refuses the misplacement, accepts the good one ──
+    let browser = |feature_tag: &str, scenario_tag: &str| {
+        format!(
+            "{feature_tag}Feature: place\n{scenario_tag}  Scenario: s\n    \
+             When I run the command \"true\"\n    Then the exit code is 0\n"
+        )
+    };
+    let bad = bdd::parse(&browser("@production\n", ""), "<place-feat>")
+        .expect("parse feature-level @production");
+    let e = bdd::compile_scenario(&bad, &bad.scenarios[0], &json!({}), "chrome-headless.sh")
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd selector placement: a Feature-level @production fails the compile",
+        e.contains("on the Feature line selects nothing"),
+    );
+    let ok = bdd::parse(&browser("", "  @production\n"), "<place-scen>")
+        .expect("parse scenario-level @production");
+    h.check(
+        "bdd selector placement: a Scenario-level @production still compiles",
+        bdd::compile_scenario(&ok, &ok.scenarios[0], &json!({}), "chrome-headless.sh").is_ok(),
+    );
+
+    // A @decision feature that carries @production is refused before its graph is read.
+    let decision_src = "@decision\n@production\nFeature: d\n\n  Scenario: only_node\n    \
+         Given a choice question \"go\" asks \"Go?\"\n      | answer | meaning |\n      \
+         | A      | yes     |\n    When any other answer goes to \"STOP\"\n";
+    let df = bdd::parse(decision_src, "<place-decision>").expect("parse @decision + @production");
+    let de = bdd::compile_decision(&df, &json!({}))
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    h.check(
+        "bdd selector placement: a @decision feature carrying @production fails the compile",
+        de.contains("selects nothing on a @decision feature"),
+    );
+}

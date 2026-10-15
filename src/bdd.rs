@@ -2503,6 +2503,44 @@ fn near_selector_tag(name: &str) -> Option<&'static str> {
         .find(|k| *k != name && within_two_edits(name, k))
 }
 
+/// Refuse a `@production` placed where its reader never looks. The profile
+/// selector reads **Scenario** tags only - `bdd build --profile production` and
+/// `bdd run --profile production` both filter on `scenario.tags` - and a
+/// `@decision` feature is a decision-graph workflow that never runs as a browser
+/// integration test at all. So a `@production` on the Feature line, or anywhere on
+/// a `@decision` feature, selects nothing. Verified end to end: a Feature-level
+/// `@production` compiles locally and contributes zero production-IT to a
+/// production build that still exits 0.
+pub fn selector_placement_problems(
+    feature_tags: &[String],
+    all_tags: &[String],
+    decision: bool,
+) -> Vec<String> {
+    const PROD: &str = "production";
+    if decision {
+        for t in all_tags {
+            if t == PROD || t.starts_with(&format!("{PROD}(")) {
+                return vec![format!(
+                    "@{t} selects nothing on a @decision feature: a decision workflow is a \
+                     decision-graph spec, not a browser integration test, so `bdd build --profile \
+                     production` / `bdd run --profile production` never reach it. Drop the tag."
+                )];
+            }
+        }
+        return Vec::new();
+    }
+    if has_tag(feature_tags, PROD) {
+        return vec![
+            "@production on the Feature line selects nothing: the production profile filters on \
+             *Scenario* tags, so a Feature-level @production is silently inert and the \
+             integration test never runs. Put @production on each Scenario you want run (see \
+             bdd/workflows/examples/production_it.feature), or drop it."
+                .to_string(),
+        ];
+    }
+    Vec::new()
+}
+
 /// Refuse a payload tag written with nothing in it. The parser drops an empty
 /// parenthetical, so `@outputs`, `@outputs()`, `@outputs( )` and
 /// `@expected_failure` all arrive here as a bare name — and each of them used to
@@ -2673,6 +2711,9 @@ pub fn compile_scenario(
     let mut tags: Vec<String> = feature.tags.clone();
     tags.extend(scenario.tags.iter().cloned());
     if let Some(p) = tag_shape_problems(&tags, false).first() {
+        bail!("{p}");
+    }
+    if let Some(p) = selector_placement_problems(&feature.tags, &tags, false).first() {
         bail!("{p}");
     }
     let merged: Vec<Step> = feature
@@ -4142,6 +4183,9 @@ pub fn compile_decision(feature: &Feature, config: &Value) -> Result<Value> {
     if let Some(p) = tag_shape_problems(&tags, true).first() {
         bail!("{p}");
     }
+    if let Some(p) = selector_placement_problems(&feature.tags, &tags, true).first() {
+        bail!("{p}");
+    }
     let mut nodes: Vec<Value> = Vec::new();
     let mut max_iterations: Option<usize> = None;
 
@@ -4628,6 +4672,17 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
                 "validated": validated,
                 "mode": "decision",
             }));
+            continue;
+        }
+
+        // P172: a selector tag on the Feature line selects nothing - the profile
+        // filter reads *Scenario* tags, so the misplaced `@production` would be
+        // skipped before `compile_scenario` could refuse it, and a production
+        // build would ship one fewer integration test while still reporting OK.
+        // Refuse it here, for both profiles, so the placement cannot hide behind
+        // the very filter that makes it inert.
+        if let Some(p) = selector_placement_problems(&feature.tags, &feature.tags, false).first() {
+            errors.push(format!("{}: {p}", rel_path(&path.to_string_lossy())));
             continue;
         }
 
@@ -7589,6 +7644,25 @@ pub fn run(o: &RunOptions) -> Result<i32> {
             .and_then(Value::as_str)
             .unwrap_or(&chrome_wrapper)
             .to_string();
+        // P172: same guard as `build` - the production filter drops a Feature-level
+        // `@production` (and every `@production` on a `@decision` feature) before
+        // `compile_scenario` runs, so the misplacement would otherwise pass in
+        // silence. A misplaced selector tag is a declaration nothing reads.
+        if let Some(p) = selector_placement_problems(
+            &feature.tags,
+            &feature.tags,
+            has_tag(&feature.tags, "decision"),
+        )
+        .first()
+        {
+            eprintln!(
+                "error: {}: {p}",
+                path.file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            );
+            return Ok(1);
+        }
         for scenario in &feature.scenarios {
             let tags = &scenario.tags;
             if profile == "production" && !has_tag(tags, "production") {
