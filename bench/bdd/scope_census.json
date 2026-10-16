@@ -745,11 +745,12 @@
     {
       "id": "ole_eval_inference",
       "upstream": "code/inference",
-      "kind": "mixed (weight-reformat fixes + WCD/WLD plumbing + a ported deadlock watchdog + a ported tool-call-fix verification + the cold/warm deployment gate pending)",
+      "kind": "mixed (weight-reformat fixes + WCD/WLD plumbing + two ported gates: the deadlock watchdog and the tool-call-fix verification, and the cold/warm deployment e2e - every gate-shaped module now ported)",
       "recursive": true,
       "ported": {
         "fixes/vllm_deadlock_watchdog_20260827/vllm_watchdog": "bdd/workflows/guards/deadlock_watchdog_gate.feature",
-        "fixes/sglang_toolcall_history_400_20260822/verify": "bdd/workflows/guards/toolcall_fix_verify.feature"
+        "fixes/sglang_toolcall_history_400_20260822/verify": "bdd/workflows/guards/toolcall_fix_verify.feature",
+        "optimization/wld_sglang_20260823/e2e_awq_int4_wld": "bdd/workflows/guards/wld_e2e_gate.feature"
       },
       "not_a_workflow": [
         {
@@ -776,10 +777,7 @@
           ]
         }
       ],
-      "gate_pending": {
-        "optimization/wld_sglang_20260823/e2e_awq_int4_wld": "the AWQ-INT4 cold-vs-warm deployment e2e: it brings the model up cold and warm (with the weight-load daemon), measures health / load time and checks the generated content is consistent, exiting non-zero on any failure. A deployment gate. Port pending."
-      },
-      "note": "The inference fixes and optimization plumbing: the weight conversions and daemons (named), and the verdict-bearing scripts - the cold/warm deployment e2e (still pending), the vLLM deadlock watchdog (ported in the previous round to bdd/workflows/guards/deadlock_watchdog_gate.feature) and the tool-call-history fix verification (ported this round to bdd/workflows/guards/toolcall_fix_verify.feature)."
+      "note": "The inference fixes and optimization plumbing: the weight conversions and daemons (named), and the three verdict-bearing gates - the vLLM deadlock watchdog (ported to bdd/workflows/guards/deadlock_watchdog_gate.feature), the tool-call-history fix verification (ported to bdd/workflows/guards/toolcall_fix_verify.feature) and the AWQ-INT4 cold/warm deployment e2e (ported to bdd/workflows/guards/wld_e2e_gate.feature)."
     }
   ]
 }

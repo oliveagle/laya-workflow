@@ -1,0 +1,185 @@
+{
+  "name": "wld_e2e_gate",
+  "_bdd": {
+    "feature": "wld_e2e_gate",
+    "feature_path": "bdd/workflows/guards/wld_e2e_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval AWQ-INT4 cold-vs-warm deployment e2e\n(code/inference/optimization/wld_sglang_20260823/e2e_awq_int4_wld.py): it brings a\n27B AWQ-INT4 model up on GPU1 twice -- once COLD (page cache dropped, loading from\nthe source dir) and once WARM (the weight-load daemon has prewarmed the weights into\npage cache, and the engine loads through a symlink) -- measures /health and\nload-weight time, and compares the two runs' generated content. It is the bring-up\ngate under the cold/warm optimization, so it names its verdict rather than\nreporting a number.\nIt makes three gating calls, in the source's own order, each of which exits non-zero\nwhen it fails:\n- cold: the COLD engine must answer /health within 600s. A cold engine that never\ncomes up prints FAIL, dumps the log tail, and exits 1.\n- wld_ready: the weight-load daemon must have become ready (its ready-file exists)\nbefore the WARM run. If it did not, the script prints FAIL and exits 1.\n- warm: the WARM engine must answer /health within 600s. If it does not, the script\nprints FAIL, dumps the log tail, and exits 1.\nThe walk encodes exactly that: cold -> wld_ready -> warm, each failing ends the walk\nand names itself; only a run where both engines came up and the daemon was ready\nreaches the deployment verdict.\nTwo folds are documented:\n- the cold-vs-warm generated content is compared (`ok = cold_gen[\"content\"] ==\nwarm_gen[\"content\"]`), but the script never exits on it: a mismatch prints\n`content match: WARN`, is saved into the result JSON's `content_match`, and the\nprocess still exits 0. The graph models the deployment's *verdict* -- exit 0 iff\nevery bring-up gate cleared -- and carries the content comparison as a recorded\nobservation: its last node names the two outcomes `E2E_OK_CONTENT_MATCH` and\n`E2E_OK_CONTENT_MISMATCH`, both of which are exit-0 (the second recording that the\ntwo runs' text differed; it is not a failure).\n- each arm's own generation call (`gen`, max_tokens 32) can also raise on a hard\nrequest failure, which propagates as an uncaught exception (also non-zero). The\nscript's only *designed* exits are the three above; the harness folds \"the arm\nreturned a response\" into that arm's pass verdict.\nEverything numeric stays in the harness: the /health timings, the `Load weight end.\nelapsed=` values, the startup delta, and the generated text itself are measured and\ncompared there; the graph reads none of them, only the harness's per-gate verdict and\nthe content-match observation.\nReference walk (e2e_awq_int4_wld.py, main body): drop cache + start COLD engine ->\nwait_health(600) or exit 1; start the WLD daemon -> ready-file or exit 1; start the\nWARM engine through the symlink -> wait_health(600) or exit 1; compare the two\ngenerated contents (recorded, not gated); save the result JSON.",
+  "start": "cold",
+  "max_iterations": 8,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "cold",
+      "primary_q": "e2e",
+      "questions": {
+        "e2e": {
+          "type": "choice",
+          "instructions": "Does the COLD engine answer /health within the bring-up window? A cold engine that never comes up ends the walk -- the deployment bring-up failed.",
+          "criteria": {
+            "fail": "the COLD engine did not answer /health in time (the script exits 1)",
+            "pass": "the COLD engine answered /health"
+          },
+          "heuristic": {
+            "answer_field": "ev_cold"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "wld_ready"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "e2e",
+        "rules": [
+          {
+            "when": {
+              "question": "e2e",
+              "answer": "fail"
+            },
+            "label": "COLD_UNHEALTHY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "COLD_UP"
+          }
+        ]
+      }
+    },
+    {
+      "name": "wld_ready",
+      "primary_q": "e2e",
+      "questions": {
+        "e2e": {
+          "type": "choice",
+          "instructions": "Did the weight-load daemon become ready before the WARM run? A daemon that never signalled ready ends the walk -- the WARM arm cannot be trusted.",
+          "criteria": {
+            "fail": "the daemon's ready-file did not appear (the script exits 1)",
+            "pass": "the daemon signalled ready"
+          },
+          "heuristic": {
+            "answer_field": "ev_wld"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "warm"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "e2e",
+        "rules": [
+          {
+            "when": {
+              "question": "e2e",
+              "answer": "fail"
+            },
+            "label": "WLD_DAEMON_NOT_READY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "WLD_READY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "warm",
+      "primary_q": "e2e",
+      "questions": {
+        "e2e": {
+          "type": "choice",
+          "instructions": "Does the WARM engine answer /health within the bring-up window? A warm engine that never comes up ends the walk -- the deployment bring-up failed.",
+          "criteria": {
+            "fail": "the WARM engine did not answer /health in time (the script exits 1)",
+            "pass": "the WARM engine answered /health"
+          },
+          "heuristic": {
+            "answer_field": "ev_warm"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "content"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "e2e",
+        "rules": [
+          {
+            "when": {
+              "question": "e2e",
+              "answer": "fail"
+            },
+            "label": "WARM_UNHEALTHY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "WARM_UP"
+          }
+        ]
+      }
+    },
+    {
+      "name": "content",
+      "primary_q": "e2e",
+      "questions": {
+        "e2e": {
+          "type": "choice",
+          "instructions": "Do the two runs generate the same content? The script compares this and records it, but never exits on a mismatch -- so both answers are a passing verdict, the second recording that the two runs' text differed. This is the last call.",
+          "criteria": {
+            "match": "the COLD and WARM runs generated identical content",
+            "mismatch": "the two runs' content differed (recorded as WARN; still exit 0)"
+          },
+          "heuristic": {
+            "answer_field": "ev_content"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "e2e",
+        "rules": [
+          {
+            "when": {
+              "question": "e2e",
+              "answer": "mismatch"
+            },
+            "label": "E2E_OK_CONTENT_MISMATCH"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "E2E_OK_CONTENT_MATCH"
+          }
+        ]
+      }
+    }
+  ]
+}

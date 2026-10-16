@@ -7319,5 +7319,31 @@
       "ev_d2": "pass",
       "ev_d3": "pass"
     }
+  },
+  "wld_e2e_gate": {
+    "cold_fail": {
+      "ev_cold": "fail"
+    },
+    "wld_fail": {
+      "ev_cold": "pass",
+      "ev_wld": "fail"
+    },
+    "warm_fail": {
+      "ev_cold": "pass",
+      "ev_wld": "pass",
+      "ev_warm": "fail"
+    },
+    "content_match": {
+      "ev_cold": "pass",
+      "ev_wld": "pass",
+      "ev_warm": "pass",
+      "ev_content": "match"
+    },
+    "content_mismatch": {
+      "ev_cold": "pass",
+      "ev_wld": "pass",
+      "ev_warm": "pass",
+      "ev_content": "mismatch"
+    }
   }
 }

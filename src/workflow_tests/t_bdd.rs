@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 25 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 26 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
         counts.ported,
-        25,
+        26,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 6 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 5 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        6,
+        5,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3367,9 +3367,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
 
     // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
     // tick that decides whether a server answering /health but making no progress is
-    // deadlocked, and restarts it. Pinned by name and by the feature it ports; one of
-    // its siblings (the tool-call fix verification) is ported in P231 below, the other
-    // (the cold/warm deployment e2e) stays registered as a pending gate.
+    // deadlocked, and restarts it. Pinned by name and by the feature it ports. Its two
+    // siblings - the tool-call fix verification (P231) and the cold/warm deployment e2e
+    // (P232) - are ported in the two blocks below.
     let inf = census_json["universes"]
         .as_array()
         .unwrap()
@@ -3377,9 +3377,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         .find(|u| u["id"] == "ole_eval_inference")
         .expect("ole_eval_inference universe");
     h.eq(
-        "bdd scope-check: inference ports two modules (the deadlock watchdog and the tool-call-fix verification)",
+        "bdd scope-check: inference ports three modules (the deadlock watchdog, the tool-call-fix verification and the cold/warm deployment e2e)",
         inf["ported"].as_object().map(|m| m.len()).unwrap_or(0),
-        2,
+        3,
     );
     h.check(
         "bdd scope-check: inference ports the deadlock watchdog as its @decision feature",
@@ -3390,19 +3390,25 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     // P231: the second `code/inference` port - the sglang multi-turn tool-call fix
     // verification, the seven-check walk (A1/A2 direct memory, B poisoned history,
     // C auto tool call, D1/D2/D3 proxy tool loop) that says whether the 2026-08-22 fix
-    // holds. Pinned by name and by the feature it ports. Its sibling, the cold/warm
-    // deployment e2e, stays registered as the one remaining pending gate.
+    // holds. Pinned by name and by the feature it ports.
     h.check(
         "bdd scope-check: inference ports the tool-call-fix verification as its @decision feature",
         inf["ported"]["fixes/sglang_toolcall_history_400_20260822/verify"]
             == serde_json::json!("bdd/workflows/guards/toolcall_fix_verify.feature"),
     );
+
+    // P232: the third and last `code/inference` port - the AWQ-INT4 cold/warm
+    // deployment e2e, the bring-up walk (cold -> wld_ready -> warm -> content) whose
+    // three gates each exit non-zero on failure. Pinned by name and by the feature it
+    // ports; with it, the universe has no gate-shaped module left unported.
     h.check(
-        "bdd scope-check: the tool-call-fix verification is the only gate still pending under code/inference",
-        inf["gate_pending"]
-            .as_object()
-            .map(|m| m.keys().all(|k| k == "optimization/wld_sglang_20260823/e2e_awq_int4_wld"))
-            .unwrap_or(false),
+        "bdd scope-check: inference ports the cold/warm deployment e2e as its @decision feature",
+        inf["ported"]["optimization/wld_sglang_20260823/e2e_awq_int4_wld"]
+            == serde_json::json!("bdd/workflows/guards/wld_e2e_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: the inference universe has no pending gate left (every gate-shaped module is ported)",
+        inf.get("gate_pending").is_none(),
     );
 
     let probs_of = |c: &str| {
@@ -3601,9 +3607,12 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         any(&drifted_g, "gate_pending[\"scripts/r28d_gamma_routing\"] needs a non-empty reason"),
     );
 
+    // P232: `e2e_awq_int4_wld` used to be the pending gate this planted; it is now
+    // ported, so the plant moves to a module that is still a pending gate - the DFlash2
+    // INT4 patch applier - listed a second time as a (same-universe) not-a-workflow.
     let gate_dup = census.replace(
-        "\"optimization/wld_sglang_20260823/wld_daemon\"",
-        "\"optimization/wld_sglang_20260823/e2e_awq_int4_wld\"",
+        "\"sglang-patches/dflash_utils\"",
+        "\"sglang-patches/int4-support/apply_all_patches\"",
     );
     let (_, drifted_gd) = scope_check_impl(&root, &gate_dup, Some(&base)).unwrap();
     h.check(
