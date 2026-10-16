@@ -424,22 +424,23 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**99/99 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
-每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价：
+**164/164 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
+每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价。**下面按类别列出全部**，条数与名单由
+`bdd doc-check` 对着活语料（`@decision` feature 集合 = `bdd round-trip` 的总数）逐个重算 —— 一个没人重算的数字
+会在下一次移植时烂掉，这份清单曾经就停在 `99/99`：
 
-- routing：support_ticket_router
-- agents：quality_gate、bitx_wrapper_test、coding_env_check、commit_push_precheck、htmx_app_lint、mlu270_smoke、project_structure_guard、skill_publish_gate、workflow_guardian、zero_leftover_gate
-- ole_eval：content_safety_guard、adaptive_risk_control、aml_screener、deployment_canary_guard、dialogue_policy、intrusion_signal_guard
-- laya_mem：admission、consolidation、memory_type、relation_pair、retrieve_loop、routing、stopping、traversal
-- guards：content_policy_gate、agent_command_gate
-- routing：support_ticket_router、support_ticket_router_hybrid、triage_then_moderate
-- loops：iterative_refine_loop
-- codegraph：routing_codegraph、stopping_codegraph、traversal_codegraph
-- versioned：refund_policy.v1、refund_policy.v2
-- pipelines：intake_pipeline_nested
-- capabilities（29）：agent_session_probe、cua_desktop、db_analytics、db_server_analytics、dingtalk/feishu chat、exec_preflight_guard、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、web_research、web_research_tinyfish、support_routing、quality_rubric、data_pipeline_local、stateful_pipeline、protocol_services、ticket_structuring、credentialed_integrations、computer_use、span_selection
-- laya_mem：+ persist_memory
+- agents（16）：bitx_wrapper_test、coding_env_check、commit_msg_gate、commit_push_precheck、htmx_app_lint、mlu270_smoke、project_structure_guard、quality_gate、rebase_push_gate、security_scan、skill_publish_gate、ssl_certificate_expiry、task_quality_gate、version_gate、workflow_guardian、zero_leftover_gate
+- apps（3）：draft_scorer、email_triage、gateway_triage
 - browser（27）：alphaxiv_paper、arxiv、bdd_assert_probe、bdd_release_probe、bdd_retry_probe、bdd_wait_probe、bdd_wait_until_probe、bing、browser_base_probe、browser_orchestrate_probe、browser_singleton、crates、docsrs、github、goofish_item、goofish_sqlite、google_research、google_search_top10、hackernews、jev_deep_dive、mdn、pypi、taobao_ddr5_sweep、taobao_item、taobao_jev_tour、v2ex、wikipedia
+- capabilities（29）：agent_session_probe、computer_use、credentialed_integrations、cua_desktop、data_pipeline_local、db_analytics、db_server_analytics、dingtalk_chat_history、exec_preflight_guard、feishu_chat_history、feishu_unread_digest、goal_runner、hf_trending、integration_hub、needle_demo、needle_ticket、notify_macos、protocol_services、quality_rubric、rag_triage、refund_with_external_checks、script_plugin、single_file_plugin、span_selection、stateful_pipeline、support_routing、ticket_structuring、web_research、web_research_tinyfish
+- codegraph（3）：routing_codegraph、stopping_codegraph、traversal_codegraph
+- guards（4）：agent_command_gate、agent_permission_gate、content_policy_gate、reliable_state_reader
+- laya_mem（9）：admission、consolidation、memory_type、persist_memory、relation_pair、retrieve_loop、routing、stopping、traversal
+- loops（1）：iterative_refine_loop
+- ole_eval（66）：accessibility_content_guard、adaptive_risk_control、alert_noise_reduction、aml_screener、api_key_rotation_guard、api_quota_guard、approval_workflow、bracket_matcher、cache_invalidation_guard、cache_policy_enforcer、circuit_breaker_guard、code_review_gate、code_self_repair、compliance_audit_evidence_guard、config_schema_migration_guard、content_safety_guard、contract_conflict_guard、crawler_schema_guard、credential_issuance_guard、credential_rotation_guard、data_contract_schema_guard、data_retention_expiry_guard、dead_letter_queue_guard、deployment_canary_guard、dialogue_policy、dns_record_validator、endpoint_health_checker、experiment_design_gate、feature_flag_rollout_guard、file_upload_scanner、formal_checker、incident_response_guard、indentation_guard、intrusion_signal_guard、inventory_replenishment_guard、keyword_order_guard、knowledge_graph_guard、literature_synthesis_guard、loan_dialogue、log_redaction_guard、model_drift_detector、network_bandwidth_allocation_guard、order_tracker、policy_as_code、pricing_discount_guard、privacy_retention_guard、protocol_parser、query_complexity_limiter、rate_limit_budget_guard、rate_limiter_config_guard、reasoning_audit、refactor_plan_guard、resource_scheduler_guard、rpa_action_guard、self_healing_gate、session_token_validator、settlement_allocation_guard、shift_assignment_guard、shipping_route_guard、sla_checker、subscription_churn_retention_guard、subscription_entitlement_guard、test_case_generator、verifiable_cot、webhook_signature_verifier、workflow_dag_validator
+- pipelines（1）：intake_pipeline_nested
+- routing（3）：support_ticket_router、support_ticket_router_hybrid、triage_then_moderate
+- versioned（2）：refund_policy.v1、refund_policy.v2
 
 验证方法：`bdd build`（compile+validate+100% 覆盖）+ round-trip 逐字段对比 + `run --spec`
 用 `bench/dsl_smoke_states.json` 同状态跑原 JSON 与 BDD spec，比对 label/action_answer/confidence。

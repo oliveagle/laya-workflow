@@ -1023,6 +1023,31 @@ spec root, so a moved spec quoted by a doc was just as unchecked as a moved
 `.feature`. Both stale spellings were rewritten as placeholders, and the gate is
 now red on a phantom under `docs/`, which is the case that used to slip past.
 
+### The third document: the page a new author reads first
+
+README and AGENT.md are gated; `docs/bdd_quickstart.md` was not, and it is the page
+a new author opens *before* either. Its "verified conversions" block had rotted the
+way this gate exists to prevent: it said **`99/99`** while the corpus held 164, over a
+ten-category list that was both partial and stale (the real list is twelve categories,
+and the names inside them had drifted too). A number nobody recomputes, and a list
+nobody recomputes.
+
+The gate now reads that page as a third document:
+
+* a label for its `N/N 决策 workflow 已转换` headline, whose truth is the `bdd round-trip`
+  total - the same authority the README and AGENT.md labels use;
+* the per-category name list is recomputed from the live `@decision` features under
+  `bdd/workflows/`. The declared count must equal the names printed, each category's
+  names must equal the features on disk (a phantom or a dropped name is named by
+  category), no live category may be missing from the page, and no category may be
+  listed that has no features;
+* the page is scanned for phantom paths like every other document.
+
+`laya-workflow-tests bdd-doc-check` feeds it a drifted headline, a renamed name and a
+dropped name and requires each to be reported. Honest boundary: this covers the page's
+`- <cat>（N）：a、b、…` bullets; a hand-written prose list elsewhere is still only
+covered by the path scan.
+
 ### What this does not check
 
 The prose *around* the numbers is not machine-checked, and the counts it

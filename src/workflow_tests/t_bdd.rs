@@ -2812,6 +2812,7 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     let root = repo_root();
     let readme = std::fs::read_to_string(root.join("bdd/README.md")).unwrap();
     let agent = std::fs::read_to_string(root.join("bdd/AGENT.md")).unwrap();
+    let quickstart = std::fs::read_to_string(root.join("docs/bdd_quickstart.md")).unwrap();
 
     // The AGENT.md half is green *in this process*: every one of its labels is
     // owned by a checker that runs here (the two sample tables, the ledger, the
@@ -2819,7 +2820,8 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     // are owned by gates that shell out to the real binary, so those are only
     // checked by `check.sh` running `bdd doc-check` - not asserted here, where
     // the process is this test runner and those sub-gates cannot run.
-    let (_checked, total, _paths, problems) = doc_check_impl(&readme, &agent).unwrap();
+    let (_checked, total, _paths, problems) =
+        doc_check_impl(&readme, &agent, &quickstart).unwrap();
     let agent_problems: Vec<&String> = problems
         .iter()
         .filter(|p| p.contains("bdd/AGENT.md"))
@@ -2840,7 +2842,9 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     );
 
     let problems_of = |r: &str, a: &str| -> Vec<String> {
-        doc_check_impl(r, a).map(|(_, _, _, p)| p).unwrap_or_default()
+        doc_check_impl(r, a, &quickstart)
+            .map(|(_, _, _, p)| p)
+            .unwrap_or_default()
     };
     let any = |ps: &[String], needle: &str| ps.iter().any(|p| p.contains(needle));
 
@@ -3011,12 +3015,99 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
         any(&p, "docs/__p125_scope_probe.md quotes dsl/guards/__p125_ghost__.json"),
     );
 
+    // Negative 9 (P223): docs/bdd_quickstart.md's converted-workflow count drifts.
+    // The page a new author reads first sat at "99/99" over a partial list while
+    // the corpus held 164. Plant a real drift - the anchor is read from the doc
+    // today, so growing the corpus cannot neuter this negative.
+    let qs_re = regex_lite::Regex::new(r"(\d+)/(\d+) 决策 workflow 已转换").unwrap();
+    let caps = qs_re
+        .captures(&quickstart)
+        .expect("docs/bdd_quickstart.md quotes the converted-workflow total");
+    let qs_total = caps[1].to_string();
+    let qs_stale = (qs_total.parse::<u64>().unwrap() - 1).to_string();
+    let drifted_qs = quickstart.replace(
+        &format!("{qs_total}/{qs_total} 决策 workflow 已转换"),
+        &format!("{qs_stale}/{qs_stale} 决策 workflow 已转换"),
+    );
+    h.check(
+        "bdd doc-check: the negative plants a real quickstart count drift (anchor is live)",
+        drifted_qs != quickstart,
+    );
+    let p = doc_check_impl(&readme, &agent, &drifted_qs)
+        .map(|(_, _, _, p)| p)
+        .unwrap_or_default();
+    h.check(
+        "bdd doc-check: a stale quickstart converted-workflow count is caught",
+        any(
+            &p,
+            &format!(
+                "docs/bdd_quickstart.md says [{qs_stale}, {qs_stale}] where the truth is [{qs_total}, {qs_total}]"
+            ),
+        ),
+    );
+
+    // Negative 10 (P223): the quickstart's per-category *name list* drifts - the
+    // rot that actually happened (the list was stale and partial, not just the
+    // count). Rename one name in the agents bullet: the feature on disk keeps its
+    // real stem, so the doc's phantom must be named and the dropped real name
+    // reported missing.
+    let agents_line = quickstart
+        .lines()
+        .find(|l| l.starts_with("- agents（"))
+        .expect("docs/bdd_quickstart.md lists the agents category");
+    let first_name = agents_line
+        .split('：')
+        .nth(1)
+        .and_then(|rest| rest.split('、').next())
+        .map(|s| s.trim().to_string())
+        .expect("the agents bullet lists at least one name");
+    let drifted_names = quickstart.replace(
+        &format!("{first_name}、"),
+        &format!("ghost_{first_name}、"),
+    );
+    h.check(
+        "bdd doc-check: the negative plants a real quickstart list drift (anchor is live)",
+        drifted_names != quickstart,
+    );
+    let p = doc_check_impl(&readme, &agent, &drifted_names)
+        .map(|(_, _, _, p)| p)
+        .unwrap_or_default();
+    h.check(
+        "bdd doc-check: a phantom name in the quickstart list is named",
+        any(&p, &format!("phantom [\"ghost_{first_name}\"]")),
+    );
+    h.check(
+        "bdd doc-check: the real name a quickstart rename dropped is reported missing",
+        any(&p, &format!("missing [\"{first_name}\"]")),
+    );
+
+    // Positive: the checked-in quickstart is green on its own (the negatives above
+    // are real detections, not a blanket failure). The count line and the whole
+    // 12-category name list are both recomputed from the live `@decision` features.
+    let p = doc_check_impl(&readme, &agent, &quickstart)
+        .map(|(_, _, _, p)| p)
+        .unwrap_or_default();
+    let qs_problems: Vec<&String> = p
+        .iter()
+        .filter(|x| x.contains("bdd_quickstart.md"))
+        .collect();
+    h.check(
+        &format!(
+            "bdd doc-check: the checked-in docs/bdd_quickstart.md is green ({} problem(s))",
+            qs_problems.len()
+        ),
+        qs_problems.is_empty(),
+    );
+    for x in &qs_problems {
+        h.check(&format!("bdd doc-check: live quickstart problem - {x}"), false);
+    }
+
     // ...and the checked-in docs quote no missing path (the negatives above are
     // real detections, not a blanket failure). The distinct (doc, path) count is a
     // second, structural witness of the widened scope: the three docs the gate used
     // to read contribute ~45, the whole checked-in doc tree 189 (measured). A
     // regression that quietly narrows the walk back would drop below this floor.
-    let (_c, _t, n_paths, all) = doc_check_impl(&readme, &agent).unwrap();
+    let (_c, _t, n_paths, all) = doc_check_impl(&readme, &agent, &quickstart).unwrap();
     h.check(
         "bdd doc-check: the checked-in docs quote no missing path",
         !any(&all, "does not exist on disk"),

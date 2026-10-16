@@ -6475,7 +6475,9 @@ pub fn check_doc() -> Result<i32> {
         .with_context(|| "reading bdd/README.md")?;
     let agent = std::fs::read_to_string(root.join("bdd").join("AGENT.md"))
         .with_context(|| "reading bdd/AGENT.md")?;
-    let (checked, total, n_paths, problems) = doc_check_impl(&readme, &agent)?;
+    let quickstart = std::fs::read_to_string(root.join("docs").join("bdd_quickstart.md"))
+        .with_context(|| "reading docs/bdd_quickstart.md")?;
+    let (checked, total, n_paths, problems) = doc_check_impl(&readme, &agent, &quickstart)?;
     for p in &problems {
         eprintln!("bdd doc check: {p}");
     }
@@ -6484,19 +6486,26 @@ pub fn check_doc() -> Result<i32> {
         return Ok(1);
     }
     println!(
-        "bdd doc check: {checked}/{total} labelled counts across bdd/README.md and bdd/AGENT.md \
-         match the gates that own them, every quoted gate line is still printed, and all \
-         {n_paths} quoted bdd/bench/dsl paths exist on disk"
+        "bdd doc check: {checked}/{total} labelled counts across bdd/README.md, bdd/AGENT.md and \
+         docs/bdd_quickstart.md match the gates that own them, every quoted gate line is still \
+         printed, and all {n_paths} quoted bdd/bench/dsl paths exist on disk"
     );
     Ok(0)
 }
 
-/// The doc gate as a pure function of the two documents. `check_doc` reads the
+/// The doc gate as a pure function of the three documents. `check_doc` reads the
 /// files, prints, and turns the count into an exit code; a regression hands in a
 /// mutated document and watches this same code report it. The README is the
 /// user-facing page, AGENT.md is the maintenance guide an agent reads before it
-/// edits anything - a guide that lies about the corpus is worse than no guide.
-pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize, Vec<String>)> {
+/// edits anything, and docs/bdd_quickstart.md is the page a *new author* reads
+/// first - a guide that lies about the corpus is worse than no guide, and the
+/// quickstart's converted-workflow list once sat at "99/99" over a partial
+/// ten-category list while the corpus held 164.
+pub fn doc_check_impl(
+    readme: &str,
+    agent: &str,
+    quickstart: &str,
+) -> Result<(usize, usize, usize, Vec<String>)> {
     let root = repo_root();
     let ws = Regex::new(r"\s+").unwrap();
 
@@ -6599,6 +6608,7 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
     // Collapse whitespace in both documents before searching labels.
     let flat_readme = ws.replace_all(&readme, " ").into_owned();
     let flat_agent = ws.replace_all(&agent, " ").into_owned();
+    let flat_quickstart = ws.replace_all(&quickstart, " ").into_owned();
 
     // The README also enumerates the pinned stems themselves ("+N pinned in the
     // decision workflows: a/b/c/..."). The count must equal the length of the list
@@ -6625,6 +6635,7 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
     // it drifts one edit sooner.
     const README: &str = "bdd/README.md";
     const AGENT: &str = "bdd/AGENT.md";
+    const QUICKSTART: &str = "docs/bdd_quickstart.md";
     let labels: Vec<(Regex, &str, &str)> = vec![
         (Regex::new(r"Current state: \*\*(\d+) scenario").unwrap(), "transpile", README),
         (Regex::new(r"(\d+) steps map correctly").unwrap(), "vocabulary", README),
@@ -6645,6 +6656,14 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
             Regex::new(r"\+(\d+) pinned in the decision workflows").unwrap(),
             "pinned",
             README,
+        ),
+        // docs/bdd_quickstart.md's "N/N 决策 workflow 已转换" quotes the round-trip
+        // gate: N is its total. The per-category name list under it is recomputed
+        // separately below, from the same live `@decision` features.
+        (
+            Regex::new(r"(\d+)/(\d+) 决策 workflow 已转换").unwrap(),
+            "convert_total",
+            QUICKSTART,
         ),
         // AGENT.md's current-state paragraph: the two sample tables, the ledger,
         // and the two gate lines it claims are green.
@@ -6692,6 +6711,7 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
             "expect_table" => vec![vec![n_expect_specs, n_expect_states]],
             "states_table" => vec![vec![n_states_specs, n_states_states]],
             "smoke_total" | "rt_total" => vec![vec![n_specs as i64, n_specs as i64]],
+            "convert_total" => vec![vec![rt_total, rt_total]],
             "roundtrip" => vec![vec![rt_total]],
             "pinned" => pinned_truth.clone(),
             "vocabulary" => rx
@@ -6709,7 +6729,11 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
     let mut problems: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (i, (rx, _src, doc)) in labels.iter().enumerate() {
-        let text = if *doc == README { &flat_readme } else { &flat_agent };
+        let text: &str = match *doc {
+            README => &flat_readme,
+            AGENT => &flat_agent,
+            _ => &flat_quickstart,
+        };
         let in_doc: Vec<Vec<i64>> = rx
             .captures_iter(text)
             .map(|c| (1..c.len()).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect())
@@ -6823,6 +6847,7 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
     let mut path_docs: Vec<(String, String)> = vec![
         (README.to_string(), readme.to_string()),
         (AGENT.to_string(), agent.to_string()),
+        (QUICKSTART.to_string(), quickstart.to_string()),
     ];
     {
         // Every checked-in `*.md`, not just the BDD toolchain's own. `.git` and
@@ -6874,6 +6899,73 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
         }
     }
 
+    // docs/bdd_quickstart.md enumerates the converted workflows by category
+    // (`- agents（16）：a、b、…`). That page is the first thing a new author reads, and
+    // its list once sat at "99/99" over a partial ten-category list while the
+    // corpus held 164 - a count *and* a list nobody recomputed. Recompute both
+    // from the live `@decision` features: the declared count must equal the names
+    // printed, the names must equal the features on disk, and no live category may
+    // be dropped from the page.
+    let live_stems = decision_feature_stems(&root);
+    let item_rx = Regex::new(r"(?m)^- ([a-z_]+)（(\d+)）：(.+)$").unwrap();
+    let mut listed: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for c in item_rx.captures_iter(quickstart) {
+        let cat = c[1].to_string();
+        let declared: i64 = c[2].parse().unwrap_or(-1);
+        let names: Vec<String> = c[3]
+            .split('、')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if declared != names.len() as i64 {
+            problems.push(format!(
+                "docs/bdd_quickstart.md says {cat}（{declared}）but lists {} name(s) - the count \
+                 and the list disagree",
+                names.len()
+            ));
+        }
+        listed.insert(cat, names);
+    }
+    if listed.is_empty() {
+        problems.push(
+            "docs/bdd_quickstart.md no longer lists the converted workflows by category, so \
+             nothing recomputes which workflows are done - restore the list or drop this check"
+                .to_string(),
+        );
+    } else {
+        let mut cats: std::collections::BTreeSet<String> = listed.keys().cloned().collect();
+        cats.extend(live_stems.keys().cloned());
+        for cat in cats {
+            let want = live_stems.get(&cat).cloned().unwrap_or_default();
+            let got = listed.get(&cat).cloned().unwrap_or_default();
+            if want.is_empty() {
+                problems.push(format!(
+                    "docs/bdd_quickstart.md lists category {cat:?}, but no @decision feature \
+                     lives under bdd/workflows/{cat}/ - a rename left a phantom category behind"
+                ));
+                continue;
+            }
+            if got.is_empty() {
+                problems.push(format!(
+                    "docs/bdd_quickstart.md lists nothing under {cat:?}, but bdd/workflows/{cat}/ \
+                     holds {} @decision feature(s) - the list is incomplete",
+                    want.len()
+                ));
+                continue;
+            }
+            let want_set: std::collections::BTreeSet<&String> = want.iter().collect();
+            let got_set: std::collections::BTreeSet<&String> = got.iter().collect();
+            let missing: Vec<String> = want_set.difference(&got_set).map(|s| (*s).clone()).collect();
+            let phantom: Vec<String> = got_set.difference(&want_set).map(|s| (*s).clone()).collect();
+            if !missing.is_empty() || !phantom.is_empty() {
+                problems.push(format!(
+                    "docs/bdd_quickstart.md's {cat} list disagrees with the live @decision \
+                     features: missing {missing:?}, phantom {phantom:?}"
+                ));
+            }
+        }
+    }
+
     Ok((checked, labels.len(), n_paths, problems))
 }
 
@@ -6902,6 +6994,49 @@ fn check_args_probes_raw(out: &mut String) -> Result<i32> {
         }
     }
     Ok(rc)
+}
+
+/// `cat -> sorted stems` of every `@decision` feature under `bdd/workflows/`. The
+/// authority behind both the round-trip total and the quickstart's converted
+/// list, so the doc gate can recompute that list instead of trusting it.
+fn decision_feature_stems(
+    root: &std::path::Path,
+) -> std::collections::BTreeMap<String, Vec<String>> {
+    let wf_root = root.join("bdd").join("workflows");
+    let mut features: Vec<PathBuf> = Vec::new();
+    if wf_root.is_dir() {
+        walk_features(&wf_root, &mut features);
+    }
+    features.sort();
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for f in &features {
+        let text = match std::fs::read_to_string(f) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let feature = match parse(&text, &f.to_string_lossy()) {
+            Ok(fe) => fe,
+            Err(_) => continue,
+        };
+        if !has_tag(&feature.tags, "decision") {
+            continue;
+        }
+        let rel = f
+            .strip_prefix(&wf_root)
+            .map(|r| r.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let rel = rel.trim_start_matches('/').to_string();
+        let (cat, fname) = match rel.rsplit_once('/') {
+            Some((c, n)) => (c, n),
+            None => ("", rel.as_str()),
+        };
+        let name = fname.strip_suffix(".feature").unwrap_or(fname).to_string();
+        out.entry(cat.to_string()).or_default().push(name);
+    }
+    for v in out.values_mut() {
+        v.sort();
+    }
+    out
 }
 
 // ── runner (port of laya-workflow bdd run) ───────────────────────────────────
