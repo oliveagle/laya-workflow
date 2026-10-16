@@ -8766,8 +8766,8 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 /// needed), so the whole section runs anywhere.
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
-        default_system_backends, rank_systems, repo_root, system_probe_questions, LiveSummary,
-        SystemVerdict,
+        default_system_backends, diff_systems, format_diff, rank_systems, repo_root,
+        system_probe_questions, LiveSummary, SpecLiveResult, SystemVerdict,
     };
 
     // ── the preflight question is the P200 drift shape: a single-option choice ──
@@ -8810,6 +8810,7 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
                 ..Default::default()
             },
             wall_ms: 0.0,
+            ..Default::default()
         }
     };
     let vs = vec![
@@ -8827,6 +8828,99 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
     h.check(
         "p201: mean latency is total/run",
         (vs[1].mean_ms_per_state() - 12.0).abs() < 1e-9,
+    );
+
+    // ── P202: per-state diff — where do two walked backends actually differ? ──
+    let mk_walked = |url: &str, specs: Vec<(&str, Vec<(&str, bool)>)>| -> SystemVerdict {
+        let per_spec = specs
+            .into_iter()
+            .map(|(rel, labels)| SpecLiveResult {
+                rel: rel.to_string(),
+                label_agreements: labels
+                    .into_iter()
+                    .map(|(l, ok)| (l.to_string(), ok))
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+        SystemVerdict { url: url.to_string(), walked: true, per_spec, ..Default::default() }
+    };
+    let x = mk_walked(
+        "http://x",
+        vec![
+            ("a.feature", vec![("s1", true), ("s2", false), ("s3", true)]),
+            ("b.feature", vec![("s1", true)]),
+        ],
+    );
+    let y = mk_walked(
+        "http://y",
+        vec![
+            ("a.feature", vec![("s1", true), ("s2", true), ("s9", false)]),
+            ("b.feature", vec![("s1", false)]),
+        ],
+    );
+    let d = diff_systems(&x, &y, 10);
+    h.check(
+        "p202: the diff joins on (spec,label) — shared == the intersection (s9 is one-sided)",
+        d.shared == 3,
+    );
+    h.check("p202: the diff counts agreements", d.agree == 1);
+    h.check("p202: the diff counts disagreements", d.disagree == 2);
+    h.check(
+        "p202: the diff names both backends",
+        d.a_url == "http://x" && d.b_url == "http://y",
+    );
+    h.check(
+        "p202: disagreement examples are in (spec,label) order",
+        d.examples
+            .iter()
+            .map(|e| (e.feature.as_str(), e.label.as_str(), e.a, e.b))
+            .collect::<Vec<_>>()
+            == vec![("a.feature", "s2", false, true), ("b.feature", "s1", true, false)],
+    );
+    h.check("p202: agreement rate is agree/shared", d.agreement_rate() == Some(1.0 / 3.0));
+    h.check(
+        "p202: the example limit caps the list",
+        diff_systems(&x, &y, 1).examples.len() == 1
+            && diff_systems(&x, &y, 1).disagree == 2,
+    );
+
+    // No overlap → nothing comparable, which is *not* "they agree".
+    let z = mk_walked("http://z", vec![("c.feature", vec![("s1", true)])]);
+    let none = diff_systems(&x, &z, 10);
+    h.check(
+        "p202: no shared state → zero counts and an undefined rate",
+        none.shared == 0
+            && none.agree == 0
+            && none.disagree == 0
+            && none.agreement_rate().is_none(),
+    );
+
+    // An un-walked backend has no per_spec → empty diff (never ranked, never diffed).
+    let dead = SystemVerdict {
+        url: "http://dead".into(),
+        preflight_error: Some("down".into()),
+        ..Default::default()
+    };
+    let dd = diff_systems(&x, &dead, 10);
+    h.check(
+        "p202: an un-walked backend diffs to nothing",
+        dd.shared == 0 && dd.examples.is_empty() && dd.agreement_rate().is_none(),
+    );
+
+    let header = format_diff(&d);
+    h.check(
+        "p202: the head-to-head header carries the counts",
+        header.contains("http://x vs http://y")
+            && header.contains("3 shared state(s), 1 agree, 2 disagree"),
+    );
+    h.check(
+        "p202: example lines name the spec, the label and both verdicts",
+        header.contains("- a.feature :: s2: http://x=no http://y=yes"),
+    );
+    h.check(
+        "p202: a truncated diff says how many were not shown",
+        format_diff(&diff_systems(&x, &y, 1)).contains("… 1 more disagreement(s) not shown"),
     );
 
     // ── end to end: an unreachable backend, no model required ──

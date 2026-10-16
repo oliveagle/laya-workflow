@@ -16,6 +16,7 @@ laya-workflow bdd score --check          # score the authoring corpus (offline)
 laya-workflow bdd score --run            # ... plus an end-to-end pass
 laya-workflow bdd compare                 # BDD vs hand-written JSON: volume + the authoring gate (offline)
 laya-workflow bdd compare-systems        # rank System-1 backends over the decision corpus (needs a live model)
+laya-workflow bdd compare-systems --json r.json   # ... plus a per-state head-to-head + full per-state verdicts (P202)
 laya-workflow bdd live                    # 29 real external websites (needs Chrome)
 ```
 

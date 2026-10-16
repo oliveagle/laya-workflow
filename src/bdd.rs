@@ -11533,6 +11533,12 @@ pub struct SpecLiveResult {
     /// time — node latency is dominated by the System-1 decide call). Zero on a
     /// validate-only spec. Lets `bdd compare-systems` rank models on latency.
     pub latency_ms: f64,
+    /// P202: one `(label, agreed)` per registered state this backend actually
+    /// walked **and** for which an offline expectation exists. `agreed` is the
+    /// final-label match. This is the per-state record `bdd compare-systems`
+    /// diffs to answer "where do two System-1 models actually *differ*?" — the
+    /// aggregate agreement alone cannot (both keep-list models sit at 645/989).
+    pub label_agreements: Vec<(String, bool)>,
 }
 
 /// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
@@ -11784,9 +11790,14 @@ fn walk_decision_corpus(
                         .and_then(|m| m.get(label))
                         .cloned();
                     if let Some(want) = &want {
-                        if crate::dsl_smoke::check_expect(&out, want).is_empty() {
+                        let agreed = crate::dsl_smoke::check_expect(&out, want).is_empty();
+                        if agreed {
                             res.states_agreed += 1;
                         }
+                        // P202: keep the per-state verdict so two backends can be
+                        // diffed on *which* states they get right, not just how
+                        // many. States without an expectation are not comparable.
+                        res.label_agreements.push((label.clone(), agreed));
                     }
                 }
                 Err(e) => {
@@ -11993,6 +12004,11 @@ pub struct SystemVerdict {
     /// Wall time for the whole corpus walk. Includes the local engine's own
     /// work, so it is only meaningful next to the other backends' walks.
     pub wall_ms: f64,
+    /// P202: the raw per-spec walks (empty when not walked). Kept so the
+    /// comparison can diff two backends state by state — the aggregate
+    /// agreement alone cannot tell "same model" from "different models that
+    /// happen to score the same".
+    pub per_spec: Vec<SpecLiveResult>,
 }
 
 impl SystemVerdict {
@@ -12030,6 +12046,124 @@ pub fn rank_systems(vs: &[SystemVerdict]) -> Vec<usize> {
     idx
 }
 
+/// P202: one state two backends disagreed on — the same `(spec, label)` key,
+/// opposite verdicts. `a`/`b` are the two backends' agreements (true = the walk
+/// produced the expected final label).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StateDiff {
+    pub feature: String,
+    pub label: String,
+    pub a: bool,
+    pub b: bool,
+}
+
+/// P202: state-by-state difference between two walked backends. `shared` counts
+/// the `(spec, label)` keys **both** backends walked and had an offline
+/// expectation for; `agree` + `disagree` partition `shared`. `examples` holds the
+/// disagreeing states in deterministic `(feature, label)` order (`usize::MAX`
+/// keeps every one). Zero counts mean the two walks do not overlap — nothing to
+/// compare — which is *not* the same as "they agree".
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BackendDiff {
+    pub a_url: String,
+    pub b_url: String,
+    pub shared: usize,
+    pub agree: usize,
+    pub disagree: usize,
+    pub examples: Vec<StateDiff>,
+}
+
+impl BackendDiff {
+    /// `agree / shared`, or `None` when the walks share no comparable state — an
+    /// undefined rate, not 0 %.
+    pub fn agreement_rate(&self) -> Option<f64> {
+        if self.shared == 0 {
+            None
+        } else {
+            Some(self.agree as f64 / self.shared as f64)
+        }
+    }
+}
+
+/// A walked backend's per-state verdicts keyed by `(spec rel, state label)`.
+/// Only states the backend actually walked *and* had an expectation for appear —
+/// exactly what `SpecLiveResult::label_agreements` records — so two backends are
+/// always diffed on the same footing. The `BTreeMap` fixes the order, so the diff
+/// is deterministic.
+fn state_verdicts(v: &SystemVerdict) -> std::collections::BTreeMap<(String, String), bool> {
+    let mut m = std::collections::BTreeMap::new();
+    for s in &v.per_spec {
+        for (label, agreed) in &s.label_agreements {
+            m.entry((s.rel.clone(), label.clone())).or_insert(*agreed);
+        }
+    }
+    m
+}
+
+/// P202: diff two walked backends state by state. Aggregate agreement is
+/// identical for the two keep-list models (both 645/989), so *which* states each
+/// one gets right is the only thing that can separate them. Pure, so the
+/// regression pins the join / counts / example order without any live backend.
+/// `limit` caps `examples`; `usize::MAX` keeps them all.
+pub fn diff_systems(a: &SystemVerdict, b: &SystemVerdict, limit: usize) -> BackendDiff {
+    let mut d =
+        BackendDiff { a_url: a.url.clone(), b_url: b.url.clone(), ..Default::default() };
+    let av = state_verdicts(a);
+    let bv = state_verdicts(b);
+    for (key, &a_ok) in &av {
+        let Some(&b_ok) = bv.get(key) else { continue };
+        d.shared += 1;
+        if a_ok == b_ok {
+            d.agree += 1;
+            continue;
+        }
+        d.disagree += 1;
+        if d.examples.len() < limit {
+            d.examples.push(StateDiff {
+                feature: key.0.clone(),
+                label: key.1.clone(),
+                a: a_ok,
+                b: b_ok,
+            });
+        }
+    }
+    d
+}
+
+/// Render one [`BackendDiff`] as the head-to-head block `compare_systems` prints
+/// after the ranking table. Pure, so the wording is pinned offline.
+pub fn format_diff(d: &BackendDiff) -> String {
+    let mut out = String::new();
+    match d.agreement_rate() {
+        Some(rate) => out.push_str(&format!(
+            "head-to-head {} vs {}: {} shared state(s), {} agree, {} disagree ({:.1}% agreement)\n",
+            d.a_url, d.b_url, d.shared, d.agree, d.disagree, rate * 100.0
+        )),
+        None => out.push_str(&format!(
+            "head-to-head {} vs {}: no comparable state (nothing to diff)\n",
+            d.a_url, d.b_url
+        )),
+    }
+    for ex in &d.examples {
+        out.push_str(&format!(
+            "  - {} :: {}: {}={} {}={}\n",
+            ex.feature,
+            ex.label,
+            d.a_url,
+            if ex.a { "yes" } else { "no" },
+            d.b_url,
+            if ex.b { "yes" } else { "no" }
+        ));
+    }
+    if d.disagree > d.examples.len() {
+        out.push_str(&format!(
+            "  … {} more disagreement(s) not shown\n",
+            d.disagree - d.examples.len()
+        ));
+    }
+    out
+}
+
 /// Compare the decision corpus across several System-1 backends and rank them.
 pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
     let corpus = DecisionCorpus::load()?;
@@ -12055,6 +12189,7 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         v.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
         v.summary = summarize_live(&per_spec);
         v.walked = true;
+        v.per_spec = per_spec;
         vs.push(v);
     }
 
@@ -12119,6 +12254,16 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         println!("best: none (no backend could be ranked)");
     }
 
+    // P202: which states do the walked backends actually *disagree* on? The
+    // aggregate agreement can tie — the two keep-list models both sit at 645/989
+    // — so this head-to-head is the only thing that separates them. Printed best
+    // vs. every other ranked backend, in rank order.
+    if ranking.len() >= 2 {
+        for &j in ranking.iter().skip(1) {
+            print!("{}", format_diff(&diff_systems(&vs[ranking[0]], &vs[j], 10)));
+        }
+    }
+
     if let Some(path) = &o.json {
         let report = json!({
             "corpus": {
@@ -12144,8 +12289,38 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 },
                 "wall_ms": (v.wall_ms * 10.0).round() / 10.0,
                 "mean_ms_per_state": (v.mean_ms_per_state() * 100.0).round() / 100.0,
+                // P202: the raw per-state verdicts, so any two backends can be
+                // re-diffed offline (the `head_to_head` below only covers
+                // best-vs-others). Empty for a backend that was not walked.
+                "state_verdicts": v.per_spec.iter().flat_map(|sp| {
+                    sp.label_agreements.iter().map(move |(label, agreed)| json!({
+                        "spec": sp.rel,
+                        "label": label,
+                        "agreed": agreed,
+                    }))
+                }).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "ranking": ranking.iter().map(|&i| vs[i].url.clone()).collect::<Vec<_>>(),
+            // P202: best-vs-each-other-ranked-backend, every disagreement listed
+            // (deterministic `(spec, label)` order) — the machine-readable half of
+            // the head-to-head block printed above.
+            "head_to_head": ranking.iter().skip(1).map(|&j| {
+                let d = diff_systems(&vs[ranking[0]], &vs[j], usize::MAX);
+                json!({
+                    "a": d.a_url,
+                    "b": d.b_url,
+                    "shared": d.shared,
+                    "agree": d.agree,
+                    "disagree": d.disagree,
+                    "agreement_rate": d.agreement_rate().map(|r| (r * 10000.0).round() / 10000.0),
+                    "examples": d.examples.iter().map(|e| json!({
+                        "spec": e.feature,
+                        "label": e.label,
+                        "a": e.a,
+                        "b": e.b,
+                    })).collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
         });
         if let Some(parent) = Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
