@@ -18,8 +18,8 @@ pub struct DslSmokeOptions {
     pub quiet: bool,
 }
 
-fn load_table(name: &str) -> Result<BTreeMap<String, Value>> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("bench").join(name);
+fn load_table(repo_root: &Path, name: &str) -> Result<BTreeMap<String, Value>> {
+    let path = repo_root.join("bench").join(name);
     if !path.exists() {
         bail!("missing data table {}: {}", name, path.display());
     }
@@ -635,7 +635,7 @@ fn is_private_host(host: &str) -> bool {
 /// behaviour-verified offline": `dsl smoke` counts its size as the live-declared
 /// set, and `bdd_list` / `bdd_decide` report it per spec so all three agree.
 pub fn coverage_ledger_live_only() -> Result<BTreeMap<String, Value>> {
-    let ledger = load_table("dsl_coverage_ledger.json")?;
+    let ledger = load_table(&crate::bdd::repo_root(), "dsl_coverage_ledger.json")?;
     let mut out: BTreeMap<String, Value> = BTreeMap::new();
     if let Some(o) = ledger.get("live_only").and_then(Value::as_object) {
         for (k, v) in o {
@@ -665,7 +665,9 @@ pub fn coverage_ledger_audit(
     root: &Path,
     states: &BTreeMap<String, Value>,
 ) -> Result<(usize, usize, Vec<String>)> {
-    let ledger = load_table("dsl_coverage_ledger.json")?;
+    // `root` here is the *dsl* dir (the strip-prefix base below); the ledger table
+    // lives under the repo's `bench/`, so resolve that separately.
+    let ledger = load_table(&crate::bdd::repo_root(), "dsl_coverage_ledger.json")?;
     let live_only = ledger
         .get("live_only")
         .and_then(Value::as_object)
@@ -902,17 +904,28 @@ pub fn tally(per_spec_fail_counts: &[u32]) -> (u32, u32, u32) {
     (specs_ok, specs_failed, failing_checks)
 }
 
-pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
+pub fn run(opts: &DslSmokeOptions) -> Result<i32> {
+    // The specs under `dsl/` and the labelled sample tables under `bench/` both
+    // live in this repo's tree, so resolve the checkout first - `LAYA_WORKFLOW_REPO`
+    // when set, else the build-time crate dir. A release or installed binary carries
+    // the path of the machine it was *built* on, which need not exist where it is
+    // unpacked: refuse then (rc=2, one reason) rather than glob an empty tree - or,
+    // as `load_table` used to, print that build path as if it were the user's.
+    let repo_root = crate::bdd::repo_root();
+    if !repo_root.is_dir() {
+        eprintln!("{}", crate::bdd::no_checkout_msg(&repo_root, "dsl smoke"));
+        return Ok(2);
+    }
     let root: PathBuf = match &opts.dsl_dir {
         Some(d) => PathBuf::from(d),
-        None => PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dsl"),
+        None => repo_root.join("dsl"),
     };
     let specs = discover_specs(&root)?;
     if specs.is_empty() {
         bail!("no specs found under {}", root.display());
     }
-    let states = load_table("dsl_smoke_states.json")?;
-    let expect = load_table("dsl_smoke_expect.json")?;
+    let states = load_table(&repo_root, "dsl_smoke_states.json")?;
+    let expect = load_table(&repo_root, "dsl_smoke_expect.json")?;
     let env = ensure_env_dirs()?;
     for (k, v) in &env {
         std::env::set_var(k, v);
@@ -1196,7 +1209,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     // meaningful against the repo's own two-tree layout, so a `--dsl-dir`
     // override — which points the smoke at some other tree — skips it.
     let iso_problems = if opts.dsl_dir.is_none() {
-        isolation_audit(Path::new(env!("CARGO_MANIFEST_DIR")))
+        isolation_audit(&repo_root)
     } else {
         Vec::new()
     };
@@ -1215,5 +1228,5 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             iso_problems.len()
         );
     }
-    Ok(fails)
+    Ok(fails as i32)
 }

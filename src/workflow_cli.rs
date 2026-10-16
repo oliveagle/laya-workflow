@@ -2530,12 +2530,18 @@ fn run_dsl(cmd: &DslCmd) -> Result<()> {
             filter,
             quiet,
         } => {
-            laya_workflow::dsl_smoke::run(&laya_workflow::dsl_smoke::DslSmokeOptions {
+            let code = laya_workflow::dsl_smoke::run(&laya_workflow::dsl_smoke::DslSmokeOptions {
                 dsl_dir: dsl_dir.clone(),
                 base_url: base_url.clone(),
                 filter: filter.clone(),
                 quiet: *quiet,
             })?;
+            // `dsl smoke` needs this repo's tree (specs + sample tables); a binary
+            // with no checkout answers rc=2 (the "could not run" code the bdd gates
+            // use) rather than a red for the wrong reason.
+            if code != 0 {
+                std::process::exit(code);
+            }
         }
     }
     Ok(())

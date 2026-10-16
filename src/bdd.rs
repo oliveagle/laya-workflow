@@ -2305,12 +2305,32 @@ pub fn repo_root_with(override_dir: Option<std::ffi::OsString>) -> PathBuf {
 }
 
 /// Why a checkout is required, in one line, for the gates below.
-fn no_checkout_msg(root: &Path, what: &str) -> String {
+///
+/// Never prints the resolved root unless the *user* named it via the override: an
+/// unset override resolves to the build-time crate dir, and echoing that leaks the
+/// path of the machine the binary was built on into a stranger's terminal.
+pub fn no_checkout_msg(root: &Path, what: &str) -> String {
+    no_checkout_msg_with(
+        root,
+        what,
+        std::env::var_os("LAYA_WORKFLOW_REPO").is_some(),
+    )
+}
+
+/// [`no_checkout_msg()`] with the "was the root named by the user?" bit passed in.
+/// Pure, so the "never echo the build-time path" rule is testable without mutating
+/// the process env.
+pub fn no_checkout_msg_with(root: &Path, what: &str, named_by_user: bool) -> String {
+    let named = if named_by_user {
+        format!(" (LAYA_WORKFLOW_REPO={} does not exist)", root.display())
+    } else {
+        String::new()
+    };
     format!(
-        "{what} reads this repo's own tree, but {} does not exist here - a release or installed \
-         binary carries the path of the machine it was built on, not the one it is unpacked on. \
-         Point LAYA_WORKFLOW_REPO at a laya-workflow checkout, or run a binary built inside one.",
-        root.display()
+        "{what} reads this repo's own tree, but this binary has no checkout beside it{named} - a \
+         release or installed binary carries the path of the machine it was built on, not the one \
+         it is unpacked on. Point LAYA_WORKFLOW_REPO at a laya-workflow checkout, or run a binary \
+         built inside one."
     )
 }
 

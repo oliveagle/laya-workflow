@@ -1277,8 +1277,13 @@ into a browser it launched. Two consequences that are easy to trip over:
   `import-check`, `features-check`, `probe-check`, `doc-check`, `scope-check` and
   `port-check` enumerate `bdd/`, `dsl/` and `bench/bdd/`; a binary unpacked away
   from its build machine has none of it, so each used to report a green over an
-  empty corpus (`0/0`, rc=0). They now refuse with `rc=2` and name
+  empty corpus (`0/0`, rc=0). `laya-workflow dsl smoke` reads `dsl/` and `bench/`
+  the same way, and its version of the failure was worse: `rc=1` and
+  `Error: <build-machine-path>/…/dsl` — the *build machine's* path, which reads like
+  the user's own tree being broken. All of them now refuse with `rc=2` and name
   `LAYA_WORKFLOW_REPO` — set it to a checkout, or run a binary built inside one.
+  The reason names that variable, and echoes the resolved path only when the user
+  passed it in, never the one baked into the binary at build time.
   `bdd run` / `score` / `live` / `live-decisions` / `compare-systems` / `compare`
   (their default corpus) and `bdd app-parity` answer the same way: the last used
   to report `0/32 reference cases reproduce the app's label`, which reads like a

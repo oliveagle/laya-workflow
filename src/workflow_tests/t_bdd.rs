@@ -10645,6 +10645,38 @@ pub fn test_bdd_checkout_root(h: &mut Harness) {
         bdd_tool("bdd_list").call(&json!({})).is_err(),
     );
 
+    // P214: `dsl smoke` had the same build-time-path blind spot as the gates above,
+    // and a worse symptom - with no checkout it printed the *build machine's* path
+    // (a build-machine path) behind `Error:` and failed rc=1, which reads like
+    // the user's own tree being broken. It now resolves the same root (override →
+    // build-time dir) and refuses rc=2; the reason never echoes that path, though it
+    // does name a root the *user* passed in.
+    h.eq(
+        "dsl smoke refuses a checkout-less root (rc=2, not a build-path error)",
+        laya_workflow::dsl_smoke::run(&laya_workflow::dsl_smoke::DslSmokeOptions {
+            dsl_dir: None,
+            base_url: None,
+            filter: None,
+            quiet: true,
+        })
+        .unwrap(),
+        2,
+    );
+    h.check(
+        "no_checkout_msg never echoes the unnamed build-time root",
+        !bdd::no_checkout_msg_with(
+            std::path::Path::new("/nonexistent-build-machine/laya-workflow"),
+            "dsl smoke",
+            false,
+        )
+        .contains("/nonexistent-build-machine"),
+    );
+    h.check(
+        "no_checkout_msg does name the root the user passed in",
+        bdd::no_checkout_msg_with(std::path::Path::new("/tmp/nope"), "dsl smoke", true)
+            .contains("/tmp/nope"),
+    );
+
     // Positive control: pointed back at a real checkout, the same gates really
     // run and really read the corpus (rc=0, and the counts are printed).
     std::env::set_var("LAYA_WORKFLOW_REPO", &crate_dir);
