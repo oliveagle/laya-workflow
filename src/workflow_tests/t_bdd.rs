@@ -9569,8 +9569,9 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
         agnostic_agreement, attribute_split, default_system_backends, diff_systems, format_diff,
-        format_split_attribution, format_strata, rank_systems, repo_root, stratify_systems,
-        system_probe_questions, CategorySplit, LiveSummary, SpecLiveResult, SystemVerdict,
+        format_split_attribution, format_strata, rank_systems, repo_root, spec_is_echo,
+        stratify_systems, system_probe_questions, CategorySplit, LiveSummary, SpecLiveResult,
+        SystemVerdict,
     };
     use laya_workflow::dsl_smoke::{expect_pins_backend_number, BACKEND_AGNOSTIC_NUMBER_KEYS};
 
@@ -9995,6 +9996,76 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
     h.check(
         "p203: an empty stratification renders nothing",
         format_strata(&[], 5).is_empty(),
+    );
+
+    // ── P240: the echo / derivation split ──
+    // An echo spec's every question is answered offline from a named state field,
+    // so its sample state *carries the answer key* and a live model can only lose
+    // it to field-name confusion. Pure, so the split pins offline.
+    h.check(
+        "p240: a spec whose every question has an offline answer_field is an echo spec",
+        spec_is_echo(&serde_json::json!({
+            "nodes": [{ "questions": {
+                "a": { "type": "choice", "heuristic": { "answer_field": "ev_a" } },
+                "b": { "type": "choice", "heuristic": { "answer_field": "ev_b" } },
+            }}]
+        })),
+    );
+    h.check(
+        "p240: one question with no offline answer_field makes the spec a derivation spec",
+        !spec_is_echo(&serde_json::json!({
+            "nodes": [{ "questions": {
+                "a": { "type": "choice", "heuristic": { "answer_field": "ev_a" } },
+                "b": { "type": "choice", "criteria": { "A": "x", "B": "y" } },
+            }}]
+        })),
+    );
+    h.check(
+        "p240: a spec with no questions at all is not an echo spec",
+        !spec_is_echo(&serde_json::json!({ "nodes": [{ "questions": {} }] })),
+    );
+    // A state whose spec is an echo spec stays in `agnostic` (that basis is
+    // unchanged) but is also counted in `echo`, so the render subtracts it out.
+    let mk_echo = |url: &str, specs: Vec<(&str, Vec<(&str, bool)>, bool)>| -> SystemVerdict {
+        let per_spec = specs
+            .into_iter()
+            .map(|(rel, labels, echo)| SpecLiveResult {
+                rel: rel.to_string(),
+                echo,
+                label_agreements: labels
+                    .into_iter()
+                    .map(|(l, ok)| (l.to_string(), ok))
+                    .collect(),
+                ..Default::default()
+            })
+            .collect();
+        SystemVerdict { url: url.to_string(), walked: true, per_spec, ..Default::default() }
+    };
+    let ex = mk_echo("http://x", vec![("e.feature", vec![("s1", false), ("s2", false)], true)]);
+    let ey = mk_echo("http://y", vec![("e.feature", vec![("s1", false), ("s2", false)], true)]);
+    let es = stratify_systems(&vec![ex, ey], &[0, 1]);
+    let ee = es.iter().find(|s| s.feature == "e.feature").expect("stratum for e.feature");
+    h.check(
+        "p240: an echo spec's all-wrong states stay in agnostic and are also counted in echo",
+        ee.agnostic.all_wrong == 2 && ee.echo.shared == 2 && ee.echo.all_wrong == 2,
+    );
+    let ereport = format_strata(&es, 5);
+    h.check(
+        "p240: the report splits the agnostic states into echo vs derivation",
+        ereport.contains("2 on echo specs (2 all-wrong") && ereport.contains("0 on derivation specs"),
+    );
+    h.check(
+        "p240: an echo spec in the hard tail is flagged in its row",
+        ereport.contains("[echo spec: the state carries the answer]"),
+    );
+    h.check(
+        "p240: a derivation spec's states are not counted as echo",
+        {
+            let dx = mk_echo("http://x", vec![("d2.feature", vec![("s1", false)], false)]);
+            let dy = mk_echo("http://y", vec![("d2.feature", vec![("s1", false)], false)]);
+            let ds = stratify_systems(&vec![dx, dy], &[0, 1]);
+            ds.iter().find(|s| s.feature == "d2.feature").map(|s| s.echo.shared).unwrap_or(9) == 0
+        },
     );
 
     // ── P204: attribute the states two backends disagree on ──

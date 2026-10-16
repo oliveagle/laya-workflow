@@ -12288,6 +12288,12 @@ pub struct SpecLiveResult {
     /// answers a `noul` / `score` question with its own value, so those states
     /// cannot be met by any other backend and must not be read as model failures.
     pub pinned_number_labels: Vec<String>,
+    /// P240: this spec is an **echo** spec ([`spec_is_echo`]) — every question is
+    /// answered offline from a named state field, so the sample state *carries the
+    /// answer key* and a live backend can only lose the state to field-name
+    /// confusion, never to a wrong judgement. `compare-systems` reports these
+    /// apart from the derivation specs so the hard tail is read honestly.
+    pub echo: bool,
 }
 
 /// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
@@ -12499,7 +12505,7 @@ fn walk_decision_corpus(
         // cannot exercise the spec, not that the deployed model regressed.
         // Evaluated once per spec: they depend only on the spec and the machine.
         let env_gap = live_env_gap(&spec);
-        let mut res = SpecLiveResult { rel, ..Default::default() };
+        let mut res = SpecLiveResult { rel, echo: spec_is_echo(&spec), ..Default::default() };
         for (label, st) in state_map {
             if let Some(why) = &env_gap {
                 if !quiet {
@@ -12959,6 +12965,40 @@ impl StratumCounts {
     }
 }
 
+/// P240: is this compiled spec an **echo** spec — one whose every question is
+/// answered offline by a named state field (`heuristic.answer_field`)? In an echo
+/// spec the sample state *carries the answer*: the state says
+/// `ev_operation: "unknown"` and the question's accepted answers are exactly
+/// `{known, unknown}`, so the model is handed the answer and asked to read it
+/// back. A live model can only lose such a state to field-name confusion, never
+/// to a wrong judgement — so an echo spec's failure must **not** be read as a
+/// model failure. The honest live basis is the **derivation** specs (raw evidence
+/// in the state; the model must judge). Pure, so the echo/derivation split pins
+/// offline. A spec with no questions is not an echo spec.
+pub fn spec_is_echo(spec: &Value) -> bool {
+    let Some(nodes) = spec.get("nodes").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut asked = 0usize;
+    for n in nodes {
+        let Some(qs) = n.get("questions").and_then(Value::as_object) else {
+            continue;
+        };
+        for qd in qs.values() {
+            asked += 1;
+            let named = qd
+                .get("heuristic")
+                .and_then(|h| h.get("answer_field"))
+                .and_then(Value::as_str)
+                .is_some();
+            if !named {
+                return false;
+            }
+        }
+    }
+    asked > 0
+}
+
 /// P203: one spec's comparable states, **split by whether the expectation is
 /// one another backend could ever meet**. `agnostic` states are routing / label
 /// / step-count assertions — a fair basis for comparing models. `pinned` states
@@ -12970,6 +13010,11 @@ pub struct SpecStratum {
     pub feature: String,
     pub agnostic: StratumCounts,
     pub pinned: StratumCounts,
+    /// P240: the subset of `agnostic` that lives on an **echo** spec — the state
+    /// carries the answer key, so these are not model failures. Kept inside
+    /// `agnostic` (that basis is unchanged) and also counted here so the render
+    /// can subtract them out.
+    pub echo: StratumCounts,
 }
 
 /// The `(spec rel, label)` keys whose expectation pins a reference-only number.
@@ -13000,6 +13045,13 @@ pub fn stratify_systems(vs: &[SystemVerdict], ranking: &[usize]) -> Vec<SpecStra
         ranking.iter().map(|&i| state_verdicts(&vs[i])).collect();
     let pinned: std::collections::BTreeSet<(String, String)> =
         ranking.iter().flat_map(|&i| pinned_state_keys(&vs[i])).collect();
+    // P240: which specs are echo specs (every question answered offline from a
+    // named state field). Deterministic from the spec, so any ranked backend's
+    // record agrees.
+    let spec_echo: std::collections::BTreeMap<String, bool> = ranking
+        .iter()
+        .flat_map(|&i| vs[i].per_spec.iter().map(|sp| (sp.rel.clone(), sp.echo)))
+        .collect();
     let mut by_spec: std::collections::BTreeMap<String, SpecStratum> =
         std::collections::BTreeMap::new();
     for (key, first) in maps[0].iter() {
@@ -13026,6 +13078,11 @@ pub fn stratify_systems(vs: &[SystemVerdict], ranking: &[usize]) -> Vec<SpecStra
             e.pinned.classify(&verdicts);
         } else {
             e.agnostic.classify(&verdicts);
+            // P240: keep echo states inside `agnostic` (that basis is unchanged)
+            // and also count them here, so the render can subtract them out.
+            if spec_echo.get(&key.0).copied().unwrap_or(false) {
+                e.echo.classify(&verdicts);
+            }
         }
     }
     by_spec.into_values().collect()
@@ -13063,9 +13120,11 @@ pub fn format_strata(strata: &[SpecStratum], top: usize) -> String {
     }
     let mut ag = StratumCounts::default();
     let mut pin = StratumCounts::default();
+    let mut ec = StratumCounts::default();
     for s in strata {
         ag.merge(&s.agnostic);
         pin.merge(&s.pinned);
+        ec.merge(&s.echo);
     }
     let mut out = format!(
         "per-spec stratification over {} spec(s): backend-agnostic {} state(s) ({} all-right, {} all-wrong, {} split); reference-pinned {} state(s) ({} all-wrong — only the reference backend reproduces its own numbers, so these are NOT model failures)\n",
@@ -13077,6 +13136,17 @@ pub fn format_strata(strata: &[SpecStratum], top: usize) -> String {
         pin.shared,
         pin.all_wrong
     );
+    // P240: split the backend-agnostic states by whether the spec is an echo
+    // spec. An echo spec's state carries the answer key, so its failures are
+    // field-name confusion, not wrong judgement; the honest live basis is the
+    // derivation remainder.
+    out.push_str(&format!(
+        "  of those, {} on echo specs ({} all-wrong — the state carries the answer key) and {} on derivation specs ({} all-wrong — the model must judge)\n",
+        ec.shared,
+        ec.all_wrong,
+        ag.shared.saturating_sub(ec.shared),
+        ag.all_wrong.saturating_sub(ec.all_wrong),
+    ));
 
     let mut hard: Vec<&SpecStratum> =
         strata.iter().filter(|s| s.agnostic.all_wrong > 0).collect();
@@ -13094,12 +13164,20 @@ pub fn format_strata(strata: &[SpecStratum], top: usize) -> String {
             top.min(hard.len())
         ));
         for s in hard.iter().take(top) {
+            let tag = if s.echo.shared == 0 {
+                ""
+            } else if s.echo.shared == s.agnostic.shared {
+                "  [echo spec: the state carries the answer]"
+            } else {
+                "  [mixed: some states are echo]"
+            };
             out.push_str(&format!(
-                "    {:>3}/{}  {}{}\n",
+                "    {:>3}/{}  {}{}{}\n",
                 s.agnostic.all_wrong,
                 s.agnostic.shared,
                 s.feature,
-                if s.agnostic.all_failed() { "  [all comparable states wrong]" } else { "" }
+                if s.agnostic.all_failed() { "  [all comparable states wrong]" } else { "" },
+                tag
             ));
         }
     }
@@ -13504,6 +13582,12 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                     "all_right": s.pinned.all_right,
                     "all_wrong": s.pinned.all_wrong,
                     "split": s.pinned.split,
+                },
+                "echo": {
+                    "shared": s.echo.shared,
+                    "all_right": s.echo.all_right,
+                    "all_wrong": s.echo.all_wrong,
+                    "split": s.echo.split,
                 },
             })).collect::<Vec<_>>(),
         });
