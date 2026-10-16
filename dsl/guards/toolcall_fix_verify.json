@@ -1,0 +1,314 @@
+{
+  "name": "toolcall_fix_verify",
+  "_bdd": {
+    "feature": "toolcall_fix_verify",
+    "feature_path": "bdd/workflows/guards/toolcall_fix_verify.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval sglang multi-turn tool-call fix verification\n(code/inference/fixes/sglang_toolcall_history_400_20260822/verify.py): an\nend-to-end gate over the 2026-08-22 ds-local fix, which taught a patched sglang\n(native chat template, `--tool-call-parser qwen3_coder`) and its proxy (injects\n`enable_thinking=false`, heals double-encoded tool_call history arguments) to\nsurvive multi-turn tool loops. It is the gate that says whether the fix holds,\nso it names its verdict rather than reporting a number.\nIt runs four checks, in the source's own order, each against a live endpoint:\n- A. direct memory (sglang direct, enable_thinking=false): a plain two-turn\nchat keeps memory continuity -- turn 1 returns 200, and turn 2 still knows\nthe codeword turn 1 was told.\n- B. poisoned history (direct): a history whose assistant tool_call carries a\n*double-encoded* arguments string (the exact pathological encoding from the\nlogs) no longer 400s -- this is the original bug.\n- C. auto tool call (direct): with no tool_choice, the model auto-emits a\nparseable XML tool call, named `bash`, whose `command` argument is exactly\nthe one asked for -- the format-mismatch bug.\n- D. proxy tool loop (agent-style, no kwargs): turn 1 auto-emits a tool call;\nturn 2 replays that call (string arguments, as the client drives it) plus\nthe tool result and returns 200 with a continuation that references the\nresult.\nThe walk encodes exactly those named checks, one node each, in source order:\na1 -> a2 -> b -> c -> d1 -> d2 -> d3. The first check that fails ends the walk\nand names itself; only a run that clears every check reaches\nTOOLCALL_FIX_VERIFIED.\nTwo folds are documented:\n- the upstream does not stop at the first failing *test*: `main` runs all\nfour and prints every result, but the verdict it returns is the conjunction\n(`return 0 if all(results) else 1`). Inside a test it does early-return at\nthe first failing sub-check, and D's turn 2 replays turn 1's call, so the\ngraph's first-fail walk is faithful to the early-returns while naming only\nthe first failure; the PASS/FAIL verdict is identical either way.\n- the four checks are live HTTP round-trips; the graph is one run of the\nverification, the unit whose exit code (0 iff all) is the verdict.\nEverything the model produced stays in the harness: the returned status codes,\nthe codeword in the turn-2 text, the tool-call name and arguments, and the\nturn-2 continuation are all read there; the graph reads none of them, only the\nharness's per-check verdict.\nReference walk (verify.py, main()): A1 turn-1 200, else A1 fails; A2 turn-2 200\nand remembers, else A2 fails; B poisoned history 200, else B fails; C 200 with a\nparseable `bash` call carrying the asked command, else C fails; D1 turn-1 has a\ntool call, else D1 fails; D2 replay 200, else D2 fails; D3 continuation mentions\nthe tool result, else D3 fails; all pass -> verified.",
+  "start": "a1",
+  "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "a1",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check A1: does the first direct turn return 200? A request that does not come back 200 ends the walk -- the fix is not verified.",
+          "criteria": {
+            "fail": "the first direct turn did not return 200",
+            "pass": "the first direct turn returned 200"
+          },
+          "heuristic": {
+            "answer_field": "ev_a1"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "a2"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "A1_DIRECT_TURN1_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "A1_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a2",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check A2: does the second direct turn return 200 and still know the codeword the first turn was told? The direct endpoint keeps memory continuity; a turn that loses it ends the walk.",
+          "criteria": {
+            "fail": "the second direct turn did not return 200, or it did not recall the codeword",
+            "pass": "the second direct turn returned 200 and recalled the codeword"
+          },
+          "heuristic": {
+            "answer_field": "ev_a2"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "b"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "A2_DIRECT_MEMORY_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "A2_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "b",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check B: does a direct request whose assistant tool_call carries a double-encoded arguments string return 200? This was the original 400; a request that still 400s ends the walk.",
+          "criteria": {
+            "fail": "the poisoned-history request did not return 200",
+            "pass": "the poisoned-history request returned 200"
+          },
+          "heuristic": {
+            "answer_field": "ev_b"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "c"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "B_POISONED_HISTORY_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "B_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "c",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check C: with no tool_choice, does a direct request auto-emit a parseable `bash` tool call whose `command` argument is exactly the one asked for? A missing or wrong call ends the walk.",
+          "criteria": {
+            "fail": "no parseable bash call was emitted, or its command argument was wrong",
+            "pass": "a parseable bash call with the exact asked command was emitted"
+          },
+          "heuristic": {
+            "answer_field": "ev_c"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "d1"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "C_AUTO_TOOLCALL_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "C_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "d1",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check D1: does the proxy's first turn auto-emit a tool call? Turn 2 replays this very call, so a turn with no tool call ends the walk.",
+          "criteria": {
+            "fail": "the proxy's first turn did not return 200 or emitted no tool call",
+            "pass": "the proxy's first turn emitted a tool call"
+          },
+          "heuristic": {
+            "answer_field": "ev_d1"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "d2"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "D1_PROXY_TURN1_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "D1_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "d2",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check D2: does the proxy's second turn -- replaying turn 1's tool call (string arguments, as the client drives it) plus the tool result -- return 200? This was the second 400; a replay that 400s ends the walk.",
+          "criteria": {
+            "fail": "the proxy's replay request did not return 200",
+            "pass": "the proxy's replay request returned 200"
+          },
+          "heuristic": {
+            "answer_field": "ev_d2"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "d3"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "D2_PROXY_REPLAY_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "D2_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "d3",
+      "primary_q": "verify",
+      "questions": {
+        "verify": {
+          "type": "choice",
+          "instructions": "Check D3: does the proxy's second-turn continuation reference the tool result? This is the last check: a continuation that forgets the result ends the walk, and clearing every check verifies the fix.",
+          "criteria": {
+            "fail": "the continuation did not reference the tool result",
+            "pass": "the continuation referenced the tool result"
+          },
+          "heuristic": {
+            "answer_field": "ev_d3"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "verify",
+        "rules": [
+          {
+            "when": {
+              "question": "verify",
+              "answer": "fail"
+            },
+            "label": "D3_PROXY_CONTINUITY_FAIL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "TOOLCALL_FIX_VERIFIED"
+          }
+        ]
+      }
+    }
+  ]
+}

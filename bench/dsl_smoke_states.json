@@ -7266,5 +7266,58 @@
       "ev_progress": "stuck",
       "ev_dwell": "over"
     }
+  },
+  "toolcall_fix_verify": {
+    "a1_fail": {
+      "ev_a1": "fail"
+    },
+    "a2_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "fail"
+    },
+    "b_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "fail"
+    },
+    "c_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "pass",
+      "ev_c": "fail"
+    },
+    "d1_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d1": "fail"
+    },
+    "d2_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d1": "pass",
+      "ev_d2": "fail"
+    },
+    "d3_fail": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d1": "pass",
+      "ev_d2": "pass",
+      "ev_d3": "fail"
+    },
+    "verified": {
+      "ev_a1": "pass",
+      "ev_a2": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d1": "pass",
+      "ev_d2": "pass",
+      "ev_d3": "pass"
+    }
   }
 }
