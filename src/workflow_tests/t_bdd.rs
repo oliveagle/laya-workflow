@@ -10708,3 +10708,65 @@ pub fn test_bdd_checkout_root(h: &mut Harness) {
             .unwrap_or(false),
     );
 }
+
+/// P216: the injected observation extension is resolved against the *checkout the
+/// binary points at*, not the compile-time crate dir. A release or installed binary
+/// carries the path of the machine it was built on, so launch mode used to fail with
+/// `browser extension is missing: <build path>` — naming a folder that is not on the
+/// box. `LAYA_WORKFLOW_REPO` (and `LAYA_BROWSER_EXTENSION`) now move it, and the tree
+/// beside the cwd still wins so a dev run loads what the user sees.
+pub fn test_browser_extension_path(h: &mut Harness) {
+    use laya_workflow::capability::browser::{repo_extension_path, repo_extension_path_in};
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // `repo_extension_path_in` is pure; only `repo_extension_path` reads the env.
+    // Clear `LAYA_BROWSER_EXTENSION` for the live assertion, restoring it after.
+    struct Restore(Option<std::ffi::OsString>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("LAYA_BROWSER_EXTENSION", v),
+                None => std::env::remove_var("LAYA_BROWSER_EXTENSION"),
+            }
+        }
+    }
+    let _restore = Restore(std::env::var_os("LAYA_BROWSER_EXTENSION"));
+    std::env::remove_var("LAYA_BROWSER_EXTENSION");
+
+    // A checkout beside the cwd wins, named absolutely.
+    h.eq(
+        "browser extension: a tree beside the cwd is used",
+        repo_extension_path_in(&crate_dir, None),
+        crate_dir.join("extensions/laya-browser").to_string_lossy().into_owned(),
+    );
+    // No tree beside the cwd: fall through to the checkout the binary points at.
+    h.eq(
+        "browser extension: with no tree beside the cwd, the override is used",
+        repo_extension_path_in(
+            std::path::Path::new("/nonexistent-cwd-xyz"),
+            Some(std::ffi::OsString::from("/tmp/co")),
+        ),
+        "/tmp/co/extensions/laya-browser".to_string(),
+    );
+    // A bogus override names the user's own path, never a build path.
+    let bogus = repo_extension_path_in(
+        std::path::Path::new("/nonexistent-cwd-xyz"),
+        Some(std::ffi::OsString::from("/nonexistent-lw-ext")),
+    );
+    h.check(
+        "browser extension: a bogus override names the user's path",
+        bogus.starts_with("/nonexistent-lw-ext/") && !bogus.contains("/nonexistent-cwd-xyz"),
+    );
+    // No override at all: the build-time crate dir (a dev build), never relative.
+    h.eq(
+        "browser extension: no override -> the build-time crate dir",
+        repo_extension_path_in(std::path::Path::new("/nonexistent-cwd-xyz"), None),
+        crate_dir.join("extensions/laya-browser").to_string_lossy().into_owned(),
+    );
+    // The live resolution (cwd = this checkout) points at a real manifest.
+    let live = repo_extension_path();
+    h.check(
+        "browser extension: the live resolution points at a real manifest",
+        std::path::Path::new(&live).join("manifest.json").is_file(),
+    );
+}

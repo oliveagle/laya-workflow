@@ -1268,9 +1268,13 @@ a `bdd run` knob.
 install from a store: the engine injects it over CDP (`Extensions.loadUnpacked`)
 into a browser it launched. Two consequences that are easy to trip over:
 
-* **Launch mode requires that folder to exist** at the path the binary resolves
-  (`<checkout>/extensions/laya-browser`). Ship the checkout, not just the exe:
-  with the folder absent every scenario fails fast with
+* **Launch mode requires that folder to exist** at the path the binary resolves.
+  It is resolved, in order, from `$LAYA_BROWSER_EXTENSION`, then
+  `./extensions/laya-browser` beside the cwd, then
+  `<repo_root>/extensions/laya-browser` where `repo_root` is `LAYA_WORKFLOW_REPO`
+  when set, else the build-time crate dir — the same root the corpus gates use, so
+  a release binary pointed at a checkout finds it too. Ship the checkout, not just
+  the exe: with the folder absent every scenario fails fast with
   `browser extension is missing: …` and no Chrome is even started (measured: 1s,
   0/20) — a staging gap, not a hang.
 * **The corpus gates need the checkout for the same reason.** `bdd round-trip`,

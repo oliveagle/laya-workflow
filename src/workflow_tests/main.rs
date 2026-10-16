@@ -237,6 +237,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
+        ("browser-extension-path", t_bdd::test_browser_extension_path),
         ("bdd-jobs-ports", t_bdd::test_bdd_jobs_ports),
         ("bdd-jobs-auto", t_bdd::test_bdd_jobs_auto),
         ("bdd-release-teardown", t_bdd::test_bdd_release_teardown),

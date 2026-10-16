@@ -335,16 +335,43 @@ fn default_profile_dir() -> String {
         .to_string()
 }
 
-fn repo_extension_path() -> String {
+/// The unpacked observation extension to inject in launch mode.
+///
+/// `$LAYA_BROWSER_EXTENSION` wins outright; otherwise the tree beside the cwd
+/// (the checkout the CLI is usually run from — what the user sees is what gets
+/// loaded); otherwise the checkout the binary points at, [`crate::bdd::repo_root`]
+/// (`LAYA_WORKFLOW_REPO`, else the build-time crate dir).
+///
+/// That last fallback used to be the bare `env!("CARGO_MANIFEST_DIR")`, so a
+/// release or installed binary resolved — and, when it could not, *named* — the
+/// path of the machine it was built on: `browser extension is missing: <build
+/// path>`. Pointing `LAYA_WORKFLOW_REPO` at a checkout now finds the shipped
+/// folder, the same way it does for the corpus gates.
+pub fn repo_extension_path() -> String {
     if let Ok(path) = std::env::var("LAYA_BROWSER_EXTENSION") {
         return path;
     }
-    // The CLI is normally executed from the repository root. Fall back to the
-    // source path known at compile time for direct Rust tests.
-    if std::path::Path::new("extensions/laya-browser/manifest.json").is_file() {
-        return "extensions/laya-browser".to_string();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    repo_extension_path_in(&cwd, std::env::var_os("LAYA_WORKFLOW_REPO"))
+}
+
+/// [`repo_extension_path()`] with the cwd and the checkout override passed in.
+/// Pure (it reads no environment of its own), so the fallback chain is testable.
+/// The path returned is absolute where the inputs are, because Chrome's
+/// `Extensions.loadUnpacked` wants a real folder.
+pub fn repo_extension_path_in(
+    cwd: &std::path::Path,
+    override_dir: Option<std::ffi::OsString>,
+) -> String {
+    let beside = cwd.join("extensions").join("laya-browser");
+    if beside.join("manifest.json").is_file() {
+        return beside.to_string_lossy().into_owned();
     }
-    concat!(env!("CARGO_MANIFEST_DIR"), "/extensions/laya-browser").to_string()
+    crate::bdd::repo_root_with(override_dir)
+        .join("extensions")
+        .join("laya-browser")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// The well-known Chrome/Chromium executable names, most-branded first so a
@@ -4843,8 +4870,7 @@ mod real_browser_tests {
             endpoint: format!("http://127.0.0.1:{cdp_port}"),
             chrome_binary: binary,
             profile_dir: profile.to_string_lossy().to_string(),
-            extension_path: concat!(env!("CARGO_MANIFEST_DIR"), "/extensions/laya-browser")
-                .to_string(),
+            extension_path: repo_extension_path(),
             launch: true,
             attach: false,
             startup_timeout_ms: 20_000,
