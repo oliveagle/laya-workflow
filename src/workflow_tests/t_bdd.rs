@@ -10100,6 +10100,66 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
             == (0, 0),
     );
 
+    // ── P242: `--backend rules` — the spec's own offline heuristics, rankable ──
+    // Not a model: it is the backend `dsl smoke` drives (in-process, no URL, no
+    // preflight). Its agreement with the same expectation table is *by
+    // construction*, which is exactly why it is the reference line the live
+    // models' hard tail is read against.
+    h.check(
+        "p242: the rules sentinel is recognised, a URL is not",
+        bdd::is_rules_backend("rules")
+            && bdd::is_rules_backend("Rules")
+            && bdd::is_rules_backend("offline")
+            && !bdd::is_rules_backend("http://127.0.0.1:18405")
+            && !bdd::is_rules_backend("rules ")
+            && !bdd::is_rules_backend(""),
+    );
+    // End to end, offline, no live server in the room: one derivation spec walked
+    // by the reference row alone. `--filter` keeps it to that single spec (0.1s);
+    // the `--json` half pins the machine-readable `kind`.
+    let jsonp = std::env::temp_dir().join(format!("laya-p242-{}.json", std::process::id()));
+    let run = std::process::Command::new(super::cli_bin())
+        .args([
+            "bdd",
+            "compare-systems",
+            "--backend",
+            "rules",
+            "--filter",
+            "laya_mem/consolidation",
+            "--json",
+            &jsonp.to_string_lossy(),
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run bdd compare-systems");
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    h.check(
+        "p242: the reference row walks a spec with no server (rc=0, never unusable)",
+        run.status.code() == Some(0) && !text.contains("unusable"),
+    );
+    h.check(
+        "p242: the table names the reference row as not-a-model",
+        text.contains("the \"rules\" row is not a model"),
+    );
+    let rep: Value = serde_json::from_str(&std::fs::read_to_string(&jsonp).unwrap_or_default())
+        .unwrap_or(Value::Null);
+    let b0 = &rep["backends"][0];
+    h.check(
+        "p242: the rules row is kind=rules and agrees on the whole spec",
+        b0["kind"] == "rules"
+            && b0["walked"] == true
+            && b0["preflight_error"].is_null()
+            && b0["summary"]["states_run"] == 5
+            && b0["agnostic_agreement"]["agreed"] == 5
+            && b0["agnostic_agreement"]["comparable"] == 5
+            && b0["derive_agreement"]["agreed"] == 5,
+    );
+    let _ = std::fs::remove_file(&jsonp);
+
     // ── P204: attribute the states two backends disagree on ──
     // a = :18400-style winner on cat2, b = the other on cat1; s3 is pinned.
     let ma = mk_stratum(

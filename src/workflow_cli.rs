@@ -552,11 +552,17 @@ enum BddCmd {
     /// every `@decision` spec's sample states through each backend, then rank the
     /// usable ones by label agreement (then latency). A backend that fails a
     /// single-option `choice` preflight probe is marked unusable, never ranked —
-    /// that probe is exactly the P200 stale-code shape. Default backends are the
-    /// keep-list (soft-decider-421m :18405, Laya FT :18400); pass `--backend` to
-    /// add challengers (repeatable).
+    /// that probe is exactly the P200 stale-code shape. With no `--backend` the
+    /// keep-list is compared (soft-decider-421m :18405, Laya FT :18400); passing
+    /// `--backend` **replaces** that list with exactly the names given (repeatable)
+    /// — name the keep-list URLs too if they belong in the same table. A backend
+    /// name may also be `rules`: not a model, but the spec's own offline heuristics
+    /// (the backend `dsl smoke` drives), ranked as the reference line to read the
+    /// models against.
     CompareSystems {
-        /// A System-1 backend base URL to compare. Repeatable.
+        /// A System-1 backend base URL to compare, or `rules` for the spec's own
+        /// offline heuristics. Repeatable; supplying any replaces the default
+        /// keep-list rather than adding to it.
         #[arg(long)]
         backend: Vec<String>,
         /// Only walk features whose path or stem contains this substring.

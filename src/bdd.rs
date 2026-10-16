@@ -12756,6 +12756,15 @@ pub fn system_probe_questions() -> Value {
     })
 }
 
+/// P242: is this `--backend` value the **offline reference backend** rather than a
+/// URL? `rules` (or its alias `offline`) names the spec's *own* deterministic
+/// heuristics — the very backend `dsl smoke` drives — so it can be ranked next to
+/// the live models as the honest reference line. Pure, so the regression pins the
+/// spelling without a live backend.
+pub fn is_rules_backend(name: &str) -> bool {
+    name.eq_ignore_ascii_case("rules") || name.eq_ignore_ascii_case("offline")
+}
+
 /// Probe `url` with [`system_probe_questions`]; `None` when the backend
 /// answered, `Some(why)` when it did not. Short timeout, so a hung backend does
 /// not stall the whole comparison.
@@ -12785,6 +12794,12 @@ pub struct SystemVerdict {
     /// agreement alone cannot tell "same model" from "different models that
     /// happen to score the same".
     pub per_spec: Vec<SpecLiveResult>,
+    /// P242: this row is not a model — it is the spec's own offline heuristics
+    /// (`backend::HeuristicBackend`), ranked as the reference line. Its agreement
+    /// with the expectation table is by construction (the same rules authored it),
+    /// so it is never read as a competitor; it says how much of the corpus a
+    /// deterministic path already answers.
+    pub rules: bool,
 }
 
 impl SystemVerdict {
@@ -13416,8 +13431,11 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
 
     let mut vs: Vec<SystemVerdict> = Vec::new();
     for url in &backends {
-        let mut v = SystemVerdict { url: url.clone(), ..Default::default() };
-        if !o.no_preflight {
+        let rules = is_rules_backend(url);
+        let mut v = SystemVerdict { url: url.clone(), rules, ..Default::default() };
+        // P242: the reference row is in-process and deterministic — there is no
+        // deployment to probe, so the stale-code preflight does not apply to it.
+        if !o.no_preflight && !rules {
             if let Some(why) = preflight_backend(url) {
                 v.preflight_error = Some(why);
                 vs.push(v);
@@ -13425,8 +13443,21 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
             }
         }
         let t0 = std::time::Instant::now();
-        let backend = crate::backend::LayaBackend::new(url);
-        let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), true, o.derive_only, &backend)?;
+        // P242: `rules` drives the spec's own offline heuristics (the `dsl smoke`
+        // backend) instead of an HTTP model, so "models vs the deterministic path
+        // the spec already encodes" is one command away.
+        let per_spec = if rules {
+            walk_decision_corpus(
+                &corpus,
+                o.filter.as_deref(),
+                true,
+                o.derive_only,
+                &crate::backend::HeuristicBackend,
+            )?
+        } else {
+            let backend = crate::backend::LayaBackend::new(url);
+            walk_decision_corpus(&corpus, o.filter.as_deref(), true, o.derive_only, &backend)?
+        };
         v.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
         v.summary = summarize_live(&per_spec);
         v.walked = true;
@@ -13499,6 +13530,15 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
             if buckets.is_empty() { String::new() } else { format!(" [{}]", buckets.join(", ")) }
         );
     }
+    // P242: name the reference row, so nobody reads "rules" as a model. Its
+    // agreement is by construction (the same rules authored the expects), which is
+    // exactly why it is the line the models are measured against.
+    if vs.iter().any(|v| v.rules) {
+        println!(
+            "note: the \"rules\" row is not a model - it is the spec's own offline heuristics (the backend `dsl smoke` drives).\n      Its agreement is by construction, so read it as the reference line the live models are measured against, not as a competitor."
+        );
+    }
+
     if let Some(best) = ranking.first() {
         println!(
             "best: {} (agreement {}/{}, {:.1} ms/state)",
@@ -13541,6 +13581,8 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
             },
             "backends": vs.iter().map(|v| json!({
                 "url": v.url,
+                // P242: "rules" (offline reference) vs "model" (HTTP System-1).
+                "kind": if v.rules { "rules" } else { "model" },
                 "walked": v.walked,
                 "preflight_error": v.preflight_error,
                 "summary": {
