@@ -3108,20 +3108,23 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     // (the census held 18/63) because nothing recomputed it. Plant a stale ported
     // count in each document; both must be named against the live breakdown.
     let named_re = regex_lite::Regex::new(
-        r"(\d+) modules named\s+\((\d+) ported \+ (\d+)\s+search-space \+ (\d+) not-a-workflow\)",
+        r"(\d+) modules named\s+\((\d+) ported \+ (\d+)\s+search-space \+ (\d+) not-a-workflow \+ (\d+)\s+pending-gate\)",
     )
     .unwrap();
     let caps = named_re
         .captures(&readme)
         .expect("bdd/README.md quotes the census's accounting");
-    let want_accounting = format!("[{}, {}, {}, {}]", &caps[1], &caps[2], &caps[3], &caps[4]);
+    let want_accounting = format!(
+        "[{}, {}, {}, {}, {}]",
+        &caps[1], &caps[2], &caps[3], &caps[4], &caps[5]
+    );
     let stale_ported = caps[2].parse::<u64>().unwrap() - 1;
     let drifted_acct = named_re
         .replace(
             &readme,
             format!(
-                "{} modules named ({stale_ported} ported + {} search-space + {} not-a-workflow)",
-                &caps[1], &caps[3], &caps[4]
+                "{} modules named ({stale_ported} ported + {} search-space + {} not-a-workflow + {} pending-gate)",
+                &caps[1], &caps[3], &caps[4], &caps[5]
             ),
         )
         .into_owned();
@@ -3136,15 +3139,15 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     );
 
     let agent_named_re = regex_lite::Regex::new(
-        r"(\d+) module\(s\) named\s+\((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
+        r"(\d+) module\(s\) named\s+\((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow \+ (\d+) pending-gate\)",
     )
     .unwrap();
     let agent_stale = agent_named_re
         .replace(
             &agent,
             format!(
-                "{} module(s) named ({stale_ported} ported + {} search-space + {} not-a-workflow)",
-                &caps[1], &caps[3], &caps[4]
+                "{} module(s) named ({stale_ported} ported + {} search-space + {} not-a-workflow + {} pending-gate)",
+                &caps[1], &caps[3], &caps[4], &caps[5]
             ),
         )
         .into_owned();
@@ -3204,16 +3207,20 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads all eleven universes", counts.universes, 11);
+    h.eq(
+        "bdd scope-check: reads all twenty-one universes",
+        counts.universes,
+        21,
+    );
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
         9,
     );
     h.eq(
-        "bdd scope-check: 21 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 22 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + the 16 agent-toolbox workflows)",
         counts.ported,
-        21,
+        22,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3226,14 +3233,19 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         1,
     );
     h.eq(
-        "bdd scope-check: 71 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root + 3 ole_eval deploy_gate/tiers + 5 laya-tch bench)",
+        "bdd scope-check: 350 modules named as not-a-workflow (the 71 the census carried at P227 + the 279 non-gate modules of the nine ML-infra trees the `code` root newly bounds)",
         counts.not_a_workflow,
-        71,
+        350,
     );
     h.eq(
-        "bdd scope-check: 4 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch)",
+        "bdd scope-check: 9 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        counts.gate_pending,
+        9,
+    );
+    h.eq(
+        "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
         counts.roots,
-        4,
+        5,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3417,6 +3429,13 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
                 names.push(n.as_str().unwrap().to_string());
             }
         }
+        for k in u["gate_pending"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            names.push(k);
+        }
         for name in names {
             planted.push(format!("{up}/{name}"));
             let f = base.join(up).join(format!("{name}.py"));
@@ -3427,7 +3446,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.eq(
         "bdd scope-check: the planted tree holds every name the census lists",
         planted.len(),
-        85,
+        374,
     );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
@@ -3483,6 +3502,56 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: a .py under a build tree (target/) does not demand a universe (P227)",
         !any(&drifted_v, "code/qwen_vm/vendored_pkg holds .py modules"),
+    );
+
+    // P228: roots nest. A child directory of a declared root that is *itself* a
+    // declared coverage root needs no universe of its own - its own entry sweeps it.
+    // Without this, the `code` root could not exist: it would demand a `code/eval`
+    // universe and collide with `code/eval`'s own sweep.
+    let (nested_counts, nested_problems) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.eq(
+        "bdd scope-check: the `code` root nests the four older roots",
+        nested_counts.roots,
+        5,
+    );
+    h.check(
+        "bdd scope-check: a child that is itself a declared coverage root does not demand a universe (roots nest)",
+        !any(&nested_problems, "code/eval holds .py modules")
+            && !any(&nested_problems, "code/qwen_vm holds .py modules")
+            && !any(&nested_problems, "code/longhorizon holds .py modules")
+            && !any(&nested_problems, "code/laya-tch holds .py modules"),
+    );
+
+    // P228: `gate_pending` is the honest middle - a module that *is* gate-shaped but is
+    // not yet ported. It is not a `not_a_workflow` (that would be false) and not a
+    // `ported` (no such feature exists), so two failures are named: an empty reason, and
+    // a name that is double-listed.
+    let gate_empty = census.replace(
+        concat!(
+            "\"scripts/r28d_gamma_routing\": \"",
+            "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set ",
+            "and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> ",
+            "RECOMMENDED`). A promote/reject verdict on a candidate. Port pending.\""
+        ),
+        "\"scripts/r28d_gamma_routing\": \"\"",
+    );
+    let (_, drifted_g) = scope_check_impl(&root, &gate_empty, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a pending gate with an empty reason is named",
+        any(&drifted_g, "gate_pending[\"scripts/r28d_gamma_routing\"] needs a non-empty reason"),
+    );
+
+    let gate_dup = census.replace(
+        "\"optimization/wld_sglang_20260823/wld_daemon\"",
+        "\"optimization/wld_sglang_20260823/e2e_awq_int4_wld\"",
+    );
+    let (_, drifted_gd) = scope_check_impl(&root, &gate_dup, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a module listed both as a pending gate and as a not-a-workflow is named",
+        any(
+            &drifted_gd,
+            "is listed both as a pending gate and as",
+        ),
     );
 
     // Negative 6: a coverage root that does not exist in the checkout is named, not

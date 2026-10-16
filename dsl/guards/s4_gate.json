@@ -1,0 +1,228 @@
+{
+  "name": "s4_gate",
+  "_bdd": {
+    "feature": "s4_gate",
+    "feature_path": "bdd/workflows/guards/s4_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval S4 GATE v2 (code/dllm/eval/sanity_ar_base.py): the coherence\ngate that decides whether a *decoded code generation* is a real sample rather than\nthe \"broken base\" degeneration the P1 diagnosis pinned down (meaningless characters\nrepeated at random). It is five predicates over the completion text, and the gate\npasses only when all five hold:\n(a) the longest AST-parseable Python prefix is at least 50 characters and holds at\nleast one def/class -- the model produced something structural;\n(b) the top-4gram whitespace-token repeat ratio is below 0.3 -- it is not looping;\n(c) the share of CJK \"garbage\" characters (Unicode category `Lo` above U+4E00) is\nbelow 0.05 -- it is not spewing nonsense glyphs;\n(d) at least 3 of the Python keywords `def `/`class `/`return `/`if `/`for ` appear;\n(e) the completion holds at least 500 whitespace tokens -- it did not stop at once.\nThe walk encodes exactly that ladder in the gate's own order: a, then b, then c,\nthen d, then e. The first predicate that fails ends the walk and names itself; only\na walk that clears all five reaches S4_PASS. That matches the source's\n`ok = a_ok and b_ok and c_ok and d_ok and e_ok` and its `all_pass` over three prompts:\na single failing check is a failing gate.\nOne fold is documented: each predicate is computed from the decoded text (an AST\nwalk, a Counter over 4-grams, a unicodedata scan), so \"check (a) passed\" -- the\npredicate's own verdict -- is the graph's observable input, and the graph reads no\nnumber the model wrote. The thresholds themselves live in the harness, not the graph.\nOne stale header is recorded, and the port follows the *code*: the module docstring\nstill says (e) is `>= 1000` tokens and (b) \"broken base 通常 >0.5\", while the code\nbelow it reads `n_tokens >= 500` and `repeat_ratio < 0.3`. The code is authoritative;\nthe docstring drifted.\nReference walk (code/dllm/eval/sanity_ar_base.py, the `# === 新判据 ===` block):\na_ok = def_count >= 1 and len(longest) >= 50; b_ok = repeat_ratio < 0.3;\nc_ok = garbage_ratio < 0.05; d_ok = py_kw >= 3; e_ok = n_tokens >= 500; then\nok = a_ok and b_ok and c_ok and d_ok and e_ok.",
+  "start": "a",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "a",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "(a) Does the longest AST-parseable Python prefix run to at least 50 characters and hold at least one def/class?",
+          "criteria": {
+            "pass": "the longest parseable prefix is >= 50 chars and holds >= 1 def/class",
+            "fail": "it is shorter, or holds no def/class"
+          },
+          "heuristic": {
+            "answer_field": "ev_a"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "b"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "S4_FAIL_A"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "S4_A_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "b",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "(b) Is the top-4gram whitespace-token repeat ratio below 0.3?",
+          "criteria": {
+            "pass": "the most frequent 4-gram covers less than 0.3 of all 4-grams",
+            "fail": "it covers 0.3 or more -- the text is looping"
+          },
+          "heuristic": {
+            "answer_field": "ev_b"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "c"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "S4_FAIL_B"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "S4_B_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "c",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "(c) Is the share of CJK garbage characters (Unicode Lo above U+4E00) below 0.05?",
+          "criteria": {
+            "pass": "garbage characters are under 5% of the completion",
+            "fail": "5% or more -- the text is nonsense glyphs"
+          },
+          "heuristic": {
+            "answer_field": "ev_c"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "d"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "S4_FAIL_C"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "S4_C_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "d",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "(d) Do at least 3 of the Python keywords def/class/return/if/for appear in the completion?",
+          "criteria": {
+            "pass": "3 or more of the five keywords appear",
+            "fail": "fewer than 3 appear"
+          },
+          "heuristic": {
+            "answer_field": "ev_d"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "e"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "S4_FAIL_D"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "S4_D_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "e",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "(e) Does the completion hold at least 500 whitespace tokens? This is the last gate: clearing it makes the S4 GATE pass.",
+          "criteria": {
+            "pass": "500 or more whitespace tokens",
+            "fail": "fewer than 500 tokens -- the model stopped almost immediately"
+          },
+          "heuristic": {
+            "answer_field": "ev_e"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "pass"
+            },
+            "label": "S4_PASS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "S4_FAIL_E"
+          }
+        ]
+      }
+    }
+  ]
+}

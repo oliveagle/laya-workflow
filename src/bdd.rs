@@ -6808,16 +6808,17 @@ pub fn doc_check_impl(
         std::fs::read_to_string(root.join("bench").join("bdd").join("scope_census.json"))
             .unwrap_or_default();
     let (scope_counts, _) = scope_check_impl(&root, &census_txt, None)?;
-    let named_modules =
-        scope_counts.ported + scope_counts.search_space + scope_counts.not_a_workflow;
+    let named_modules = scope_counts.ported + scope_counts.search_space
+        + scope_counts.not_a_workflow + scope_counts.gate_pending;
     let named_want = vec![
         named_modules as i64,
         scope_counts.ported as i64,
         scope_counts.search_space as i64,
         scope_counts.not_a_workflow as i64,
+        scope_counts.gate_pending as i64,
     ];
     let named_rx = Regex::new(
-        r"(\d+) module(?:\(s\)|s) named \((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
+        r"(\d+) module(?:\(s\)|s) named \((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow \+ (\d+) pending-gate\)",
     )
     .unwrap();
     for (doc, flat) in [(README, &flat_readme), (AGENT, &flat_agent)] {
@@ -11122,6 +11123,13 @@ pub struct ScopeCounts {
     /// carrying one reason - so an engine / model / harness module is still named
     /// rather than silently absent.
     pub not_a_workflow: usize,
+    /// Upstream names that *are* gate-shaped (they carry an explicit pass/fail or
+    /// promote/reject verdict) but are not yet ported (`gate_pending`), each with one
+    /// non-empty reason naming the gate. The honest middle: `not_a_workflow` would be a
+    /// false claim about a verdict-bearing module, and `ported` would claim a port that
+    /// does not exist. An audit that finds a gate and cannot port it this turn says so
+    /// here instead of quietly filing it under "not a workflow".
+    pub gate_pending: usize,
     /// Declared coverage roots (`roots`): upstream trees the census claims to cover
     /// end to end. Under `--sources`, every immediate child directory of a root that
     /// holds a `.py` must be some universe's `upstream`, so a *new* upstream
@@ -11290,14 +11298,17 @@ pub fn scope_check_impl(
         let ported = u.get("ported").and_then(Value::as_object);
         let search = u.get("search_space").and_then(Value::as_object);
         let not_workflow = u.get("not_a_workflow").and_then(Value::as_array);
+        let gate_pending = u.get("gate_pending").and_then(Value::as_object);
         let recursive = u.get("recursive").and_then(Value::as_bool).unwrap_or(false);
         let ported_all = u.get("ported_all").and_then(Value::as_bool).unwrap_or(false);
         if ported_all {
             counts.ported_all += 1;
-        } else if ported.is_none() && search.is_none() && not_workflow.is_none() {
+        } else if ported.is_none() && search.is_none() && not_workflow.is_none()
+            && gate_pending.is_none()
+        {
             problems.push(format!(
                 "{id}: a universe must carry `ported`, `search_space`, `not_a_workflow`, \
-                 or `ported_all` - silence is not a disposition"
+                 `gate_pending`, or `ported_all` - silence is not a disposition"
             ));
             continue;
         }
@@ -11405,6 +11416,33 @@ pub fn scope_check_impl(
             }
         }
 
+        if let Some(gates) = gate_pending {
+            for (name, reason) in gates {
+                counts.gate_pending += 1;
+                if reason.as_str().map(|r| r.trim().is_empty()).unwrap_or(true) {
+                    problems.push(format!(
+                        "{id}: gate_pending[{name:?}] needs a non-empty reason naming the \
+                         gate - a verdict-bearing module is never quietly skipped"
+                    ));
+                }
+                if ported.map_or(false, |p| p.contains_key(name))
+                    || search.map_or(false, |s| s.contains_key(name))
+                    || not_workflow.map_or(false, |g| {
+                        g.iter().any(|g| {
+                            g.get("names")
+                                .and_then(Value::as_array)
+                                .map_or(false, |ns| ns.iter().any(|n| n.as_str() == Some(name)))
+                        })
+                    })
+                {
+                    problems.push(format!(
+                        "{id}: {name} is listed both as a pending gate and as \
+                         ported/search-space/not-a-workflow - pick one"
+                    ));
+                }
+            }
+        }
+
         // A universe may declare `enumerate: false` when its upstream is not publicly
         // enumerable (a private repo, e.g. a set of ops scripts). Its names are pinned
         // here and every `ported` feature was existence-checked above; `--sources` has
@@ -11446,11 +11484,15 @@ pub fn scope_check_impl(
                                 }
                             }
                         }
+                        if let Some(gates) = gate_pending {
+                            listed.extend(gates.keys().cloned());
+                        }
                         counts.sources += listed.len();
                         for n in live.difference(&listed) {
                             problems.push(format!(
                                 "{id}: the upstream {upstream}/{n}.py is not in the census - port it, \
-                                 or list it (with a reason) as a search-space or a not-a-workflow module"
+                                 or list it (with a reason) as a search-space, a not-a-workflow \
+                                 module, or a pending gate"
                             ));
                         }
                         for n in listed.difference(&live) {
@@ -11473,6 +11515,16 @@ pub fn scope_check_impl(
     // live checkout (`--sources`) can see the tree, so this is skipped offline.
     if let Some(roots) = v.get("roots").and_then(Value::as_array) {
         counts.roots = roots.len();
+        // Roots nest: a root may contain another declared root (the `code` root covers
+        // `code/eval`, which is itself a root with its own sweep). A child that is a
+        // declared root is swept by its own entry, so the parent must not also demand a
+        // universe for it - only a child that is *neither* a universe's upstream nor a
+        // root is a new upstream directory with nothing accounting for it.
+        let declared_roots: BTreeSet<String> = roots
+            .iter()
+            .filter_map(|r| r.get("root").and_then(Value::as_str))
+            .map(|n| n.trim_end_matches('/').to_string())
+            .collect();
         if let Some(src) = sources {
             for r in roots {
                 let Some(root_name) = r.get("root").and_then(Value::as_str) else {
@@ -11505,6 +11557,11 @@ pub fn scope_check_impl(
                         continue;
                     }
                     let rel = format!("{root_name}/{name}");
+                    if declared_roots.contains(&rel) {
+                        // A declared coverage root in its own right; its children get
+                        // their own sweep below. Roots nest.
+                        continue;
+                    }
                     if !universe_upstreams.contains(&rel) {
                         problems.push(format!(
                             "{rel} holds .py modules, but no universe declares it as its \
@@ -11542,6 +11599,7 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
                 "ported": counts.ported,
                 "search_space": counts.search_space,
                 "not_a_workflow": counts.not_a_workflow,
+                "gate_pending": counts.gate_pending,
                 "ported_all": counts.ported_all,
                 "roots": counts.roots,
                 "non_enumerable": counts.non_enumerable,
@@ -11565,14 +11623,15 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
     }
     println!(
         "bdd scope-check: {} upstream universe(s) accounted for - {} ported in full (proven by \
-         `bdd port-check`), {} module(s) named ({} ported + {} search-space + {} not-a-workflow), \
-         {} coverage root(s), {} non-enumerable{}",
+         `bdd port-check`), {} module(s) named ({} ported + {} search-space + {} not-a-workflow + \
+         {} pending-gate), {} coverage root(s), {} non-enumerable{}",
         counts.universes,
         counts.ported_all,
-        counts.ported + counts.search_space + counts.not_a_workflow,
+        counts.ported + counts.search_space + counts.not_a_workflow + counts.gate_pending,
         counts.ported,
         counts.search_space,
         counts.not_a_workflow,
+        counts.gate_pending,
         counts.roots,
         counts.non_enumerable,
         if sources.is_some() {

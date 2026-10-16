@@ -1,5 +1,5 @@
 {
-  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* and how this repo's BDD corpus accounts for every module in it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy); `not_a_workflow` names a module that is not a workflow at all (engine / model / harness), one reason per group, so that code is named rather than quietly absent. `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. A universe enumerates the `.py` files directly under `upstream`; set `recursive: true` when its workflows are not all in one directory (a package whose root holds gates next to a `workflows/` dir) - names are then the `/`-joined path minus the extension. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream module cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it). A universe declares its whole *package* when its workflows are not all in one directory (`recursive`). On top of the universes, `roots` declares the upstream trees the census claims to cover end to end; with `--sources`, every immediate child directory of a root that holds a `.py` must be some universe's `upstream`, and a root's own modules need a universe too - so a new upstream *directory* cannot appear without a universe accounting for it, not just a new file inside one already known.",
+  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* and how this repo's BDD corpus accounts for every module in it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy); `not_a_workflow` names a module that is not a workflow at all (engine / model / harness), one reason per group, so that code is named rather than quietly absent. `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. A universe enumerates the `.py` files directly under `upstream`; set `recursive: true` when its workflows are not all in one directory (a package whose root holds gates next to a `workflows/` dir) - names are then the `/`-joined path minus the extension. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream module cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it). A universe declares its whole *package* when its workflows are not all in one directory (`recursive`). On top of the universes, `roots` declares the upstream trees the census claims to cover end to end; with `--sources`, every immediate child directory of a root that holds a `.py` must be some universe's `upstream`, and a root's own modules need a universe too (a root may contain another declared root, whose own sweep covers it - roots nest) - so a new upstream *directory* cannot appear without a universe accounting for it, not just a new file inside one already known.",
   "roots": [
     {
       "root": "code/qwen_vm",
@@ -16,6 +16,10 @@
     {
       "root": "code/laya-tch",
       "note": "The Rust LayaModel crate and its Python bench harness. The crate's Python lives entirely under bench/ (src/ is Rust and target/ is a cargo build tree), so bench/ is the universe upstream and the crate root holds no .py of its own; a new .py directory beside bench/ would need a universe. The numeric parity gate is ported; the reference-capture and perf-measurement scripts are named."
+    },
+    {
+      "root": "code",
+      "note": "The whole code tree of the evaluation repo - the top of the bound. Every immediate child directory that holds a `.py` is a universe's `upstream` (agentic_memory, clef-clm-bench, dflash2, distill, dllm, eval_index, inference, llama-eval, swebench) or is itself a declared coverage root (eval, longhorizon, qwen_vm, laya-tch), whose own sweep covers it: roots nest. The root's own module (the resumable uploader) has a universe too. So neither a new upstream directory nor a new module directly under code/ can appear without a universe accounting for it."
     }
   ],
   "universes": [
@@ -304,6 +308,474 @@
         }
       ],
       "note": "The Rust-vs-PyTorch numeric parity gate for LayaModel: bench_parity compares the Rust forward pass against the captured PyTorch reference and gates the decision output -- the marker logits must agree to max|delta| < 1e-3. Ported as a 5-node walk: four named refusals in the wrapper's own order (bin not built, trace absent, no model dir, weights missing -> CANNOT_RUN_NO_BIN / _NO_TRACE / _NO_MODEL_DIR / _NO_WEIGHTS) and the single run's PASS/FAIL verdict. The tolerance and the marker-logit choice are applied inside the bench_parity binary, so the run's outcome is the graph's observable input. Proved against the live upstream by a 7-case drive of code/laya-tch/bench/parity_check.py (4 refusals + PASS + FAIL + exit-0-without-PASS)."
+    },
+    {
+      "id": "ole_eval_code_root",
+      "upstream": "code",
+      "kind": "mixed (the repo's code root: one standalone utility module)",
+      "not_a_workflow": [
+        {
+          "reason": "the resumable ModelScope uploader: it chunks a local model directory and uploads it over the hub API with retry. It moves bytes; it decides nothing.",
+          "names": [
+            "upload_resumable"
+          ]
+        }
+      ],
+      "note": "The code root itself: one standalone module beside the trees. Every other immediate child that holds a `.py` is either a universe's `upstream` or a declared coverage root (roots nest), so a new directory or file directly under code/ cannot appear without a universe accounting for it."
+    },
+    {
+      "id": "ole_eval_agentic_memory",
+      "upstream": "code/agentic_memory",
+      "kind": "non-workflow (an HTTP service over the memory store)",
+      "not_a_workflow": [
+        {
+          "reason": "the agentic-memory service: an HTTP backend that serves the memory store (remember / recall / retrieve) over HTTP. It runs the store; the store's own policy lives in laya-mem, not here.",
+          "names": [
+            "laya_http_backend"
+          ]
+        }
+      ],
+      "note": "The memory service tree. Named not-a-workflow: it serves the store, it does not decide."
+    },
+    {
+      "id": "ole_eval_clef_clm_bench",
+      "upstream": "code/clef-clm-bench",
+      "kind": "mixed (the System-1 comparison bench: candidate adapters + servers + runners)",
+      "not_a_workflow": [
+        {
+          "reason": "the System-1 candidate adapters: one per published System-1 model, each a faithful re-implementation of that model's own scoring protocol (what it takes as input, what its head emits, how a score maps to an answer). They are the *subjects* of the comparison, not a decision this repo makes - the policy is the model's weights, which live outside the repo. One shared harness scores them all on one pipeline.",
+          "names": [
+            "abidlabs06_adapter",
+            "agentjev_adapter",
+            "anthonym21_adapter",
+            "bekko_adapter",
+            "bekko_mini_adapter",
+            "bev_decider_adapter",
+            "byrne_adapter",
+            "chaoliang_adapter",
+            "decider_adapter",
+            "diffcider_adapter",
+            "dwidlee_adapter",
+            "eikos_adapter",
+            "gliner_adapter",
+            "intern_adapter",
+            "jeb_adapter",
+            "jef_adapter",
+            "jev06_adapter",
+            "jev_adapter",
+            "jevk5_adapter",
+            "jevstyle_adapter",
+            "julia_adapter",
+            "kai_adapter",
+            "kaivoss_adapter",
+            "kenning_adapter",
+            "kev_adapter",
+            "kotoba_adapter",
+            "lev_adapter",
+            "lightdec_adapter",
+            "lightjev_adapter",
+            "lumma_adapter",
+            "mghafiri_adapter",
+            "minhleduc_adapter",
+            "minilm_specialist_adapter",
+            "minojev_adapter",
+            "mobarmg_adapter",
+            "od1_adapter",
+            "opendecider_adapter",
+            "openjev2b_adapter",
+            "openjev_adapter",
+            "openthai_adapter",
+            "pngwn4b_adapter",
+            "raz_adapter",
+            "sog_adapter",
+            "startlux_adapter",
+            "tev1_adapter",
+            "tinyjev_adapter",
+            "vela_adapter",
+            "von_adapter",
+            "clef_auto_loader",
+            "diffcider_loader_patch"
+          ]
+        },
+        {
+          "reason": "the serving wrappers and the measurement runners: an HTTP front for the fine-tuned Laya head, a Qwen3-8B embedding server, a soft-decider server, and the typed-decisions accuracy / throughput benches. They serve a model and measure it; no gate.",
+          "names": [
+            "bench_throughput",
+            "bench_typed",
+            "laya_ft_server",
+            "qwen_emb_server",
+            "soft_decider_server"
+          ]
+        }
+      ],
+      "note": "The typed-decisions System-1 comparison: ~48 per-model adapters, two loaders, three servers and two benches. Every module is named; none is a decision graph (the candidates' policies are their external weights)."
+    },
+    {
+      "id": "ole_eval_dflash2",
+      "upstream": "code/dflash2",
+      "kind": "mixed (speculative-decoding patches + a patch-applier gate + a measurement harness)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the speculative-decoding integration: the DFlash2 draft-model patches applied into sglang / vLLM site-packages (worker classes, kernels, model shims, the INT4 support set), and the draft-model packing scripts. They edit another project's source so a speculative decoder runs; there is no answer of their own to rule on.",
+          "names": [
+            "sglang-patches/dflash_utils",
+            "sglang-patches/dflash_worker_v2",
+            "sglang-patches/draft_worker_common",
+            "sglang-patches/int4-support/00_save_raw_packed",
+            "sglang-patches/int4-support/01_model_packed_modules",
+            "sglang-patches/int4-support/02_dflash_utils",
+            "sglang-patches/int4-support/03_fused_kv_materialize",
+            "sglang-patches/int4-support/04_compressed_tensors_skip",
+            "sglang-patches/kernels_dflash",
+            "sglang-patches/models_dflash",
+            "sglang-patches/sgl_kernel_init",
+            "sglang-patches/sgl_kernel_load_utils",
+            "sglang-patches/v2-int4/01_model_packed_modules",
+            "vllm-draft/dflash2_qwen3",
+            "vllm-draft/dflash2_register",
+            "vllm-draft/official_model_ref",
+            "scripts/quant/prepare_syvai_int4_draft"
+          ]
+        },
+        {
+          "reason": "the draft-model measurement harness: the three-path throughput benches, the HF direct-check harnesses, and the sglang launch wrapper. They measure.",
+          "names": [
+            "bench/bench_vllm",
+            "bench/bench_vllm_full",
+            "bench/hf_direct_check2",
+            "bench/hf_unquant_check",
+            "launch/run_sglang_dflash2_v2",
+            "scripts/bench_three_paths"
+          ]
+        }
+      ],
+      "gate_pending": {
+        "sglang-patches/int4-support/apply_all_patches": "the DFlash2 INT4 patch-set applier: it backs up and applies five source patches into sglang's site-packages and exits non-zero when any one fails to apply (`all_ok` -> `sys.exit(1)`), i.e. it gates the environment before a draft model may be launched. Gate-shaped, port pending."
+      },
+      "note": "The DFlash2 draft-model work: patch files applied into another project, the draft packing scripts, the benches, and the patch-set applier - which is gate-shaped and registered as a pending port."
+    },
+    {
+      "id": "ole_eval_distill",
+      "upstream": "code/distill",
+      "kind": "mixed (SFT/distill pipeline: generators + training loops + runners + two promotion gates)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the SFT / distill data generators: one script per dataset round (handcrafted batches, programmatic generators, teacher-generated rows, DPO pair builders, the GPU2 agent generators). They synthesise training rows and self-check each row compiles; they decide nothing about a candidate.",
+          "names": [
+            "scripts/agent_gpu2_v26_hard_algo",
+            "scripts/agent_gpu2_v26_multiturn",
+            "scripts/agent_gpu2_v26_toolcall",
+            "scripts/agent_gpu2_v27_coding_easy",
+            "scripts/agent_gpu2_v27_hard_algo",
+            "scripts/agent_gpu2_v27_multiturn",
+            "scripts/agent_gpu2_v27_toolcall",
+            "scripts/agent_gpu2_v28_coding_easy",
+            "scripts/agent_gpu2_v28_hard_algo",
+            "scripts/agent_gpu2_v28_multiturn",
+            "scripts/agent_gpu2_v28_toolcall",
+            "scripts/beauvoir_extra",
+            "scripts/beauvoir_v45_v51",
+            "scripts/beauvoir_v52_v58",
+            "scripts/beauvoir_v59_v64",
+            "scripts/beauvoir_v65_v70",
+            "scripts/beauvoir_v71_v76",
+            "scripts/beauvoir_v77_v80",
+            "scripts/beauvoir_v81_v83",
+            "scripts/beauvoir_v84_v86",
+            "scripts/beauvoir_v87_v89",
+            "scripts/data_gen_coding_v26_v27",
+            "scripts/data_gen_coding_v28",
+            "scripts/data_gen_coding_v29_design",
+            "scripts/data_gen_coding_v30_cot",
+            "scripts/data_gen_dbg11_mt19",
+            "scripts/data_gen_hard_v21_ifc_v10_longtask_v11",
+            "scripts/data_gen_ifc_v11",
+            "scripts/data_gen_ifc_v12",
+            "scripts/data_gen_mt18_ifc12",
+            "scripts/data_gen_multiturn_v12",
+            "scripts/data_gen_multiturn_v13_3turn",
+            "scripts/data_gen_multiturn_v14_debug",
+            "scripts/data_gen_multiturn_v15",
+            "scripts/data_gen_multiturn_v16",
+            "scripts/data_gen_multiturn_v17",
+            "scripts/data_gen_multiturn_v18",
+            "scripts/data_gen_multiturn_v20",
+            "scripts/data_gen_multiturn_v21",
+            "scripts/data_gen_multiturn_v21b",
+            "scripts/data_gen_multiturn_v21c",
+            "scripts/data_gen_multiturn_v21d",
+            "scripts/data_gen_multiturn_v21e",
+            "scripts/data_gen_teacher_oop_v3",
+            "scripts/gen_coding_v26_v27",
+            "scripts/gen_dpo_pairs_r32_tsm",
+            "scripts/handcrafted_coding_ifc",
+            "scripts/handcrafted_coding_ifc_v79",
+            "scripts/handcrafted_coding_v80",
+            "scripts/handcrafted_coding_v81",
+            "scripts/handcrafted_coding_v82",
+            "scripts/clean_sft_round21_mixed",
+            "scripts/merge_agent_data_v2",
+            "scripts/r13_datagen",
+            "scripts/r24_make_data",
+            "scripts/r28_gamma_data_gen",
+            "scripts/r28d_ifc_alpha_datagen",
+            "scripts/gpu2_teacher_gen_v2"
+          ]
+        },
+        {
+          "reason": "the LoRA / SFT training loops: one script per optimisation round (r11..r30, the DPO pair trainer, the KD trainer, the FlashNext LoRA trainer, and the round's config). They train a candidate; the promotion verdict is drawn from the eval JSONs by the gates registered as pending.",
+          "names": [
+            "scripts/dpo_r28_alpha_train",
+            "scripts/r11_ifc_train",
+            "scripts/r11_layerft_train",
+            "scripts/r12_ifc_train",
+            "scripts/r12_ifc_train_continue",
+            "scripts/r13_layerft_train",
+            "scripts/r20_lora_train",
+            "scripts/r21_lora_train",
+            "scripts/r21_lora_train_v1_backup",
+            "scripts/r21_lora_train_v2",
+            "scripts/r22_lora_train",
+            "scripts/r23_lora_train",
+            "scripts/r23_lora_train_config",
+            "scripts/r24_lora_train",
+            "scripts/r28_gamma_lora_train",
+            "scripts/r28_ifc_beta_train",
+            "scripts/r28d_distill_beta_train",
+            "scripts/r28d_ifc_alpha_train",
+            "scripts/r29_hard_train",
+            "scripts/r29_ifc_train",
+            "scripts/r30_layerft_train",
+            "train/kd_train",
+            "train/sft_flashnext_lora"
+          ]
+        },
+        {
+          "reason": "the measurement runners and the data plumbing: the A/B eval scripts that write result JSON, the latency runner, the long-horizon runners, the few-shot eval, the short-bucket packer, the Python-syntax data filter (a predicate over rows, not a gate), the dataset preparer, the ngram config and the teacher client.",
+          "names": [
+            "scripts/r28d_alpha_ab_eval",
+            "scripts/r28d_gamma_latency",
+            "scripts/r22_eval_pipeline",
+            "scripts/r22_longhorizon_runner",
+            "scripts/eval_v10_step75_vs_longhorizon",
+            "scripts/eval_fewshot_v2",
+            "scripts/longhorizon_1h_real",
+            "scripts/longhorizon_api",
+            "scripts/syntax_filter",
+            "scripts/r28_gamma_short_buckets",
+            "data/dataset_prep",
+            "ngram/ngram_config",
+            "teacher_client/teacher_client"
+          ]
+        }
+      ],
+      "gate_pending": {
+        "scripts/r28d_gamma_routing": "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> RECOMMENDED`). A promote/reject verdict on a candidate. Port pending.",
+        "scripts/eval_longhorizon_gamma": "the long-horizon A/B promotion gate: it reads two eval JSONs and computes pass-rate buckets and a promotion verdict against a pass-rate and a regression threshold. A promote/reject verdict on a candidate. Port pending."
+      },
+      "note": "The SFT / distillation pipeline: the data generators, the training loops, the measurement runners, and the two promotion gates (routing and long-horizon) that are registered as pending ports."
+    },
+    {
+      "id": "ole_eval_llama_eval",
+      "upstream": "code/llama-eval",
+      "kind": "non-workflow (the benchmark harness and the model sweeps)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the llama-eval benchmark harness: the stage runners, the pass@1 benchmark drivers (humaneval / mbpp / bigcodebench / livecodebench / swebench / apps / taco / cruxeval and the archived eval scripts), the config loader and manager, the diagnostics probes, the opencompass config and the framework / harness plumbing. They run a benchmark and report a number.",
+          "names": [
+            "eval/archived_benchmarks/apps_pass1",
+            "eval/archived_benchmarks/bigcode_harness_eval",
+            "eval/archived_benchmarks/class_eval_pass1",
+            "eval/archived_benchmarks/codecontests_pass1",
+            "eval/archived_benchmarks/coding_eval_all",
+            "eval/archived_benchmarks/coding_eval_standard",
+            "eval/archived_benchmarks/cruxeval_pass1",
+            "eval/archived_benchmarks/taco_pass1",
+            "eval/bigcodebench_pass1",
+            "eval/coding_eval",
+            "eval/coding_eval_v2",
+            "eval/config_loader",
+            "eval/config_manager",
+            "eval/datasets_download",
+            "eval/diagnostics/analyze_low_score_categories",
+            "eval/diagnostics/probe_batch_compare",
+            "eval/diagnostics/probe_extract_misalign",
+            "eval/diagnostics/probe_max_tokens_truncation",
+            "eval/diagnostics/recheck_low_categories",
+            "eval/framework/base",
+            "eval/harness_common",
+            "eval/humaneval_pass1",
+            "eval/livecodebench_pass1",
+            "eval/mbpp_pass1",
+            "eval/opencompass/configs/humaneval_local_endpoint",
+            "eval/run_code_eval",
+            "eval/run_stage2",
+            "eval/run_stage3_all_models",
+            "eval/run_stage4",
+            "eval/stage1_perf_test",
+            "eval/stage3_retest_fixed",
+            "eval/swebench_eval",
+            "eval/utils/raw_data_logger"
+          ]
+        },
+        {
+          "reason": "the model sweeps: the sweep runners, the quantization scripts (AutoRound / AWQ / GPTQ / compressed-tensors conversion / MTP weights), the int8 head and embedding quantizers, the serve and probe scripts and the concurrency bench. They produce quantized variants and measure them; no gate.",
+          "names": [
+            "eval/sweeps/concurrency_bench",
+            "eval/sweeps/models/bigbang_v1/quant/add_mtp_weights",
+            "eval/sweeps/models/bigbang_v1/quant/autoround_gpu",
+            "eval/sweeps/models/bigbang_v1/quant/autoround_improved",
+            "eval/sweeps/models/bigbang_v1/quant/autoround_quantize",
+            "eval/sweeps/models/bigbang_v1/quant/autoround_v4_sym",
+            "eval/sweeps/models/bigbang_v1/quant/convert_ct_to_sglang",
+            "eval/sweeps/models/bigbang_v1/quant/convert_ct_to_sglang_v2",
+            "eval/sweeps/models/bigbang_v1/quant/fix_autoround_keys",
+            "eval/sweeps/models/bigbang_v1/quant/gptq_quantize",
+            "eval/sweeps/models/bigbang_v1/quant/mtp_config",
+            "eval/sweeps/models/bigbang_v1/quant/mtp_sweep_config",
+            "eval/sweeps/models/bigbang_v1/quant/mtp_test_v4",
+            "eval/sweeps/models/bigbang_v1/quant/quantize_awq",
+            "eval/sweeps/models/bigbang_v1/quant/split_shards",
+            "eval/sweeps/models/bigbang_v1/sweep_runner",
+            "eval/sweeps/models/fuse_1_lite/probe_coding",
+            "eval/sweeps/models/fuse_1_lite/serve",
+            "eval/sweeps/models/qwen36_27b/sweep_runner",
+            "eval/sweeps/models/qwen3_8_27b/bench_dflash2",
+            "eval/sweeps/models/qwen3_8_27b/bench_dflash2_push",
+            "eval/sweeps/models/qwen3_8_27b/inspect_vllm_embed",
+            "eval/sweeps/models/qwen3_8_27b/quant/enhance_qwopus_fast",
+            "eval/sweeps/models/qwen3_8_27b/quant/quantize_qwopus_w4a16",
+            "eval/sweeps/models/qwen3_8_27b/quantize_embed_tokens_int8",
+            "eval/sweeps/models/qwen3_8_27b/quantize_lm_head_int8",
+            "eval/sweeps/models/qwen3_8_27b/sweep_runner",
+            "eval/sweeps/models/qwen3_8_27b/vllm_int8_patch",
+            "eval/sweeps/models/qwen3_8_flashnext/bench_gpu0_256k",
+            "eval/sweeps/sglang_sweeper",
+            "eval/sweeps/sweeper"
+          ]
+        }
+      ],
+      "note": "The llama-eval benchmark harness and the model sweeps. Every module named; none is a decision graph (they run benchmarks and produce quantized variants)."
+    },
+    {
+      "id": "ole_eval_swebench",
+      "upstream": "code/swebench",
+      "kind": "non-workflow (the SWE-bench inference runners + SFT data prep)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the SWE-bench side: the inference runners (v1..v6 and the flashnext variants, one per model generation), the SFT-dataset preparer and the prototype diff-expert trainer. They run the benchmark and build training data; there is no gate.",
+          "names": [
+            "inference",
+            "inference_v2",
+            "inference_v3",
+            "inference_v3_flashnext",
+            "inference_v5_flashnext",
+            "inference_v5b_flashnext",
+            "inference_v5c_flashnext",
+            "inference_v5d_flashnext",
+            "inference_v6_flashnext",
+            "prepare_sft_dataset",
+            "sft/prototype_diff_expert"
+          ]
+        }
+      ],
+      "note": "The SWE-bench side: one inference runner per model generation, the SFT-dataset preparer and a prototype trainer. Named not-a-workflow: they run the benchmark and build data."
+    },
+    {
+      "id": "ole_eval_dllm",
+      "upstream": "code/dllm",
+      "kind": "mixed (the masked-diffusion LM + a ported coherence gate + two pass@1 runners)",
+      "recursive": true,
+      "ported": {
+        "eval/sanity_ar_base": "bdd/workflows/guards/s4_gate.feature"
+      },
+      "not_a_workflow": [
+        {
+          "reason": "the masked-diffusion LM itself: the model / loss / sampling / training modules, the dataset loaders and the ModelScope ingest, and the hybrid->dense weight converter. It builds and trains the model; it decides nothing.",
+          "names": [
+            "data/coding_corpus",
+            "data/llada_dataset",
+            "data/modelscope_ingest",
+            "model/llada_loss",
+            "model/qwen3_dllm",
+            "scripts/convert_hybrid_to_dense",
+            "train/muon",
+            "train/sample",
+            "train/train_llada"
+          ]
+        }
+      ],
+      "gate_pending": {
+        "eval/eval_diffusion_coding": "the diffusion-coding pass@1 runner: it samples from the diffusion LM, executes each candidate against the benchmark's unit tests in a subprocess and reports pass@1. A candidate's verdict, though the promote/reject is drawn by hand from the JSON. Verdict-adjacent; port pending.",
+        "eval/eval_ar_coding": "the AR-coding pass@1 runner: the autoregressive counterpart of the diffusion-coding runner on the same benchmarks - it executes each candidate against the unit tests and reports pass@1. Verdict-adjacent; port pending."
+      },
+      "note": "The diffusion-LM line: the model / training / conversion modules (named), the S4 coherence gate (ported this round to bdd/workflows/guards/s4_gate.feature), and the two pass@1 runners registered as pending."
+    },
+    {
+      "id": "ole_eval_index",
+      "upstream": "code/eval_index",
+      "kind": "mixed (the eval-results index + tooling + a report generator registered pending)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the eval-results index and its tooling: the SQLite-backed store, the ingest and query tools, the CLI and the markdown report CLI, plus the perf benches. They store, format and measure results.",
+          "names": [
+            "db",
+            "eval_tool",
+            "ingest",
+            "report",
+            "perf/bench_responses_concurrency",
+            "perf/responses_longctx_bench",
+            "perf/responses_multiturn_bench",
+            "perf/vllm_cold_warm_bench"
+          ]
+        }
+      ],
+      "gate_pending": {
+        "report_gen": "the unified eval-report generator: it renders eval JSON into a standard markdown report and exits non-zero when the requested input or arguments are missing (and prints the threshold legend it calls 判定标准). Verdict-adjacent; port pending."
+      },
+      "note": "The eval-results index: the store, the ingest / query / report tooling and the perf benches (named), plus the report generator, registered as a pending gate."
+    },
+    {
+      "id": "ole_eval_inference",
+      "upstream": "code/inference",
+      "kind": "mixed (weight-reformat fixes + WCD/WLD plumbing + three deployment gates pending)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the AWQ / GGUF weight-reformat fix: the conversion, dequant, key-rename and shard-repair scripts under one dated fix directory, plus the source-patch applier for the tool-call-history fix. They rewrite weights and patch a server; no policy over an answer.",
+          "names": [
+            "fixes/qwen4exp_awq_reformat_20260907/convert_awq_keys",
+            "fixes/qwen4exp_awq_reformat_20260907/convert_full",
+            "fixes/qwen4exp_awq_reformat_20260907/convert_to_gguf",
+            "fixes/qwen4exp_awq_reformat_20260907/convert_v2",
+            "fixes/qwen4exp_awq_reformat_20260907/dequant_awq_to_bf16",
+            "fixes/qwen4exp_awq_reformat_20260907/rename_and_dequant_hc",
+            "fixes/qwen4exp_awq_reformat_20260907/rename_awq_keys",
+            "fixes/qwen4exp_awq_reformat_20260907/repair_gguf_gate_up",
+            "fixes/sglang_toolcall_history_400_20260822/apply_patch"
+          ]
+        },
+        {
+          "reason": "the WCD / WLD optimization plumbing: the weighted-cache supervisor and library, the block-FP8 quantizer, and the weight-load daemon that prewarms page cache on demand. They schedule, quantize and prewarm.",
+          "names": [
+            "optimization/wcd_sglang_20260822/quantize_block_fp8",
+            "optimization/wcd_sglang_20260822/wcd_lib",
+            "optimization/wcd_sglang_20260822/wcd_supervisor",
+            "optimization/wld_sglang_20260823/wld_daemon"
+          ]
+        }
+      ],
+      "gate_pending": {
+        "fixes/sglang_toolcall_history_400_20260822/verify": "the multi-turn tool-call fix verification: it runs four end-to-end checks (A-D) against the patched sglang and its proxy and exits 0 only when all pass (`Exit code 0 = all checks passed`). A gate over a fix. Port pending.",
+        "optimization/wld_sglang_20260823/e2e_awq_int4_wld": "the AWQ-INT4 cold-vs-warm deployment e2e: it brings the model up cold and warm (with the weight-load daemon), measures health / load time and checks the generated content is consistent, exiting non-zero on any failure. A deployment gate. Port pending.",
+        "fixes/vllm_deadlock_watchdog_20260827/vllm_watchdog": "the vLLM deadlock watchdog: it reads the server's metrics and engine log and decides whether a server that answers /health but makes no progress is deadlocked (running > 0 and generation stalled past a threshold), then restarts it. A state machine with a named verdict. Port pending."
+      },
+      "note": "The inference fixes and optimization plumbing: the weight conversions and daemons (named), and the three verdict-bearing scripts - the tool-call fix verification, the cold/warm deployment e2e, and the vLLM deadlock watchdog - registered as pending gates."
     }
   ]
 }

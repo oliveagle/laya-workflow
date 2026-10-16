@@ -7175,5 +7175,39 @@
       "ev_weights": "ok",
       "ev_run": "fail"
     }
+  },
+  "s4_gate": {
+    "s4_pass": {
+      "ev_a": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d": "pass",
+      "ev_e": "pass"
+    },
+    "s4_fail_a": {
+      "ev_a": "fail"
+    },
+    "s4_fail_b": {
+      "ev_a": "pass",
+      "ev_b": "fail"
+    },
+    "s4_fail_c": {
+      "ev_a": "pass",
+      "ev_b": "pass",
+      "ev_c": "fail"
+    },
+    "s4_fail_d": {
+      "ev_a": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d": "fail"
+    },
+    "s4_fail_e": {
+      "ev_a": "pass",
+      "ev_b": "pass",
+      "ev_c": "pass",
+      "ev_d": "pass",
+      "ev_e": "fail"
+    }
   }
 }

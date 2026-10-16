@@ -613,10 +613,12 @@ enum BddCmd {
         write_pin: Option<String>,
     },
     /// Audit the scope census: every known upstream workflow is accounted for -
-    /// ported (as a `@decision` graph), or named as an optimizer search-space
-    /// with a reason. Reads `bench/bdd/scope_census.json`; `--sources <ole-eval
-    /// root>` makes the census match the live `.py` files, so a new upstream
-    /// workflow cannot be silently skipped.
+    /// ported (as a `@decision` graph), named as an optimizer search-space with a
+    /// reason, named as `not_a_workflow` (engine / model / harness, one reason per
+    /// group), or named under `gate_pending` (gate-shaped but not yet ported, one
+    /// reason naming the gate). Reads `bench/bdd/scope_census.json`; `--sources
+    /// <ole-eval root>` makes the census match the live `.py` files, so a new
+    /// upstream workflow cannot be silently skipped.
     ScopeCheck {
         /// An ole-eval (or similar) checkout root; the census `upstream` paths
         /// are resolved under it. Omit to judge the census on its own.
