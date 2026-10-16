@@ -3037,6 +3037,54 @@ pub fn test_bdd_browser_gate(h: &mut Harness) {
     }
 }
 
+/// The rule behind `bdd.release` refusing a release it must refuse: a close
+/// counts only when the target has *left* the browser's list.
+///
+/// Chrome's `/json/close/{id}` is asynchronous - it keeps answering 200 "Target
+/// is closing" while the target is still listed - so counting an accepted
+/// request as a closed tab made `bdd.release` unable to refuse releasing a tab it
+/// had already released. `bdd_release_probe` is the end-to-end gate for that; the
+/// membership test it rests on is pinned here so the parsing cannot drift
+/// without a browser being present.
+pub fn test_bdd_release_teardown(h: &mut Harness) {
+    use laya_workflow::capability::browser::target_listed_in;
+
+    let list = json!([
+        {"id": "AAA", "type": "page"},
+        {"id": "BBB", "type": "background_page"}
+    ]);
+    h.eq(
+        "release teardown: a listed target is found",
+        target_listed_in(&list, "BBB"),
+        true,
+    );
+    h.eq(
+        "release teardown: an unlisted target is not",
+        target_listed_in(&list, "CCC"),
+        false,
+    );
+    h.eq(
+        "release teardown: an empty list lists nothing",
+        target_listed_in(&json!([]), "AAA"),
+        false,
+    );
+    h.eq(
+        "release teardown: a payload that is not a list lists nothing",
+        target_listed_in(&json!({"id": "AAA"}), "AAA"),
+        false,
+    );
+    h.eq(
+        "release teardown: an entry whose id is not a string is skipped",
+        target_listed_in(&json!([{"id": 7}, {"no_id": true}]), "7"),
+        false,
+    );
+    h.eq(
+        "release teardown: a non-string id never matches a string lookup",
+        target_listed_in(&json!([{"id": 7}]), "null"),
+        false,
+    );
+}
+
 /// `bdd run --jobs N` gives every worker its own CDP endpoint, so two workers
 /// must never be handed the same port. `free_port()` binds and releases, so it
 /// can hand back a port an earlier worker already holds; the draw below is pinned

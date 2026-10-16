@@ -973,22 +973,75 @@ fn ws_endpoint(endpoint: &str, path: &str) -> Result<String> {
     Ok(format!("{stripped}{path}"))
 }
 
-/// Chrome's `/json/close/{id}` replies with plain text, so use a raw bounded
+/// Ask Chrome to close `target_id` over the DevTools HTTP endpoint.
+///
+/// `/json/close/{id}` replies with plain text, so this uses a raw bounded
 /// request instead of the JSON-decoding helper.
-fn http_close(endpoint: &str, target_id: &str, timeout: Duration) -> Result<()> {
+///
+/// `Ok(true)` means the request was **accepted** (200, "Target is closing"),
+/// `Ok(false)` means Chrome answered 404 ("No such target id") - there is no
+/// such tab, which is an answer rather than a fault - and `Err` is a real
+/// transport/status failure.
+///
+/// `Ok(true)` is deliberately *not* "the tab is gone": `/json/close` is
+/// **asynchronous** and keeps answering 200 "Target is closing" for as long as
+/// the target is still in the browser's list, so two back-to-back closes of one
+/// id can both be accepted (measured: 7 of 30). A caller that needs "closed a
+/// tab" as a *fact* has to confirm the teardown as well - see
+/// [`close_target_ids`].
+fn http_close(endpoint: &str, target_id: &str, timeout: Duration) -> Result<bool> {
     let url = format!("{endpoint}/json/close/{target_id}");
     let resp = ureq::AgentBuilder::new()
         .timeout(timeout)
         .build()
         .get(&url)
         .set("accept", "text/plain, application/json")
-        .call()
-        .map_err(|e| anyhow!("Chrome CDP GET {url} failed: {e}"))?;
-    let status = resp.status();
-    if (200..300).contains(&status) {
-        Ok(())
-    } else {
-        bail!("Chrome CDP GET {url} returned HTTP {status}")
+        .call();
+    match resp {
+        Ok(r) if (200..300).contains(&r.status()) => Ok(true),
+        Err(ureq::Error::Status(404, _)) => Ok(false),
+        Ok(r) => bail!("Chrome CDP GET {url} returned HTTP {}", r.status()),
+        Err(e) => Err(anyhow!("Chrome CDP GET {url} failed: {e}")),
+    }
+}
+
+/// Is `target_id` one of the targets Chrome currently lists?
+///
+/// Pure over the `/json/list` payload so the parsing is testable without a
+/// browser. Anything other than a JSON array of objects with a string `id` is
+/// "not listed": a listing that cannot be read must never be mistaken for a tab
+/// that is still there.
+pub fn target_listed_in(list: &Value, target_id: &str) -> bool {
+    list.as_array().is_some_and(|items| {
+        items
+            .iter()
+            .any(|t| t.get("id").and_then(Value::as_str) == Some(target_id))
+    })
+}
+
+/// The `/json/list` membership test for a real browser, bounded by `timeout`.
+fn target_listed(endpoint: &str, target_id: &str, timeout: Duration) -> Result<bool> {
+    let list = http_json(endpoint, "GET", "/json/list", timeout)?;
+    Ok(target_listed_in(&list, target_id))
+}
+
+/// Wait until `target_id` has actually left the browser's target list, bounded
+/// by `timeout`.
+///
+/// This is what turns "the close was accepted" into "the tab is gone". Chrome
+/// drops the target from the list within milliseconds once the close is
+/// processed (measured: gone by the next poll, 20-50ms in the worst case), so
+/// one or two polls is the normal cost.
+fn wait_target_gone(endpoint: &str, target_id: &str, timeout: Duration) -> Result<bool> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if !target_listed(endpoint, target_id, timeout)? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -1332,7 +1385,23 @@ pub(crate) fn close_target_ids(
     let mut errors = Vec::new();
     for id in ids {
         match http_close(endpoint, id, timeout) {
-            Ok(()) => closed_count += 1,
+            // Accepted - but "accepted" is not "closed": while the tab is still
+            // tearing down the same id answers 200 again, so counting the
+            // request made `bdd.release` unable to refuse releasing a tab it had
+            // already released (the bdd_release_probe caught it: 7 of 30
+            // back-to-back double closes were still accepted). The target has to
+            // leave the browser's list before this counts as a close.
+            Ok(true) => match wait_target_gone(endpoint, id, timeout) {
+                Ok(true) => closed_count += 1,
+                Ok(false) => errors.push(json!({
+                    "target_id": id,
+                    "error": "accepted, but the target is still listed after the close",
+                })),
+                Err(e) => errors.push(json!({"target_id": id, "error": e.to_string()})),
+            },
+            // 404: nothing to close. The caller decides whether that is a
+            // mistake (bdd.release: it is) - it is not a close, and not an error.
+            Ok(false) => {}
             // Keep the reason: a silently dropped tab is otherwise invisible
             // (and this is the only place a close can fail).
             Err(e) => errors.push(json!({"target_id": id, "error": e.to_string()})),
@@ -4314,6 +4383,83 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
 
         assert_eq!(launch_binary(&cap("", true)), default_chrome_binary());
+    }
+
+    /// `bdd.release` counts a *tab that is gone*, not a request that was
+    /// accepted. Chrome's `/json/close/{id}` is asynchronous: it keeps answering
+    /// 200 "Target is closing" while the target is still in the browser's list,
+    /// so two back-to-back closes of one id can both be accepted (measured: 7 of
+    /// 30 before this was fixed). `bdd_release_probe` exists to catch exactly
+    /// that, and it did - but only under load, once in four `--jobs 16` runs.
+    /// This pins the rule deterministically and without load: the second close
+    /// of a tab must count zero, every time. Skipped where there is no Chrome.
+    #[test]
+    fn a_double_close_counts_the_tab_once() {
+        let _g = test_guard();
+        if find_chrome_binary().is_none() {
+            eprintln!("skipped: no Chrome/Chromium on this box");
+            return;
+        }
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let launcher = repo.join("scripts/bdd/chrome-headless.sh");
+        if !launcher.is_file() {
+            eprintln!("skipped: no scripts/bdd/chrome-headless.sh in {repo:?}");
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let profile = std::env::temp_dir().join(format!("laya-close-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&profile);
+        let mut child = std::process::Command::new(&launcher)
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn headless Chrome");
+        let endpoint = format!("http://127.0.0.1:{port}");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while http_json(&endpoint, "GET", "/json/version", Duration::from_millis(500)).is_err() {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = std::fs::remove_dir_all(&profile);
+                panic!("headless Chrome never exposed CDP at {endpoint}");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        const TRIALS: usize = 20;
+        let mut second_counted = 0usize;
+        let mut first_short = 0usize;
+        for _ in 0..TRIALS {
+            let id = open_background_target(&endpoint, Duration::from_secs(5)).expect("a target");
+            let (first, _) =
+                close_target_ids(&endpoint, std::slice::from_ref(&id), Duration::from_secs(5));
+            if first != 1 {
+                first_short += 1;
+            }
+            let (second, errs) =
+                close_target_ids(&endpoint, std::slice::from_ref(&id), Duration::from_secs(5));
+            if second != 0 {
+                second_counted += 1;
+                eprintln!("second close of {id} counted {second} (errors: {errs:?})");
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&profile);
+
+        // The first close must always count; a first close that does not would
+        // mean the teardown confirmation is too strict and `bdd.release` would
+        // refuse a tab it had just closed.
+        assert_eq!(first_short, 0, "{first_short}/{TRIALS} first closes counted zero");
+        // The second must never count - the rule under test.
+        assert_eq!(
+            second_counted, 0,
+            "a second close of an already-closed tab counted as a close {second_counted}/{TRIALS} times"
+        );
     }
 
     #[test]
