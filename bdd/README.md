@@ -820,7 +820,14 @@ decision graph. A universe whose upstream is *not publicly enumerable* (a privat
 repo) is pinned by name with `enumerate: false`, so it is accounted for instead of
 being silently left out of the bound. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
 census must name exactly the live upstream workflows, so a new one nobody ported
-fails the gate instead of going unnoticed. The browser stage is
+fails the gate instead of going unnoticed. Every one of these gates reads *this*
+repo's own tree, and an installed or tarball binary carries the path of the
+machine it was **built** on — so point `LAYA_WORKFLOW_REPO` at a laya-workflow
+checkout and they run against that checkout instead. With no checkout in reach
+they refuse with `rc=2` and say so, rather than report a green over an empty
+corpus (measured on the v0.11.0 tarball: `bdd round-trip` answered `0/0 decision
+workflows reproduce their dsl spec` and exited 0, where a real checkout reads
+163/163). The browser stage is
 **skip-not-fail**: `bdd run` prints a `skipped`
 line and exits 0 where no browser is installed, so the file stays green on a
 browserless CI runner, but a broken scenario fails wherever a browser exists.
@@ -1266,6 +1273,12 @@ into a browser it launched. Two consequences that are easy to trip over:
   with the folder absent every scenario fails fast with
   `browser extension is missing: …` and no Chrome is even started (measured: 1s,
   0/20) — a staging gap, not a hang.
+* **The corpus gates need the checkout for the same reason.** `bdd round-trip`,
+  `import-check`, `features-check`, `probe-check`, `doc-check`, `scope-check` and
+  `port-check` enumerate `bdd/`, `dsl/` and `bench/bdd/`; a binary unpacked away
+  from its build machine has none of it, so each used to report a green over an
+  empty corpus (`0/0`, rc=0). They now refuse with `rc=2` and name
+  `LAYA_WORKFLOW_REPO` — set it to a checkout, or run a binary built inside one.
 * **Attach mode does not need it at all.** The BDD and `browser_base` ops are
   pure CDP; measured 20/20 with `extensions/laya-browser` moved away. If an
   attached flow needs extension-backed ops, set `extension_path` explicitly

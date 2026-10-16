@@ -2285,8 +2285,59 @@ fn compile_step(step: &Step, has_page: bool) -> Result<(CompiledNode, bool)> {
 // ── transpiler ─────────────────────────────────────────────────────────────
 
 /// Repo root, derived from this source file's location (`src/bdd.rs`).
+///
+/// `LAYA_WORKFLOW_REPO` overrides it whenever its value is a non-empty path, so a
+/// release or installed binary - which carries the path of the machine it was
+/// *built* on, not the one it is unpacked on - can be pointed at a real checkout.
+/// Unset or empty keeps the compile-time path, which is what a binary run
+/// straight out of the checkout it was built in needs.
 pub fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
+    repo_root_with(std::env::var_os("LAYA_WORKFLOW_REPO"))
+}
+
+/// [`repo_root()`] with the override already resolved. Pure, so the mapping from
+/// the environment to a root is testable without mutating the process env.
+pub fn repo_root_with(override_dir: Option<std::ffi::OsString>) -> PathBuf {
+    match override_dir {
+        Some(d) if !d.is_empty() => PathBuf::from(d),
+        _ => Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf(),
+    }
+}
+
+/// Why a checkout is required, in one line, for the gates below.
+fn no_checkout_msg(root: &Path, what: &str) -> String {
+    format!(
+        "{what} reads this repo's own tree, but {} does not exist here - a release or installed \
+         binary carries the path of the machine it was built on, not the one it is unpacked on. \
+         Point LAYA_WORKFLOW_REPO at a laya-workflow checkout, or run a binary built inside one.",
+        root.display()
+    )
+}
+
+/// [`repo_root()`], or `None` (reason already on stderr) when it is not a checkout.
+///
+/// The gates below walk this repo's own corpus (`bdd/features`, `bdd/workflows`,
+/// `dsl/`, `bdd/README.md`, the scope census). Each enumerates it with `is_dir()`
+/// / `read_dir()` and reports what it found, so with no tree present each printed
+/// a green over an empty corpus. Measured on the v0.11.0 release asset run in a
+/// directory with no checkout, beside the same gates in a real checkout:
+///
+///   `bdd round-trip`      "0/0 decision workflows reproduce their dsl spec"    vs 163/163
+///   `bdd import-check`    "0/0 checked-in specs recompile from their feature"  vs 163/163
+///   `bdd features-check`  "0/0 checked-in features compile ()"                 vs 204/204
+///   `bdd probe-check`     "bdd probes: none found - skipped"                   vs 6 wired
+///
+/// all at rc=0 - the same fail-open `validate --spec <missing>` had (`0 passed,
+/// 0 failed`, rc=0), and why `scripts/bdd/check.sh` probes a binary before
+/// trusting it. A gate that examined nothing is not a pass: these answer rc=2
+/// (the "could not run" code `live-decisions` already uses) and say how to fix it.
+fn checkout_root(what: &str) -> Option<PathBuf> {
+    let root = repo_root();
+    if root.is_dir() {
+        return Some(root);
+    }
+    eprintln!("{}", no_checkout_msg(&root, what));
+    None
 }
 
 /// The `chrome_binary` a transpiled scenario gets when its config pins none.
@@ -4349,6 +4400,13 @@ fn validate_spec(spec_path: &str) -> Result<(), String> {
 pub fn build(o: &BuildOptions) -> Result<i32> {
     let root = repo_root();
     let feature_dir = root.join("bdd").join("features");
+    // No file arguments means "build this repo's corpus". With no checkout there
+    // is no corpus, and the old "no feature files selected" (rc=1) read like a
+    // filter that matched nothing rather than "there is no tree here at all".
+    if o.features.is_empty() && !feature_dir.is_dir() {
+        eprintln!("{}", no_checkout_msg(&root, "bdd build"));
+        return Ok(2);
+    }
     let prod_tag = "production";
 
     // Feature selection: explicit args, or all of bdd/features/*.feature
@@ -5897,7 +5955,9 @@ fn check_vocabulary_impl(silent: bool) -> Result<(i32, Option<String>)> {
 /// Port of `probe_check.py` — check hand-written probe specs without Chrome.
 pub fn check_probes() -> Result<i32> {
     const TERMINAL: &str = "STOP";
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd probe-check") else {
+        return Ok(2);
+    };
     let runner_state: BTreeSet<String> = ["url", "cdp_port", "cdp_profile"]
         .iter()
         .map(|s| s.to_string())
@@ -6374,7 +6434,9 @@ impl CommandTimeout {
 
 /// Port of `doc_check.py` — keep the numbers bdd/README.md quotes honest.
 pub fn check_doc() -> Result<i32> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd doc-check") else {
+        return Ok(2);
+    };
     let readme = std::fs::read_to_string(root.join("bdd").join("README.md"))
         .with_context(|| "reading bdd/README.md")?;
     let agent = std::fs::read_to_string(root.join("bdd").join("AGENT.md"))
@@ -9953,7 +10015,9 @@ impl Default for ImportCheckOptions {
 /// *recoverable* from the spec alone. A spec that cannot be imported is a
 /// workflow BDD cannot yet express.
 pub fn import_check(o: &ImportCheckOptions) -> Result<i32> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd import-check") else {
+        return Ok(2);
+    };
     let wf_root = root.join("bdd").join("workflows");
     let mut features: Vec<PathBuf> = Vec::new();
     if wf_root.is_dir() {
@@ -10102,7 +10166,9 @@ impl Default for FeaturesCheckOptions {
 /// bucket - a `.feature` dropped in a directory no gate reads is *named* here
 /// rather than silently shipping unverified.
 pub fn features_check(o: &FeaturesCheckOptions) -> Result<i32> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd features-check") else {
+        return Ok(2);
+    };
     let (total, compiled, buckets, verdicts, problems) = features_check_impl(&root)?;
     if let Some(p) = &o.json {
         let out = root.join(p);
@@ -10727,7 +10793,9 @@ pub fn port_check(o: &PortCheckOptions) -> Result<i32> {
         }
     }
 
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd port-check") else {
+        return Ok(2);
+    };
     let sources = source_names;
     let features = read_stem_set(&root.join("bdd").join("workflows").join(&o.cat), "feature");
     let specs = read_stem_set(&root.join("dsl").join(&o.cat), "json");
@@ -10989,7 +11057,9 @@ pub fn scope_check_impl(
 }
 
 pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd scope-check") else {
+        return Ok(2);
+    };
     let census = std::fs::read_to_string(root.join("bench").join("bdd").join("scope_census.json"))
         .with_context(|| "reading bench/bdd/scope_census.json")?;
     let sources: Option<PathBuf> = o.sources.as_ref().map(PathBuf::from);
@@ -11048,7 +11118,9 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
 /// the printing — the same `(rc, Some(success line))` shape `check_vocabulary_impl`
 /// uses, so a gate's number is never compared against a copy of itself.
 fn round_trip_impl(silent: bool, o: &RoundTripOptions) -> Result<(i32, Option<String>)> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd round-trip") else {
+        return Ok((2, None));
+    };
     let wf_root = root.join("bdd").join("workflows");
     let mut features: Vec<PathBuf> = Vec::new();
     if wf_root.is_dir() {

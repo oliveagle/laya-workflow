@@ -490,6 +490,21 @@ Feature: support_ticket_router
   - **诚实边界**：这只保证「选择器不空转」；**不**能证明手里那份二进制是新的 —— 一份旧二进制在新 guard 落地**之前**仍是 fail-open，故同轮把 `~/.cargo/bin/` 里那份陈旧的 `laya-workflow-tests` 一并更新（此前安装步骤只拷 `laya-workflow`，没拷测试二进制）。
   - **关键路径**：`src/workflow_tests/main.rs`（选择器校验）、`src/workflow_tests/runner.rs`（新）、`scripts/verify.sh`（注释）、本条目；`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§84）。
 
+- **release / 安装版二进制里，所有「遍历本仓语料」的门禁都在空语料上判绿（P212，正确性 / 一致性轴，fail-open 同族第 3 例）**：
+  - **问题（真跑暴露的）**：`repo_root()` 是 `env!("CARGO_MANIFEST_DIR")` —— **编译期常量**，release 二进制里嵌的是**构建机**的路径（GitHub Actions runner 家目录下那条，`strings` 可见；本机编的嵌本机 checkout）。于是一份解包到别处的二进制，凡是遍历本仓语料的门禁都拿到「什么都没找到」，然后**把空语料报成绿**。实测（v0.11.0 release asset 放在无 checkout 的目录里，与真 checkout 并列）：
+    * `bdd round-trip` ⇒ `0/0 decision workflows reproduce their dsl spec`，rc=0 ／ 真 checkout 163/163
+    * `bdd import-check` ⇒ `0/0 checked-in specs recompile from their imported feature`，rc=0 ／ 真 checkout 163/163
+    * `bdd features-check` ⇒ `0/0 checked-in features compile ()`，rc=0 ／ 真 checkout 204/204
+    * `bdd probe-check` ⇒ `bdd probes: none found - skipped`，rc=0 ／ 真 checkout 6 wired
+    * `bdd scope-check` ⇒ `Error: reading bench/bdd/scope_census.json`，rc=1（红，但报的是「文件不在」而不是「这里没有树」）
+    * `bdd port-check --sources <ole-eval>` ⇒ `132 drift(s)`（66 源 × 2 侧全在报），rc=1（红，且全是幻影）
+  - **修法**：① `repo_root()` 认 `LAYA_WORKFLOW_REPO`（非空即覆盖；纯函数 `repo_root_with` 使这层映射可测，不必动进程环境）；② 新增 `checkout_root(what)` —— `repo_root()` 不是目录时把一条**说得出怎么办**的原因打到 stderr，并让门禁返回 **rc=2**（`live-decisions` 已在用的「跑不了」码）；套在 7 个整语料门禁上：`round-trip` / `import-check` / `features-check` / `probe-check` / `doc-check` / `scope-check` / `port-check`；`bdd build` 的**无参**路径同样 rc=2（旧消息 `no feature files selected` 像「过滤器没匹配上」，不像「这里根本没有树」）。
+  - **回归 `laya-workflow-tests bdd-checkout-root`（14 断言）**：纯映射三条（未设 / 空串忽略 / 非空覆盖）+ `repo_root_with(None)` 恰为本 checkout；再在**同一进程内**把 `LAYA_WORKFLOW_REPO` 指向不存在的路径，七个门禁逐一断言 **rc=2**（带 Drop 还原；section 顺序执行，不泄漏给邻居）；正对照指回真 checkout ⇒ `round-trip` / `import-check` / `features-check` 全 rc=0 且分别打印 163/163、163/163、204/204。
+  - **真跑**：全量 **6589 passed, 0 failed**（189 段，exit 0；+14 恰为新段）；`scripts/verify.sh` 全绿 **EXIT=0**；`LAYA_BDD_SKIP_BROWSER=1 scripts/bdd/check.sh` **EXIT=0**（`isolation:` 行仍在）；`bdd doc-check` 19/19 计数 + 194 条引用路径在盘。
+  - **对面仓同轮配对**：`ole-eval/scripts/_laya_bin.sh` 现在把 checkout 位置导出成 `LAYA_WORKFLOW_REPO`（被测二进制在 `<dir>/target/{release,debug}/` 下就推 `<dir>`，否则沿用已有的兄弟目录约定）—— 于是「拿**非本仓构建**的二进制跑 ole-eval 的 `bdd-ports` / `bdd-scope`」从 **EXIT=1** 变成 **EXIT=0**（实测：新编二进制复制到临时目录后 `bdd_scope_check.sh` / `bdd_port_check.sh` 双双 rc=0）；v0.11.0 那份 asset **不认**这个变量，仍红 —— 修复随下一个 release 发布。
+  - **诚实边界**：① 不改任何 workflow 语义，只把「空转绿」换成「红得说得出原因」；② `bdd run` / `bdd score` 与 MCP 侧的 `repo_root()` 读方不在本轮（前者带显式文件参数时本就不该要求 checkout，后者的降级形态另论）；③ 变量的效力只及于**认它**的二进制 —— 手里那份旧的仍是 fail-open。
+  - **关键路径**：`src/bdd.rs`（`repo_root` / `repo_root_with` / `no_checkout_msg` / `checkout_root` + 7 门禁 + `build` 无参路径）、`src/workflow_tests/t_bdd.rs`（`test_bdd_checkout_root`）、`src/workflow_tests/main.rs`（段注册）、`bdd/README.md`、`bdd/AGENT.md`（本条）；`ole-eval/scripts/_laya_bin.sh`、`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§85）。
+
 **当前语料现状**（本段每个数都由 `bdd doc-check` 从门禁复算，改了不更新就会点名）：`bench/dsl_smoke_expect.json` 覆盖 **127** 个 spec / **988** 个 state（多节点 spec 的每个样本按 P38 逐步钉 `trace.step_count` + 每步 node/action/answer）；`bench/dsl_smoke_states.json` 注册 **128** 个 spec / **989** 个 state；**分支覆盖门禁** 断言每个 state-registered spec 的可达节点全集被走到（白名单仅 1 条，容器节点已结构性排除）；覆盖台账 `128 offline-verified + 35 live-declared = 163 specs`。门禁实测：`scripts/bdd/check.sh` 全绿、`dsl smoke 163/163`、`bdd round-trip 163/163`（回归断言的条数、全量 `laya-workflow-tests` 的 section / passed 数只出现在 CI 输出里，不再写进文档 —— 一个没人复算的数一周就会变成谎话）。
 
 ### 作者循环（agent 怎么写一个决策 workflow）

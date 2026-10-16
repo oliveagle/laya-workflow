@@ -10499,3 +10499,116 @@ pub fn test_bdd_args_probe_verdicts(h: &mut Harness) {
         problems[2].contains("row \"d\"") && problems[2].contains("timed out"),
     );
 }
+
+/// The whole-corpus gates must not read a checkout-less binary as a pass.
+///
+/// Measured on the v0.11.0 release asset, run in a directory with no checkout:
+/// the binary carries the *build* machine's `repo_root` (the path is visible in
+/// `strings`), and every gate that walks this repo's tree then reported a green
+/// over an empty corpus, all at rc=0 - `bdd round-trip` "0/0 decision workflows
+/// reproduce their dsl spec", `bdd import-check` "0/0 checked-in specs recompile
+/// from their imported feature", `bdd features-check` "0/0 checked-in features
+/// compile ()", `bdd probe-check` "bdd probes: none found - skipped". The same
+/// gates in a real checkout read 163/163, 163/163, 204/204 and 6 wired. A pass
+/// that examined nothing is the fail-open `validate --spec <missing>` already
+/// was (`0 passed, 0 failed`, rc=0), so these now refuse with rc=2 (the
+/// "could not run" code `live-decisions` uses) and name `LAYA_WORKFLOW_REPO`.
+pub fn test_bdd_checkout_root(h: &mut Harness) {
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // The override as a pure mapping - no environment mutation needed for this
+    // half, so it cannot race anything.
+    h.eq(
+        "bdd repo_root: unset follows the build-time crate dir",
+        bdd::repo_root_with(None),
+        crate_dir.clone(),
+    );
+    h.eq(
+        "bdd repo_root: an empty override is ignored (not an empty root)",
+        bdd::repo_root_with(Some(std::ffi::OsString::new())),
+        crate_dir.clone(),
+    );
+    h.eq(
+        "bdd repo_root: a non-empty override wins",
+        bdd::repo_root_with(Some(std::ffi::OsString::from("/tmp"))),
+        std::path::PathBuf::from("/tmp"),
+    );
+    h.check(
+        "bdd repo_root: the build-time dir is itself a checkout",
+        crate_dir.is_dir(),
+    );
+
+    // End to end in this process: sections run in declaration order (see
+    // `workflow_tests::main`), and the guard restores the variable on drop, so
+    // the override cannot leak into a neighbour even on a panic.
+    struct Restore(Option<std::ffi::OsString>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("LAYA_WORKFLOW_REPO", v),
+                None => std::env::remove_var("LAYA_WORKFLOW_REPO"),
+            }
+        }
+    }
+    let _restore = Restore(std::env::var_os("LAYA_WORKFLOW_REPO"));
+
+    std::env::set_var("LAYA_WORKFLOW_REPO", "/nonexistent-laya-workflow-checkout");
+    h.eq(
+        "bdd round-trip refuses a checkout-less root (rc=2, not a green 0/0)",
+        bdd::round_trip(&bdd::RoundTripOptions { json: None }).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd import-check refuses a checkout-less root (rc=2)",
+        bdd::import_check(&bdd::ImportCheckOptions { json: None }).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd features-check refuses a checkout-less root (rc=2)",
+        bdd::features_check(&bdd::FeaturesCheckOptions { json: None }).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd probe-check refuses a checkout-less root (rc=2)",
+        bdd::check_probes().unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd doc-check refuses a checkout-less root (rc=2)",
+        bdd::check_doc().unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd scope-check refuses a checkout-less root (rc=2)",
+        bdd::scope_check(&bdd::ScopeCheckOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd port-check refuses a checkout-less root (rc=2)",
+        bdd::port_check(&bdd::PortCheckOptions {
+            sources: crate_dir.join("dsl"),
+            ..bdd::PortCheckOptions::default()
+        })
+        .unwrap(),
+        2,
+    );
+
+    // Positive control: pointed back at a real checkout, the same gates really
+    // run and really read the corpus (rc=0, and the counts are printed).
+    std::env::set_var("LAYA_WORKFLOW_REPO", &crate_dir);
+    h.eq(
+        "bdd round-trip runs green once a checkout is named",
+        bdd::round_trip(&bdd::RoundTripOptions { json: None }).unwrap(),
+        0,
+    );
+    h.eq(
+        "bdd import-check runs green once a checkout is named",
+        bdd::import_check(&bdd::ImportCheckOptions { json: None }).unwrap(),
+        0,
+    );
+    h.eq(
+        "bdd features-check runs green once a checkout is named",
+        bdd::features_check(&bdd::FeaturesCheckOptions { json: None }).unwrap(),
+        0,
+    );
+}
