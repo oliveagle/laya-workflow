@@ -101,6 +101,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("spec-folders", t_spec::test_spec_folders),
         ("spec-version", t_spec::test_spec_version),
         ("spec-layers", t_spec::test_spec_layers),
+        ("spec-builtin-root", t_spec::test_spec_builtin_root),
         ("spec-state-projection-runtime", t_spec::test_spec_state_projection_runtime),
         ("validate-unknown-action-kind", t_validate::test_validate_unknown_action_kind),
         ("validate-dangling-edge", t_validate::test_validate_dangling_edge),

@@ -149,7 +149,8 @@ through a **layered** set of spec roots (highest priority first):
    repo's topology travels with its code.
 3. **user** — `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`. Personal, never
    committed.
-4. **builtin** — `<crate>/dsl`, the specs shipped with the binary.
+4. **builtin** — the checkout's `<root>/dsl`, where `<root>` is `$LAYA_WORKFLOW_REPO` when set, else the binary's build-time crate dir — so a release binary pointed at a checkout still resolves the shipped specs. With no checkout the layer is named `<no checkout here: point LAYA_WORKFLOW_REPO at a laya-workflow checkout>`, not the path the build machine happened to hold. A *release* binary carries the path of the machine it was built
+   on, which is why this layer reads `LAYA_WORKFLOW_REPO` first.
 
 The first root that defines a name wins; a same-named spec in a lower-priority
 root is reported by `list` as `(shadowed by …)`. `laya-workflow list` prints the

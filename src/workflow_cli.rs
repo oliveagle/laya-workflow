@@ -1460,8 +1460,13 @@ fn main() -> Result<()> {
             let roots = laya_workflow::spec::spec_roots_low_to_high();
             println!("DSL search path (low → high; later overrides earlier):");
             for r in &roots {
-                let mark = if r.path.is_dir() { "" } else { "  (missing)" };
-                println!("  {:<8} {}{}", r.layer.as_str(), r.path.display(), mark);
+                // `spec_root_display` keeps a *missing* builtin root from printing
+                // the build machine's path (see its doc); a dev build is unchanged.
+                println!(
+                    "  {:<8} {}",
+                    r.layer.as_str(),
+                    laya_workflow::spec::spec_root_display(r.layer, &r.path)
+                );
             }
             let found = laya_workflow::spec::discover_layered()?;
             println!(

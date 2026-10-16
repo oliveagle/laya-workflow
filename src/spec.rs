@@ -176,8 +176,8 @@ pub fn from_spec_in(spec: &Value, base_dir: Option<&std::path::Path>) -> Result<
 ///
 /// A bare name is looked up across the layered spec roots (see [`spec_roots`]),
 /// highest priority first: the explicit pin (`set_dsl_dir` / `--dsl-dir`), the
-/// repo `.laya-workflow/dsl` / `dsl` tree, the user root, then `<crate>/dsl` —
-/// the first root that has the name wins.
+/// repo `.laya-workflow/dsl` / `dsl` tree, the user root, then the checkout's
+/// `<root>/dsl` (see [`builtin_spec_dir`]) — the first root that has the name wins.
 ///
 /// Accepted forms:
 ///   * `"workflow": "support_ticket_router"`        → first layered root that has it
@@ -225,7 +225,8 @@ pub fn dsl_dir_pinned() -> bool {
 /// Which layer a spec root belongs to. Later layers override earlier ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpecLayer {
-    /// `<crate>/dsl` — the specs shipped with the engine.
+    /// `<root>/dsl` — the specs shipped with the checkout the binary points at
+    /// (see [`builtin_spec_dir`]).
     Builtin,
     /// `~/.laya-workflow/dsl` (or `$LAYA_HOME` / `$LAYA_USER_DSL_DIR`).
     User,
@@ -254,6 +255,28 @@ pub struct SpecRoot {
     pub layer: SpecLayer,
 }
 
+/// How a spec root is named in `laya-workflow list`.
+///
+/// A *missing* builtin root has no honest path to print: the string the constant
+/// holds is the build machine's (`…/runner/work/…/dsl`), which leaks it and reads
+/// as "your tree is broken". Print the fix instead — unless the *user* named the
+/// root via `LAYA_WORKFLOW_REPO`, where echoing their own path is the most useful
+/// thing. Pure, so the rule is testable without touching the env.
+pub fn spec_root_display_with(layer: SpecLayer, path: &std::path::Path, named_by_user: bool) -> String {
+    if path.is_dir() {
+        return path.display().to_string();
+    }
+    if layer == SpecLayer::Builtin && !named_by_user {
+        return "<no checkout here: point LAYA_WORKFLOW_REPO at a laya-workflow checkout>".to_string();
+    }
+    format!("{}  (missing)", path.display())
+}
+
+/// [`spec_root_display_with`] with the "was `LAYA_WORKFLOW_REPO` set?" bit resolved.
+pub fn spec_root_display(layer: SpecLayer, path: &std::path::Path) -> String {
+    spec_root_display_with(layer, path, std::env::var_os("LAYA_WORKFLOW_REPO").is_some())
+}
+
 /// Repo-relative spec directories, searched upward from the cwd (nearest first).
 ///
 /// `.laya-workflow/dsl` wins over a bare `dsl/` so a repo can keep a dedicated,
@@ -262,9 +285,23 @@ pub const REPO_SPEC_REL_PATHS: [&str; 2] = [".laya-workflow/dsl", "dsl"];
 
 static DSL_DIR_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `<crate>/dsl` — the specs compiled into the engine's source tree.
+/// The specs that ship *with the checkout the binary points at*: `<root>/dsl`,
+/// where `<root>` is [`crate::bdd::repo_root`] — the `LAYA_WORKFLOW_REPO` override
+/// when set, else this file's own crate dir.
+///
+/// Deliberately not the bare `env!("CARGO_MANIFEST_DIR")` it used to be: a release
+/// or installed binary carries the path of the machine it was *built* on, which is
+/// a tree that need not exist where it is unpacked — and `laya-workflow list`
+/// printed that path as the `builtin` layer. Honouring the override lets a binary
+/// unpacked away from its build machine still resolve the shipped specs.
 pub fn builtin_spec_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/dsl"))
+    builtin_spec_dir_with(std::env::var_os("LAYA_WORKFLOW_REPO"))
+}
+
+/// [`builtin_spec_dir()`] with the override already resolved. Pure, so the mapping
+/// from the environment to a root is testable without mutating the process env.
+pub fn builtin_spec_dir_with(override_dir: Option<std::ffi::OsString>) -> std::path::PathBuf {
+    crate::bdd::repo_root_with(override_dir).join("dsl")
 }
 
 /// Per-user spec root: `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`.

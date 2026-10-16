@@ -19,7 +19,8 @@ Spec roots are **layered**. A bare `"workflow": "name"` ref (and `list`) resolve
 against, highest priority first: an explicit pin (`--dsl-dir` / `$LAYA_DSL_DIR`,
 which replaces the rest) → **repo** `.laya-workflow/dsl/` (preferred) or `dsl/`,
 found by walking up to the git root → **user** `~/.laya-workflow/dsl`
-(`$LAYA_USER_DSL_DIR` / `$LAYA_HOME` override) → **builtin** `<crate>/dsl`.
+(`$LAYA_USER_DSL_DIR` / `$LAYA_HOME` override) → **builtin** the checkout's `<root>/dsl` (`$LAYA_WORKFLOW_REPO`, else the binary's build-time
+crate dir) — a release binary pointed at a checkout resolves the shipped specs from it.
 This directory is the repo layer for the checkout; commit changes here so the
 topology follows the repo. The first root to define a name wins.
 See `ole_eval/README.md` for the ole-eval scenario mapping,

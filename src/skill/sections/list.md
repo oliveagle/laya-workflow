@@ -6,7 +6,11 @@
 2. **repo** — `.laya-workflow/dsl/` (preferred) or `dsl/`, walking up from the
    cwd and stopping at the git root (so it follows the repo's commits);
 3. **user** — `$LAYA_USER_DSL_DIR` → `~/.laya-workflow/dsl`;
-4. **builtin** — `<crate>/dsl` (shipped with the binary).
+4. **builtin** — the checkout's `<root>/dsl`, where `<root>` is `$LAYA_WORKFLOW_REPO` when
+   set, else the binary's build-time crate dir. A release binary carries the path of the
+   machine it was *built* on, so point `$LAYA_WORKFLOW_REPO` at a checkout to resolve the
+   shipped specs; with no checkout this layer prints
+   `<no checkout here: point LAYA_WORKFLOW_REPO at a laya-workflow checkout>`.
 
 It prints the search path (low → high) plus every discoverable spec with its
 layer, version, and path. The first root to define a name wins; a same-named
@@ -14,7 +18,7 @@ spec in a lower-priority root is listed with `(shadowed by …)`:
 
 ```
 DSL search path (low → high; later overrides earlier):
-  builtin  <crate>/dsl
+  builtin  <root>/dsl
   user     ~/.laya-workflow/dsl  (missing)
   repo     /path/to/repo/dsl
 

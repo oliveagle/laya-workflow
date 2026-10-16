@@ -1010,3 +1010,91 @@ pub fn test_spec_state_projection_runtime(h: &mut Harness) {
         seen,
     );
 }
+
+/// P215: the `builtin` spec root is the *checkout the binary points at*, not the
+/// compile-time crate dir. A release or installed binary carries the path of the
+/// machine it was built on, so the old `env!("CARGO_MANIFEST_DIR")` named a tree
+/// that is not beside it — and `laya-workflow list` printed that path as the
+/// `builtin` layer (`…/runner/work/…/dsl  (missing)` on the v0.11.0 asset).
+/// `builtin_spec_dir()` now honours `LAYA_WORKFLOW_REPO`, and a missing builtin
+/// root is named by the fix rather than by that path.
+pub fn test_spec_builtin_root(h: &mut Harness) {
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Pure mapping: unset / empty keep the crate dir, a non-empty override wins.
+    h.eq(
+        "builtin root: unset -> <crate dir>/dsl",
+        spec::builtin_spec_dir_with(None),
+        crate_dir.join("dsl"),
+    );
+    h.eq(
+        "builtin root: an empty override is ignored",
+        spec::builtin_spec_dir_with(Some(std::ffi::OsString::new())),
+        crate_dir.join("dsl"),
+    );
+    h.eq(
+        "builtin root: a non-empty override wins",
+        spec::builtin_spec_dir_with(Some(std::ffi::OsString::from("/tmp"))),
+        std::path::PathBuf::from("/tmp/dsl"),
+    );
+
+    // Display: a *missing* unnamed builtin root never shows the path the constant
+    // holds; a root the user named is echoed; other layers keep `(missing)`.
+    let buildish = std::path::Path::new("/nonexistent-build-machine/laya-workflow/dsl");
+    let shown = spec::spec_root_display_with(spec::SpecLayer::Builtin, buildish, false);
+    h.check(
+        "builtin root display: a missing unnamed root hides the build path",
+        !shown.contains("/nonexistent-build-machine") && shown.contains("LAYA_WORKFLOW_REPO"),
+    );
+    h.check(
+        "builtin root display: a user-named root is echoed",
+        spec::spec_root_display_with(spec::SpecLayer::Builtin, buildish, true)
+            .contains("/nonexistent-build-machine"),
+    );
+    h.check(
+        "root display: a missing user/repo root still reads '(missing)'",
+        spec::spec_root_display_with(
+            spec::SpecLayer::User,
+            std::path::Path::new("/tmp/nope-user"),
+            false,
+        )
+        .ends_with("(missing)"),
+    );
+    h.check(
+        "root display: an existing root prints its path as-is",
+        spec::spec_root_display_with(spec::SpecLayer::Builtin, &crate_dir, false)
+            == crate_dir.display().to_string(),
+    );
+
+    // End to end in this process: the override moves the floor of the search path,
+    // and `list` (via the same display helper) echoes the user's own path.
+    struct Restore(Option<std::ffi::OsString>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("LAYA_WORKFLOW_REPO", v),
+                None => std::env::remove_var("LAYA_WORKFLOW_REPO"),
+            }
+        }
+    }
+    let _restore = Restore(std::env::var_os("LAYA_WORKFLOW_REPO"));
+    std::env::set_var("LAYA_WORKFLOW_REPO", "/nonexistent-lw-root");
+    h.eq(
+        "builtin root: the override moves the floor of the search path",
+        spec::spec_roots().last().map(|r| (r.layer, r.path.clone())),
+        Some((
+            spec::SpecLayer::Builtin,
+            std::path::PathBuf::from("/nonexistent-lw-root/dsl"),
+        )),
+    );
+    h.check(
+        "builtin root: with the override set, list echoes the user's own path",
+        spec::spec_root_display(spec::SpecLayer::Builtin, std::path::Path::new("/nonexistent-lw-root/dsl"))
+            .contains("/nonexistent-lw-root/dsl"),
+    );
+    std::env::set_var("LAYA_WORKFLOW_REPO", &crate_dir);
+    h.check(
+        "builtin root: pointed at a checkout, the builtin layer is a real tree again",
+        spec::builtin_spec_dir() == crate_dir.join("dsl") && spec::builtin_spec_dir().is_dir(),
+    );
+}
