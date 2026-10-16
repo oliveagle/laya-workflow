@@ -321,6 +321,36 @@ pub fn shell_argv(cmd: &str) -> Vec<String> {
     }
 }
 
+/// True when `name` names a program this host could launch: an **explicit
+/// path** that exists, or a **bare name** found on `$PATH`.
+///
+/// This is the pure half of [`program_available`] over an explicit directory
+/// list, so the `$PATH` policy is unit-testable without mutating the process
+/// environment — the same split `browser::find_chrome_binary[_in]` uses.
+/// Only regular-file existence is checked (matching that helper); a
+/// non-executable file of the right name is treated as present rather than
+/// second-guessed.
+pub fn program_available_in(dirs: &[std::path::PathBuf], name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if name.contains('/') {
+        return std::path::Path::new(name).is_file();
+    }
+    dirs.iter().any(|d| {
+        !d.as_os_str().is_empty() && d.join(name).is_file()
+    })
+}
+
+/// True when `name` (a bare program name, or an explicit path) resolves to a
+/// file this host could launch. See [`program_available_in`] for the policy.
+pub fn program_available(name: &str) -> bool {
+    let dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect())
+        .unwrap_or_default();
+    program_available_in(&dirs, name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,6 +471,25 @@ mod tests {
         assert!(record["downloaded_at"].as_str().unwrap().ends_with('Z'));
         assert!(record["downloaded_at_local"].as_str().unwrap().len() >= 25);
         assert!(record["downloaded_at_unix_ms"].as_u64().unwrap() > 1_600_000_000_000);
+    }
+
+    #[test]
+    fn resolves_programs_on_path_and_by_explicit_path() {
+        let d = std::env::temp_dir().join(format!("laya-util-path-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let exe = d.join("mytool");
+        std::fs::write(&exe, b"#!/bin/sh\n").unwrap();
+        // Bare name: found only in a non-empty dir that holds it.
+        assert!(program_available_in(&[d.clone()], "mytool"));
+        assert!(!program_available_in(&[d.clone()], "nosuchtool"));
+        assert!(!program_available_in(&[d.join("nope")], "mytool"));
+        // An explicit path is checked directly, not searched for.
+        assert!(program_available_in(&[], exe.to_str().unwrap()));
+        assert!(!program_available_in(&[d.clone()], "/nope/mytool"));
+        // Empty entries (a `::` in $PATH) never match.
+        assert!(!program_available_in(&[std::path::PathBuf::new()], "mytool"));
+        std::fs::remove_file(&exe).ok();
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]

@@ -1205,6 +1205,16 @@ higher-level `shell` capability and the transpiled `I run the command` step
 ordinary command string works on both. Reserve `platforms` for the cases that
 genuinely need one OS's tooling.
 
+The same stance covers **external programs**. A `shell` capability that names a
+program this host does not have — or an `exec`/`db` capability whose program
+cannot be spawned — has its states skipped (validate-only) rather than failing,
+so the gate stays green on a runner with no `sqlite3`. The `shell` miss is the
+subtle one: the platform shell `/bin/sh -c` still starts and exits 127, which
+the workflow reads as a plain "no" rather than an error, so a `shell` command's
+program is pre-flighted by name; an `exec`/`db` spawn failure is caught when the
+state runs. A program at an explicit path that is missing is a **defect**, not an
+environment gap, and still fails.
+
 Gating is enforced at run time: `laya-workflow dsl smoke` skips (validate-only)
 any spec that *calls* a capability gated to another platform, and reports it as
 skipped rather than failed — the same stance as a network-bound spec, and for

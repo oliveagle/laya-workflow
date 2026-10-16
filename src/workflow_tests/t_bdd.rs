@@ -1925,6 +1925,143 @@ pub fn test_bdd_smoke_offline_asset_skip(h: &mut Harness) {
     );
 }
 
+/// P197: a `shell` capability whose **fixed program** is not installed is
+/// skipped validate-only instead of failing — the third member of the
+/// "unreachable here ⇒ validate-only" family, after a network endpoint with no
+/// listener (P33) and an absent on-device asset (P196).
+///
+/// It covers the one *silent* miss: the platform shell `/bin/sh -c` still starts
+/// and exits 127, which the workflow's routing reads as a plain "no"; `exec` /
+/// `db` misses instead surface as a `spawn … failed` error and are caught by the
+/// run-error classifier (`missing_program`), which is what keeps a spec whose
+/// registered states never reach the node running for real.
+pub fn test_bdd_smoke_offline_binary_skip(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::{binary_bound, missing_program};
+    let root = bdd::repo_root();
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+
+    // ── Machine-independent half ──
+    // The skip can never widen past `shell`: a db-only spec and an exec-only
+    // spec both carry no bound, because their misses stay a run-time spawn
+    // error (which is a per-state skip that never touches a state that does not
+    // call them — `cua_desktop`'s lone `route` state, for one).
+    h.check(
+        "p197: db-only spec has no binary bound",
+        binary_bound(&load("dsl/laya_mem/persist_memory.json")).is_none(),
+    );
+    h.check(
+        "p197: exec-only spec has no binary bound",
+        binary_bound(&load("dsl/browser/browser_orchestrate_probe.json")).is_none(),
+    );
+    h.check(
+        "p197: shell-free spec has no binary bound",
+        binary_bound(&load("dsl/versioned/refund_policy.v1.json")).is_none(),
+    );
+
+    // A called shell capability naming a program that cannot exist is bound…
+    let fake = json!({
+        "capabilities": { "run": { "kind": "shell", "command": "p197-nosuch-program-xyz --flag" } },
+        "nodes": [ { "name": "start", "action": { "kind": "call", "capability": "run" } } ]
+    });
+    let why = binary_bound(&fake).expect("a missing shell program must bound the spec");
+    h.check(
+        "p197: a missing shell program names itself in the reason",
+        why.contains("p197-nosuch-program-xyz"),
+    );
+    // …but a command starting with a placeholder is not decided statically.
+    let placeholder = json!({
+        "capabilities": { "run": { "kind": "shell", "command": "${state.tool} --flag" } },
+        "nodes": [ { "name": "start", "action": { "kind": "call", "capability": "run" } } ]
+    });
+    h.check(
+        "p197: a placeholder-led shell command carries no binary bound",
+        binary_bound(&placeholder).is_none(),
+    );
+    // A declared-but-uncalled shell capability must not knock a spec out.
+    let uncalled = json!({
+        "capabilities": { "run": { "kind": "shell", "command": "p197-nosuch-program-xyz" } },
+        "nodes": [ { "name": "start", "action": { "kind": "stop" } } ]
+    });
+    h.check(
+        "p197: an uncalled shell capability does not bound the spec",
+        binary_bound(&uncalled).is_none(),
+    );
+
+    // The run-error classifier: a bare not-found names the program; an explicit
+    // path (a real defect) and a non-ENOENT failure do not.
+    h.check(
+        "p197: a bare spawn-ENOENT yields the program",
+        missing_program("spawn \"sqlite3\" failed: No such file or directory (os error 2)")
+            .as_deref()
+            == Some("sqlite3"),
+    );
+    h.check(
+        "p197: an explicit-path spawn-ENOENT is a defect, not an environment gap",
+        missing_program("spawn \"/opt/x/tool\" failed: No such file or directory (os error 2)")
+            .is_none(),
+    );
+    h.check(
+        "p197: a non-ENOENT spawn failure is not an environment gap",
+        missing_program("spawn \"sh\" failed: Permission denied (os error 13)").is_none(),
+    );
+
+    // ── End to end under a stripped $PATH ──
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+
+    let home = std::env::temp_dir().join(format!("laya-p197-nopath-{}", std::process::id()));
+    std::fs::create_dir_all(&home).expect("tmp home");
+    let run = |filter: &str| {
+        std::process::Command::new(&bin)
+            .args(["dsl", "smoke", "--filter", filter])
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("PATH", "/nonexistent")
+            .output()
+            .expect("run dsl smoke")
+    };
+
+    // A shell miss is silent (exit 127) → the pre-flight skip catches it.
+    let out = run("feishu_unread_digest");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check("p197: shell spec with no program exits 0", out.status.success());
+    h.check(
+        "p197: shell state skipped, naming the program",
+        err.contains("needs the external program `sh` on $PATH") && err.contains("skipped, validate only"),
+    );
+    h.check("p197: no run failure reported for the shell spec", !err.contains("[FAIL]"));
+    h.check("p197: shell spec still counts as OK", stdout.contains("1/1 specs OK"));
+
+    // A db miss is a spawn error → the run-error classification catches it.
+    let out2 = run("persist_memory");
+    let err2 = String::from_utf8_lossy(&out2.stderr).to_string();
+    let stdout2 = String::from_utf8_lossy(&out2.stdout).to_string();
+    h.check("p197: db spec with no sqlite3 exits 0", out2.status.success());
+    h.check(
+        "p197: db state skipped, naming sqlite3",
+        err2.contains("needs the external program `sqlite3` on $PATH"),
+    );
+    h.check("p197: no run failure reported for the db spec", !err2.contains("[FAIL]"));
+    h.check("p197: db spec still counts as OK", stdout2.contains("1/1 specs OK"));
+
+    // Control: an external-program-free spec, same stripped $PATH, untouched.
+    let out3 = run("refund_policy.v1");
+    let err3 = String::from_utf8_lossy(&out3.stderr).to_string();
+    h.check(
+        "p197: external-program-free spec unaffected",
+        out3.status.success()
+            && !err3.contains("needs the external program")
+            && !err3.contains("[FAIL]"),
+    );
+}
+
 /// P42: structural branch-coverage gate — generalises P40's manual "状态覆盖广度"
 /// audit into a structural invariant. For every spec that carries registered
 /// smoke states, the union of nodes visited across those states (**real engine

@@ -244,6 +244,13 @@ pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
 // spec's resolvable endpoints and skip the states (validate-only) when they are
 // all unreachable — the same "skip, don't hang or fail" policy the rest of the
 // harness already applies to network-dependent sections.
+//
+// Three further "unreachable here" families share that policy, each with its own
+// predicate: a capability gated to another platform (`platform_bound_here`), an
+// optional on-device asset that is not installed (`offline_asset_bound`, the
+// Needle engine + weights), and an external program a capability shells out to
+// (`binary_bound` for a `shell` command, `missing_program` for the `exec` / `db`
+// spawn failures). None of them changes the judgement of a spec that can run.
 
 /// Expand `${env.X}` / `${secret.X}` for a probe URL. Unlike the engine's
 /// strict resolver, a missing name leaves the reference literal (so the target
@@ -436,6 +443,92 @@ pub fn offline_asset_bound(spec: &Value) -> Option<String> {
     crate::capability::needle::assets_available()
         .err()
         .map(|e| format!("needs the on-device needle engine: {e}"))
+}
+
+/// The single external program a `shell` command line names first — `sh` in
+/// `sh script.sh`, `du` in `du -sk … | awk …` — when that first word is a plain
+/// command name or an absolute path.
+///
+/// `None` when it is a `${…}` placeholder, a `VAR=value` assignment, a
+/// quoting/control construct, or a **relative** path (`./build.sh`): there the
+/// program cannot be decided without a working directory, so the spec is left
+/// to the run-error classification rather than pre-emptively skipped.
+fn shell_program(command: &str) -> Option<String> {
+    let first = command.split_whitespace().next()?;
+    if first.is_empty() {
+        return None;
+    }
+    if first.starts_with('/') {
+        return Some(first.to_string());
+    }
+    let plain = first
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '+'));
+    if plain {
+        Some(first.to_string())
+    } else {
+        None
+    }
+}
+
+/// `Some(reason)` when a spec *calls* a `shell` capability whose fixed program
+/// name this host cannot resolve, so the command can never start.
+///
+/// This is the third member of the "unreachable here ⇒ validate-only" family,
+/// after a network endpoint with no listener (`network_bound_offline`) and an
+/// absent on-device asset (`offline_asset_bound`). It exists because a `shell`
+/// miss is the one that is *silent*: the platform shell `/bin/sh -c` still
+/// starts and exits 127, which the workflow's routing reads as a plain "no"
+/// rather than an error — measured, `feishu_unread_digest` under a stripped
+/// `$PATH` routed `collect → classify` on an empty capture and died inside the
+/// Rhai classifier with a JSON parse error, never a spawn error.
+///
+/// `exec` / `db` misses are deliberately **not** pre-flighted here: they
+/// surface as a `spawn … failed` run error and are caught by the run-error
+/// classification in [`run`] instead. That keeps a spec whose registered states
+/// never reach the node running for real — `cua_desktop`'s lone `route` state
+/// asserts fine while its `cua-driver` exec capability is never called.
+pub fn binary_bound(spec: &Value) -> Option<String> {
+    let caps = spec.get("capabilities").and_then(Value::as_object)?;
+    let called = called_capabilities(spec);
+    for (name, cdef) in caps {
+        if !called.iter().any(|c| *c == name.as_str()) {
+            continue;
+        }
+        if cdef.get("kind").and_then(Value::as_str) != Some("shell") {
+            continue;
+        }
+        let Some(command) = cdef.get("command").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(prog) = shell_program(command) {
+            if !crate::capability::util::program_available(&prog) {
+                return Some(format!("needs the external program `{prog}` on $PATH"));
+            }
+        }
+    }
+    None
+}
+
+/// The bare program name from a `spawn "<prog>" failed: … (os error 2)` run
+/// error — the program the OS could not find — or `None` for anything else.
+///
+/// Only a **bare** name counts. A spawn failure for an explicit path is a real
+/// defect (the spec named a file that is not there), not this host lacking a
+/// tool, so it keeps failing; and only a *not-found* (ENOENT) qualifies.
+pub fn missing_program(err: &str) -> Option<String> {
+    let prog = err.split("spawn \"").nth(1)?.split('"').next()?;
+    if prog.is_empty() || prog.contains('/') {
+        return None;
+    }
+    if !err.contains(&format!("spawn \"{prog}\" failed")) {
+        return None;
+    }
+    if err.contains("os error 2") || err.contains("No such file or directory") {
+        Some(prog.to_string())
+    } else {
+        None
+    }
 }
 
 fn tcp_reachable(host: &str, port: u16) -> bool {
@@ -889,6 +982,11 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
         } else {
             None
         };
+        let program_bound = if opts.base_url.is_none() {
+            binary_bound(&raw_spec)
+        } else {
+            None
+        };
         for (label, st) in state_map {
             // P33: the offline smoke must not perform real internet I/O. A
             // spec that is network-bound to an external (non-local) host has
@@ -931,13 +1029,40 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                 skipped += 1;
                 continue;
             }
+            // P197: a `shell` capability whose fixed program is not installed
+            // cannot start its command — the shell exits 127 and the workflow
+            // reads that as a plain "no" — so skip validate-only here, exactly
+            // like the network / asset families above.
+            if let Some(why) = &program_bound {
+                if !opts.quiet {
+                    eprintln!(
+                        "       {label}: {why} — skipped, validate only (runs in the integration job)"
+                    );
+                }
+                skipped += 1;
+                continue;
+            }
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
                 Err(e) => {
+                    // P197: an `exec` / `db` (or plugin-spawned) program that
+                    // is not installed surfaces as this spawn error. A bare
+                    // name the OS cannot find is the environment lacking a
+                    // tool, not a defect in the spec, so skip validate-only.
+                    if let Some(prog) = missing_program(&e.to_string()) {
+                        if !opts.quiet {
+                            eprintln!(
+                                "       {label}: needs the external program `{prog}` on $PATH — skipped, validate only (runs in the integration job)"
+                            );
+                        }
+                        skipped += 1;
+                        continue;
+                    }
                     if network_bound_offline(&raw_spec)
                         || external_bound
                         || platform_bound
                         || asset_bound.is_some()
+                        || program_bound.is_some()
                     {
                         if !opts.quiet {
                             eprintln!(
@@ -1028,7 +1153,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let (ok, failed_specs, _failing_checks) = tally(&per_spec_fail_counts);
     println!("\n{ok}/{total} specs OK");
     if skipped > 0 {
-        println!("({skipped} state(s) skipped offline: a declared network endpoint was unreachable, or an optional on-device asset (the needle engine/weights) is not installed here; they run in the integration job / with the local mocks up)");
+        println!("({skipped} state(s) skipped offline: a declared network endpoint was unreachable, an optional on-device asset (the needle engine/weights) is not installed here, or an external program a capability shells out to is missing; they run in the integration job / with the local mocks up)");
     }
     // P43: the coverage ledger — every discovered spec accounted for, no
     // stale declaration. Printed so `check.sh` / CI show the split.
