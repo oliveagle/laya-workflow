@@ -3920,5 +3920,108 @@
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "below"
     }
+  },
+  "deadlock_watchdog_gate": {
+    "unhealthy": {
+      "result.label": "NO_ACTION_UNHEALTHY",
+      "result.ev_health": "down",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "down"
+    },
+    "idle": {
+      "result.label": "NO_ACTION_IDLE",
+      "result.ev_health": "up",
+      "result.ev_progress": "idle",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "idle"
+    },
+    "decoding": {
+      "result.label": "NO_ACTION_DECODING",
+      "result.ev_health": "up",
+      "result.ev_progress": "decoding",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "decoding"
+    },
+    "prefill": {
+      "result.label": "NO_ACTION_PREFILL",
+      "result.ev_health": "up",
+      "result.ev_progress": "prefill",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "prefill"
+    },
+    "armed": {
+      "result.label": "STUCK_ARMED",
+      "result.ev_health": "up",
+      "result.ev_progress": "stuck",
+      "result.ev_dwell": "first",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "stuck",
+      "trace.steps.1.next": "dwell",
+      "trace.steps.2.node": "dwell",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "first"
+    },
+    "waiting": {
+      "result.label": "STUCK_WAITING",
+      "result.ev_health": "up",
+      "result.ev_progress": "stuck",
+      "result.ev_dwell": "under",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "stuck",
+      "trace.steps.1.next": "dwell",
+      "trace.steps.2.node": "dwell",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "under"
+    },
+    "restart": {
+      "result.label": "RESTART_CONTAINER",
+      "result.ev_health": "up",
+      "result.ev_progress": "stuck",
+      "result.ev_dwell": "over",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "health",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "up",
+      "trace.steps.0.next": "progress",
+      "trace.steps.1.node": "progress",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "stuck",
+      "trace.steps.1.next": "dwell",
+      "trace.steps.2.node": "dwell",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "over"
+    }
   }
 }

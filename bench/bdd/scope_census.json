@@ -745,8 +745,11 @@
     {
       "id": "ole_eval_inference",
       "upstream": "code/inference",
-      "kind": "mixed (weight-reformat fixes + WCD/WLD plumbing + three deployment gates pending)",
+      "kind": "mixed (weight-reformat fixes + WCD/WLD plumbing + a ported deadlock watchdog + two deployment gates pending)",
       "recursive": true,
+      "ported": {
+        "fixes/vllm_deadlock_watchdog_20260827/vllm_watchdog": "bdd/workflows/guards/deadlock_watchdog_gate.feature"
+      },
       "not_a_workflow": [
         {
           "reason": "the AWQ / GGUF weight-reformat fix: the conversion, dequant, key-rename and shard-repair scripts under one dated fix directory, plus the source-patch applier for the tool-call-history fix. They rewrite weights and patch a server; no policy over an answer.",
@@ -774,10 +777,9 @@
       ],
       "gate_pending": {
         "fixes/sglang_toolcall_history_400_20260822/verify": "the multi-turn tool-call fix verification: it runs four end-to-end checks (A-D) against the patched sglang and its proxy and exits 0 only when all pass (`Exit code 0 = all checks passed`). A gate over a fix. Port pending.",
-        "optimization/wld_sglang_20260823/e2e_awq_int4_wld": "the AWQ-INT4 cold-vs-warm deployment e2e: it brings the model up cold and warm (with the weight-load daemon), measures health / load time and checks the generated content is consistent, exiting non-zero on any failure. A deployment gate. Port pending.",
-        "fixes/vllm_deadlock_watchdog_20260827/vllm_watchdog": "the vLLM deadlock watchdog: it reads the server's metrics and engine log and decides whether a server that answers /health but makes no progress is deadlocked (running > 0 and generation stalled past a threshold), then restarts it. A state machine with a named verdict. Port pending."
+        "optimization/wld_sglang_20260823/e2e_awq_int4_wld": "the AWQ-INT4 cold-vs-warm deployment e2e: it brings the model up cold and warm (with the weight-load daemon), measures health / load time and checks the generated content is consistent, exiting non-zero on any failure. A deployment gate. Port pending."
       },
-      "note": "The inference fixes and optimization plumbing: the weight conversions and daemons (named), and the three verdict-bearing scripts - the tool-call fix verification, the cold/warm deployment e2e, and the vLLM deadlock watchdog - registered as pending gates."
+      "note": "The inference fixes and optimization plumbing: the weight conversions and daemons (named), and the verdict-bearing scripts - the tool-call fix verification and the cold/warm deployment e2e (both still pending), and the vLLM deadlock watchdog (ported this round to bdd/workflows/guards/deadlock_watchdog_gate.feature)."
     }
   ]
 }

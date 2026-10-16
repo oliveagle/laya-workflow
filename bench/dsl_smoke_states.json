@@ -7234,5 +7234,37 @@
       "ev_longhorizon": "skipped",
       "ev_coding": "below"
     }
+  },
+  "deadlock_watchdog_gate": {
+    "unhealthy": {
+      "ev_health": "down"
+    },
+    "idle": {
+      "ev_health": "up",
+      "ev_progress": "idle"
+    },
+    "decoding": {
+      "ev_health": "up",
+      "ev_progress": "decoding"
+    },
+    "prefill": {
+      "ev_health": "up",
+      "ev_progress": "prefill"
+    },
+    "armed": {
+      "ev_health": "up",
+      "ev_progress": "stuck",
+      "ev_dwell": "first"
+    },
+    "waiting": {
+      "ev_health": "up",
+      "ev_progress": "stuck",
+      "ev_dwell": "under"
+    },
+    "restart": {
+      "ev_health": "up",
+      "ev_progress": "stuck",
+      "ev_dwell": "over"
+    }
   }
 }

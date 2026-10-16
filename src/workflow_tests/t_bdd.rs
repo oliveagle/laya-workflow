@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 23 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 24 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + inference vllm_deadlock_watchdog + the 16 agent-toolbox workflows)",
         counts.ported,
-        23,
+        24,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 8 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 7 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        8,
+        7,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3363,6 +3363,28 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         "bdd scope-check: distill ports the A/B promotion gate as its @decision feature",
         ds["ported"]["scripts/eval_longhorizon_gamma"]
             == serde_json::json!("bdd/workflows/guards/ab_promote_gate.feature"),
+    );
+
+    // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
+    // tick that decides whether a server answering /health but making no progress is
+    // deadlocked, and restarts it. Pinned by name and by the feature it ports; its two
+    // siblings (the tool-call fix verification and the cold/warm deployment e2e) stay
+    // registered as pending gates.
+    let inf = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_inference")
+        .expect("ole_eval_inference universe");
+    h.eq(
+        "bdd scope-check: vllm_watchdog is the one ported module under code/inference",
+        inf["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: inference ports the deadlock watchdog as its @decision feature",
+        inf["ported"]["fixes/vllm_deadlock_watchdog_20260827/vllm_watchdog"]
+            == serde_json::json!("bdd/workflows/guards/deadlock_watchdog_gate.feature"),
     );
 
     let probs_of = |c: &str| {

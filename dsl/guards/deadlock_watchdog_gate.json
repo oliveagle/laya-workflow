@@ -1,0 +1,168 @@
+{
+  "name": "deadlock_watchdog_gate",
+  "_bdd": {
+    "feature": "deadlock_watchdog_gate",
+    "feature_path": "bdd/workflows/guards/deadlock_watchdog_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval vLLM deadlock watchdog (code/inference/fixes/\nvllm_deadlock_watchdog_20260827/vllm_watchdog.py, `VLLMWatchdog.run_once` + `is_stuck`):\na supervisor that, once a tick, decides whether a vLLM server that still answers\n/health but makes no progress is deadlocked -- and if so, restarts its container.\nIt is the gate that stands between \"the server looks up\" and \"the server is doing\nanything\", so it names its verdict rather than reporting a number.\nIt makes three calls, in the source's own order:\n- health: if /health does not answer, the container may be down and the tick\ndoes nothing at all -- it neither measures nor restarts (the watchdog waits\nfor the supervisor to bring it back).\n- progress: for a server that is up, is it making progress? `is_stuck` returns\nnot-stuck when running requests == 0 (idle), or generation throughput > 0\n(normal decode), or prompt throughput > 0 (prefill, which can run long); it is\nstuck only when running > 0 and both throughputs are 0 -- a server holding\nrequests while moving nothing.\n- dwell: a stuck server is not restarted on sight. The first stuck tick only arms\nthe accumulator (`stuck_since`); a later tick whose stuck duration has reached\n`stuck_threshold` (default 120s) restarts the container and clears the\naccumulator. In between, it keeps waiting.\nThe walk encodes exactly that: health -> progress -> dwell. The first call that\nresolves the tick without a restart ends it and names itself; only a stuck server\nwhose dwell has reached the threshold reaches RESTART_CONTAINER.\nTwo folds are documented:\n- the accumulator is state *across* ticks. `stuck_since` is carried between\ninvocations, so the graph models one tick given the bucket that accumulator\nimplies (first / under / over) -- that bucket is the graph's observable input.\n- the upstream is a daemon loop (`run_forever`); the graph is one tick, the unit\nwhose return value (True iff it restarted) is the verdict.\nEverything numeric stays in the harness: the three throughputs, the running count\nand the dwell duration are computed there, and the graph reads none of them, only\nthe verdicts (health up/down, the progress classification, the dwell bucket).\nOne stale upstream bug is recorded, and the port follows the *policy the code\nintends*: `parse_engine_state` currently returns None for every real `Engine 000:`\nline (its index reads `float(parts[i+3])`, i.e. `float(\"tokens/s,\")`), and the\nmetrics fallback builds `VLLMState` without `prompt_throughput` and raises\nTypeError -- so the shipped watchdog raises on every tick and never restarts\nanything. The graph ports the decision `is_stuck` and `run_once` describe, not the\nbroken plumbing that starves them; the harness feeds the graph the verdicts.\nReference walk (vllm_watchdog.py, run_once): health first; then is_stuck (running==0\n-> no, gen>0 -> no, prompt>0 -> no, else yes); for a stuck state, first tick arms,\nand a tick whose stuck duration is >= stuck_threshold restarts.",
+  "start": "health",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "health",
+      "primary_q": "tick",
+      "questions": {
+        "tick": {
+          "type": "choice",
+          "instructions": "Does the server answer /health? If it does not, the container may be down: this tick does nothing at all, neither measuring nor restarting.",
+          "criteria": {
+            "up": "/health answered",
+            "down": "/health did not answer -- the container may be down"
+          },
+          "heuristic": {
+            "answer_field": "ev_health"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "down": "STOP"
+        },
+        "default": "progress"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "tick",
+        "rules": [
+          {
+            "when": {
+              "question": "tick",
+              "answer": "down"
+            },
+            "label": "NO_ACTION_UNHEALTHY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "HEALTH_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "progress",
+      "primary_q": "tick",
+      "questions": {
+        "tick": {
+          "type": "choice",
+          "instructions": "Is the running server making progress? It is idle when no request is running, decoding when generation throughput is positive, prefill when prompt throughput is positive, and stuck only when requests are running while both throughputs are zero. Anything but stuck clears the stuck accumulator and ends the tick.",
+          "criteria": {
+            "idle": "no request is running (running == 0) -- not stuck",
+            "decoding": "generation throughput is positive -- normal decode",
+            "prefill": "prompt throughput is positive -- prefill, which can run long",
+            "stuck": "requests are running but both throughputs are zero"
+          },
+          "heuristic": {
+            "answer_field": "ev_progress"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "idle": "STOP",
+          "decoding": "STOP",
+          "prefill": "STOP"
+        },
+        "default": "dwell"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "tick",
+        "rules": [
+          {
+            "when": {
+              "question": "tick",
+              "answer": "idle"
+            },
+            "label": "NO_ACTION_IDLE"
+          },
+          {
+            "when": {
+              "question": "tick",
+              "answer": "decoding"
+            },
+            "label": "NO_ACTION_DECODING"
+          },
+          {
+            "when": {
+              "question": "tick",
+              "answer": "prefill"
+            },
+            "label": "NO_ACTION_PREFILL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROGRESS_STUCK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dwell",
+      "primary_q": "tick",
+      "questions": {
+        "tick": {
+          "type": "choice",
+          "instructions": "The server is stuck. How long has it been stuck? The first stuck tick only arms the accumulator; a later tick whose stuck duration has reached the threshold restarts the container. This is the last call: reaching the threshold restarts.",
+          "criteria": {
+            "first": "this is the first stuck tick -- nothing had been armed before",
+            "under": "it was already stuck, and the stuck duration is still below the threshold",
+            "over": "it was already stuck, and the stuck duration has reached the threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_dwell"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "tick",
+        "rules": [
+          {
+            "when": {
+              "question": "tick",
+              "answer": "first"
+            },
+            "label": "STUCK_ARMED"
+          },
+          {
+            "when": {
+              "question": "tick",
+              "answer": "under"
+            },
+            "label": "STUCK_WAITING"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "RESTART_CONTAINER"
+          }
+        ]
+      }
+    }
+  ]
+}
