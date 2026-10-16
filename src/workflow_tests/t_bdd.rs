@@ -3002,7 +3002,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads all three universes", counts.universes, 3);
+    h.eq("bdd scope-check: reads all seven universes", counts.universes, 7);
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
@@ -3024,9 +3024,14 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         1,
     );
     h.eq(
-        "bdd scope-check: 36 self_evolving package modules named as not-a-workflow (engine/model/harness)",
+        "bdd scope-check: 64 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 15 working_mem + 1 qwen_vm root)",
         counts.not_a_workflow,
-        36,
+        64,
+    );
+    h.eq(
+        "bdd scope-check: 1 declared coverage root (code/qwen_vm)",
+        counts.roots,
+        1,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3097,45 +3102,54 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
 
     // Negative 4 (the real failure): against a checkout, an upstream module the
     // census never mentions must be caught. Build a temp root whose files are
-    // exactly the census's own names (so being green there is not an accident of a
-    // short hand-list), prove it is green, then add a *root-level* module - the
-    // module class that used to live outside the bound because the universe
-    // enumerated only `self_evolving/workflows/`.
+    // exactly the census's own names for every enumerable universe (so being green
+    // there is not an accident of a short hand-list), prove it is green, then add
+    // (a) a *root-level* module of the self_evolving package - the module class that
+    // used to live outside the bound because the universe enumerated only
+    // `self_evolving/workflows/` - and (b) a brand-new upstream *directory* under the
+    // coverage root, which only the root sweep can see.
     let tag = std::process::id();
     let base = std::env::temp_dir().join(format!("laya-scope-{tag}"));
     let _ = std::fs::remove_dir_all(&base);
-    let se = base.join("code/qwen_vm/self_evolving");
-    std::fs::create_dir_all(&se).unwrap();
-    let uni = census_json["universes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|u| u["id"] == "self_evolving_package")
-        .expect("self_evolving_package universe");
+    let universes = census_json["universes"].as_array().unwrap();
     let mut planted: Vec<String> = Vec::new();
-    for k in uni["ported"].as_object().unwrap().keys() {
-        planted.push(k.clone());
-    }
-    for k in uni["search_space"].as_object().unwrap().keys() {
-        planted.push(k.clone());
-    }
-    for g in uni["not_a_workflow"].as_array().unwrap() {
-        for n in g["names"].as_array().unwrap() {
-            planted.push(n.as_str().unwrap().to_string());
+    for u in universes {
+        if u["enumerate"] == serde_json::json!(false) {
+            continue;
+        }
+        let up = u["upstream"].as_str().unwrap();
+        std::fs::create_dir_all(base.join(up)).unwrap();
+        let mut names: Vec<String> = Vec::new();
+        for k in u["ported"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            names.push(k);
+        }
+        for k in u["search_space"]
+            .as_object()
+            .map(|m| m.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+        {
+            names.push(k);
+        }
+        for g in u["not_a_workflow"].as_array().cloned().unwrap_or_default() {
+            for n in g["names"].as_array().unwrap() {
+                names.push(n.as_str().unwrap().to_string());
+            }
+        }
+        for name in names {
+            planted.push(format!("{up}/{name}"));
+            let f = base.join(up).join(format!("{name}.py"));
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(&f, "pass\n").unwrap();
         }
     }
-    for name in &planted {
-        let f = se.join(format!("{name}.py"));
-        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
-        std::fs::write(&f, "pass\n").unwrap();
-    }
-    std::fs::write(se.join("__init__.py"), "\n").unwrap();
-    std::fs::write(se.join("workflows/__init__.py"), "\n").unwrap();
-    std::fs::create_dir_all(base.join("code/qwen_vm/app_scenarios")).unwrap();
     h.eq(
         "bdd scope-check: the planted tree holds every name the census lists",
         planted.len(),
-        46,
+        74,
     );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
@@ -3144,6 +3158,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         clean.is_empty(),
     );
 
+    let se = base.join("code/qwen_vm/self_evolving");
     std::fs::write(se.join("brand_new_gate.py"), "pass\n").unwrap();
     let (_, drifted) = scope_check_impl(&root, &census, Some(&base)).unwrap();
     h.check(
@@ -3163,6 +3178,31 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
             "code/qwen_vm/self_evolving/workflows/brand_new_workflow.py is not in the census",
         ),
     );
+
+    // Negative 5: a brand-new upstream *directory* under a coverage root. No universe
+    // enumerates it, so the per-universe check above is blind to it - only the root
+    // sweep sees it. This is the one-level generalisation P221 exists for.
+    let newdir = base.join("code/qwen_vm/new_platform");
+    std::fs::create_dir_all(&newdir).unwrap();
+    std::fs::write(newdir.join("gate.py"), "pass\n").unwrap();
+    let (_, drifted3) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a new upstream *directory* under the coverage root is named (the root sweep)",
+        any(
+            &drifted3,
+            "code/qwen_vm/new_platform holds .py modules, but no universe declares it as its `upstream`",
+        ),
+    );
+
+    // Negative 6: a coverage root that does not exist in the checkout is named, not
+    // silently skipped.
+    let bad_roots = census.replace("\"root\": \"code/qwen_vm\"", "\"root\": \"code/ghost_tree\"");
+    let (_, drifted4) = scope_check_impl(&root, &bad_roots, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a declared coverage root that is missing is named",
+        any(&drifted4, "declared coverage root code/ghost_tree is missing under"),
+    );
+
     let _ = std::fs::remove_dir_all(&base);
 }
 

@@ -1,5 +1,11 @@
 {
-  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* and how this repo's BDD corpus accounts for every module in it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy); `not_a_workflow` names a module that is not a workflow at all (engine / model / harness), one reason per group, so that code is named rather than quietly absent. `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. A universe enumerates the `.py` files directly under `upstream`; set `recursive: true` when its workflows are not all in one directory (a package whose root holds gates next to a `workflows/` dir) - names are then the `/`-joined path minus the extension. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream module cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it).",
+  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* and how this repo's BDD corpus accounts for every module in it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy); `not_a_workflow` names a module that is not a workflow at all (engine / model / harness), one reason per group, so that code is named rather than quietly absent. `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. A universe enumerates the `.py` files directly under `upstream`; set `recursive: true` when its workflows are not all in one directory (a package whose root holds gates next to a `workflows/` dir) - names are then the `/`-joined path minus the extension. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream module cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it). A universe declares its whole *package* when its workflows are not all in one directory (`recursive`). On top of the universes, `roots` declares the upstream trees the census claims to cover end to end; with `--sources`, every immediate child directory of a root that holds a `.py` must be some universe's `upstream`, and a root's own modules need a universe too - so a new upstream *directory* cannot appear without a universe accounting for it, not just a new file inside one already known.",
+  "roots": [
+    {
+      "root": "code/qwen_vm",
+      "note": "The workflow home of the qwen_vm line. Every immediate child directory that holds a `.py` must be a universe's `upstream` (app_scenarios, self_evolving, hybrid, lang, working_mem), and the root's own modules need one too (qwen_vm_root). So a new upstream directory under qwen_vm cannot appear without a universe accounting for it - the one-level generalisation of the per-universe check."
+    }
+  ],
   "universes": [
     {
       "id": "ole_eval_app_scenarios",
@@ -114,6 +120,114 @@
         "zero_leftover_gate": "bdd/workflows/agents/zero_leftover_gate.feature"
       },
       "note": "The agent-toolbox decision workflows were ported to DSL first (dsl/agents/, whose README maps each spec to its upstream ops script) and then to BDD (@decision). Their upstream is a private repo of shell/Python scripts, so it cannot be enumerated publicly; the upstream names are pinned here and every ported feature must exist and be a @decision graph. `enumerate: false` tells `--sources` not to demand a directory - there is no public one to list - so the universe is accounted for by name instead of being silently omitted from the bound."
+    },
+    {
+      "id": "qwen_vm_root",
+      "upstream": "code/qwen_vm",
+      "kind": "the package root's stray module (a bench harness)",
+      "not_a_workflow": [
+        {
+          "reason": "harness: the multilingual 100%-syntax bench (34 languages x prompts, driven through the lark grammars and the official compilers). It *measures* a model; it is not a workflow.",
+          "names": [
+            "bench_multilang"
+          ]
+        }
+      ],
+      "note": "The one module that sits directly under code/qwen_vm. A universe whose `upstream` is the root is what lets the coverage-root sweep name the root's own modules instead of leaving them unclaimed."
+    },
+    {
+      "id": "qwen_vm_hybrid",
+      "upstream": "code/qwen_vm/hybrid",
+      "kind": "mixed (the hybrid forward-pass loop + its router pair + its ablation harness)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the hybrid forward-pass engine: the continuous decode loop, the LLM<->VM bridge, the state bridge to working_mem, the WASM executor wrapper, the real-model adapter and the two demos. They *run* a loop; they are not a decision over a model proposal.",
+          "names": [
+            "hybrid_generate",
+            "bridge",
+            "state_bridge",
+            "wasm_executor",
+            "real_llm",
+            "demo",
+            "demo_real_llm"
+          ]
+        },
+        {
+          "reason": "the router pair: `mode_router` is a deterministic 2-state token switch (lang vs exec, driven by the literal `<exec>` / `</exec>` markers) and `learned_router` is its learned replacement. A mode router steers one decode step - it has no model proposal to gate and no verdict vocabulary - and the learned variant *is* the model, so neither is a decision graph.",
+          "names": [
+            "mode_router",
+            "learned_router"
+          ]
+        },
+        {
+          "reason": "the ablation harness: the three state-tracking baselines and their real-LLM runner. They measure the loop; they decide nothing.",
+          "names": [
+            "ablation",
+            "ablation_real_llm"
+          ]
+        }
+      ],
+      "note": "The hybrid forward pass of the Percepta line: one LLM plus a deterministic router, a WASM executor and working memory. Every module here is engine / router / harness, so the universe is entirely `not_a_workflow`; the `test_*.py` files are skipped by the recursive enumeration."
+    },
+    {
+      "id": "qwen_vm_lang",
+      "upstream": "code/qwen_vm/lang",
+      "kind": "grammar library",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the multilingual lark grammars + the official-compiler validators + the brace-depth truncation guidance + the lark-constrained generation helper. It is a parsing/validation library, not a decision over a model proposal.",
+          "names": [
+            "lang_grammars"
+          ]
+        }
+      ],
+      "note": "The grammar library the multilingual bench and the Transformer-VM line share."
+    },
+    {
+      "id": "qwen_vm_working_mem",
+      "upstream": "code/qwen_vm/working_mem",
+      "kind": "mixed (the three-layer memory engine + the readout-head research + one proposal guard)",
+      "recursive": true,
+      "not_a_workflow": [
+        {
+          "reason": "the three-layer memory engine and its deterministic reference: the trace store + sliding KV + checkpoint manager, the hot/warm/cold tiering, the core-state schema, the long-horizon simulator, the Phase-1 runner and the capacity probe.",
+          "names": [
+            "memory",
+            "tiered",
+            "schema",
+            "simulator",
+            "runner",
+            "size_probe"
+          ]
+        },
+        {
+          "reason": "the readout-head research: the residual-slot probe and the field / per-field / field-token-pool / dedicated readout trainers. They *train a head* - the head is the model, and its output is a proposal the corpus would gate, not the gate itself.",
+          "names": [
+            "llm_probe",
+            "llm_readout_train",
+            "llm_perfield_train",
+            "llm_fieldtoken_pool_train",
+            "llm_fieldtoken_pool_large",
+            "llm_fieldtoken_pool_exact",
+            "llm_dedicated_readout_train"
+          ]
+        },
+        {
+          "reason": "the reliable state reader: a proposal *guard* - the model may name an action and reference field names, and every numeric value is taken from the deterministic state (a bad shape is rejected and retried, then falls back to `hold`). It has the same deterministic-consumer shape the corpus ports, but it is a single-shot payload repair over one proposal: there is no state machine walked over a trace and no verdict vocabulary, so there is no decision graph to encode. (The one borderline call of this universe.)",
+          "names": [
+            "reliable_reader"
+          ]
+        },
+        {
+          "reason": "the package's own self-test module. It is named `tests` (not `test_*.py`), so the recursive enumeration does not skip it.",
+          "names": [
+            "tests"
+          ]
+        }
+      ],
+      "note": "Working memory of the long-horizon line (F3/F5/F6): the store, the tiering and the readout heads. `test_reliable_reader.py` is skipped by the recursive enumeration."
     }
   ]
 }

@@ -10943,6 +10943,11 @@ pub struct ScopeCounts {
     /// carrying one reason - so an engine / model / harness module is still named
     /// rather than silently absent.
     pub not_a_workflow: usize,
+    /// Declared coverage roots (`roots`): upstream trees the census claims to cover
+    /// end to end. Under `--sources`, every immediate child directory of a root that
+    /// holds a `.py` must be some universe's `upstream`, so a *new* upstream
+    /// directory cannot appear unnoticed.
+    pub roots: usize,
     /// Live upstream workflow files enumerated (only with `--sources`).
     pub sources: usize,
 }
@@ -11020,6 +11025,30 @@ fn scope_enumerate_py(dir: &Path, recursive: bool) -> Result<BTreeSet<String>> {
     Ok(out)
 }
 
+/// Does `dir` hold a `.py` anywhere under it? The coverage-root sweep asks it of
+/// every immediate child directory of a declared root: a directory that holds
+/// upstream code must be claimed by some universe's `upstream`.
+fn scope_dir_holds_py(dir: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "__pycache__" {
+            continue;
+        }
+        let p = e.path();
+        if p.is_dir() {
+            if scope_dir_holds_py(&p) {
+                return true;
+            }
+        } else if name.ends_with(".py") {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn scope_check_impl(
     root: &Path,
     census: &str,
@@ -11032,6 +11061,9 @@ pub fn scope_check_impl(
         .with_context(|| "scope census: `universes` must be an array")?;
     let mut counts = ScopeCounts::default();
     let mut problems: Vec<String> = Vec::new();
+    // Every universe's `upstream`, so the coverage-root sweep below can ask "is this
+    // directory claimed?" without a second pass over the universes.
+    let mut universe_upstreams: BTreeSet<String> = BTreeSet::new();
     for u in universes {
         let id = u.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
         let Some(upstream) = u.get("upstream").and_then(Value::as_str) else {
@@ -11041,6 +11073,7 @@ pub fn scope_check_impl(
             continue;
         };
         counts.universes += 1;
+        universe_upstreams.insert(upstream.trim_end_matches('/').to_string());
         let ported = u.get("ported").and_then(Value::as_object);
         let search = u.get("search_space").and_then(Value::as_object);
         let not_workflow = u.get("not_a_workflow").and_then(Value::as_array);
@@ -11195,6 +11228,58 @@ pub fn scope_check_impl(
             }
         }
     }
+    // The declared coverage roots: the upstream trees this census claims to cover end
+    // to end. Each root's own `.py` modules are accounted for like any other module (a
+    // universe whose `upstream` is the root), and every immediate child directory of a
+    // root that holds a `.py` must be some universe's `upstream`. That is the one-level
+    // generalisation of the per-universe check above: a *new upstream directory* cannot
+    // appear without a universe, instead of only a new file inside a known one. Only a
+    // live checkout (`--sources`) can see the tree, so this is skipped offline.
+    if let Some(roots) = v.get("roots").and_then(Value::as_array) {
+        counts.roots = roots.len();
+        if let Some(src) = sources {
+            for r in roots {
+                let Some(root_name) = r.get("root").and_then(Value::as_str) else {
+                    problems.push("roots[] needs a `root` (a repo-relative directory)".into());
+                    continue;
+                };
+                let dir = src.join(root_name);
+                if !dir.is_dir() {
+                    problems.push(format!(
+                        "declared coverage root {root_name} is missing under {}",
+                        src.display()
+                    ));
+                    continue;
+                }
+                if !scope_enumerate_py(&dir, false)?.is_empty()
+                    && !universe_upstreams.contains(root_name)
+                {
+                    problems.push(format!(
+                        "{root_name} holds .py modules of its own, but no universe declares \
+                         `{root_name}` as its `upstream`"
+                    ));
+                }
+                for e in std::fs::read_dir(&dir)?.flatten() {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    if name.starts_with('.') || name == "__pycache__" {
+                        continue;
+                    }
+                    let p = e.path();
+                    if !p.is_dir() || !scope_dir_holds_py(&p) {
+                        continue;
+                    }
+                    let rel = format!("{root_name}/{name}");
+                    if !universe_upstreams.contains(&rel) {
+                        problems.push(format!(
+                            "{rel} holds .py modules, but no universe declares it as its \
+                             `upstream` - a new upstream directory must get one"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     problems.sort();
     problems.dedup();
     Ok((counts, problems))
@@ -11222,6 +11307,7 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
                 "search_space": counts.search_space,
                 "not_a_workflow": counts.not_a_workflow,
                 "ported_all": counts.ported_all,
+                "roots": counts.roots,
                 "non_enumerable": counts.non_enumerable,
                 "sources": counts.sources
             },
@@ -11244,13 +11330,14 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
     println!(
         "bdd scope-check: {} upstream universe(s) accounted for - {} ported in full (proven by \
          `bdd port-check`), {} module(s) named ({} ported + {} search-space + {} not-a-workflow), \
-         {} non-enumerable{}",
+         {} coverage root(s), {} non-enumerable{}",
         counts.universes,
         counts.ported_all,
         counts.ported + counts.search_space + counts.not_a_workflow,
         counts.ported,
         counts.search_space,
         counts.not_a_workflow,
+        counts.roots,
         counts.non_enumerable,
         if sources.is_some() {
             " - the census matches the live checkout"

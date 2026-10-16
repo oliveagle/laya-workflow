@@ -834,7 +834,17 @@ path minus the extension. A universe whose upstream is *not publicly enumerable*
 (a private repo) is pinned by name with `enumerate: false`, so it is accounted for
 instead of being silently left out of the bound. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
 census must name exactly the live upstream workflows, so a new one nobody ported
-fails the gate instead of going unnoticed. Every one of these gates reads *this*
+fails the gate instead of going unnoticed. On top of the universes the census
+declares `roots` — the upstream trees it claims to cover end to end — and with a
+live checkout every immediate child directory of a root that holds a `.py` must be
+some universe's `upstream` (a root's own modules need one too), so a new upstream
+*directory* cannot appear without a universe accounting for it: the one-level
+generalisation of the per-universe check. Seven universes now cover the whole
+`code/qwen_vm` tree — `ole_eval_app_scenarios` (66, ported in full),
+`self_evolving_package` (46), `agent_toolbox` (16 ported, private upstream), and the
+four the tree used to leave unclaimed: `qwen_vm_root` (1), `qwen_vm_hybrid` (11),
+`qwen_vm_lang` (1), `qwen_vm_working_mem` (15) — 90 modules named (17 ported + 9
+search-space + 64 not-a-workflow). Every one of these gates reads *this*
 repo's own tree, and an installed or tarball binary carries the path of the
 machine it was **built** on — so point `LAYA_WORKFLOW_REPO` at a laya-workflow
 checkout and they run against that checkout instead. With no checkout in reach
