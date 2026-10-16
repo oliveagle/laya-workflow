@@ -32,12 +32,6 @@ pub use crate::laya_mem_util::{ensure_specs, restore_specs};
 pub const GROUP_NAME: &str = "laya-mem";
 pub const DEFAULT_SPEC_SUBDIR: &str = "dsl/laya_mem";
 
-/// Build-time crate root, kept only as a fallback for running the test binary
-/// straight out of a checkout. A binary installed to `/usr/local/bin` has no
-/// guarantee this path still exists, which is why the specs below are compiled
-/// in rather than read from here.
-pub const PLUGIN_MANIFEST_DIR: &str = env!("CARGO_MANIFEST_DIR");
-
 /// The System-One specs, compiled into the binary: `(file name, contents)`.
 ///
 /// These are the whole behavioural contract of the four tools, and an MCP server
@@ -89,8 +83,10 @@ impl LayaMemTools {
             }
         }
         // No writable state root (no `$HOME`): fall back to the checkout, which
-        // is also what running the test binary in-tree wants.
-        let bundled = PathBuf::from(PLUGIN_MANIFEST_DIR).join(DEFAULT_SPEC_SUBDIR);
+        // is also what running the test binary in-tree wants. Resolved through
+        // `bdd::repo_root()`, so `LAYA_WORKFLOW_REPO=<checkout>` works here too -
+        // the bare compile-time constant named the build machine instead.
+        let bundled = crate::bdd::repo_root().join(DEFAULT_SPEC_SUBDIR);
         if bundled.is_dir() {
             return bundled;
         }

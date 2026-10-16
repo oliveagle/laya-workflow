@@ -385,7 +385,10 @@ pub fn default_spec_dir() -> PathBuf {
             return dir;
         }
     }
-    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("dsl/codegraph");
+    // `bdd::repo_root()`, not the build-time constant: a release binary that
+    // was pointed at a checkout with `LAYA_WORKFLOW_REPO` should read *that*
+    // checkout's specs.
+    let bundled = crate::bdd::repo_root().join("dsl/codegraph");
     if bundled.is_dir() {
         return bundled;
     }

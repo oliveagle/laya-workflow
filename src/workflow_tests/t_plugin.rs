@@ -10,9 +10,8 @@
 //! to the hard-coded "google-chrome").
 
 use super::Harness;
+use super::run_code_in;
 use laya_workflow::capability::browser::{find_chrome_binary_in, CHROME_BINARY_NAMES};
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub fn test_plugin_chrome_discovery(h: &mut Harness) {
     let root = std::env::temp_dir().join(format!("laya-chrome-disc-{}", std::process::id()));
@@ -71,33 +70,6 @@ pub fn test_plugin_chrome_discovery(h: &mut Harness) {
     );
 
     let _ = std::fs::remove_dir_all(&root);
-}
-
-/// `laya-workflow`'s own binary beside `laya-workflow-tests` in `target/<profile>/`.
-fn cli_bin() -> PathBuf {
-    let mut p = std::env::current_exe().expect("test binary path");
-    p.pop();
-    if p.ends_with("deps") {
-        p.pop();
-    }
-    p.join("laya-workflow")
-}
-
-/// Run the CLI from `cwd` with a clean environment, then add the `env` pairs
-/// given. Returns the exit *code* (not just success) plus stdout+stderr, because
-/// the contract here is rc=2 vs rc=0/1, not pass/fail.
-fn run_code_in(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
-    let mut cmd = Command::new(cli_bin());
-    cmd.args(args).current_dir(cwd);
-    // A stray override in the developer's shell would decide the answer.
-    cmd.env_remove("LAYA_WORKFLOW_REPO");
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    let out = cmd.output().expect("run laya-workflow");
-    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    (out.status.code(), text)
 }
 
 /// `plugin registry-check` / `plugin check` when there is no checkout to read.

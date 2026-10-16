@@ -5,7 +5,7 @@
 //! live laya-tch @ /v1/systemone, on the same specs. Rust port of
 //! `bench/backend_comparison.py`.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use serde_json::{json, Value};
 
 pub struct BackendComparisonOptions {
@@ -86,7 +86,18 @@ fn run_one(spec_path: &std::path::Path, state: &Value, live: bool, base_url: &Op
 }
 
 pub fn backend_comparison(opts: &BackendComparisonOptions) -> Result<()> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("dsl/laya_mem");
+    let root = crate::bdd::repo_root().join("dsl/laya_mem");
+    if !root.is_dir() {
+        // Every case below loads a spec from here. With no checkout the loads
+        // failed, every row printed `ERR`, and the command exited 0 - a
+        // benchmark that measured nothing reading as a clean run.
+        bail!(
+            "bench backend-comparison runs the laya_mem specs from this repo's \
+             dsl/laya_mem, and there is none at the resolved root: point \
+             LAYA_WORKFLOW_REPO at a laya-workflow checkout, or run a binary built \
+             inside one"
+        );
+    }
     println!("laya-workflow CLI: in-process (lib)");
     println!("laya-tch base url: {}", opts.base_url.clone().unwrap_or_else(|| "(none)".into()));
     println!("laya-work_dir: /tmp/laya_work_dir");

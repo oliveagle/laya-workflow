@@ -1405,6 +1405,17 @@ fn main() -> Result<()> {
             spec,
             text,
         } => {
+            // The demo page and the singleton spec are both repo files, so with
+            // no checkout this used to fail with the build machine's path in the
+            // message. rc=2 is the "could not run" code the other corpus readers
+            // answer with; an explicit --site / --spec is the caller's input and
+            // needs no checkout.
+            if site.is_none() || spec.is_none() {
+                if let Err(e) = laya_workflow::bdd::require_checkout("browser-demo") {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                }
+            }
             let _ = laya_workflow::browser_demo::run(
                 &laya_workflow::browser_demo::BrowserDemoOptions {
                     site: site.clone(),
@@ -2503,13 +2514,21 @@ fn run_bench(cmd: &BenchCmd) -> Result<()> {
             base_url,
             skip_heuristic,
             skip_live,
-        } => laya_workflow::bench::backend_comparison(
-            &laya_workflow::bench::BackendComparisonOptions {
-                base_url: base_url.clone(),
-                skip_heuristic: *skip_heuristic,
-                skip_live: *skip_live,
-            },
-        )?,
+        } => {
+            // Every case loads a laya_mem spec from the checkout, so a missing one
+            // must not read as a clean benchmark (rc=2, like the bdd gates).
+            if let Err(e) = laya_workflow::bdd::require_checkout("bench backend-comparison") {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+            laya_workflow::bench::backend_comparison(
+                &laya_workflow::bench::BackendComparisonOptions {
+                    base_url: base_url.clone(),
+                    skip_heuristic: *skip_heuristic,
+                    skip_live: *skip_live,
+                },
+            )?
+        }
         BenchCmd::JevVsGbnf { md_out } => {
             laya_workflow::bench_probe::jev_vs_gbnf(
                 &laya_workflow::bench_probe::JevVsGbnfOptions { md_out: md_out.clone() },

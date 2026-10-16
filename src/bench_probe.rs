@@ -742,7 +742,7 @@ enum LiveRow {
 }
 
 fn live_jev_decisions(observations: &[&str]) -> Vec<LiveRow> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = crate::bdd::repo_root();
     let spec = root.join("dsl/laya_mem/admission.json");
     let mut out = Vec::new();
     for obs in observations {

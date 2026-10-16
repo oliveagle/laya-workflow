@@ -90,7 +90,10 @@ pub struct BrowserDemoOptions {
 }
 
 pub fn run(opts: &BrowserDemoOptions) -> Result<Value> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // `bdd::repo_root()`: with no checkout beside the binary this used to name
+    // the machine it was built on (`Error: demo site root not found:
+    // <build-machine-path>/bench/demo-site`) instead of saying what to do.
+    let root = crate::bdd::repo_root();
     let site_root = opts
         .site
         .as_ref()

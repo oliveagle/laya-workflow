@@ -25,6 +25,7 @@ mod t_validate;
 mod t_state;
 mod t_bdd;
 mod t_plugin;
+mod t_paths;
 mod timeouts;
 mod update;
 mod runner;
@@ -39,6 +40,8 @@ pub use laya_workflow::workflow::{
     WorkflowNode,
 };
 pub use serde_json::{json, Map, Value};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub struct Harness {
     pub passed: usize,
@@ -62,6 +65,35 @@ impl Harness {
         }
         self.check(name, ok);
     }
+}
+
+/// `laya-workflow`'s own binary, beside `laya-workflow-tests` in `target/<profile>/`.
+///
+/// Several sections assert an exit *code* (rc=2 "could not run" vs rc=0/1), which
+/// needs the CLI as a subprocess - the harness runs inside `laya-workflow-tests`.
+pub fn cli_bin() -> PathBuf {
+    let mut p = std::env::current_exe().expect("test binary path");
+    p.pop();
+    if p.ends_with("deps") {
+        p.pop();
+    }
+    p.join("laya-workflow")
+}
+
+/// Run the CLI from `cwd` in a near-empty environment plus the `env` pairs given,
+/// returning the exit code and stdout+stderr. `LAYA_WORKFLOW_REPO` is cleared by
+/// default: a stray override in the developer's shell would decide the answer.
+pub fn run_code_in(cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
+    let mut cmd = Command::new(cli_bin());
+    cmd.args(args).current_dir(cwd);
+    cmd.env_remove("LAYA_WORKFLOW_REPO");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("run laya-workflow");
+    let mut text = String::from_utf8_lossy(&out.stdout).to_string();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    (out.status.code(), text)
 }
 
 pub fn q(v: &[(&str, &str)]) -> Value {
@@ -236,6 +268,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-selector-placement", t_bdd::test_bdd_selector_placement),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("plugin-checkout-gate", t_plugin::test_plugin_checkout_gate),
+        ("build-time-paths", t_paths::test_build_time_paths),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
         ("browser-extension-path", t_bdd::test_browser_extension_path),

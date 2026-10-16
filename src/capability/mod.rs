@@ -849,7 +849,9 @@ fn call_http(c: &HttpCap, with: &Value, state: &Value, policy: &Policy) -> Resul
 /// launched (P127 for a plugin `dir` and a shell script, P128 for a
 /// `chrome_cdp` binary). Order: the cwd (legacy — a hand-run spec's own
 /// assets), each layered spec root (`dsl/` itself), each root's parent (the
-/// checkout that holds it), then the crate root the engine was built from.
+/// checkout that holds it), then the crate root the engine was built in — which
+/// is `LAYA_WORKFLOW_REPO` when set, else the build-time crate dir, via the same
+/// resolver the corpus gates use.
 pub(crate) fn asset_bases() -> Vec<PathBuf> {
     let mut bases: Vec<PathBuf> = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -861,7 +863,11 @@ pub(crate) fn asset_bases() -> Vec<PathBuf> {
         }
         bases.push(r.path.clone());
     }
-    bases.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    // Through `bdd::repo_root()` rather than the bare compile-time constant it
+    // used to be: a release or installed binary carries the path of the machine
+    // it was *built* on, so `LAYA_WORKFLOW_REPO=<checkout>` has to be able to
+    // point this at a real tree - the same fix the corpus gates got (P212).
+    bases.push(crate::bdd::repo_root());
     bases
 }
 
@@ -1199,3 +1205,19 @@ pub fn registry_from(entries: &[(&str, Value)], policy: Option<Policy>) -> Resul
 
 /// Shareable handle (used by `spec::from_spec_with_dir` when building nodes).
 pub type SharedRegistry = Arc<Registry>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The last `asset_bases()` entry is the crate root, and it is *resolved*:
+    /// a binary pointed at another checkout resolves spec-relative assets
+    /// against that checkout rather than the machine it was built on. Pinning
+    /// the last entry is what keeps a compile-time constant from creeping back
+    /// in (the same fail-open P212-P217 closed for the gates and the plugin
+    /// commands).
+    #[test]
+    fn asset_bases_end_at_the_resolved_repo_root() {
+        assert_eq!(asset_bases().last(), Some(&crate::bdd::repo_root()));
+    }
+}
