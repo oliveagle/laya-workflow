@@ -222,6 +222,28 @@ pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec
 /// Make the scratch env vars every spec may reference; create the dirs.
 /// Directory vars get a scratch dir; plain secret-like vars get a dummy value.
 /// Only set when absent, so a real environment (CI, live) is never clobbered.
+/// The `laya-workflow` CLI that stands behind this process.
+///
+/// This executable when it *is* the CLI (the `dsl smoke` subcommand), else its
+/// sibling — the offline harness runs `laya-workflow-tests` in the same
+/// directory as `laya-workflow`, and `current_exe` can sit one level down in
+/// `deps/`. Both existing call sites in the harness fall back to exactly this
+/// path, so resolving it here matches their convention instead of inventing one.
+fn cli_binary() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let name = if cfg!(windows) {
+        "laya-workflow.exe"
+    } else {
+        "laya-workflow"
+    };
+    if exe.file_name().and_then(|s| s.to_str()) == Some(name) {
+        return Some(exe);
+    }
+    let dir = exe.parent()?;
+    let candidates = [dir.join(name), dir.parent().unwrap_or(dir).join(name)];
+    candidates.into_iter().find(|c| c.is_file())
+}
+
 pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     let base = std::env::temp_dir().join("laya_dsl_smoke_rust");
     let mut map = BTreeMap::new();
@@ -230,6 +252,23 @@ pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
             let dir = base.join(var.to_lowercase());
             std::fs::create_dir_all(&dir)?;
             map.insert(var.to_string(), dir.to_string_lossy().into_owned());
+        }
+    }
+    // A plugin / `shell` shim that delegates back into our own CLI
+    // (`websites/feishu.com/plugin/collect.sh` → `laya-workflow feishu-collect`)
+    // resolves `$LAYA_WORKFLOW_BIN` first, then `$REPO_ROOT/target/release/...`,
+    // then `$PATH`. Pin the first: the binary *this* run came from. Without it
+    // the shim has to guess, and the offline CI job builds only `target/debug`
+    // with no CLI on `$PATH`, so `collect.sh` found no binary at all and its
+    // spec failed with an unclassifiable `json_parse: EOF` (the shell emitted
+    // nothing) instead of running — the same gap made `dsl smoke` fail off a
+    // neutral cwd. An explicit caller value still wins.
+    if std::env::var("LAYA_WORKFLOW_BIN").is_err() {
+        if let Some(bin) = cli_binary() {
+            map.insert(
+                "LAYA_WORKFLOW_BIN".to_string(),
+                bin.to_string_lossy().into_owned(),
+            );
         }
     }
     // Plain scratch values for the secret/webhook/search env refs the specs

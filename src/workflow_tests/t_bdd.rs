@@ -8833,6 +8833,50 @@ pub fn test_dsl_smoke_cwd_independent(h: &mut Harness) {
     let _ = std::fs::remove_dir_all(&cwd);
 }
 
+/// P220: `ensure_env_dirs` pins `$LAYA_WORKFLOW_BIN`, so a plugin / `shell` shim
+/// that delegates back into our own CLI finds it without guessing.
+///
+/// `websites/feishu.com/plugin/collect.sh` → `laya-workflow feishu-collect` is
+/// the live example: the shim prefers `$LAYA_WORKFLOW_BIN`, then
+/// `$REPO_ROOT/target/release/…`, then `$PATH`. CI's offline job builds only
+/// `target/debug` and installs nothing on `$PATH`, so the shim found no binary,
+/// printed nothing on stdout, and `feishu_unread_digest` failed with a
+/// `json_parse: EOF` that no predicate could classify — the same gap made
+/// `dsl smoke` fail from a neutral cwd. This pins both halves of the contract.
+pub fn test_dsl_shim_resolves_cli(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::ensure_env_dirs;
+
+    let pinned = ensure_env_dirs()
+        .ok()
+        .and_then(|m| m.get("LAYA_WORKFLOW_BIN").cloned())
+        .or_else(|| std::env::var("LAYA_WORKFLOW_BIN").ok());
+    let expected = if cfg!(windows) {
+        "laya-workflow.exe"
+    } else {
+        "laya-workflow"
+    };
+    h.check(
+        &format!("dsl shim: $LAYA_WORKFLOW_BIN names a real CLI ({pinned:?})"),
+        pinned
+            .as_deref()
+            .map(|p| {
+                let path = std::path::Path::new(p);
+                path.is_file() && path.file_name().and_then(|s| s.to_str()) == Some(expected)
+            })
+            .unwrap_or(false),
+    );
+
+    // The other half: the shim the specs actually call must honour that var.
+    // If it stopped reading `$LAYA_WORKFLOW_BIN` the pin above would be inert
+    // and the CI failure would come straight back.
+    let shim = bdd::repo_root().join("websites/feishu.com/plugin/collect.sh");
+    let src = std::fs::read_to_string(&shim).unwrap_or_default();
+    h.check(
+        "dsl shim: collect.sh resolves $LAYA_WORKFLOW_BIN first (the pin is load-bearing)",
+        shim.is_file() && src.contains("LAYA_WORKFLOW_BIN"),
+    );
+}
+
 /// `bdd features-check` is the corpus-completeness gate: every checked-in
 /// `.feature` compiles, and every one sits in a gate bucket. It was added
 /// because `bdd/workflows/examples/` - the two features `docs/bdd_quickstart.md`

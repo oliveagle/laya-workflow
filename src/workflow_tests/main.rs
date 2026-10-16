@@ -219,6 +219,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-smoke-branch-coverage", t_bdd::test_bdd_smoke_branch_coverage),
         ("dsl-smoke-unasserted-state", t_bdd::test_dsl_smoke_unasserted_state),
         ("dsl-smoke-cwd-independent", t_bdd::test_dsl_smoke_cwd_independent),
+        ("dsl-shim-resolves-cli", t_bdd::test_dsl_shim_resolves_cli),
         ("dsl-smoke-tally", t_bdd::test_dsl_smoke_tally),
         ("bdd-live-decisions", t_bdd::test_bdd_live_decisions),
         ("bdd-live-decisions-env-gap", t_bdd::test_bdd_live_decisions_env_gap),
