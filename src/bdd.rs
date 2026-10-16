@@ -4463,6 +4463,12 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
         }
     } else {
         for f in &o.features {
+            if let Some(msg) =
+                feature_arg_problem(f, Some("this repo's `bdd/features` corpus"))
+            {
+                eprintln!("bdd build: {msg}");
+                return Ok(1);
+            }
             paths.push(PathBuf::from(f));
         }
     }
@@ -4485,6 +4491,10 @@ pub fn build(o: &BuildOptions) -> Result<i32> {
         return Ok(1);
     }
 
+    if let Some(msg) = out_dir_problem("--out", &o.out) {
+        eprintln!("bdd build: {msg}");
+        return Ok(1);
+    }
     let out_dir = Path::new(&o.out);
     let spec_dir = out_dir.join("spec");
     std::fs::create_dir_all(&spec_dir)?;
@@ -4810,8 +4820,18 @@ pub fn transpile_cli(
 ) -> Result<i32> {
     let default_wrapper = default_chrome_wrapper();
     let chrome_wrapper = chrome_bin.unwrap_or(&default_wrapper);
+    if let Some(out) = out {
+        if let Some(msg) = out_dir_problem("--out", out) {
+            eprintln!("bdd transpile: {msg}");
+            return Ok(1);
+        }
+    }
     let mut total = 0usize;
     for fp in features {
+        if let Some(msg) = feature_arg_problem(fp, None) {
+            eprintln!("bdd transpile: {msg}");
+            return Ok(1);
+        }
         let path = Path::new(fp);
         let feature = match load(path) {
             Ok(f) => f,
@@ -7783,6 +7803,51 @@ fn run_plan_item(
     )
 }
 
+/// The message for a path that is not a usable Gherkin `.feature`, or `None` when
+/// it is one. `corpus` names the directory the command's *no-argument* form runs,
+/// so the advice is right for `bdd run` (`bdd/features`) and for the `bdd live`
+/// path that reuses [`run`] (`bdd/workflows/browser`) alike.
+///
+/// One voice for the confusion this line kept tripping over: `--spec` takes a
+/// `.json` workflow spec, `bdd` takes `.feature` documents. Two spellings of the
+/// same mistake are named here -- a spec where a feature was meant, and a
+/// `.feature` where a spec was meant (see `workflow_cli::resolve_spec_arg`).
+pub fn feature_arg_problem(fp: &str, corpus: Option<&str>) -> Option<String> {
+    let p = Path::new(fp);
+    if fp.ends_with(".json") {
+        return Some(format!(
+            "{fp} is a compiled workflow spec, not a Gherkin feature — run it with \
+             `laya-workflow run --spec {fp}` (to turn it back into a feature: \
+             `laya-workflow bdd import {fp}`)"
+        ));
+    }
+    if p.is_dir() {
+        return Some(format!("{fp} is a directory; pass the `.feature` files themselves"));
+    }
+    if !p.exists() {
+        let corpus = corpus.map(|c| format!(", or no path at all to run {c}")).unwrap_or_default();
+        return Some(format!(
+            "{fp}: no such file; pass one or more `.feature` paths{corpus}"
+        ));
+    }
+    if !fp.ends_with(".feature") {
+        return Some(format!("{fp} is not a `.feature`; pass Gherkin `.feature` files"));
+    }
+    None
+}
+
+/// Catch a `--out` that is a file (or any non-directory) *before* the first
+/// `create_dir_all`, which would otherwise answer `Not a directory (os error 20)`
+/// — the same raw errno shape `--spec` used to answer with.
+pub fn out_dir_problem(flag: &str, path: &str) -> Option<String> {
+    let p = Path::new(path);
+    if p.exists() && !p.is_dir() {
+        Some(format!("{flag} `{path}` exists and is not a directory; it is a directory of generated artifacts"))
+    } else {
+        None
+    }
+}
+
 pub fn run(o: &RunOptions) -> Result<i32> {
     let root = repo_root();
     let feature_dir = root.join("bdd").join("features");
@@ -7840,29 +7905,17 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     // a compiled workflow spec, not a Gherkin feature; a missing file used to
     // surface as `<path>: reading <path>` (the context, not the cause), which
     // reads as if the file were found. Checked only for explicit arguments - the
-    // no-argument corpus above is already the repo's own `bdd/features`.
+    // no-argument corpus above is already this repo's own tree, and that tree
+    // differs between `bdd run` and the `bdd live` path that reuses this function.
     if !o.features.is_empty() {
+        let (cmd, corpus) = if o.live {
+            ("bdd live", "this repo's `bdd/workflows/browser` live corpus")
+        } else {
+            ("bdd run", "this repo's `bdd/features` corpus")
+        };
         for p in &paths {
-            let name = p.to_string_lossy();
-            if name.ends_with(".json") {
-                eprintln!(
-                    "bdd run: {name} is a compiled workflow spec, not a Gherkin feature — run \
-                     it with `laya-workflow run --spec {name}` (to turn it back into a feature: \
-                     `laya-workflow bdd import {name}`)"
-                );
-                return Ok(1);
-            }
-            if !p.exists() {
-                eprintln!(
-                    "bdd run: {name}: no such file; pass one or more `.feature` paths, or no \
-                     path at all to run this repo's `bdd/features` corpus"
-                );
-                return Ok(1);
-            }
-            if !name.ends_with(".feature") {
-                eprintln!(
-                    "bdd run: {name} is not a `.feature`; bdd run executes Gherkin features"
-                );
+            if let Some(msg) = feature_arg_problem(&p.to_string_lossy(), Some(corpus)) {
+                eprintln!("{cmd}: {msg}");
                 return Ok(1);
             }
         }
@@ -8067,6 +8120,10 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         desc.push_str(n);
     }
     println!("bdd: {} scenario(s)  ({desc})", plan.len());
+    if let Some(msg) = out_dir_problem("--out", &o.out) {
+        eprintln!("bdd run: {msg}");
+        return Ok(1);
+    }
     std::fs::create_dir_all(&o.out)?;
 
     // One CDP endpoint per worker: each worker keeps its own port and profile
@@ -8691,7 +8748,16 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
     }
 
     if tasks.is_empty() {
-        bail!("no authoring tasks selected");
+        // `--tasks` takes task *ids*, not a file. Naming the id's home turns a
+        // silently-empty selection into an actionable message.
+        if o.tasks.is_empty() {
+            bail!("no authoring tasks selected");
+        }
+        bail!(
+            "no authoring task matched {:?}; pass task ids as bare arguments (the `id` field \
+             of the *.json under bench/bdd/tasks/), not a file path",
+            o.tasks
+        );
     }
 
     // optional e2e: run every task feature once. Two halves, because `bdd run`'s
@@ -9938,6 +10004,24 @@ pub fn import(o: &ImportOptions) -> Result<i32> {
 
 /// One `.json` → one `.feature`.
 fn import_one(spec_path: &str, o: &ImportOptions) -> Result<i32> {
+    // `import` is the inverse of `transpile`: it reads a `.json` spec and writes a
+    // `.feature`. A `.feature` here is the same confusion, the other way round.
+    let p = Path::new(spec_path);
+    if spec_path.ends_with(".feature") {
+        bail!(
+            "`{spec_path}` is a BDD `.feature`, not a workflow spec; `bdd import` turns a spec \
+             `.json` *into* a feature — to go the other way: \
+             `laya-workflow bdd transpile {spec_path} --out <spec.json>`"
+        );
+    }
+    if p.is_dir() {
+        bail!(
+            "`{spec_path}` is a directory; pass one spec `.json`, or `--dir <DIR>` for a whole tree"
+        );
+    }
+    if !p.exists() {
+        bail!("`{spec_path}`: no such file; `bdd import` reads a workflow spec `.json`");
+    }
     let text =
         std::fs::read_to_string(spec_path).with_context(|| format!("reading {spec_path}"))?;
     let spec: Value =
@@ -10927,6 +11011,20 @@ fn read_sources_sealed(dir: &Path) -> Result<Vec<(String, String)>> {
 
 /// The sealed manifest (`bench/bdd/port_pins/<cat>.json`), as name -> fingerprint.
 fn read_pin(path: &Path) -> Result<Vec<(String, String)>> {
+    if path.is_dir() {
+        bail!(
+            "the seal {} is a directory; pass the sealed manifest file under \
+             bench/bdd/port_pins/",
+            path.display()
+        );
+    }
+    if !path.is_file() {
+        bail!(
+            "the seal {} does not exist; pass a sealed manifest under bench/bdd/port_pins/ \
+             (seal one with `bdd port-check --sources <DIR> --write-pin <FILE>`)",
+            path.display()
+        );
+    }
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading the seal {}", path.display()))?;
     let v: Value = serde_json::from_str(&text)

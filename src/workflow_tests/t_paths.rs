@@ -142,3 +142,158 @@ pub fn test_spec_arg_hints(h: &mut Harness) {
 
     let _ = std::fs::remove_dir_all(&cwd);
 }
+
+/// P238: the same "name the confusion" pass over the remaining `bdd`
+/// sub-commands. `transpile` / `build` take `.feature` documents, `import` takes
+/// a spec `.json`, `port-check --pin` takes a sealed manifest, `evaluate
+/// --dataset` takes a labeled `.jsonl`, and `bdd score` takes task *ids*. Each
+/// used to answer a raw errno (`No such file or directory (os error 2)`, `Is a
+/// directory (os error 21)`, `Not a directory (os error 20)`), a context-only io
+/// error (`<path>: reading <path>`), or a bare serde error (`expected value at
+/// line 1 column 1`) - none of which names the fix. Each now names the next step,
+/// and the happy paths stay unregressed.
+pub fn test_bdd_arg_hints(h: &mut Harness) {
+    let cwd = std::env::temp_dir().join(format!("laya-bddargv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(cwd.join("sub")).unwrap();
+    std::fs::write(cwd.join("doc.feature"), "Feature: x\n").unwrap();
+    std::fs::write(cwd.join("out.txt"), "x\n").unwrap();
+    // A spec that round-trips (`import` -> `build`), so both happy paths really run.
+    let spec = json!({
+        "dsl_version": 2, "name": "hint_ok", "start": "a",
+        "max_iterations": 3, "convergence_window": 2, "convergence_eps": 0.001,
+        "nodes": [{
+            "name": "a", "primary_q": "q",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+            "min_confidence": 0.0, "max_retries": 1,
+            "action": {"kind": "copy_keys", "keys": ["q"]}
+        }]
+    });
+    std::fs::write(cwd.join("ok.json"), serde_json::to_string_pretty(&spec).unwrap()).unwrap();
+
+    // Happy paths: the guards must not over-trigger.
+    let (code, text) = run_code_in(&cwd, &["bdd", "import", "ok.json"], &[]);
+    h.eq("bdd-arg: `bdd import <spec.json>` still imports (rc=0)", code, Some(0));
+    h.check(
+        "bdd-arg: import emits a @decision feature",
+        text.contains("@decision") && text.contains("Feature: hint_ok"),
+    );
+    std::fs::write(cwd.join("roundtrip.feature"), &text).unwrap();
+    let (code, _) = run_code_in(
+        &cwd,
+        &["bdd", "build", "roundtrip.feature", "--out", "build_out"],
+        &[],
+    );
+    h.eq("bdd-arg: `bdd build <feature>` still builds (rc=0)", code, Some(0));
+
+    // transpile: a spec (was a Feature-header parse error / the wrong path).
+    let (code, text) = run_code_in(&cwd, &["bdd", "transpile", "ok.json"], &[]);
+    h.eq("bdd-arg: `bdd transpile <spec.json>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: transpile on a spec points at `run --spec` / `bdd import`",
+        text.contains("compiled workflow spec")
+            && text.contains("run --spec")
+            && !text.contains("os error"),
+    );
+    // transpile: a directory (was `Is a directory (os error 21)`).
+    let (code, text) = run_code_in(&cwd, &["bdd", "transpile", "sub"], &[]);
+    h.eq("bdd-arg: `bdd transpile <dir>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: transpile on a directory says so",
+        text.contains("is a directory") && !text.contains("os error"),
+    );
+    // transpile: a missing feature.
+    let (code, text) = run_code_in(&cwd, &["bdd", "transpile", "ghost.feature"], &[]);
+    h.eq("bdd-arg: `bdd transpile <missing>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: transpile on a missing feature says `no such file`",
+        text.contains("no such file") && !text.contains("os error"),
+    );
+
+    // build: a missing feature (was the context-only `<path>: reading <path>`).
+    let (code, text) = run_code_in(&cwd, &["bdd", "build", "ghost.feature"], &[]);
+    h.eq("bdd-arg: `bdd build <missing.feature>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: build on a missing feature says `no such file`",
+        text.contains("no such file") && !text.contains("os error"),
+    );
+    // build: a spec handed to build (was `text before any Feature: header: "{"`).
+    let (code, text) = run_code_in(&cwd, &["bdd", "build", "ok.json"], &[]);
+    h.eq("bdd-arg: `bdd build <spec.json>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: build on a spec points at `run --spec`",
+        text.contains("compiled workflow spec")
+            && text.contains("run --spec")
+            && !text.contains("Feature: header"),
+    );
+    // build: `--out` that is a file (was `Not a directory (os error 20)`).
+    let (code, text) = run_code_in(
+        &cwd,
+        &["bdd", "build", "roundtrip.feature", "--out", "out.txt"],
+        &[],
+    );
+    h.eq("bdd-arg: `bdd build --out <file>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: build `--out <file>` says not a directory",
+        text.contains("is not a directory") && !text.contains("os error"),
+    );
+
+    // import: a missing spec / a feature handed to import (was a bare serde error).
+    let (code, text) = run_code_in(&cwd, &["bdd", "import", "ghost.json"], &[]);
+    h.eq("bdd-arg: `bdd import <missing.json>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: import on a missing spec says `no such file`",
+        text.contains("no such file") && !text.contains("os error"),
+    );
+    let (code, text) = run_code_in(&cwd, &["bdd", "import", "doc.feature"], &[]);
+    h.eq("bdd-arg: `bdd import <feature>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: import on a feature points at `bdd transpile`",
+        text.contains("is a BDD `.feature`")
+            && text.contains("bdd transpile")
+            && !text.contains("expected value"),
+    );
+
+    // port-check: a missing / directory seal (was `reading the seal <path>` + errno).
+    let (code, text) = run_code_in(&cwd, &["bdd", "port-check", "--pin", "ghost.json"], &[]);
+    h.eq("bdd-arg: `bdd port-check --pin <missing>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: port-check on a missing seal says `does not exist`",
+        text.contains("does not exist")
+            && text.contains("--write-pin")
+            && !text.contains("os error"),
+    );
+    let (code, text) = run_code_in(&cwd, &["bdd", "port-check", "--pin", "sub"], &[]);
+    h.eq("bdd-arg: `bdd port-check --pin <dir>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: port-check on a directory seal says so",
+        text.contains("is a directory") && !text.contains("os error"),
+    );
+
+    // evaluate: a missing / directory dataset (was a bare `os error 2` / `21`).
+    for ds in ["ghost.jsonl", "sub"] {
+        let (code, text) = run_code_in(
+            &cwd,
+            &["evaluate", "--spec", "ok.json", "--dataset", ds],
+            &[],
+        );
+        h.eq(&format!("bdd-arg: `evaluate --dataset {ds}` rc=1"), code, Some(1));
+        h.check(
+            &format!("bdd-arg: `evaluate --dataset {ds}` names the flag, not an errno"),
+            text.contains("evaluate --dataset") && !text.contains("os error"),
+        );
+    }
+
+    // score: an unknown task id (ids, not a file / a path).
+    let (code, text) = run_code_in(&cwd, &["bdd", "score", "no-such-task-id"], &[]);
+    h.eq("bdd-arg: `bdd score <unknown-id>` rc=1", code, Some(1));
+    h.check(
+        "bdd-arg: score on an unknown id names the tasks corpus",
+        text.contains("no authoring task matched")
+            && text.contains("bench/bdd/tasks")
+            && !text.contains("os error"),
+    );
+
+    let _ = std::fs::remove_dir_all(&cwd);
+}

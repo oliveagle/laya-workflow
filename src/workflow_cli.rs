@@ -3011,6 +3011,27 @@ fn run_improve(dir: &str, rounds: usize, score_only: bool) -> Result<()> {
     Ok(())
 }
 
+/// The message for a `--dataset` that is not a readable JSONL corpus, or `None`.
+/// `evaluate --dataset` takes a labeled `.jsonl` file (one JSON case per line) --
+/// not a `.json` workflow spec and not a directory. A missing or wrong-shaped
+/// path otherwise surfaces as a bare `No such file or directory (os error 2)` /
+/// `Is a directory (os error 21)`, the same raw-errno shape `--spec` used to give.
+fn dataset_arg_problem(path: &str) -> Option<String> {
+    let p = std::path::Path::new(path);
+    if p.is_dir() {
+        return Some(format!(
+            "{path} is a directory; pass the labeled `.jsonl` dataset file itself"
+        ));
+    }
+    if !p.exists() {
+        return Some(format!(
+            "{path}: no such file; `--dataset` reads a labeled `.jsonl` corpus \
+             (one JSON case per line)"
+        ));
+    }
+    None
+}
+
 /// Evaluate a workflow against a labeled JSONL dataset (dev/holdout + slice
 /// breakdowns + confusion matrix + review queue). Port of awesome-jev's
 /// `evaluations/run.py`: only the ticket message reaches the workflow; the
@@ -3049,6 +3070,9 @@ fn run_evaluate(
         }
     }
 
+    if let Some(msg) = dataset_arg_problem(dataset_path) {
+        bail!("evaluate --dataset: {msg}");
+    }
     let cases = evaluate::load_dataset(dataset_path, &departments)?;
     let selected: Vec<_> = cases
         .iter()
