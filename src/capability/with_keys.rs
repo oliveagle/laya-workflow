@@ -98,15 +98,13 @@ const SOURCES: &[(&str, &str)] = &[
 /// The compiled patterns, built once. `regex_lite` has no `\b`, so whole-word
 /// `with` is matched by hand in [`has_word`].
 struct Rx {
-    fn_sig: Regex,
-    /// The same signature shape, but matched against a single line (see [`fn_sigs`]).
+    /// The `fn` signature shape, matched against a single line (see [`fn_sigs`]).
+    /// The whole-file `(?m)` form it replaced lives in the tests, which pin
+    /// [`fn_sigs`] against it.
     fn_sig_one: Regex,
     kind_var: Regex,
     kind_lit: Regex,
     var_fn: Regex,
-    with_get_lit: Regex,
-    with_get_dyn: Regex,
-    call: Regex,
     str_lit: Regex,
     ident: Regex,
     as_ty: Regex,
@@ -119,7 +117,6 @@ struct Rx {
 fn rx() -> &'static Rx {
     static R: OnceLock<Rx> = OnceLock::new();
     R.get_or_init(|| Rx {
-        fn_sig: Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*[(<]").unwrap(),
         fn_sig_one: Regex::new(r"^\s*(?:pub\s+)?fn\s+(\w+)\s*[(<]").unwrap(),
         kind_var: Regex::new(
             r#"((?:"[a-z0-9_-]+"\s*\|\s*)*"[a-z0-9_-]+")\s*=>\s*Ok\(Capability::(\w+)"#,
@@ -130,9 +127,6 @@ fn rx() -> &'static Rx {
             r#"Capability::(\w+)\s*\(\s*c\s*\)\s*=>\s*(?:([a-z_]+)::)?(\w+)\s*\("#,
         )
         .unwrap(),
-        with_get_lit: Regex::new(r#"with\s*\.\s*get\s*\(\s*"([^"]+)""#).unwrap(),
-        with_get_dyn: Regex::new(r#"with\s*\.\s*get\s*\(\s*[^"]"#).unwrap(),
-        call: Regex::new(r"([A-Za-z_][A-Za-z0-9_]*(?:::\w+)?)\s*\(").unwrap(),
         str_lit: Regex::new(r#""([^"\\]*)""#).unwrap(),
         ident: Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap(),
         // `regex_lite` has no `\b`; a trailing `([^A-Za-z0-9_]|$)` is the whole-word
@@ -215,10 +209,150 @@ impl Sources {
     fn src(&self, name: &str) -> Option<&str> {
         self.stripped.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str())
     }
+
+    /// The whitespace-stripped form of source `name`, or `""` for a name that is
+    /// not a source (which makes the necessary-condition gates below skip, never
+    /// run).
+    fn compact_of(&self, name: &str) -> &str {
+        self.compact.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str()).unwrap_or("")
+    }
 }
 
 fn compact_ws(src: &str) -> String {
     src.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// `regex_lite`'s `\s`: the ASCII whitespace class (it carries no Unicode
+/// classes). Spelled out so the scanners below agree with the patterns they
+/// replaced on every byte, not just on ` `.
+#[inline]
+fn is_ws(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && is_ws(b[i]) {
+        i += 1;
+    }
+    i
+}
+
+/// Match `with\s*\.\s*get\s*\(` at byte `p`; return the offset just past the
+/// `(`.
+///
+/// A hand-written scan rather than the `regex_lite` pattern it replaced. The
+/// whole-source scan runs once per source per table (and once per reached body
+/// per kind in [`reads_for`]), and `regex_lite` is a backtracking engine: the
+/// pattern cost ~23 ms per pass over the ~780 KB of capability sources, where
+/// this costs ~0.5 ms. [`scanners_match_the_regexes`] pins the equivalence on
+/// every source.
+fn match_with_get_prefix(b: &[u8], p: usize) -> Option<usize> {
+    let mut i = p + 4; // past `with`
+    i = skip_ws(b, i);
+    if b.get(i) != Some(&b'.') {
+        return None;
+    }
+    i = skip_ws(b, i + 1);
+    if b.get(i..i + 3) != Some(b"get") {
+        return None;
+    }
+    i = skip_ws(b, i + 3);
+    if b.get(i) != Some(&b'(') {
+        return None;
+    }
+    Some(i + 1)
+}
+
+/// Every literal read site: `(key, offset just past the closing quote)`.
+/// Equivalent to `with\s*\.\s*get\s*\(\s*"([^"]+)"` - non-overlapping, left to
+/// right, and the key is the run up to the first `"`.
+fn scan_with_get(src: &str) -> Vec<(&str, usize)> {
+    let b = src.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while let Some(rel) = src[i..].find("with") {
+        let p = i + rel;
+        let mut hit = None;
+        if let Some(paren) = match_with_get_prefix(b, p) {
+            let q = skip_ws(b, paren);
+            if b.get(q) == Some(&b'"') {
+                let start = q + 1;
+                let mut j = start;
+                while j < b.len() && b[j] != b'"' {
+                    j += 1;
+                }
+                if j > start && j < b.len() {
+                    hit = Some((start, j, j + 1));
+                }
+            }
+        }
+        match hit {
+            Some((s, e, end)) => {
+                out.push((&src[s..e], end));
+                i = end;
+            }
+            None => i = p + 1,
+        }
+    }
+    out
+}
+
+/// Does any read site take its key from a value rather than a literal - the
+/// `with\s*\.\s*get\s*\(\s*[^"]` shape. `\s*` may land on the byte right after
+/// `(`, so the pattern matches exactly when that byte is not the opening quote.
+fn has_with_get_dyn(src: &str) -> bool {
+    let b = src.as_bytes();
+    let mut i = 0usize;
+    while let Some(rel) = src[i..].find("with") {
+        let p = i + rel;
+        if let Some(paren) = match_with_get_prefix(b, p) {
+            if b.get(paren).is_some_and(|c| *c != b'"') {
+                return true;
+            }
+        }
+        i = p + 1;
+    }
+    false
+}
+
+/// Every call site as `(callee, offset of the '(')`. Equivalent to
+/// `([A-Za-z_][A-Za-z0-9_]*(?:::\w+)?)\s*\(` - the `::` group is greedy but does
+/// not span a second `::`, so `a::b::c(` yields `b::c`.
+fn scan_calls(src: &str) -> Vec<(&str, usize)> {
+    let b = src.as_bytes();
+    let ident0 = |c: u8| c.is_ascii_alphabetic() || c == b'_';
+    let identn = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < b.len() {
+        if !ident0(b[i]) {
+            i += 1;
+            continue;
+        }
+        let s = i;
+        let mut j = i + 1;
+        while j < b.len() && identn(b[j]) {
+            j += 1;
+        }
+        let mut name_end = j;
+        if b.get(j) == Some(&b':') && b.get(j + 1) == Some(&b':') {
+            let mut k = j + 2;
+            while k < b.len() && identn(b[k]) {
+                k += 1;
+            }
+            if k > j + 2 {
+                name_end = k;
+            }
+        }
+        let m = skip_ws(b, name_end);
+        if b.get(m) == Some(&b'(') {
+            out.push((&src[s..name_end], m));
+            i = m + 1;
+        } else {
+            i = s + 1;
+        }
+    }
+    out
 }
 
 /// Every `fn` definition in `src`, as `(name, offset just past the signature)`.
@@ -313,7 +447,6 @@ fn reads_for(
     funcs: &BTreeMap<String, Vec<String>>,
     seen: &mut BTreeSet<String>,
 ) -> BTreeSet<String> {
-    let r = rx();
     let mut res = BTreeSet::new();
     if !seen.insert(name.to_string()) {
         return res;
@@ -322,22 +455,23 @@ fn reads_for(
         return res;
     };
     for body in bodies {
-        for c in r.with_get_lit.captures_iter(body) {
-            res.insert(c[1].to_string());
+        for (key, _) in scan_with_get(body) {
+            res.insert(key.to_string());
         }
         // A dynamic `with.get(<not-a-literal>)` means the key comes from a
         // captured value (a local closure): over-approximate with every
         // identifier literal the body passes to any call.
-        if r.with_get_dyn.is_match(body) {
-            for c in r.call.captures_iter(body) {
-                let args = arg_span(body, c.get(0).unwrap().end() - 1);
-                res.extend(ident_literals(&args));
+        if has_with_get_dyn(body) {
+            for (_, open) in scan_calls(body) {
+                let (a, z) = arg_span(body, open);
+                res.extend(ident_literals(&body[a..z]));
             }
         }
-        for c in r.call.captures_iter(body) {
-            let called = c[1].rsplit("::").next().unwrap().to_string();
-            let args = arg_span(body, c.get(0).unwrap().end() - 1);
-            if !has_word(&args, "with") {
+        for (callee, open) in scan_calls(body) {
+            let called = callee.rsplit("::").next().unwrap();
+            let (a, z) = arg_span(body, open);
+            let args = &body[a..z];
+            if !has_word(args, "with") {
                 continue;
             }
             if called == "expand" || called == "expand_str" {
@@ -346,18 +480,20 @@ fn reads_for(
             if called == "effective_op" {
                 res.insert("op".to_string());
             }
-            res.extend(ident_literals(&args));
-            res.extend(reads_for(&called, funcs, seen));
+            res.extend(ident_literals(args));
+            res.extend(reads_for(called, funcs, seen));
         }
     }
     res
 }
 
-/// The argument list of the call whose `(` is at byte `open`.
-fn arg_span(src: &str, open: usize) -> String {
+/// The byte range just inside the parens of the call whose `(` is at byte
+/// `open` - `(start, end)`, sliced as `&src[start..end]`. A call whose parens do
+/// not close yields `(0, 0)`, the same empty slice the owned form returned.
+fn arg_span(src: &str, open: usize) -> (usize, usize) {
     let bytes = src.as_bytes();
     if bytes.get(open) != Some(&b'(') {
-        return String::new();
+        return (0, 0);
     }
     let mut depth = 0i32;
     let mut i = open;
@@ -367,7 +503,7 @@ fn arg_span(src: &str, open: usize) -> String {
             b')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return src[open + 1..i].to_string();
+                    return (open + 1, i);
                 }
             }
             b'"' => {
@@ -387,7 +523,7 @@ fn arg_span(src: &str, open: usize) -> String {
         }
         i += 1;
     }
-    String::new()
+    (0, 0)
 }
 
 /// Every `"…"` literal in `s` that is a bare identifier (`text`, `op`, `id_key`).
@@ -563,27 +699,22 @@ fn note_ty(m: &mut BTreeMap<String, Option<ReadTy>>, key: &str, ty: Option<ReadT
 
 fn build_types() -> BTreeMap<String, BTreeMap<String, ReadTy>> {
     let r = rx();
-    // Only the non-test half speaks for the engine: a typed `with.get` inside a
-    // `#[cfg(test)]` module would otherwise pin a key nothing read types.
-    let stripped: Vec<(&str, String)> = sources()
-        .stripped
-        .iter()
-        .map(|(n, s)| {
-            let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
-            (*n, s[..cut].to_string())
-        })
-        .collect();
+    let s = sources();
     let mut per_mod: BTreeMap<String, BTreeMap<String, Option<ReadTy>>> = BTreeMap::new();
-    for (name, src) in &stripped {
+    for (name, full) in &s.stripped {
+        // Only the non-test half speaks for the engine: a typed `with.get` inside
+        // a `#[cfg(test)]` module would otherwise pin a key nothing read types.
+        let cut = full.find("#[cfg(test)]").unwrap_or(full.len());
+        let src = &full[..cut];
         let m = per_mod.entry((*name).to_string()).or_default();
-        // `with\s*\.\s*get\s*\(` can only match where `with.get(` survives once
+        // A literal `with.get("` can only survive where `with.get(` does once
         // whitespace is gone - a necessary condition, so this gate can only skip a
-        // source the regex would not have matched.
-        if compact_ws(src).contains("with.get(\"") {
-            for c in r.with_get_lit.captures_iter(src) {
-                let key = c[1].to_string();
-                let seg = read_segment(src, c.get(0).unwrap().end());
-                note_ty(m, &key, ty_in(&seg));
+        // source the scan would not have matched. (`sources()` already holds the
+        // stripped form; the gate used to recompute it here, per table.)
+        if s.compact_of(name).contains("with.get(\"") {
+            for (key, from) in scan_with_get(src) {
+                let seg = read_segment(src, from);
+                note_ty(m, key, ty_in(&seg));
             }
         }
         // `effective_op(op, with, ...)` reads `with.op` as a string, and only a
@@ -745,27 +876,21 @@ fn with_bands() -> &'static BTreeMap<String, BTreeMap<String, Band>> {
 }
 
 fn build_bands() -> BTreeMap<String, BTreeMap<String, Band>> {
-    let r = rx();
-    let stripped: Vec<(&str, String)> = sources()
-        .stripped
-        .iter()
-        .map(|(n, s)| {
-            let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
-            (*n, s[..cut].to_string())
-        })
-        .collect();
+    let s = sources();
     // module -> key -> (how many read sites, the band of the first one)
     let mut per_mod: BTreeMap<String, BTreeMap<String, (usize, Option<Band>)>> =
         BTreeMap::new();
-    for (name, src) in &stripped {
+    for (name, full) in &s.stripped {
+        let cut = full.find("#[cfg(test)]").unwrap_or(full.len());
+        let src = &full[..cut];
         let m = per_mod.entry((*name).to_string()).or_default();
-        // Same necessary-condition gate as `build_types`.
-        if compact_ws(src).contains("with.get(\"") {
-            for c in r.with_get_lit.captures_iter(src) {
-                let key = c[1].to_string();
-                let seg = band_segment(src, c.get(0).unwrap().end());
+        // Same necessary-condition gate as `build_types`, off the cached
+        // whitespace-stripped copy rather than a fresh one per table.
+        if s.compact_of(name).contains("with.get(\"") {
+            for (key, from) in scan_with_get(src) {
+                let seg = band_segment(src, from);
                 let band = band_in(&seg);
-                let e = m.entry(key).or_insert((0, None));
+                let e = m.entry(key.to_string()).or_insert((0, None));
                 if e.0 == 0 {
                     e.1 = band;
                 }
@@ -1134,19 +1259,77 @@ pub fn with_issue_body(issue: &WithIssue) -> String {
 mod tests {
     use super::*;
 
+    /// The `regex_lite` patterns the hand-written scanners replaced, rebuilt here
+    /// rather than in [`Rx`]: the production build then carries no pattern it does
+    /// not use, and the equivalence is still pinned against the pattern itself.
+    fn ref_fn_sig() -> &'static Regex {
+        static R: OnceLock<Regex> = OnceLock::new();
+        R.get_or_init(|| Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*[(<]").unwrap())
+    }
+
+    fn ref_with_get_lit() -> &'static Regex {
+        static R: OnceLock<Regex> = OnceLock::new();
+        R.get_or_init(|| Regex::new(r#"with\s*\.\s*get\s*\(\s*"([^"]+)""#).unwrap())
+    }
+
+    fn ref_with_get_dyn() -> &'static Regex {
+        static R: OnceLock<Regex> = OnceLock::new();
+        R.get_or_init(|| Regex::new(r#"with\s*\.\s*get\s*\(\s*[^"]"#).unwrap())
+    }
+
+    fn ref_call() -> &'static Regex {
+        static R: OnceLock<Regex> = OnceLock::new();
+        R.get_or_init(|| Regex::new(r"([A-Za-z_][A-Za-z0-9_]*(?:::\w+)?)\s*\(").unwrap())
+    }
+
     /// [`fn_sigs`] must find exactly what the `(?m)` regex it replaced found -
     /// same names, same offsets, same order - on every capability source.
     #[test]
     fn fn_sigs_matches_the_regex() {
-        let r = rx();
+        let r = ref_fn_sig();
         for (name, src) in SOURCES {
             let want: Vec<(String, usize)> = r
-                .fn_sig
                 .captures_iter(src)
                 .map(|m| (m[1].to_string(), m.get(0).unwrap().end()))
                 .collect();
             assert!(!want.is_empty(), "source {name} defines no fn (sanity)");
             assert_eq!(fn_sigs(src), want, "source {name}");
+        }
+    }
+
+    /// The scanners must return exactly what the patterns did - same values, same
+    /// offsets, same order, same count - on every capability source. This is what
+    /// lets the hot paths drop `regex_lite` without moving a single judgement: a
+    /// `with` key set that differs by one entry would make `bdd build` accept or
+    /// refuse a step the other way.
+    #[test]
+    fn scanners_match_the_regexes() {
+        for (name, src) in SOURCES {
+            let want: Vec<(String, usize)> = ref_with_get_lit()
+                .captures_iter(src)
+                .map(|c| (c[1].to_string(), c.get(0).unwrap().end()))
+                .collect();
+            let got: Vec<(String, usize)> = scan_with_get(src)
+                .into_iter()
+                .map(|(k, end)| (k.to_string(), end))
+                .collect();
+            assert_eq!(got, want, "scan_with_get on {name}");
+
+            let want: Vec<(String, usize)> = ref_call()
+                .captures_iter(src)
+                .map(|c| (c[1].to_string(), c.get(0).unwrap().end() - 1))
+                .collect();
+            let got: Vec<(String, usize)> = scan_calls(src)
+                .into_iter()
+                .map(|(k, open)| (k.to_string(), open))
+                .collect();
+            assert_eq!(got, want, "scan_calls on {name}");
+
+            assert_eq!(
+                has_with_get_dyn(src),
+                ref_with_get_dyn().is_match(src),
+                "has_with_get_dyn on {name}"
+            );
         }
     }
 }

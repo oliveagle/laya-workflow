@@ -6570,23 +6570,6 @@ pub fn doc_check_impl(readme: &str, agent: &str) -> Result<(usize, usize, usize,
         ),
     ];
 
-    let ints = |s: &str| -> Vec<Vec<i64>> {
-        let mut out = Vec::new();
-        for m in labels.iter().filter_map(|(rx, src, _)| if *src == s { Some(rx) } else { None }) {
-            for c in m.captures_iter(&vocab_or_args(s, &vocab_out, &args_out)) {
-                out.push((1..=c.len() - 1).map(|i| c[i].parse::<i64>().unwrap_or(0)).collect());
-            }
-        }
-        out
-    };
-    fn vocab_or_args(owner: &str, vocab: &str, args: &str) -> String {
-        match owner {
-            "vocabulary" => vocab.to_string(),
-            "args" => args.to_string(),
-            _ => String::new(),
-        }
-    }
-
     let ledger_truth = |pat: &str| -> Vec<Vec<i64>> {
         match pat {
             _ if pat.starts_with("覆盖台账") => {
