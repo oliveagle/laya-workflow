@@ -212,8 +212,12 @@ pub fn ensure_env_dirs() -> Result<BTreeMap<String, String>> {
     // heuristic backend refuses the capability as an unresolved reference
     // (`${unresolved:env.NEEDLE3_CACT}`) before it can run, so the whole
     // needle-using spec was unreachable offline; a placeholder lets the
-    // offline backend drive those graphs (needle_demo / needle_ticket /
-    // support_ticket_router_hybrid's hybrid fallback).
+    // offline backend *start* those graphs (needle_demo / needle_ticket /
+    // support_ticket_router_hybrid's hybrid fallback). Whether they can
+    // *finish* here is decided by `offline_asset_bound`: on a machine with the
+    // engine + weights installed the states run for real, and on one without
+    // them (a fresh CI runner) they are skipped validate-only instead of
+    // failing the gate.
     for (var, val) in [
         ("LAYA_SMTP_USER", "smoke@example.com"),
         ("LAYA_SMTP_PASS", "smoke-pass"),
@@ -349,6 +353,27 @@ fn current_platform_tags() -> Vec<&'static str> {
     }
 }
 
+/// The capability names a spec's nodes actually call (`action.capability`).
+///
+/// Every platform / asset predicate consults this rather than the whole
+/// `capabilities` map: a declared-but-unused capability must not knock a spec
+/// out of the offline run.
+fn called_capabilities(spec: &Value) -> Vec<&str> {
+    let mut called: Vec<&str> = Vec::new();
+    if let Some(nodes) = spec.get("nodes").and_then(Value::as_array) {
+        for n in nodes {
+            if let Some(cap) = n
+                .get("action")
+                .and_then(|a| a.get("capability"))
+                .and_then(Value::as_str)
+            {
+                called.push(cap);
+            }
+        }
+    }
+    called
+}
+
 /// True when a spec *calls* a capability gated to a platform we are not on.
 ///
 /// Some capabilities are inherently OS-specific: an `exec` argv of
@@ -365,18 +390,7 @@ pub fn platform_bound_here(spec: &Value) -> bool {
     };
     // Only capabilities a node actually calls matter; a declared-but-unused
     // unix-only capability must not knock an otherwise-portable spec out.
-    let mut called: Vec<&str> = Vec::new();
-    if let Some(nodes) = spec.get("nodes").and_then(Value::as_array) {
-        for n in nodes {
-            if let Some(cap) = n
-                .get("action")
-                .and_then(|a| a.get("capability"))
-                .and_then(Value::as_str)
-            {
-                called.push(cap);
-            }
-        }
-    }
+    let called = called_capabilities(spec);
     let here = current_platform_tags();
     for (name, cdef) in caps {
         if !called.contains(&name.as_str()) {
@@ -394,6 +408,34 @@ pub fn platform_bound_here(spec: &Value) -> bool {
         }
     }
     false
+}
+
+/// `Some(reason)` when a spec calls a capability that needs an optional
+/// on-device asset this machine does not have — today the `needle` engine
+/// (`libneedle.so`) and its 35 MB weight archive (`needle3.cact`).
+///
+/// Such a state cannot make its claim offline here, so the smoke skips it
+/// validate-only, exactly like a network-bound spec with no listener
+/// (`network_bound_offline`) or a `platforms`-gated capability on the wrong OS
+/// (`platform_bound_here`). This is what makes `scripts/bdd/check.sh`'s own
+/// contract — "offline heuristic backend, so no model, no Chrome, no network" —
+/// actually true: `ensure_env_dirs` injects a `NEEDLE3_CACT` *placeholder* so
+/// the graph can start, and before this check a browserless, model-less CI
+/// runner died inside the engine (`libneedle.so not found`) on
+/// `needle_demo` / `needle_ticket` / `support_ticket_router_hybrid`.
+pub fn offline_asset_bound(spec: &Value) -> Option<String> {
+    let caps = spec.get("capabilities").and_then(Value::as_object)?;
+    let called = called_capabilities(spec);
+    let uses_needle = caps.iter().any(|(name, cdef)| {
+        called.iter().any(|c| *c == name.as_str())
+            && cdef.get("kind").and_then(Value::as_str) == Some("needle")
+    });
+    if !uses_needle {
+        return None;
+    }
+    crate::capability::needle::assets_available()
+        .err()
+        .map(|e| format!("needs the on-device needle engine: {e}"))
 }
 
 fn tcp_reachable(host: &str, port: u16) -> bool {
@@ -837,6 +879,16 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
+        // These three predicates depend only on the raw spec — and, for the
+        // asset one, on the machine — so evaluate them once per spec instead of
+        // once per state.
+        let external_bound = opts.base_url.is_none() && network_bound_external(&raw_spec);
+        let platform_bound = platform_bound_here(&raw_spec);
+        let asset_bound = if opts.base_url.is_none() {
+            offline_asset_bound(&raw_spec)
+        } else {
+            None
+        };
         for (label, st) in state_map {
             // P33: the offline smoke must not perform real internet I/O. A
             // spec that is network-bound to an external (non-local) host has
@@ -844,7 +896,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             // `hf_trending` plugin reaching huggingface.co was costing ~16 s
             // per run before the static plugin-script scan classified it.
             // The integration / live job runs these states for real.
-            if opts.base_url.is_none() && network_bound_external(&raw_spec) {
+            if external_bound {
                 if !opts.quiet {
                     eprintln!(
                         "       {label}: external network target(s) — skipped, validate only (runs in the integration job)"
@@ -857,7 +909,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
             // `exec`/`shell` command on Windows) cannot run here; skip
             // validate-only rather than report a regression the host cannot
             // actually demonstrate.
-            if platform_bound_here(&raw_spec) {
+            if platform_bound {
                 if !opts.quiet {
                     eprintln!(
                         "       {label}: platform-bound capability (not available on {}) — skipped, validate only",
@@ -867,12 +919,25 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
                 skipped += 1;
                 continue;
             }
+            // P196: a capability whose optional on-device asset is absent (the
+            // needle engine + weights) cannot run here; skip validate-only
+            // rather than report a regression the host cannot demonstrate.
+            if let Some(why) = &asset_bound {
+                if !opts.quiet {
+                    eprintln!(
+                        "       {label}: {why} — skipped, validate only (runs in the integration job, where the model is installed)"
+                    );
+                }
+                skipped += 1;
+                continue;
+            }
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
                 Err(e) => {
                     if network_bound_offline(&raw_spec)
-                        || (opts.base_url.is_none() && network_bound_external(&raw_spec))
-                        || platform_bound_here(&raw_spec)
+                        || external_bound
+                        || platform_bound
+                        || asset_bound.is_some()
                     {
                         if !opts.quiet {
                             eprintln!(
@@ -963,7 +1028,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
     let (ok, failed_specs, _failing_checks) = tally(&per_spec_fail_counts);
     println!("\n{ok}/{total} specs OK");
     if skipped > 0 {
-        println!("({skipped} state(s) skipped offline because a network endpoint was unreachable; they run in the integration job / with the local mocks up)");
+        println!("({skipped} state(s) skipped offline: a declared network endpoint was unreachable, or an optional on-device asset (the needle engine/weights) is not installed here; they run in the integration job / with the local mocks up)");
     }
     // P43: the coverage ledger — every discovered spec accounted for, no
     // stale declaration. Printed so `check.sh` / CI show the split.

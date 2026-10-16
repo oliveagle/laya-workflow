@@ -1857,6 +1857,74 @@ pub fn test_bdd_smoke_offline_external_skip(h: &mut Harness) {
     // mocks-down integration run; not repeated here.
 }
 
+/// P196: a capability whose optional on-device asset is absent must be skipped
+/// validate-only, not reported as a regression. `needle` is the only such
+/// capability (engine `libneedle.so` + the 35 MB `needle3.cact`), and
+/// `ensure_env_dirs` injects a `NEEDLE3_CACT` placeholder that lets the graph
+/// *start* — so before this, `scripts/bdd/check.sh` (run by CI on a browserless,
+/// model-less runner, and whose own header promises "no model") died with
+/// `libneedle.so not found` on `needle_demo` / `needle_ticket` /
+/// `support_ticket_router_hybrid`. Force the assets away with env + a private
+/// HOME and prove the states are skipped with exit 0.
+pub fn test_bdd_smoke_offline_asset_skip(h: &mut Harness) {
+    use laya_workflow::dsl_smoke::offline_asset_bound;
+    let root = bdd::repo_root();
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+
+    // Machine-independent half: a spec that never calls a needle capability
+    // carries no asset bound, so the skip can never widen to cover it.
+    h.check(
+        "p196: needle-free spec has no asset bound",
+        offline_asset_bound(&load("dsl/versioned/refund_policy.v1.json")).is_none(),
+    );
+
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+
+    let home = std::env::temp_dir().join(format!("laya-p196-nomodel-{}", std::process::id()));
+    std::fs::create_dir_all(&home).expect("tmp home");
+    let absent = home.join("absent-model");
+    let run = |filter: &str| {
+        std::process::Command::new(&bin)
+            .args(["dsl", "smoke", "--filter", filter])
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("NEEDLE3_LIB_PATH", &absent)
+            .env("NEEDLE3_CACT", &absent)
+            .output()
+            .expect("run dsl smoke")
+    };
+
+    // End to end: with the model forced absent the spec still passes the gate
+    // (its state is skipped validate-only), instead of failing with a run
+    // error the host cannot act on.
+    let out = run("needle_demo");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check("p196: needle spec with no model exits 0", out.status.success());
+    h.check(
+        "p196: needle state skipped, not failed",
+        err.contains("on-device needle engine") && err.contains("skipped, validate only"),
+    );
+    h.check("p196: no run failure reported", !err.contains("[FAIL]"));
+    h.check("p196: needle spec still counts as OK", stdout.contains("1/1 specs OK"));
+
+    // Control: a needle-free spec under the same forced-absent env is not
+    // touched by the new skip.
+    let out2 = run("refund_policy.v1");
+    let err2 = String::from_utf8_lossy(&out2.stderr).to_string();
+    h.check(
+        "p196: needle-free spec unaffected by the asset skip",
+        out2.status.success() && !err2.contains("on-device needle engine"),
+    );
+}
+
 /// P42: structural branch-coverage gate — generalises P40's manual "状态覆盖广度"
 /// audit into a structural invariant. For every spec that carries registered
 /// smoke states, the union of nodes visited across those states (**real engine

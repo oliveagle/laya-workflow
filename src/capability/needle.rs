@@ -291,6 +291,19 @@ pub fn find_lib() -> Result<PathBuf> {
     bail!("libneedle.so not found; set $NEEDLE3_LIB_PATH or run `needle fetch`")
 }
 
+/// Whether the on-device engine **and** its weight archive are present, using
+/// existence checks only — it must not `dlopen` the engine nor read the 35 MB
+/// archive, so callers can ask cheaply (once per spec, not per state).
+///
+/// `dsl smoke` uses this to decide whether a `kind: needle` state can run
+/// offline here at all: an absent model is an *environment* gap — the same
+/// shape as a declared listener that is down — not a workflow regression, so
+/// the state is skipped validate-only instead of failing the gate.
+pub fn assets_available() -> Result<()> {
+    find_lib().map(|_| ())?;
+    find_cact().map(|_| ())
+}
+
 pub fn find_cact() -> Result<PathBuf> {
     if let Ok(p) = std::env::var("NEEDLE3_CACT") {
         let p = PathBuf::from(p);
