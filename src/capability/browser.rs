@@ -28,7 +28,9 @@ use std::time::{Duration, Instant};
 
 use super::human;
 use super::util::{stamp_downloaded, urlencoding_utf8};
-use super::{bounded_timeout, check_host, expand, host_of, stringify, truncate, Policy};
+use super::{
+    bounded_timeout, check_host, expand_required_str, host_of, stringify, truncate, Policy,
+};
 
 #[derive(Clone, Debug)]
 pub struct BrowserCap {
@@ -527,7 +529,7 @@ fn normalized_endpoint(c: &BrowserCap, with: &Value, state: &Value) -> Result<St
     let raw = if c.endpoint.is_empty() {
         std::env::var("LAYA_BROWSER_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_string())
     } else {
-        stringify(&expand(&Value::String(c.endpoint.clone()), state, with))
+        expand_required_str(&c.endpoint, state, with, "browser endpoint")?
     };
     let endpoint = raw.trim_end_matches('/').to_string();
     if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
@@ -701,7 +703,8 @@ pub(crate) fn ensure_runtime(
         // into a browser we do not own. A flow that needs the extension sets
         // `extension_path` explicitly to opt in.
         if !c.extension_path.is_empty() {
-            let extension = stringify(&expand(&Value::String(c.extension_path.clone()), state, with));
+            let extension =
+                expand_required_str(&c.extension_path, state, with, "browser extension_path")?;
             if std::path::Path::new(&extension).join("manifest.json").is_file() {
                 ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
             }
@@ -722,10 +725,7 @@ pub(crate) fn ensure_runtime(
     } else {
         c.profile_dir.clone()
     };
-    let profile = stringify(&expand(&Value::String(profile_source), state, with));
-    if profile.is_empty() {
-        bail!("browser launch needs profile_dir");
-    }
+    let profile = expand_required_str(&profile_source, state, with, "browser profile_dir")?;
     let profile_path = std::path::PathBuf::from(&profile);
     if !policy.allow_paths.is_empty() {
         let allowed = policy
@@ -747,7 +747,7 @@ pub(crate) fn ensure_runtime(
     } else {
         c.extension_path.clone()
     };
-    let extension = stringify(&expand(&Value::String(extension_source), state, with));
+    let extension = expand_required_str(&extension_source, state, with, "browser extension_path")?;
 
     // Reuse only an instance that Laya launched and marked in its own profile.
     if http_json(

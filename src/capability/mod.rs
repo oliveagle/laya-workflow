@@ -504,6 +504,50 @@ pub fn has_unresolved(s: &str) -> bool {
     s.contains("${unresolved:")
 }
 
+/// Expand a configured string that **must** resolve to a value.
+///
+/// `expand` deliberately lets a reference that is not set fall through: a whole
+/// `"${state.X}"` becomes JSON `null` and an embedded one becomes the literal
+/// text `"null"`. That is harmless for an optional override, but when the value
+/// becomes a path, a directory or an endpoint the `"null"` is not a value - it is
+/// a file or a URL nobody declared: `db: "${state.db_path}"` opened a database
+/// file called `null`, and `endpoint: "http://127.0.0.1:${state.cdp_port}"` asked
+/// Chrome for port `null`. Check every reference against `state`/`with` *before*
+/// expanding and refuse, naming the field and the raw string, so a missing key
+/// is a configuration error instead of a fabricated path.
+pub fn expand_required_str(raw: &str, state: &Value, with: &Value, what: &str) -> Result<String> {
+    let mut rest = raw;
+    while let Some(i) = rest.find("${") {
+        let after = &rest[i + 2..];
+        match after.find('}') {
+            Some(j) => {
+                let path = &after[..j];
+                let v = lookup(path, state, with);
+                if v.is_null() || stringify(&v).contains("${unresolved:") {
+                    bail!(
+                        "{what}: {raw:?} references \"${{{path}}}\", which is not set - a missing \
+                         reference must not become a path, a URL or an argument"
+                    );
+                }
+                rest = &after[j + 1..];
+            }
+            None => break,
+        }
+    }
+    let v = expand(&Value::String(raw.to_string()), state, with);
+    if v.is_null() {
+        bail!(
+            "{what}: {raw:?} names no value - the state/with key it references is not set, \
+             so it would be used as the literal text \"null\""
+        );
+    }
+    let s = stringify(&v);
+    if s.is_empty() {
+        bail!("{what}: {raw:?} expanded to an empty string");
+    }
+    Ok(s)
+}
+
 /// Collect the unresolved references inside a capability's own configuration.
 ///
 /// Configured strings are stored **unexpanded** (e.g. `"Bearer ${env.X}"`), so

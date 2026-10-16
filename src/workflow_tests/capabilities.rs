@@ -1070,3 +1070,78 @@ pub fn test_support_routing(h: &mut Harness) {
     h.check("match_rules: fallback is low-confidence",
         v_o.confidence("department").unwrap_or(1.0) < 0.8);
 }
+
+/// A reference that does not resolve must not become the literal text "null" in
+/// a value that ends up as a path, a directory or an endpoint (P189).
+///
+/// `expand` leaves a whole `${state.X}` that is not set as JSON `null` and an
+/// embedded one as the text "null" - that is deliberate, an optional override may
+/// legitimately be absent. But a capability whose declared `db` silently became a
+/// file named `null`, or whose `"http://127.0.0.1:${state.cdp_port}"` asked Chrome
+/// for port `null`, is not an optional override: the value is a path or an
+/// endpoint. `expand_required_str` checks each reference *before* expanding and
+/// refuses at those call sites, so `expand` itself is unchanged.
+pub fn test_capabilities_required_str(h: &mut Harness) {
+    use laya_workflow::capability::{expand, expand_required_str, has_unresolved};
+
+    let st = json!({"db": "/tmp/x.sqlite", "port": 9222});
+    let w = json!({"q": "A"});
+    let ok = |raw: &str, what: &str| expand_required_str(raw, &st, &w, what);
+
+    h.eq(
+        "cap: required str resolves a whole state reference",
+        ok("${state.db}", "sqlite db").unwrap(),
+        "/tmp/x.sqlite".to_string(),
+    );
+    h.eq(
+        "cap: required str resolves an embedded state reference",
+        ok("http://127.0.0.1:${state.port}", "browser endpoint").unwrap(),
+        "http://127.0.0.1:9222".to_string(),
+    );
+    h.eq(
+        "cap: required str leaves a literal alone",
+        ok("/tmp/literal.sqlite", "sqlite db").unwrap(),
+        "/tmp/literal.sqlite".to_string(),
+    );
+    let e = ok("${state.nope}", "sqlite db").unwrap_err().to_string();
+    h.check(
+        "cap: required str refuses a whole reference that is not set, naming the field",
+        e.contains("sqlite db") && e.contains("state.nope"),
+    );
+    let e = ok("http://127.0.0.1:${state.nope}", "browser endpoint")
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "cap: required str refuses an embedded reference that is not set",
+        e.contains("browser endpoint") && e.contains("state.nope"),
+    );
+    let e = ok("", "sqlite db").unwrap_err().to_string();
+    h.check(
+        "cap: required str refuses an empty value",
+        e.contains("empty"),
+    );
+    std::env::remove_var("LAYA_P189_UNSET");
+    let e = ok("${env.LAYA_P189_UNSET}", "sqlite db")
+        .unwrap_err()
+        .to_string();
+    h.check(
+        "cap: required str refuses an unresolved env reference",
+        e.contains("env.LAYA_P189_UNSET"),
+    );
+    // `expand` itself is unchanged: an embedded reference that is not set still
+    // becomes the literal "null", and the guard is what refuses it.
+    h.eq(
+        "cap: an embedded reference that is not set still expands to the literal null",
+        expand(&json!("http://127.0.0.1:${state.nope}"), &st, &w),
+        json!("http://127.0.0.1:null"),
+    );
+    h.eq(
+        "cap: a whole reference that is not set is JSON null (unchanged contract)",
+        expand(&json!("${state.nope}"), &st, &w),
+        json!(null),
+    );
+    h.check(
+        "cap: has_unresolved sees the secret/env marker",
+        has_unresolved("${unresolved:env.X}") && !has_unresolved("plain"),
+    );
+}

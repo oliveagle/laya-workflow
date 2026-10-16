@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 use super::browser::canonicalize_lenient;
-use super::{bounded_timeout, effective_op, expand, stringify, truncate, ExecCap, Policy};
+use super::{
+    bounded_timeout, effective_op, expand, expand_required_str, stringify, truncate, ExecCap,
+    Policy,
+};
 
 // ── datetime ────────────────────────────────────────────────────────
 
@@ -470,10 +473,7 @@ pub fn call_sqlite(c: &SqliteCap, with: &Value, state: &Value, policy: &Policy) 
         .map(stringify)
         .ok_or_else(|| anyhow!("sqlite capability needs 'sql' in 'with'"))?;
     let sql = stringify(&expand(&Value::String(sql), state, with));
-    let db = stringify(&expand(&Value::String(c.db.clone()), state, with));
-    if db.is_empty() {
-        bail!("sqlite capability needs 'db' (path to the database file)");
-    }
+    let db = expand_required_str(&c.db, state, with, "sqlite db")?;
     let readonly = c.readonly || c.op == "query";
     if readonly {
         let head = sql.trim_start().to_ascii_lowercase();

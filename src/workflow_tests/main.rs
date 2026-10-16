@@ -233,6 +233,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-import-dir", t_bdd::test_bdd_import_dir),
         ("install", t_state::test_install),
         ("capabilities", capabilities::test_capabilities),
+        ("capabilities-required-str", capabilities::test_capabilities_required_str),
         ("span-selection", capabilities::test_span_selection),
         ("quality-rubric", capabilities::test_quality_rubric),
         ("support-routing", capabilities::test_support_routing),
