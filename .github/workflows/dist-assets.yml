@@ -1,0 +1,191 @@
+name: dist-assets
+
+# The two release artifacts that `release.yml` cannot produce on its own:
+#
+#   * `laya-workflow-<ver>-glibc216-x86_64.tar.gz` — a linux binary for hosts
+#     whose glibc is older than the runner's. `release.yml` builds on
+#     `ubuntu-latest`, so its x86_64 binary needs GLIBC_2.35/2.39 and will not
+#     start on a RHEL 9 box (glibc 2.34). Built with `cargo zigbuild
+#     --target x86_64-unknown-linux-gnu.2.16`.
+#   * `laya-plugins-<ver>.{tar.gz,zip}` — the plugin set the engine loads:
+#     every built-in Rhai plugin (incl. `browser_base`) plus the `laya-mem`
+#     specs, plus whatever only the checkout carries (`plugins/jev-planner`).
+#     Platform-neutral: one package serves linux and windows.
+#
+# Run it for a tag that is already released (`release.yml` creates the release
+# itself; this only appends assets, so it can never block a release):
+#
+#   gh workflow run dist-assets.yml -f tag=v0.12.0
+#
+# Both jobs assert what they advertise — the glibc ceiling of the binary, and
+# that the archive member counts match the staging tree — rather than shipping
+# something that merely looks right.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build for (e.g. v0.12.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  glibc216:
+    name: linux x86_64 (glibc <= 2.16)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the tag to build
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$TAG" in v*) ;; *) echo "::error::tag must start with v (got '$TAG')"; exit 1 ;; esac
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "PKG_VER=${TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: glibc216-x86_64-linux-gnu
+
+      - name: Install zig
+        run: |
+          ZIG_VERSION=0.13.0
+          curl -fsSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz"
+          tar -xJf /tmp/zig.tar.xz -C /opt
+          echo "/opt/zig-linux-x86_64-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          "/opt/zig-linux-x86_64-${ZIG_VERSION}/zig" version
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      # The `.2.16` suffix is cargo-zigbuild's glibc baseline: zig links against
+      # that version's stubs, so the ELF only references symbols up to it.
+      - name: Build (low-glibc)
+        run: cargo zigbuild --release --locked --target x86_64-unknown-linux-gnu.2.16 -p laya-workflow
+
+      - name: Assert the glibc ceiling
+        run: |
+          BIN=target/x86_64-unknown-linux-gnu/release/laya-workflow
+          file "$BIN"
+          objdump -T "$BIN" | grep -oE 'GLIBC_2\.[0-9]+' | sort -Vu | sed 's/^/  needs /' | tail -5
+          bad=$(objdump -T "$BIN" | grep -oE 'GLIBC_2\.[0-9]+' | sort -Vu | awk -F. '$2 >= 17' | head -1)
+          if [ -n "$bad" ]; then
+            echo "::error::$BIN requires $bad but this artifact advertises glibc <= 2.16"
+            exit 1
+          fi
+          echo "ok: everything is GLIBC_2.16 or older"
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          tar -czf "dist/laya-workflow-${PKG_VER}-glibc216-x86_64.tar.gz" \
+            -C target/x86_64-unknown-linux-gnu/release laya-workflow
+          ls -la dist/
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: dist/*.tar.gz
+          # An `-rc.N` tag is a candidate, not the release, so `update`'s
+          # /releases/latest keeps pointing at the formal version.
+          prerelease: ${{ contains(env.TAG, '-rc') }}
+
+  plugins:
+    name: plugin set (browser_base + laya-mem specs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the tag to build
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$TAG" in v*) ;; *) echo "::error::tag must start with v (got '$TAG')"; exit 1 ;; esac
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "PKG_VER=${TAG#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: plugins-linux
+
+      - name: Build the CLI (the harvest runs it)
+        run: cargo build --release --locked -p laya-workflow
+
+      # Source 1: what the binary itself ships — every built-in plugin and the
+      # laya-mem specs, exactly as `laya-workflow install` lays them down.
+      - name: Harvest the built-ins
+        run: |
+          HARVEST="$RUNNER_TEMP/harvest"
+          rm -rf "$HARVEST"; mkdir -p "$HARVEST"
+          LAYA_HOME="$HARVEST" ./target/release/laya-workflow install
+          echo "builtin plugins: $(ls -1 "$HARVEST/plugins" | wc -l)"
+          echo "laya-mem specs : $(ls -1 "$HARVEST/laya-mem/specs"/*.json | wc -l)"
+
+      # Source 2: plugins that only the checkout carries. Built-ins win, so a
+      # name that is in both is not duplicated (that is why the overlay is
+      # one-directional).
+      - name: Stage the package
+        run: |
+          NAME="laya-plugins-${PKG_VER}"
+          STAGE="$RUNNER_TEMP/stage/$NAME"
+          mkdir -p "$STAGE/payload/laya-mem"
+          cp -R "$RUNNER_TEMP/harvest/plugins"        "$STAGE/payload/plugins"
+          cp -R "$RUNNER_TEMP/harvest/laya-mem/specs" "$STAGE/payload/laya-mem/specs"
+          cp    "scripts/linux-dist/payload/plugins/install.sh" "$STAGE/install.sh"
+          chmod +x "$STAGE/install.sh"
+          added=0
+          for d in plugins/*/; do
+            [ -d "$d" ] || continue
+            n=$(basename "$d")
+            [ -d "$STAGE/payload/plugins/$n" ] && continue
+            cp -R "$d" "$STAGE/payload/plugins/$n"; echo "  + $n (checkout only)"; added=$((added+1))
+          done
+          NP=$(ls -1 "$STAGE/payload/plugins" | wc -l | tr -d ' ')
+          NS=$(ls -1 "$STAGE/payload/laya-mem/specs"/*.json | wc -l | tr -d ' ')
+          echo "plugins=$NP  laya-mem specs=$NS  (checkout-only added: $added)"
+          [ "$NP" -gt 0 ] || { echo "::error::no plugins harvested"; exit 1; }
+          [ "$NS" -gt 0 ] || { echo "::error::no laya-mem specs harvested"; exit 1; }
+          sed -e "s/@VERSION@/${PKG_VER}/g" -e "s/@N_PLUGINS@/$NP/g" -e "s/@N_SPECS@/$NS/g" \
+            scripts/linux-dist/payload/plugins/README.md > "$STAGE/README.md"
+          echo "NAME=$NAME"        >> "$GITHUB_ENV"
+          echo "STAGE=$STAGE"      >> "$GITHUB_ENV"
+          echo "STAGE_PARENT=$RUNNER_TEMP/stage" >> "$GITHUB_ENV"
+
+      - name: Package and assert member counts
+        run: |
+          mkdir -p dist
+          want=$(find "$STAGE" | wc -l | tr -d ' ')
+          ( cd "$STAGE_PARENT" && zip -r -q -X "$GITHUB_WORKSPACE/dist/$NAME.zip" "$NAME" )
+          ( cd "$STAGE_PARENT" && tar -czf "$GITHUB_WORKSPACE/dist/$NAME.tar.gz" "$NAME" )
+          nz=$(zipinfo -1 "dist/$NAME.zip" | wc -l | tr -d ' ')
+          nt=$(tar -tzf "dist/$NAME.tar.gz" | wc -l | tr -d ' ')
+          echo "members: staging=$want zip=$nz tar=$nt"
+          [ "$nz" = "$want" ] || { echo "::error::zip member count $nz != $want"; exit 1; }
+          [ "$nt" = "$want" ] || { echo "::error::tar member count $nt != $want"; exit 1; }
+          ls -la dist/
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            dist/*.zip
+            dist/*.tar.gz
+          prerelease: ${{ contains(env.TAG, '-rc') }}
