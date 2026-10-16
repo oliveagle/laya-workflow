@@ -1,0 +1,228 @@
+{
+  "name": "int4_patch_gate",
+  "_bdd": {
+    "feature": "int4_patch_gate",
+    "feature_path": "bdd/workflows/guards/int4_patch_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval DFlash2 INT4 patch-set applier\n(code/dflash2/sglang-patches/int4-support/apply_all_patches.py): the gate that\ndecides whether the five INT4 DFlash2 support patches can be applied into sglang's\nsite-packages -- the pre-flight step that must clear before an INT4 draft model may\nbe launched. It backs up each target file, runs the five patch scripts in order, and\nexits non-zero when any one of them fails to apply, so it names its verdict rather\nthan reporting a number.\nThe five patches, in the source's own order, each run as its own script whose exit\ncode says whether it applied:\n- save_raw_packed (00_save_raw_packed.py): save the raw GPTQ packed weight as\nweight_packed_raw *before* sglang's WNA16 Marlin repack overwrites it -- the\nformat Patch 3 v2 needs for dequantization.\n- model_packed_modules (01_model_packed_modules.py): add\n`packed_modules_mapping = {\"qkv_proj\": [\"q_proj\", \"k_proj\", \"v_proj\"]}` to\nDFlashDraftModel so sglang's loader fuses a checkpoint's separate q/k/v weights.\n- dflash_utils (02_dflash_utils.py): rewrite `can_dflash_slice_qkv_weight` to accept\nquantized (INT32/INT8 packed) qkv_proj weights, not only BF16/FP16.\n- fused_kv_materialize (03_fused_kv_materialize.py): teach FusedKVMaterializeHelper\nto dequantize the INT4 qkv weight, preferring the weight_packed_raw Patch 0 saved,\nthen a raw packed weight, then a BF16/FP16 weight.\n- compressed_tensors_skip (04_compressed_tensors_skip.py): skip\nprocess_weights_after_loading (the Marlin repack) for layers in the ignore list --\na fallback for layers whose Marlin repack is wrong.\nThe walk encodes exactly those five named checks, one node each, in source order:\nsave_raw_packed -> model_packed_modules -> dflash_utils -> fused_kv_materialize ->\ncompressed_tensors_skip. The first patch that fails ends the walk and names itself;\nonly a run that applies all five reaches ALL_PATCHES_APPLIED.\nThree folds are documented:\n- the upstream does not stop at the first failing patch: `main` runs all five\n(`for patch in patches: if not run_patch(patch): all_ok = False`), prints every\nresult, and exits 1 once, at the end, when `all_ok` is false. The graph names the\nfirst failure and stops; the PASS/FAIL verdict is identical either way.\n- `--reverse` is a mode, not the gate: `main` short-circuits into `reverse_patches()`\n-- restore every `*.orig` and return 0 -- and never enters the patch loop. The\ngraph models the apply path the census names; the reverse path is a restore, not a\nverdict.\n- the pre-flight backup and the post-flight `clear_pycaches` are not judged: the\nbackup only runs when a `.orig` is absent (and would raise, uncaught, rather than\nbe an apply verdict), and `clear_pycaches` only prints a `Warning:` when `find` is\nunhappy. Neither carries the exit code; only the five patch scripts' exit codes do.\nIdempotence is only partial, and the probe really ran it: Patch 0 and Patch 3 exit 0\nwhen their own marker is already present (`already applied`), but a second apply is\nnot clean -- Patch 1's replacement text still *contains* its own anchor, so it silently\nre-applies (duplicating `packed_modules_mapping`), while Patch 2 and Patch 4 have\nanchors that vanish, so a re-apply exits 1 with Patch 2 as the first failure. So \"fail\"\nmeans the patch script exited non-zero (its anchor block was not found), not that the\npatch was unnecessary.\nEverything the patch scripts printed stays in the harness -- the per-script stdout,\nthe `.orig` backups, the found/not-found anchors. The graph reads none of it, only\neach script's exit code.\nReference walk (apply_all_patches.py, main()): back up originals; for each of the five\npatch scripts in order, run it and record its exit code; `all_ok = all(...)`; exit 1\nwhen not all_ok, exit 0 otherwise.",
+  "start": "save_raw_packed",
+  "max_iterations": 8,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "save_raw_packed",
+      "primary_q": "apply",
+      "questions": {
+        "apply": {
+          "type": "choice",
+          "instructions": "Patch 0: does 00_save_raw_packed.py apply -- does it find the `transform_w_q` block to save the raw packed weight before the Marlin repack (or see its own marker already present)? A script that exits non-zero ends the walk -- the patch set did not apply.",
+          "criteria": {
+            "fail": "the script exited non-zero: the transform_w_q anchor was not found",
+            "pass": "the script applied the patch, or its marker was already present"
+          },
+          "heuristic": {
+            "answer_field": "ev_save_raw_packed"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "model_packed_modules"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "apply",
+        "rules": [
+          {
+            "when": {
+              "question": "apply",
+              "answer": "fail"
+            },
+            "label": "PATCH_SAVE_RAW_PACKED_FAILED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "SAVE_RAW_PACKED_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "model_packed_modules",
+      "primary_q": "apply",
+      "questions": {
+        "apply": {
+          "type": "choice",
+          "instructions": "Patch 1: does 01_model_packed_modules.py apply -- does it find the DFlashDraftModel class block to add `packed_modules_mapping`? A script that exits non-zero ends the walk.",
+          "criteria": {
+            "fail": "the script exited non-zero: the DFlashDraftModel block was not found",
+            "pass": "the script applied the patch"
+          },
+          "heuristic": {
+            "answer_field": "ev_model_packed_modules"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "dflash_utils"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "apply",
+        "rules": [
+          {
+            "when": {
+              "question": "apply",
+              "answer": "fail"
+            },
+            "label": "PATCH_MODEL_PACKED_MODULES_FAILED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "MODEL_PACKED_MODULES_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dflash_utils",
+      "primary_q": "apply",
+      "questions": {
+        "apply": {
+          "type": "choice",
+          "instructions": "Patch 2: does 02_dflash_utils.py apply -- does it find the original `can_dflash_slice_qkv_weight` to rewrite so it accepts quantized qkv_proj weights? A script that exits non-zero ends the walk.",
+          "criteria": {
+            "fail": "the script exited non-zero: the original function was not found",
+            "pass": "the script applied the patch"
+          },
+          "heuristic": {
+            "answer_field": "ev_dflash_utils"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "fused_kv_materialize"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "apply",
+        "rules": [
+          {
+            "when": {
+              "question": "apply",
+              "answer": "fail"
+            },
+            "label": "PATCH_DFLASH_UTILS_FAILED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "DFLASH_UTILS_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "fused_kv_materialize",
+      "primary_q": "apply",
+      "questions": {
+        "apply": {
+          "type": "choice",
+          "instructions": "Patch 3: does 03_fused_kv_materialize.py apply -- does it find the v1 block to upgrade (or see its own v2 marker already present), with the dequantize helper present? A script that exits non-zero ends the walk.",
+          "criteria": {
+            "fail": "the script exited non-zero: neither the v2 marker nor the helper function was present",
+            "pass": "the script applied (or upgraded) the patch"
+          },
+          "heuristic": {
+            "answer_field": "ev_fused_kv_materialize"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "compressed_tensors_skip"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "apply",
+        "rules": [
+          {
+            "when": {
+              "question": "apply",
+              "answer": "fail"
+            },
+            "label": "PATCH_FUSED_KV_MATERIALIZE_FAILED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "FUSED_KV_MATERIALIZE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "compressed_tensors_skip",
+      "primary_q": "apply",
+      "questions": {
+        "apply": {
+          "type": "choice",
+          "instructions": "Patch 4: does 04_compressed_tensors_skip.py apply -- does it find the original `process_weights_after_loading` to add the ignore-list skip? This is the last patch: a script that exits non-zero ends the walk, and applying all five means the INT4 patch set is in place.",
+          "criteria": {
+            "fail": "the script exited non-zero: the original method was not found",
+            "pass": "the script applied the patch"
+          },
+          "heuristic": {
+            "answer_field": "ev_compressed_tensors_skip"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "apply",
+        "rules": [
+          {
+            "when": {
+              "question": "apply",
+              "answer": "fail"
+            },
+            "label": "PATCH_COMPRESSED_TENSORS_SKIP_FAILED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALL_PATCHES_APPLIED"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -7363,5 +7363,39 @@
       "ev_route": "hard",
       "ev_gate": "pass"
     }
+  },
+  "int4_patch_gate": {
+    "save_raw_packed_fail": {
+      "ev_save_raw_packed": "fail"
+    },
+    "model_packed_modules_fail": {
+      "ev_save_raw_packed": "pass",
+      "ev_model_packed_modules": "fail"
+    },
+    "dflash_utils_fail": {
+      "ev_save_raw_packed": "pass",
+      "ev_model_packed_modules": "pass",
+      "ev_dflash_utils": "fail"
+    },
+    "fused_kv_materialize_fail": {
+      "ev_save_raw_packed": "pass",
+      "ev_model_packed_modules": "pass",
+      "ev_dflash_utils": "pass",
+      "ev_fused_kv_materialize": "fail"
+    },
+    "compressed_tensors_skip_fail": {
+      "ev_save_raw_packed": "pass",
+      "ev_model_packed_modules": "pass",
+      "ev_dflash_utils": "pass",
+      "ev_fused_kv_materialize": "pass",
+      "ev_compressed_tensors_skip": "fail"
+    },
+    "applied": {
+      "ev_save_raw_packed": "pass",
+      "ev_model_packed_modules": "pass",
+      "ev_dflash_utils": "pass",
+      "ev_fused_kv_materialize": "pass",
+      "ev_compressed_tensors_skip": "pass"
+    }
   }
 }

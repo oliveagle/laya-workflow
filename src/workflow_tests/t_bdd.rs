@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 27 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 28 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + dflash2 int4_patch_applier + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
         counts.ported,
-        27,
+        28,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 4 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 3 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        4,
+        3,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3377,6 +3377,31 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: the distill universe has no pending gate left (every gate-shaped module is ported)",
         ds.get("gate_pending").is_none(),
+    );
+
+    // P234: the DFlash2 INT4 patch-set applier under `code/dflash2` - the gate that backs
+    // up and applies the five INT4 support patches into sglang's site-packages and exits
+    // non-zero when any one fails to apply. Pinned by name and by the feature it ports;
+    // with it, the dflash2 universe has no gate-shaped module left unported.
+    let df = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_dflash2")
+        .expect("ole_eval_dflash2 universe");
+    h.eq(
+        "bdd scope-check: dflash2 has exactly 1 ported module",
+        df["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: dflash2 ports the INT4 patch-set applier as its @decision feature",
+        df["ported"]["sglang-patches/int4-support/apply_all_patches"]
+            == serde_json::json!("bdd/workflows/guards/int4_patch_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: the dflash2 universe has no pending gate left (every gate-shaped module is ported)",
+        df.get("gate_pending").is_none(),
     );
 
     // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
@@ -3625,11 +3650,13 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     );
 
     // P232: `e2e_awq_int4_wld` used to be the pending gate this planted; it is now
-    // ported, so the plant moves to a module that is still a pending gate - the DFlash2
-    // INT4 patch applier - listed a second time as a (same-universe) not-a-workflow.
+    // ported. P233 moved it to the distill routing gate (also now ported), and P234 to
+    // the DFlash2 INT4 applier (also now ported), so the plant moves once more to a
+    // module that is still a pending gate - the dllm diffusion-coding runner - listed a
+    // second time as a (same-universe) not-a-workflow.
     let gate_dup = census.replace(
-        "\"sglang-patches/dflash_utils\"",
-        "\"sglang-patches/int4-support/apply_all_patches\"",
+        "\"data/coding_corpus\"",
+        "\"eval/eval_diffusion_coding\"",
     );
     let (_, drifted_gd) = scope_check_impl(&root, &gate_dup, Some(&base)).unwrap();
     h.check(

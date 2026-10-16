@@ -413,7 +413,7 @@
     {
       "id": "ole_eval_dflash2",
       "upstream": "code/dflash2",
-      "kind": "mixed (speculative-decoding patches + a patch-applier gate + a measurement harness)",
+      "kind": "mixed (speculative-decoding patches + a ported patch-applier gate + a measurement harness)",
       "recursive": true,
       "not_a_workflow": [
         {
@@ -450,10 +450,10 @@
           ]
         }
       ],
-      "gate_pending": {
-        "sglang-patches/int4-support/apply_all_patches": "the DFlash2 INT4 patch-set applier: it backs up and applies five source patches into sglang's site-packages and exits non-zero when any one fails to apply (`all_ok` -> `sys.exit(1)`), i.e. it gates the environment before a draft model may be launched. Gate-shaped, port pending."
+      "ported": {
+        "sglang-patches/int4-support/apply_all_patches": "bdd/workflows/guards/int4_patch_gate.feature"
       },
-      "note": "The DFlash2 draft-model work: patch files applied into another project, the draft packing scripts, the benches, and the patch-set applier - which is gate-shaped and registered as a pending port."
+      "note": "The DFlash2 draft-model work: patch files applied into another project, the draft packing scripts, the benches, and the patch-set applier - the gate that backs up and applies the five INT4 patches and exits non-zero when any one fails to apply - ported this round to bdd/workflows/guards/int4_patch_gate.feature."
     },
     {
       "id": "ole_eval_distill",
