@@ -486,7 +486,7 @@ Feature: support_ticket_router
   - **修法**：`src/workflow_tests/main.rs` 在跑任何 section **之前**校验选择器 —— argv + `LAYA_TEST_SECTIONS` 里每个 filter（`all` 除外）必须至少前缀匹配一个 section，否则把冒犯的名字全部打到 stderr 并 `exit 2`。`all` 通配保留；空选择器（跑全套）不变；**先校验再跑**，所以不会「跑一半才报错」。
   - **回归 `laya-workflow-tests runner-unknown-section`（7 断言）**：新增 `src/workflow_tests/runner.rs` —— 子进程 spawn **当前这个二进制本身**（走真实 argv 路径，不是复刻）：未知 section ⇒ 非零退出 + stderr 点名 + **不出现** `0 passed, 0 failed` 那行；正对照 `rules-glob` 仍绿且真的跑了；**前缀选择器仍合法**（`rules-p` → `rules-probability`，匹配 ≥1 即可）。
   - **同轮修掉一处 rotted claim**：`scripts/verify.sh` 头注释写「`laya-workflow-tests` has 103 sections and 102 of them finish in about 10s」（实际早已不是 103）—— 改成不钉数字（运行期本来就打印精确计数），并把「103」的来历写清楚。
-  - **真跑**：`scripts/verify.sh` 全绿 **EXIT=0**（fast suite **187 of 188**、**6500 passed, 0 failed**；browser run 31 passed）；`laya-workflow-tests zz-bogus` ⇒ **rc=2** 且点名；`bdd doc-check` 19/19 计数 + 194 条引用路径全在盘上。
+  - **真跑**：`scripts/verify.sh` 全绿 **EXIT=0**（fast suite **187 of 188**、**6500 passed, 0 failed**；browser run 31 passed）；`laya-workflow-tests zz-bogus` ⇒ **rc=2** 且点名；`bdd doc-check` 19/19 计数 + 194 条引用路径全在盘上。 **全量**（188 段，含 `capability-timeouts`）⇒ `6575 passed, 0 failed`（exit 0）—— 把 188 个段名逐个当 filter 传进去，也就是 `scripts/verify.sh --full` 的那条路径。
   - **诚实边界**：这只保证「选择器不空转」；**不**能证明手里那份二进制是新的 —— 一份旧二进制在新 guard 落地**之前**仍是 fail-open，故同轮把 `~/.cargo/bin/` 里那份陈旧的 `laya-workflow-tests` 一并更新（此前安装步骤只拷 `laya-workflow`，没拷测试二进制）。
   - **关键路径**：`src/workflow_tests/main.rs`（选择器校验）、`src/workflow_tests/runner.rs`（新）、`scripts/verify.sh`（注释）、本条目；`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§84）。
 
