@@ -458,8 +458,11 @@
     {
       "id": "ole_eval_distill",
       "upstream": "code/distill",
-      "kind": "mixed (SFT/distill pipeline: generators + training loops + runners + two promotion gates)",
+      "kind": "mixed (SFT/distill pipeline: generators + training loops + runners + a ported A/B promotion gate + one promotion gate pending)",
       "recursive": true,
+      "ported": {
+        "scripts/eval_longhorizon_gamma": "bdd/workflows/guards/ab_promote_gate.feature"
+      },
       "not_a_workflow": [
         {
           "reason": "the SFT / distill data generators: one script per dataset round (handcrafted batches, programmatic generators, teacher-generated rows, DPO pair builders, the GPU2 agent generators). They synthesise training rows and self-check each row compiles; they decide nothing about a candidate.",
@@ -572,10 +575,9 @@
         }
       ],
       "gate_pending": {
-        "scripts/r28d_gamma_routing": "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> RECOMMENDED`). A promote/reject verdict on a candidate. Port pending.",
-        "scripts/eval_longhorizon_gamma": "the long-horizon A/B promotion gate: it reads two eval JSONs and computes pass-rate buckets and a promotion verdict against a pass-rate and a regression threshold. A promote/reject verdict on a candidate. Port pending."
+        "scripts/r28d_gamma_routing": "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> RECOMMENDED`). A promote/reject verdict on a candidate. Port pending."
       },
-      "note": "The SFT / distillation pipeline: the data generators, the training loops, the measurement runners, and the two promotion gates (routing and long-horizon) that are registered as pending ports."
+      "note": "The SFT / distillation pipeline: the data generators, the training loops, the measurement runners, and the long-horizon A/B promotion gate (ported this round to bdd/workflows/guards/ab_promote_gate.feature) with the routing promotion gate still registered as pending."
     },
     {
       "id": "ole_eval_llama_eval",

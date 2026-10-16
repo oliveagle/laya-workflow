@@ -1,0 +1,101 @@
+{
+  "name": "ab_promote_gate",
+  "_bdd": {
+    "feature": "ab_promote_gate",
+    "feature_path": "bdd/workflows/guards/ab_promote_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval long-horizon A/B promotion gate\n(code/distill/scripts/eval_longhorizon_gamma.py): an offline, read-only gate that\nreads a baseline and a candidate eval JSON and decides whether the candidate may be\npromoted. It is the gate the Round-9/10/11 training line leans on to call a candidate\npromoted or not, and it makes exactly two calls, each with its own floor:\n- the long-horizon floor: when the candidate is a long-horizon eval (it carries\n`windows_5min` or a `results` list), its overall pass rate -- total pass over total\nsteps -- must be at or above `--threshold-pass-rate` (default 0.05). Below it, the\ncandidate is not promoted.\n- the coding-regression floor: when the candidate carries a `coding_compare` block,\nthe candidate arm's pass rate must be at or above `--threshold-regression`\n(default 0.56). Below it, the candidate is not promoted.\nThe gate promotes only when every check that applies clears: `promote_ok` starts true\nand each failed check flips it and appends a reason. So the verdict is the conjunction\nof the two floors, and a check that does not apply is skipped, not failed.\nThe walk encodes exactly that: long-horizon floor first, then the coding floor, and the\nfirst floor that fails ends the walk and names itself; only a candidate that clears\nevery applicable floor reaches PROMOTE. The thresholds and the pass-rate arithmetic\n(a ratio over the windows) live in the harness, so each check's own verdict -- does it\napply, does it clear -- is the graph's observable input, and the graph reads no number\nthe eval wrote.\nOne fold is documented: the upstream does not stop at the first failed floor. It\ncollects every failed floor into a `reasons` list and prints them all, but the verdict\nit prints (`PASS` / `NO-PROMOTE`) is still the conjunction. The graph names the *first*\nfloor that fails; the PASS/NO-PROMOTE verdict is identical either way.\nReference walk (code/distill/scripts/eval_longhorizon_gamma.py, main()): if baseline and\ncandidate are both long-horizon shaped and the candidate's overall pass rate is below\nthe threshold, fail; if the candidate carries a coding_compare and its candidate pass\nrate is below the regression floor, fail; promote iff no floor failed.",
+  "start": "longhorizon",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "longhorizon",
+      "primary_q": "promote",
+      "questions": {
+        "promote": {
+          "type": "choice",
+          "instructions": "Does the candidate clear the long-horizon floor? Its overall pass rate (total pass over total steps) must be at or above the threshold. It does not apply when the candidate is not a long-horizon eval.",
+          "criteria": {
+            "skipped": "the candidate is not a long-horizon eval, so the floor does not apply",
+            "meets": "the floor applies and the overall pass rate is at or above the threshold",
+            "below": "the floor applies and the overall pass rate is below the threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_longhorizon"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "below": "STOP"
+        },
+        "default": "coding"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "promote",
+        "rules": [
+          {
+            "when": {
+              "question": "promote",
+              "answer": "below"
+            },
+            "label": "NO_PROMOTE_LONGHORIZON"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "LH_APPLIES_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "coding",
+      "primary_q": "promote",
+      "questions": {
+        "promote": {
+          "type": "choice",
+          "instructions": "Does the candidate clear the coding-regression floor? Its coding arm's pass rate must be at or above the regression floor. It does not apply when the candidate carries no coding comparison. This is the last gate: clearing every applicable floor promotes.",
+          "criteria": {
+            "skipped": "the candidate carries no coding_compare block, so the floor does not apply",
+            "meets": "the floor applies and the candidate arm's pass rate is at or above the floor",
+            "below": "the floor applies and the candidate arm's pass rate is below the floor"
+          },
+          "heuristic": {
+            "answer_field": "ev_coding"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "promote",
+        "rules": [
+          {
+            "when": {
+              "question": "promote",
+              "answer": "below"
+            },
+            "label": "NO_PROMOTE_CODING"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROMOTE"
+          }
+        ]
+      }
+    }
+  ]
+}

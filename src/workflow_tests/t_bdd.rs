@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 22 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 23 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + the 16 agent-toolbox workflows)",
         counts.ported,
-        22,
+        23,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 9 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 8 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        9,
+        8,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3343,6 +3343,26 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: laya-tch ports the numeric parity gate as its @decision feature",
         lt["ported"]["parity_check"] == serde_json::json!("bdd/workflows/guards/parity_gate.feature"),
+    );
+
+    // P229: the long-horizon A/B promotion gate under the `code/distill` coverage root
+    // is pinned by name *and* by the feature it ports - the same pin the ports above
+    // carry. Its sibling, the routing promotion gate, stays registered as a pending gate.
+    let ds = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_distill")
+        .expect("ole_eval_distill universe");
+    h.eq(
+        "bdd scope-check: eval_longhorizon_gamma is the one ported module under code/distill",
+        ds["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: distill ports the A/B promotion gate as its @decision feature",
+        ds["ported"]["scripts/eval_longhorizon_gamma"]
+            == serde_json::json!("bdd/workflows/guards/ab_promote_gate.feature"),
     );
 
     let probs_of = |c: &str| {

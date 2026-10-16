@@ -7209,5 +7209,30 @@
       "ev_d": "pass",
       "ev_e": "fail"
     }
+  },
+  "ab_promote_gate": {
+    "promote_both": {
+      "ev_longhorizon": "meets",
+      "ev_coding": "meets"
+    },
+    "promote_skipped": {
+      "ev_longhorizon": "skipped",
+      "ev_coding": "skipped"
+    },
+    "no_promote_lh": {
+      "ev_longhorizon": "below"
+    },
+    "no_promote_coding": {
+      "ev_longhorizon": "meets",
+      "ev_coding": "below"
+    },
+    "promote_lh_skipped": {
+      "ev_longhorizon": "skipped",
+      "ev_coding": "meets"
+    },
+    "no_promote_coding_skipped": {
+      "ev_longhorizon": "skipped",
+      "ev_coding": "below"
+    }
   }
 }

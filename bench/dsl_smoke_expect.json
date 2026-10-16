@@ -3845,5 +3845,80 @@
       "trace.steps.4.action": "stop",
       "trace.steps.4.answer": "fail"
     }
+  },
+  "ab_promote_gate": {
+    "promote_both": {
+      "result.label": "PROMOTE",
+      "result.ev_longhorizon": "meets",
+      "result.ev_coding": "meets",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "meets",
+      "trace.steps.0.next": "coding",
+      "trace.steps.1.node": "coding",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "meets"
+    },
+    "promote_skipped": {
+      "result.label": "PROMOTE",
+      "result.ev_longhorizon": "skipped",
+      "result.ev_coding": "skipped",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "skipped",
+      "trace.steps.0.next": "coding",
+      "trace.steps.1.node": "coding",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "skipped"
+    },
+    "no_promote_lh": {
+      "result.label": "NO_PROMOTE_LONGHORIZON",
+      "result.ev_longhorizon": "below",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "below"
+    },
+    "no_promote_coding": {
+      "result.label": "NO_PROMOTE_CODING",
+      "result.ev_longhorizon": "meets",
+      "result.ev_coding": "below",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "meets",
+      "trace.steps.0.next": "coding",
+      "trace.steps.1.node": "coding",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "below"
+    },
+    "promote_lh_skipped": {
+      "result.label": "PROMOTE",
+      "result.ev_longhorizon": "skipped",
+      "result.ev_coding": "meets",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "skipped",
+      "trace.steps.0.next": "coding",
+      "trace.steps.1.node": "coding",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "meets"
+    },
+    "no_promote_coding_skipped": {
+      "result.label": "NO_PROMOTE_CODING",
+      "result.ev_longhorizon": "skipped",
+      "result.ev_coding": "below",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "longhorizon",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "skipped",
+      "trace.steps.0.next": "coding",
+      "trace.steps.1.node": "coding",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "below"
+    }
   }
 }
