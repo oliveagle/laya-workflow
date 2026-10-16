@@ -2878,18 +2878,64 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
         ),
     );
 
-    // Negative 2: AGENT.md's ledger total drifts.
-    let p = problems_of(&readme, &agent.replace("= 163 specs", "= 162 specs"));
+    // Negative 2: AGENT.md's ledger total drifts. Like Negative 1, the planted
+    // drift and the number the gate must quote are derived from what the doc says
+    // *today* - these two were left hard-coded at `= 163 specs` / `dsl smoke
+    // 163/163` and the corpus grew past them (P222), which is the same rot the
+    // gate exists to catch, one level up.
+    let ledger_re = regex_lite::Regex::new(
+        r"`(\d+) offline-verified \+ (\d+) live-declared = (\d+) specs`",
+    )
+    .unwrap();
+    let caps = ledger_re
+        .captures(&agent)
+        .expect("AGENT.md quotes the coverage-ledger totals");
+    let (led_off, led_live, led_total) =
+        (caps[1].to_string(), caps[2].to_string(), caps[3].to_string());
+    let stale_total = (led_total.parse::<u64>().unwrap() - 1).to_string();
+    let drifted_ledger = agent.replace(
+        &format!("= {led_total} specs"),
+        &format!("= {stale_total} specs"),
+    );
+    h.check(
+        "bdd doc-check: the negative plants a real ledger drift (anchor is live)",
+        drifted_ledger != agent,
+    );
+    let p = problems_of(&readme, &drifted_ledger);
     h.check(
         "bdd doc-check: a stale AGENT.md ledger total is caught",
-        any(&p, "bdd/AGENT.md says [128, 35, 162] where the truth is [128, 35, 163]"),
+        any(
+            &p,
+            &format!(
+                "bdd/AGENT.md says [{led_off}, {led_live}, {stale_total}] where the truth is [{led_off}, {led_live}, {led_total}]"
+            ),
+        ),
     );
 
     // Negative 3: AGENT.md's gate lines drift.
-    let p = problems_of(&readme, &agent.replace("`dsl smoke 163/163`", "`dsl smoke 162/162`"));
+    let smoke_re = regex_lite::Regex::new(r"`dsl smoke (\d+)/(\d+)`").unwrap();
+    let caps = smoke_re
+        .captures(&agent)
+        .expect("AGENT.md quotes the dsl smoke total");
+    let smoke_total = caps[1].to_string();
+    let stale_smoke = (smoke_total.parse::<u64>().unwrap() - 1).to_string();
+    let drifted_smoke = agent.replace(
+        &format!("`dsl smoke {smoke_total}/{smoke_total}`"),
+        &format!("`dsl smoke {stale_smoke}/{stale_smoke}`"),
+    );
+    h.check(
+        "bdd doc-check: the negative plants a real smoke claim drift (anchor is live)",
+        drifted_smoke != agent,
+    );
+    let p = problems_of(&readme, &drifted_smoke);
     h.check(
         "bdd doc-check: a stale AGENT.md gate claim (dsl smoke) is caught",
-        any(&p, "bdd/AGENT.md says [162, 162] where the truth is [163, 163]"),
+        any(
+            &p,
+            &format!(
+                "bdd/AGENT.md says [{stale_smoke}, {stale_smoke}] where the truth is [{smoke_total}, {smoke_total}]"
+            ),
+        ),
     );
 
     // Negative 4: the README's own count drifts - the file the gate was born for.
@@ -3009,9 +3055,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 17 explicit ports (agent_permission + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 18 explicit ports (agent_permission + reliable_reader + the 16 agent-toolbox workflows)",
         counts.ported,
-        17,
+        18,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3024,9 +3070,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         1,
     );
     h.eq(
-        "bdd scope-check: 64 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 15 working_mem + 1 qwen_vm root)",
+        "bdd scope-check: 63 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root)",
         counts.not_a_workflow,
-        64,
+        63,
     );
     h.eq(
         "bdd scope-check: 1 declared coverage root (code/qwen_vm)",
@@ -3053,6 +3099,25 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: agent_toolbox is marked non-enumerable",
         toolbox["enumerate"] == serde_json::json!(false),
+    );
+
+    // P222: the working_mem universe's one ported module (reliable_reader) is pinned
+    // by name *and* by the feature it ports, so neither the classification nor the
+    // port target can drift silently.
+    let wm = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "qwen_vm_working_mem")
+        .expect("qwen_vm_working_mem universe");
+    h.eq(
+        "bdd scope-check: working_mem has exactly 1 ported module",
+        wm["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: working_mem ports reliable_reader as its @decision feature",
+        wm["ported"]["reliable_reader"] == serde_json::json!("bdd/workflows/guards/reliable_state_reader.feature"),
     );
 
     let probs_of = |c: &str| {
@@ -8076,6 +8141,14 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
         use laya_workflow::workflow::Decide;
         let root = bdd::repo_root();
         let specs = laya_workflow::spec::discover(&root.join("dsl").to_string_lossy()).unwrap();
+        // The census walks every spec `spec::discover` hands back that is a graph
+        // (has `start` + `nodes`); the count it must end at is the one `dsl_smoke`
+        // itself discovers - the authority `bdd doc-check` recomputes `n_specs`
+        // from. Pinned as a literal it rotted (163 -> 164 when a port was added),
+        // which is the same rot the doc gate exists to catch.
+        let n_dsl_specs = laya_workflow::dsl_smoke::discover_specs(&root.join("dsl"))
+            .map(|v| v.len())
+            .unwrap_or(0);
         let mut specs_seen = 0usize;
         let mut checked_choice = 0usize;
         let mut checked_num = 0usize;
@@ -8167,7 +8240,7 @@ pub fn test_bdd_engine_contract(h: &mut Harness) {
             &format!(
                 "engine-contract: the shape census covers every workflow spec ({specs_seen} specs; {checked_choice} choice + {checked_num} score/noul answers held to the declared shape; {skipped_dynamic} dynamic skipped)"
             ),
-            specs_seen == 163 && checked_choice >= 600 && checked_num >= 100 && skipped_dynamic == 1,
+            specs_seen == n_dsl_specs && checked_choice >= 600 && checked_num >= 100 && skipped_dynamic == 1,
         );
         h.check(
             &format!(

@@ -559,7 +559,7 @@ Feature: support_ticket_router
   - **诚实边界**：上面 live reader 的 rc 是竞态值，**不**拿它当断言 —— 确定性的那半由测试里「先关读端再 spawn」给出：第一次写必失败 ⇒ 必 `SIGPIPE`(13)、`code == None`、stderr 无 panic（9 断言逐跑稳定）；shell 里 `| head` 只是同一处置在竞态下的表现（要么 141、要么 0，永远不再是 101 + 栈回溯）。修复前对照：v0.11.0 asset 的 `apps | head -2` ⇒ **rc=101** + panic（同一断言在老二进制上会红 = 真判别力，不是把老行为换个名字）。
   - **关键路径**：`src/sigpipe.rs`、`src/lib.rs`、`src/workflow_cli.rs`、`src/workflow_tests/main.rs`、`src/workflow_tests/t_pipe.rs`、`bdd/AGENT.md`（本条）；`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§92）。
 
-**当前语料现状**（本段每个数都由 `bdd doc-check` 从门禁复算，改了不更新就会点名）：`bench/dsl_smoke_expect.json` 覆盖 **127** 个 spec / **988** 个 state（多节点 spec 的每个样本按 P38 逐步钉 `trace.step_count` + 每步 node/action/answer）；`bench/dsl_smoke_states.json` 注册 **128** 个 spec / **989** 个 state；**分支覆盖门禁** 断言每个 state-registered spec 的可达节点全集被走到（白名单仅 1 条，容器节点已结构性排除）；覆盖台账 `128 offline-verified + 35 live-declared = 163 specs`。门禁实测：`scripts/bdd/check.sh` 全绿、`dsl smoke 163/163`、`bdd round-trip 163/163`（回归断言的条数、全量 `laya-workflow-tests` 的 section / passed 数只出现在 CI 输出里，不再写进文档 —— 一个没人复算的数一周就会变成谎话）。
+**当前语料现状**（本段每个数都由 `bdd doc-check` 从门禁复算，改了不更新就会点名）：`bench/dsl_smoke_expect.json` 覆盖 **128** 个 spec / **993** 个 state（多节点 spec 的每个样本按 P38 逐步钉 `trace.step_count` + 每步 node/action/answer）；`bench/dsl_smoke_states.json` 注册 **129** 个 spec / **994** 个 state；**分支覆盖门禁** 断言每个 state-registered spec 的可达节点全集被走到（白名单仅 1 条，容器节点已结构性排除）；覆盖台账 `129 offline-verified + 35 live-declared = 164 specs`。门禁实测：`scripts/bdd/check.sh` 全绿、`dsl smoke 164/164`、`bdd round-trip 164/164`（回归断言的条数、全量 `laya-workflow-tests` 的 section / passed 数只出现在 CI 输出里，不再写进文档 —— 一个没人复算的数一周就会变成谎话）。
 
 ### 作者循环（agent 怎么写一个决策 workflow）
 

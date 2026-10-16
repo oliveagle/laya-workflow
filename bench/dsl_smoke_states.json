@@ -6973,6 +6973,32 @@
       "ev_risk": "high"
     }
   },
+  "reliable_state_reader": {
+    "accept_first": {
+      "ev_fresh": "valid"
+    },
+    "accept_after_one_retry": {
+      "ev_fresh": "bad_action",
+      "ev_retry1": "valid"
+    },
+    "accept_after_two_retries": {
+      "ev_fresh": "no_json",
+      "ev_retry1": "unknown_field",
+      "ev_retry2": "valid"
+    },
+    "accept_on_last_attempt": {
+      "ev_fresh": "not_object",
+      "ev_retry1": "bad_fields_type",
+      "ev_retry2": "bad_action",
+      "ev_exhausted": "valid"
+    },
+    "fallback_all_malformed": {
+      "ev_fresh": "no_json",
+      "ev_retry1": "not_object",
+      "ev_retry2": "unknown_field",
+      "ev_exhausted": "bad_action"
+    }
+  },
   "email_triage": {
     "billing_urgent": {
       "subject": "Re: invoice duplicate charge",

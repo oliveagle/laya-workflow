@@ -188,8 +188,11 @@
     {
       "id": "qwen_vm_working_mem",
       "upstream": "code/qwen_vm/working_mem",
-      "kind": "mixed (the three-layer memory engine + the readout-head research + one proposal guard)",
+      "kind": "mixed (one decision guard + the three-layer memory engine + the readout-head research)",
       "recursive": true,
+      "ported": {
+        "reliable_reader": "bdd/workflows/guards/reliable_state_reader.feature"
+      },
       "not_a_workflow": [
         {
           "reason": "the three-layer memory engine and its deterministic reference: the trace store + sliding KV + checkpoint manager, the hot/warm/cold tiering, the core-state schema, the long-horizon simulator, the Phase-1 runner and the capacity probe.",
@@ -215,19 +218,13 @@
           ]
         },
         {
-          "reason": "the reliable state reader: a proposal *guard* - the model may name an action and reference field names, and every numeric value is taken from the deterministic state (a bad shape is rejected and retried, then falls back to `hold`). It has the same deterministic-consumer shape the corpus ports, but it is a single-shot payload repair over one proposal: there is no state machine walked over a trace and no verdict vocabulary, so there is no decision graph to encode. (The one borderline call of this universe.)",
-          "names": [
-            "reliable_reader"
-          ]
-        },
-        {
           "reason": "the package's own self-test module. It is named `tests` (not `test_*.py`), so the recursive enumeration does not skip it.",
           "names": [
             "tests"
           ]
         }
       ],
-      "note": "Working memory of the long-horizon line (F3/F5/F6): the store, the tiering and the readout heads. `test_reliable_reader.py` is skipped by the recursive enumeration."
+      "note": "Working memory of the long-horizon line (F3/F5/F6): the store, the tiering and the readout heads, plus the one proposal guard - `reliable_reader` is ported as a `@decision` graph (`bdd/workflows/guards/reliable_state_reader.feature`), which resolves P221's flagged borderline call. `test_reliable_reader.py` is the upstream reference and is skipped by the recursive enumeration."
     }
   ]
 }

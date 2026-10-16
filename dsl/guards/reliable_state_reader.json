@@ -1,0 +1,213 @@
+{
+  "name": "reliable_state_reader",
+  "_bdd": {
+    "feature": "reliable_state_reader",
+    "feature_path": "bdd/workflows/guards/reliable_state_reader.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval working-memory proposal guard (working_mem/reliable_reader.py,\npinned upstream by working_mem/test_reliable_reader.py): the model may name an\naction and reference state field names, but it may never dictate a numeric value.\nA proposal that is not the contract shape -- a JSON object, after code fences are\nstripped, whose action is one of buy / sell / hold / reduce / increase / abort and\nwhose fields_used, when present, is a list of the seven deterministic state field\nnames -- is rejected and retried with a corrective message; when the retry budget\nis spent (max_retries = 3, so four attempts) the reader stops on the safe action\nhold. One fold is documented: fields_used is optional (absent or empty is a valid\nproposal whose payload references no field), and its *contents* never change the\nverdict, so the port keeps only `valid` versus the five rejection reasons.\nThe decision graph reads no numeric value at all: none of the seven state fields\nenters it, so a number the model wrote cannot reach the decision. That is the\nreader's guarantee expressed as the graph's shape, rather than as an override.\nReference walk (working_mem/reliable_reader.py, max_retries = 1 + 3): attempt 0 at\nnode fresh, then retry1, then retry2, then exhausted; the first valid proposal\nends the walk with ACCEPT, and four malformed proposals end it with FALLBACK.",
+  "start": "fresh",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "fresh",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Attempt 0 of 4. Is the model's proposal the contract shape -- a JSON object whose action is one of buy/sell/hold/reduce/increase/abort, and whose fields_used, when present, is a list of the seven deterministic state field names?",
+          "criteria": {
+            "valid": "the object names a legal action and, when fields_used is present, only known state field names",
+            "no_json": "no JSON object could be extracted from the response",
+            "not_object": "the extracted JSON is not an object",
+            "bad_action": "action is missing or outside buy/sell/hold/reduce/increase/abort",
+            "bad_fields_type": "fields_used is present but is not a list of strings",
+            "unknown_field": "fields_used references a name that is not a state field"
+          },
+          "heuristic": {
+            "answer_field": "ev_fresh"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "no_json": "retry1",
+          "not_object": "retry1",
+          "bad_action": "retry1",
+          "bad_fields_type": "retry1",
+          "unknown_field": "retry1"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "valid"
+            },
+            "label": "ACCEPT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "RETRY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "retry1",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Attempt 1 of 4, after one corrective retry. Is the proposal the contract shape?",
+          "criteria": {
+            "valid": "the object names a legal action and, when fields_used is present, only known state field names",
+            "no_json": "no JSON object could be extracted from the response",
+            "not_object": "the extracted JSON is not an object",
+            "bad_action": "action is missing or outside buy/sell/hold/reduce/increase/abort",
+            "bad_fields_type": "fields_used is present but is not a list of strings",
+            "unknown_field": "fields_used references a name that is not a state field"
+          },
+          "heuristic": {
+            "answer_field": "ev_retry1"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "no_json": "retry2",
+          "not_object": "retry2",
+          "bad_action": "retry2",
+          "bad_fields_type": "retry2",
+          "unknown_field": "retry2"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "valid"
+            },
+            "label": "ACCEPT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "RETRY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "retry2",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Attempt 2 of 4, after two corrective retries. Is the proposal the contract shape?",
+          "criteria": {
+            "valid": "the object names a legal action and, when fields_used is present, only known state field names",
+            "no_json": "no JSON object could be extracted from the response",
+            "not_object": "the extracted JSON is not an object",
+            "bad_action": "action is missing or outside buy/sell/hold/reduce/increase/abort",
+            "bad_fields_type": "fields_used is present but is not a list of strings",
+            "unknown_field": "fields_used references a name that is not a state field"
+          },
+          "heuristic": {
+            "answer_field": "ev_retry2"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "no_json": "exhausted",
+          "not_object": "exhausted",
+          "bad_action": "exhausted",
+          "bad_fields_type": "exhausted",
+          "unknown_field": "exhausted"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "valid"
+            },
+            "label": "ACCEPT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "RETRY"
+          }
+        ]
+      }
+    },
+    {
+      "name": "exhausted",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Attempt 3 of 4, the last attempt: no retry budget remains. Is the proposal the contract shape?",
+          "criteria": {
+            "valid": "the object names a legal action and, when fields_used is present, only known state field names",
+            "no_json": "no JSON object could be extracted from the response",
+            "not_object": "the extracted JSON is not an object",
+            "bad_action": "action is missing or outside buy/sell/hold/reduce/increase/abort",
+            "bad_fields_type": "fields_used is present but is not a list of strings",
+            "unknown_field": "fields_used references a name that is not a state field"
+          },
+          "heuristic": {
+            "answer_field": "ev_exhausted"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "valid"
+            },
+            "label": "ACCEPT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "FALLBACK"
+          }
+        ]
+      }
+    }
+  ]
+}
