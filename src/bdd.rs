@@ -11539,6 +11539,12 @@ pub struct SpecLiveResult {
     /// diffs to answer "where do two System-1 models actually *differ*?" — the
     /// aggregate agreement alone cannot (both keep-list models sit at 645/989).
     pub label_agreements: Vec<(String, bool)>,
+    /// P203: the subset of [`Self::label_agreements`] labels whose expectation
+    /// pins a *number* only the reference backend can reproduce (see
+    /// [`crate::dsl_smoke::expect_pins_backend_number`]). A live System-1 model
+    /// answers a `noul` / `score` question with its own value, so those states
+    /// cannot be met by any other backend and must not be read as model failures.
+    pub pinned_number_labels: Vec<String>,
 }
 
 /// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
@@ -11798,6 +11804,12 @@ fn walk_decision_corpus(
                         // diffed on *which* states they get right, not just how
                         // many. States without an expectation are not comparable.
                         res.label_agreements.push((label.clone(), agreed));
+                        // P203: and keep the ones whose expectation pins a number
+                        // only the reference backend can reproduce, so the
+                        // comparison can set them aside instead of blaming a model.
+                        if crate::dsl_smoke::expect_pins_backend_number(want) {
+                            res.pinned_number_labels.push(label.clone());
+                        }
                     }
                 }
                 Err(e) => {
@@ -12164,6 +12176,212 @@ pub fn format_diff(d: &BackendDiff) -> String {
     out
 }
 
+/// P203: counts for one stratum of a spec's comparable states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StratumCounts {
+    pub shared: usize,
+    pub all_right: usize,
+    pub all_wrong: usize,
+    pub split: usize,
+}
+
+impl StratumCounts {
+    /// Classify one state by the ranked backends' verdicts: every one right,
+    /// every one wrong (a consensus failure), or a split (the discriminating
+    /// case).
+    fn classify(&mut self, verdicts: &[bool]) {
+        self.shared += 1;
+        if verdicts.iter().all(|&v| v) {
+            self.all_right += 1;
+        } else if verdicts.iter().all(|&v| !v) {
+            self.all_wrong += 1;
+        } else {
+            self.split += 1;
+        }
+    }
+
+    fn merge(&mut self, o: &StratumCounts) {
+        self.shared += o.shared;
+        self.all_right += o.all_right;
+        self.all_wrong += o.all_wrong;
+        self.split += o.split;
+    }
+
+    /// Every comparable state in this stratum failed for every ranked backend.
+    pub fn all_failed(&self) -> bool {
+        self.shared > 0 && self.all_wrong == self.shared
+    }
+}
+
+/// P203: one spec's comparable states, **split by whether the expectation is
+/// one another backend could ever meet**. `agnostic` states are routing / label
+/// / step-count assertions — a fair basis for comparing models. `pinned` states
+/// pin a number only the reference backend reproduces (an answer it gave, or an
+/// environment value), so a live model fails them by construction and they must
+/// not be read as model failures.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SpecStratum {
+    pub feature: String,
+    pub agnostic: StratumCounts,
+    pub pinned: StratumCounts,
+}
+
+/// The `(spec rel, label)` keys whose expectation pins a reference-only number.
+fn pinned_state_keys(v: &SystemVerdict) -> std::collections::BTreeSet<(String, String)> {
+    let mut out = std::collections::BTreeSet::new();
+    for sp in &v.per_spec {
+        for label in &sp.pinned_number_labels {
+            out.insert((sp.rel.clone(), label.clone()));
+        }
+    }
+    out
+}
+
+/// P203: stratify the ranked backends' work per spec — and inside each spec,
+/// split the states whose expectation a *different* backend can meet from the
+/// ones that pin a reference-only number. The point is to tell three things
+/// apart that the aggregate agreement conflates: states no model can pass by
+/// construction (reference-pinned), states no model in the list can pass at all
+/// (the honest hard tail), and states the models *disagree* on (the only states
+/// that can discriminate). Pure and deterministic (sorted by feature); returns
+/// empty unless at least two backends were ranked, since a stratum of one says
+/// nothing.
+pub fn stratify_systems(vs: &[SystemVerdict], ranking: &[usize]) -> Vec<SpecStratum> {
+    if ranking.len() < 2 {
+        return Vec::new();
+    }
+    let maps: Vec<std::collections::BTreeMap<(String, String), bool>> =
+        ranking.iter().map(|&i| state_verdicts(&vs[i])).collect();
+    let pinned: std::collections::BTreeSet<(String, String)> =
+        ranking.iter().flat_map(|&i| pinned_state_keys(&vs[i])).collect();
+    let mut by_spec: std::collections::BTreeMap<String, SpecStratum> =
+        std::collections::BTreeMap::new();
+    for (key, first) in maps[0].iter() {
+        // Only states every ranked backend walked are comparable; a backend that
+        // bailed mid-spec contributes nothing for the missing states.
+        let mut verdicts = vec![*first];
+        let mut all_present = true;
+        for m in &maps[1..] {
+            match m.get(key) {
+                Some(&v) => verdicts.push(v),
+                None => {
+                    all_present = false;
+                    break;
+                }
+            }
+        }
+        if !all_present {
+            continue;
+        }
+        let e = by_spec
+            .entry(key.0.clone())
+            .or_insert_with(|| SpecStratum { feature: key.0.clone(), ..Default::default() });
+        if pinned.contains(key) {
+            e.pinned.classify(&verdicts);
+        } else {
+            e.agnostic.classify(&verdicts);
+        }
+    }
+    by_spec.into_values().collect()
+}
+
+/// P203: a ranked backend's agreement over **backend-agnostic states only**
+/// (`agreed`, `comparable`) — the number that actually measures the model, next
+/// to the raw `states_agreed` / `states_run` that also counts the states no
+/// backend can meet.
+pub fn agnostic_agreement(v: &SystemVerdict) -> (usize, usize) {
+    let pinned = pinned_state_keys(v);
+    let mut agreed = 0usize;
+    let mut comparable = 0usize;
+    for sp in &v.per_spec {
+        for (label, ok) in &sp.label_agreements {
+            if pinned.contains(&(sp.rel.clone(), label.clone())) {
+                continue;
+            }
+            comparable += 1;
+            if *ok {
+                agreed += 1;
+            }
+        }
+    }
+    (agreed, comparable)
+}
+
+/// Render the [`stratify_systems`] report: the agnostic / pinned totals, then the
+/// honest hard tail (specs no ranked backend passes, backend-agnostic states
+/// only) and the discriminating specs (where the ranked backends split), each
+/// capped at `top` rows. Pure, so the wording pins offline.
+pub fn format_strata(strata: &[SpecStratum], top: usize) -> String {
+    if strata.is_empty() {
+        return String::new();
+    }
+    let mut ag = StratumCounts::default();
+    let mut pin = StratumCounts::default();
+    for s in strata {
+        ag.merge(&s.agnostic);
+        pin.merge(&s.pinned);
+    }
+    let mut out = format!(
+        "per-spec stratification over {} spec(s): backend-agnostic {} state(s) ({} all-right, {} all-wrong, {} split); reference-pinned {} state(s) ({} all-wrong — only the reference backend reproduces its own numbers, so these are NOT model failures)\n",
+        strata.len(),
+        ag.shared,
+        ag.all_right,
+        ag.all_wrong,
+        ag.split,
+        pin.shared,
+        pin.all_wrong
+    );
+
+    let mut hard: Vec<&SpecStratum> =
+        strata.iter().filter(|s| s.agnostic.all_wrong > 0).collect();
+    hard.sort_by(|x, y| {
+        y.agnostic
+            .all_wrong
+            .cmp(&x.agnostic.all_wrong)
+            .then(y.agnostic.shared.cmp(&x.agnostic.shared))
+            .then(x.feature.cmp(&y.feature))
+    });
+    if !hard.is_empty() {
+        out.push_str(&format!(
+            "  hard tail (no ranked backend got them; backend-agnostic states only) — {} spec(s), top {}:\n",
+            hard.len(),
+            top.min(hard.len())
+        ));
+        for s in hard.iter().take(top) {
+            out.push_str(&format!(
+                "    {:>3}/{}  {}{}\n",
+                s.agnostic.all_wrong,
+                s.agnostic.shared,
+                s.feature,
+                if s.agnostic.all_failed() { "  [all comparable states wrong]" } else { "" }
+            ));
+        }
+    }
+
+    let mut disc: Vec<&SpecStratum> = strata.iter().filter(|s| s.agnostic.split > 0).collect();
+    disc.sort_by(|x, y| {
+        y.agnostic
+            .split
+            .cmp(&x.agnostic.split)
+            .then(y.agnostic.shared.cmp(&x.agnostic.shared))
+            .then(x.feature.cmp(&y.feature))
+    });
+    if !disc.is_empty() {
+        out.push_str(&format!(
+            "  discriminating (the ranked backends disagree) — {} spec(s), top {}:\n",
+            disc.len(),
+            top.min(disc.len())
+        ));
+        for s in disc.iter().take(top) {
+            out.push_str(&format!(
+                "    {:>3}/{}  {}\n",
+                s.agnostic.split, s.agnostic.shared, s.feature
+            ));
+        }
+    }
+    out
+}
+
 /// Compare the decision corpus across several System-1 backends and rank them.
 pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
     let corpus = DecisionCorpus::load()?;
@@ -12212,15 +12430,15 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         vs.len()
     );
     println!(
-        "  {:>4}  {:<28}  {:>9}  {:>9}  {:>9}  {:>10}  {}",
-        "rank", "backend", "clean", "agree", "wall", "ms/state", "status"
+        "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>8}  {:>9}  {}",
+        "rank", "backend", "clean", "agree", "agnostic", "wall", "ms/state", "status"
     );
     for (i, v) in vs.iter().enumerate() {
         let rank = rank_of.get(&i).map(|r| r.to_string()).unwrap_or_else(|| "-".to_string());
         if let Some(why) = &v.preflight_error {
             println!(
-                "  {:>4}  {:<28}  {:>9}  {:>9}  {:>9}  {:>10}  unusable (preflight: {})",
-                rank, v.url, "-", "-", "-", "-", sys_truncate(&sys_one_line(why), 64)
+                "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>8}  {:>9}  unusable (preflight: {})",
+                rank, v.url, "-", "-", "-", "-", "-", sys_truncate(&sys_one_line(why), 64)
             );
             continue;
         }
@@ -12231,12 +12449,17 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         if v.summary.specs_backend_error > 0 {
             buckets.push(format!("{} backend-error", v.summary.specs_backend_error));
         }
+        // P203: the agreement over backend-agnostic states only — the number
+        // that actually measures the model, next to the raw one that also counts
+        // the states only the reference backend can meet.
+        let (ag_ok, ag_all) = agnostic_agreement(v);
         println!(
-            "  {:>4}  {:<28}  {:>9}  {:>9}  {:>8.1}s  {:>9.1}ms  ok{}",
+            "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>7.1}s  {:>8.1}ms  ok{}",
             rank,
             v.url,
             format!("{}/{}", v.summary.specs_clean, v.summary.specs_total),
             format!("{}/{}", v.summary.states_agreed, v.summary.states_run),
+            format!("{ag_ok}/{ag_all}"),
             v.wall_ms / 1000.0,
             v.mean_ms_per_state(),
             if buckets.is_empty() { String::new() } else { format!(" [{}]", buckets.join(", ")) }
@@ -12262,6 +12485,10 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         for &j in ranking.iter().skip(1) {
             print!("{}", format_diff(&diff_systems(&vs[ranking[0]], &vs[j], 10)));
         }
+        // P203: `shared`/`agree` above lumps in states no backend can meet. The
+        // stratification separates those from the honest hard tail and the specs
+        // that actually discriminate.
+        print!("{}", format_strata(&stratify_systems(&vs, &ranking), 5));
     }
 
     if let Some(path) = &o.json {
@@ -12289,6 +12516,14 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 },
                 "wall_ms": (v.wall_ms * 10.0).round() / 10.0,
                 "mean_ms_per_state": (v.mean_ms_per_state() * 100.0).round() / 100.0,
+                // P203: agreement over backend-agnostic states only (the raw
+                // figures above also count states only the reference backend can
+                // meet).
+                "agnostic_agreement": {
+                    "agreed": agnostic_agreement(v).0,
+                    "comparable": agnostic_agreement(v).1,
+                },
+                "pinned_number_states": v.per_spec.iter().map(|sp| sp.pinned_number_labels.len()).sum::<usize>(),
                 // P202: the raw per-state verdicts, so any two backends can be
                 // re-diffed offline (the `head_to_head` below only covers
                 // best-vs-others). Empty for a backend that was not walked.
@@ -12321,6 +12556,24 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                     })).collect::<Vec<_>>(),
                 })
             }).collect::<Vec<_>>(),
+            // P203: per spec, the comparable states split into backend-agnostic
+            // (a fair basis for comparing models) and reference-pinned (only the
+            // reference backend reproduces its own numbers).
+            "strata": stratify_systems(&vs, &ranking).iter().map(|s| json!({
+                "feature": s.feature,
+                "agnostic": {
+                    "shared": s.agnostic.shared,
+                    "all_right": s.agnostic.all_right,
+                    "all_wrong": s.agnostic.all_wrong,
+                    "split": s.agnostic.split,
+                },
+                "pinned": {
+                    "shared": s.pinned.shared,
+                    "all_right": s.pinned.all_right,
+                    "all_wrong": s.pinned.all_wrong,
+                    "split": s.pinned.split,
+                },
+            })).collect::<Vec<_>>(),
         });
         if let Some(parent) = Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {

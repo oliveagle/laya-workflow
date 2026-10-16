@@ -8766,9 +8766,11 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 /// needed), so the whole section runs anywhere.
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
-        default_system_backends, diff_systems, format_diff, rank_systems, repo_root,
-        system_probe_questions, LiveSummary, SpecLiveResult, SystemVerdict,
+        agnostic_agreement, default_system_backends, diff_systems, format_diff, format_strata,
+        rank_systems, repo_root, stratify_systems, system_probe_questions, LiveSummary,
+        SpecLiveResult, SystemVerdict,
     };
+    use laya_workflow::dsl_smoke::{expect_pins_backend_number, BACKEND_AGNOSTIC_NUMBER_KEYS};
 
     // ── the preflight question is the P200 drift shape: a single-option choice ──
     let q = system_probe_questions();
@@ -8977,6 +8979,220 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
     h.check(
         "p201: a walked-but-broken backend exits 2 (inconclusive), not 1 (regression)",
         out.status.code() == Some(2),
+    );
+
+    // ── P203: reference-pinned expectations are not model failures ──
+    h.check(
+        "p203: only step_count and round are backend-agnostic numbers",
+        BACKEND_AGNOSTIC_NUMBER_KEYS == ["trace.step_count", "result.round"],
+    );
+    h.check(
+        "p203: a numeric step answer is reference-pinned (only the writer backend makes it)",
+        expect_pins_backend_number(&serde_json::json!({ "trace.steps.0.answer": 0.8 })),
+    );
+    h.check(
+        "p203: a kept noul answer in result.<f> is reference-pinned",
+        expect_pins_backend_number(
+            &serde_json::json!({ "result.semantic": 0.85, "trace.step_count": 1 }),
+        ),
+    );
+    h.check(
+        "p203: a structural number (step_count / round) is not pinned",
+        !expect_pins_backend_number(
+            &serde_json::json!({ "trace.step_count": 2, "result.round": 1 })
+        ),
+    );
+    h.check(
+        "p203: a string answer / a label is not a pinned number",
+        !expect_pins_backend_number(
+            &serde_json::json!({ "trace.steps.0.answer": "technical", "result.label": "QUEUE_TODAY" })
+        ),
+    );
+    h.check(
+        "p203: a boolean decision output is not a pinned number",
+        !expect_pins_backend_number(&serde_json::json!({ "result.blocked": true })),
+    );
+
+    // The classification must cover the whole corpus: every distinct numeric
+    // expectation key shape normalises into one of the two buckets, and the
+    // pinned bucket is enumerated by name — a *new* shape fails here instead of
+    // silently counting as a model failure.
+    let shape = |k: &str| -> String {
+        k.split('.')
+            .map(|seg| {
+                if !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()) {
+                    "N".to_string()
+                } else {
+                    seg.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(".")
+    };
+    let expect_json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("bench/dsl_smoke_expect.json"))
+            .expect("read bench/dsl_smoke_expect.json"),
+    )
+    .expect("parse bench/dsl_smoke_expect.json");
+    let mut agnostic_shapes: std::collections::BTreeSet<String> = Default::default();
+    let mut pinned_shapes: std::collections::BTreeSet<String> = Default::default();
+    let mut pinned_states = 0usize;
+    let mut total_states = 0usize;
+    for (_stem, states) in expect_json.as_object().expect("expect table is an object") {
+        for (_label, e) in states.as_object().expect("spec states are an object") {
+            total_states += 1;
+            if expect_pins_backend_number(e) {
+                pinned_states += 1;
+            }
+            if let Some(o) = e.as_object() {
+                for (k, v) in o {
+                    if v.as_f64().is_some() {
+                        let norm = shape(k);
+                        if BACKEND_AGNOSTIC_NUMBER_KEYS.contains(&norm.as_str()) {
+                            agnostic_shapes.insert(norm);
+                        } else {
+                            pinned_shapes.insert(norm);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    h.check(
+        "p203: the agnostic numeric-key set in the corpus is exactly step_count + round",
+        agnostic_shapes
+            == ["result.round", "trace.step_count"].iter().map(|s| s.to_string()).collect(),
+    );
+    let known_pinned: std::collections::BTreeSet<String> = [
+        "result.action_answer",
+        "result.cand_0_new_information",
+        "result.cand_0_relation_usefulness",
+        "result.cand_0_relevance",
+        "result.cand_0_supports_current_evidence",
+        "result.cand_1_new_information",
+        "result.cand_1_relation_usefulness",
+        "result.cand_1_relevance",
+        "result.cand_1_supports_current_evidence",
+        "result.causal",
+        "result.chars",
+        "result.entity",
+        "result.multi_hop_need",
+        "result.page_chars",
+        "result.page_status",
+        "result.recency_importance",
+        "result.result_count",
+        "result.score",
+        "result.search_status",
+        "result.semantic",
+        "result.status",
+        "result.temporal",
+        "trace.steps.N.answer",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    h.check(
+        &format!(
+            "p203: every pinned numeric-key shape is one of the {known_len} documented ones (unclassified: {extra:?})",
+            known_len = known_pinned.len(),
+            extra = pinned_shapes.difference(&known_pinned).collect::<Vec<_>>(),
+        ),
+        pinned_shapes == known_pinned,
+    );
+    h.check(
+        &format!("p203: the corpus really does pin numbers ({pinned_states}/{total_states} states)"),
+        pinned_states >= 20 && pinned_states <= total_states,
+    );
+
+    // ── P203: stratification (pure) ──
+    let mk_stratum =
+        |url: &str, specs: Vec<(&str, Vec<(&str, bool)>, Vec<&str>)>| -> SystemVerdict {
+            let per_spec = specs
+                .into_iter()
+                .map(|(rel, labels, pinned)| SpecLiveResult {
+                    rel: rel.to_string(),
+                    label_agreements: labels
+                        .into_iter()
+                        .map(|(l, ok)| (l.to_string(), ok))
+                        .collect(),
+                    pinned_number_labels: pinned.into_iter().map(|s| s.to_string()).collect(),
+                    ..Default::default()
+                })
+                .collect();
+            SystemVerdict { url: url.to_string(), walked: true, per_spec, ..Default::default() }
+        };
+    let sx = mk_stratum(
+        "http://x",
+        vec![
+            ("a.feature", vec![("s1", true), ("s2", false), ("s3", true), ("s4", false)], vec!["s4"]),
+            ("b.feature", vec![("s1", false), ("s2", true)], vec![]),
+            ("c.feature", vec![("s1", true)], vec![]),
+            ("d.feature", vec![("s1", false), ("s2", false)], vec![]),
+        ],
+    );
+    let sy = mk_stratum(
+        "http://y",
+        vec![
+            ("a.feature", vec![("s1", true), ("s2", false), ("s3", false), ("s4", false)], vec!["s4"]),
+            ("b.feature", vec![("s1", false), ("s2", true)], vec![]),
+            ("d.feature", vec![("s1", false), ("s2", false)], vec![]),
+        ],
+    );
+    let both = vec![sx.clone(), sy.clone()];
+    let strata = stratify_systems(&both, &[0, 1]);
+    let get = |f: &str| {
+        strata
+            .iter()
+            .find(|s| s.feature == f)
+            .unwrap_or_else(|| panic!("no stratum for {f}"))
+            .clone()
+    };
+    h.check(
+        "p203: stratification only counts states every ranked backend walked (c.feature drops out)",
+        strata.len() == 3 && strata.iter().all(|s| s.feature != "c.feature"),
+    );
+    let a = get("a.feature");
+    h.check(
+        "p203: per spec, agnostic states split into all-right / all-wrong / split",
+        a.agnostic.shared == 3
+            && a.agnostic.all_right == 1
+            && a.agnostic.all_wrong == 1
+            && a.agnostic.split == 1,
+    );
+    h.check(
+        "p203: a reference-pinned state lands in the pinned stratum, not the agnostic one",
+        a.pinned.shared == 1 && a.pinned.all_wrong == 1 && a.pinned.all_failed(),
+    );
+    let d = get("d.feature");
+    h.check(
+        "p203: a spec no ranked backend passes at all is flagged",
+        d.agnostic.shared == 2 && d.agnostic.all_failed(),
+    );
+    h.check(
+        "p203: a single ranked backend yields no stratum (one backend says nothing)",
+        stratify_systems(&both, &[0]).is_empty(),
+    );
+    h.check(
+        "p203: agnostic agreement counts only backend-agnostic states",
+        agnostic_agreement(&sx) == (4, 8) && agnostic_agreement(&sy) == (2, 7),
+    );
+    let report = format_strata(&strata, 5);
+    h.check(
+        "p203: the report separates agnostic from reference-pinned",
+        report.contains("backend-agnostic 7 state(s) (2 all-right, 4 all-wrong, 1 split)")
+            && report.contains("reference-pinned 1 state(s) (1 all-wrong"),
+    );
+    h.check(
+        "p203: the hard tail is ordered by count and flags a spec it cannot pass at all",
+        report.contains("d.feature") && report.contains("[all comparable states wrong]"),
+    );
+    h.check(
+        "p203: the discriminating list names the split spec",
+        report.contains("discriminating") && report.contains("a.feature"),
+    );
+    h.check(
+        "p203: an empty stratification renders nothing",
+        format_strata(&[], 5).is_empty(),
     );
 }
 

@@ -148,6 +148,33 @@ pub fn uncovered_state(stem: &str, label: &str, want: Option<&Value>, steps: usi
     ))
 }
 
+/// P203: the numeric expectation keys every backend can be held to. A walk's
+/// step count and its loop round are facts about the routing — two backends that
+/// route the same way produce the same numbers. Every *other* numeric key in the
+/// corpus is a number a backend **itself** produced: `trace.steps.<n>.answer` is
+/// by construction the answer that backend gave, and a `result.<f>` that carries
+/// a `noul`/`score` answer merely copies it (`result.semantic`,
+/// `result.cand_0_relevance`, `result.score`, …); the rest are environment values
+/// (`result.status` / `result.chars` from a capability). Only the reference
+/// backend that wrote the table reproduces its own numbers, so a live-model
+/// comparison that counts such a state as "this model failed" measures the wrong
+/// thing. See [`expect_pins_backend_number`].
+pub const BACKEND_AGNOSTIC_NUMBER_KEYS: &[&str] = &["trace.step_count", "result.round"];
+
+/// P203: does this expectation pin a *number* only the reference backend can
+/// reproduce? True when it asserts a numeric value at any key that is not in
+/// [`BACKEND_AGNOSTIC_NUMBER_KEYS`] — i.e. an answer the backend gave, or an
+/// environment value. `trace.steps.<n>.answer` needs no index normalisation here:
+/// neither it nor any `result.<f>` answer field is agnostic. Pure, so the
+/// regression pins the classification without a live backend.
+pub fn expect_pins_backend_number(want: &Value) -> bool {
+    let Some(o) = want.as_object() else { return false };
+    o.iter().any(|(k, v)| {
+        // `as_f64` is `Some` only for JSON numbers (a bool is `Value::Bool`).
+        v.as_f64().is_some() && !BACKEND_AGNOSTIC_NUMBER_KEYS.contains(&k.as_str())
+    })
+}
+
 pub fn check_expect(out: &crate::workflow::WorkflowOutcome, want: &Value) -> Vec<String> {
     let res = out.to_json();
     let mut problems = Vec::new();
