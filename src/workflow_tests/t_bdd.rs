@@ -3204,16 +3204,16 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads all ten universes", counts.universes, 10);
+    h.eq("bdd scope-check: reads all eleven universes", counts.universes, 11);
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
         9,
     );
     h.eq(
-        "bdd scope-check: 20 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 21 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + the 16 agent-toolbox workflows)",
         counts.ported,
-        20,
+        21,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3226,14 +3226,14 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         1,
     );
     h.eq(
-        "bdd scope-check: 66 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root + 3 ole_eval deploy_gate/tiers)",
+        "bdd scope-check: 71 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root + 3 ole_eval deploy_gate/tiers + 5 laya-tch bench)",
         counts.not_a_workflow,
-        66,
+        71,
     );
     h.eq(
-        "bdd scope-check: 3 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon)",
+        "bdd scope-check: 4 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch)",
         counts.roots,
-        3,
+        4,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3312,6 +3312,25 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: longhorizon ports the model-action gate as its @decision feature",
         lh["ported"]["state_machine"] == serde_json::json!("bdd/workflows/guards/longhorizon_action_gate.feature"),
+    );
+
+    // P227: the LayaModel numeric parity gate, under the new `code/laya-tch` coverage
+    // root, is pinned by name *and* by the feature it ports - the same pin the ports
+    // above carry. Its five bench siblings are named as measurement / capture scripts.
+    let lt = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_laya_tch_bench")
+        .expect("ole_eval_laya_tch_bench universe");
+    h.eq(
+        "bdd scope-check: laya-tch/bench is the one ported module under code/laya-tch",
+        lt["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: laya-tch ports the numeric parity gate as its @decision feature",
+        lt["ported"]["parity_check"] == serde_json::json!("bdd/workflows/guards/parity_gate.feature"),
     );
 
     let probs_of = |c: &str| {
@@ -3408,7 +3427,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.eq(
         "bdd scope-check: the planted tree holds every name the census lists",
         planted.len(),
-        79,
+        85,
     );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
@@ -3451,6 +3470,19 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
             &drifted3,
             "code/qwen_vm/new_platform holds .py modules, but no universe declares it as its `upstream`",
         ),
+    );
+
+    // P227: a `.py` vendored under a build tree is not upstream code. A brand-new
+    // directory whose only `.py` sits under `target/` must NOT be demanded as a
+    // universe - the coverage-root sweep and the recursive enumerator share
+    // `scope_dir_ignored_dir` for exactly this.
+    let vendored = base.join("code/qwen_vm/vendored_pkg/target");
+    std::fs::create_dir_all(&vendored).unwrap();
+    std::fs::write(vendored.join("build_artifact.py"), "pass\n").unwrap();
+    let (_, drifted_v) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a .py under a build tree (target/) does not demand a universe (P227)",
+        !any(&drifted_v, "code/qwen_vm/vendored_pkg holds .py modules"),
     );
 
     // Negative 6: a coverage root that does not exist in the checkout is named, not

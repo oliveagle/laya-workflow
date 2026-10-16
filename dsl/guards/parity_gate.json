@@ -1,0 +1,228 @@
+{
+  "name": "parity_gate",
+  "_bdd": {
+    "feature": "parity_gate",
+    "feature_path": "bdd/workflows/guards/parity_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval LayaModel Rust-vs-PyTorch numeric parity gate\n(code/laya-tch/bench/parity_check.py): the `bench_parity` harness compares the Rust\nforward pass against a captured PyTorch reference and gates the *decision output* --\nthe marker logits must agree to `max|delta| < 1e-3`. Before it can measure at all,\nthe wrapper refuses with a named reason when a precondition is missing rather than\nsilently succeeding: the binary is not built, the reference trace is absent, no\nmodel directory is named, or the weights file is missing.\nThe walk encodes exactly that ladder: four named refusals in the wrapper's own order\n(bin, then trace, then model dir, then weights), then the one run whose verdict is\nPASS only when the binary exits 0 *and* prints PASS; anything else is FAIL.\nOne fold is documented: the tolerance (`max|delta| < 1e-3`) and the marker-logit\nchoice are applied inside the `bench_parity` binary, so the run's outcome -- \"the\nbinary returned PASS\" -- is the graph's observable input, not the raw delta.\nReference walk (code/laya-tch/bench/parity_check.py, main()): if the --bin path does\nnot exist -> return 2 (\"is not built\"); if the trace file is missing -> return 2;\nmodel_dir = --model-dir, or the trace's own `model_dir`, and if neither -> return 2;\nif <model_dir>/model.safetensors is missing -> return 2; otherwise passed =\n(returncode == 0 and \"PASS\" in output), and the exit is 0 when passed else 1.",
+  "start": "bin",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "bin",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "Is the bench_parity binary built at the given --bin path?",
+          "criteria": {
+            "ok": "the binary path exists",
+            "missing": "the --bin path does not exist on disk"
+          },
+          "heuristic": {
+            "answer_field": "ev_bin"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "missing": "STOP"
+        },
+        "default": "trace"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "missing"
+            },
+            "label": "CANNOT_RUN_NO_BIN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "BIN_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "trace",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "Is the captured PyTorch reference trace present at the given --trace path?",
+          "criteria": {
+            "ok": "the trace file exists",
+            "missing": "the trace file does not exist"
+          },
+          "heuristic": {
+            "answer_field": "ev_trace"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "missing": "STOP"
+        },
+        "default": "model_dir"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "missing"
+            },
+            "label": "CANNOT_RUN_NO_TRACE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "TRACE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "model_dir",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "Is a model directory named, either by --model-dir or by the trace's own model_dir field?",
+          "criteria": {
+            "ok": "a model directory is known",
+            "missing": "neither --model-dir nor the trace names one"
+          },
+          "heuristic": {
+            "answer_field": "ev_model"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "missing": "STOP"
+        },
+        "default": "weights"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "missing"
+            },
+            "label": "CANNOT_RUN_NO_MODEL_DIR"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "MODEL_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "weights",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "Does the named model directory hold model.safetensors?",
+          "criteria": {
+            "ok": "model.safetensors exists under the model directory",
+            "missing": "model.safetensors is absent"
+          },
+          "heuristic": {
+            "answer_field": "ev_weights"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "missing": "STOP"
+        },
+        "default": "measure"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "missing"
+            },
+            "label": "CANNOT_RUN_NO_WEIGHTS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "WEIGHTS_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "measure",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "Did bench_parity pass? It must exit 0 and print PASS. This is the last gate: a pass here clears the parity check.",
+          "criteria": {
+            "pass": "the binary exited 0 and printed PASS",
+            "fail": "the binary exited non-zero, or did not print PASS"
+          },
+          "heuristic": {
+            "answer_field": "ev_run"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "pass"
+            },
+            "label": "PARITY_PASS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PARITY_FAIL"
+          }
+        ]
+      }
+    }
+  ]
+}

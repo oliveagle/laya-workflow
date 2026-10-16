@@ -12,6 +12,10 @@
     {
       "root": "code/longhorizon",
       "note": "The long-horizon trusted-state-machine package (R11 Path C): the model may only choose an action, and the executor gates that proposal before it acts. Its one decision module is ported; a new module under this root cannot appear without a universe accounting for it."
+    },
+    {
+      "root": "code/laya-tch",
+      "note": "The Rust LayaModel crate and its Python bench harness. The crate's Python lives entirely under bench/ (src/ is Rust and target/ is a cargo build tree), so bench/ is the universe upstream and the crate root holds no .py of its own; a new .py directory beside bench/ would need a universe. The numeric parity gate is ported; the reference-capture and perf-measurement scripts are named."
     }
   ],
   "universes": [
@@ -274,6 +278,32 @@
         "state_machine": "bdd/workflows/guards/longhorizon_action_gate.feature"
       },
       "note": "The model may only choose an action (run a candidate / declare done); parse_model_action decides whether that proposal is the contract shape before the executor acts. Ported as a 4-node validation walk. The executor's syntax/test/record bookkeeping is measurement and is folded into the gate's observable input, so it is not a graph of its own; the package __init__ is a re-export and is not enumerated (scope_enumerate_py skips __init__)."
+    },
+    {
+      "id": "ole_eval_laya_tch_bench",
+      "upstream": "code/laya-tch/bench",
+      "kind": "the LayaModel Rust-vs-PyTorch parity gate (ported) plus the reference-capture and perf-measurement bench family",
+      "ported": {
+        "parity_check": "bdd/workflows/guards/parity_gate.feature"
+      },
+      "not_a_workflow": [
+        {
+          "reason": "the measurement family: bench_pytorch reports the PyTorch latency baseline, compare_perf runs the two engines head-to-head, and api_parity replays each captured case through both engines and prints per-field agreement (its hard exit is a raw-probability disagreement at 1e-5; a 4-decimal rounding-boundary difference is only warned). Like the tier1 quality runner under code/eval, they measure; the numeric parity gate is parity_check.",
+          "names": [
+            "api_parity",
+            "bench_pytorch",
+            "compare_perf"
+          ]
+        },
+        {
+          "reason": "the reference-capture scripts: ref_capture writes the PyTorch reference trace (token ids, pre-temperature logits, calibrated answers, a probe hidden state) and ref_raw_capture writes the unrounded probabilities, precisely so the rounded reference cannot hide a mismatch. They produce the data the parity gate reads; they decide nothing.",
+          "names": [
+            "ref_capture",
+            "ref_raw_capture"
+          ]
+        }
+      ],
+      "note": "The Rust-vs-PyTorch numeric parity gate for LayaModel: bench_parity compares the Rust forward pass against the captured PyTorch reference and gates the decision output -- the marker logits must agree to max|delta| < 1e-3. Ported as a 5-node walk: four named refusals in the wrapper's own order (bin not built, trace absent, no model dir, weights missing -> CANNOT_RUN_NO_BIN / _NO_TRACE / _NO_MODEL_DIR / _NO_WEIGHTS) and the single run's PASS/FAIL verdict. The tolerance and the marker-logit choice are applied inside the bench_parity binary, so the run's outcome is the graph's observable input. Proved against the live upstream by a 7-case drive of code/laya-tch/bench/parity_check.py (4 refusals + PASS + FAIL + exit-0-without-PASS)."
     }
   ]
 }

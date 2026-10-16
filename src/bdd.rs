@@ -11162,8 +11162,12 @@ impl Default for ScopeCheckOptions {
 /// stems directly under `dir`. Recursive (`recursive: true`) walks the tree and yields
 /// the `/`-joined path minus the extension, so a package whose decision modules are not
 /// all in one directory (gates at the package root next to a `workflows/` dir) can still
-/// pin every one. `__init__.py`, `__pycache__/`, `tests/`, `test_*.py` and anything whose
-/// name starts with `.` or `_` are not workflows.
+/// pin every one. `__init__.py`, `__pycache__/`, `tests/`, `test_*.py`, anything whose
+/// name starts with `.` or `_`, and build/dependency trees (`target/`, `venv/`,
+/// `site-packages/`, `node_modules/`) are not workflows - a vendored `.py` under a
+/// build tree must not force a universe. The build-directory set is shared with
+/// `scope_dir_holds_py` via `scope_dir_ignored_dir` so the coverage-root sweep and the
+/// per-universe listing agree on what a directory holds.
 fn scope_enumerate_py(dir: &Path, recursive: bool) -> Result<BTreeSet<String>> {
     let mut out: BTreeSet<String> = BTreeSet::new();
     if !recursive {
@@ -11186,7 +11190,7 @@ fn scope_enumerate_py(dir: &Path, recursive: bool) -> Result<BTreeSet<String>> {
             }
             let p = e.path();
             if p.is_dir() {
-                if name == "__pycache__" || name == "tests" {
+                if scope_dir_ignored_dir(&name) {
                     continue;
                 }
                 stack.push((p, format!("{prefix}{name}/")));
@@ -11213,11 +11217,14 @@ fn scope_dir_holds_py(dir: &Path) -> bool {
     };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || name == "__pycache__" {
+        if name.starts_with('.') {
             continue;
         }
         let p = e.path();
         if p.is_dir() {
+            if scope_dir_ignored_dir(&name) {
+                continue;
+            }
             if scope_dir_holds_py(&p) {
                 return true;
             }
@@ -11226,6 +11233,19 @@ fn scope_dir_holds_py(dir: &Path) -> bool {
         }
     }
     false
+}
+
+/// A directory the census never descends into: bytecode caches, the test tree, and
+/// build / dependency output (`target`, `venv`, `site-packages`, `node_modules`).
+/// None of these hold hand-authored upstream workflows, so a `.py` under one of them
+/// must not force a universe - the same trap as counting a vendored file. Shared by
+/// `scope_enumerate_py` (recursive) and `scope_dir_holds_py` so the two never disagree
+/// about what a directory holds.
+fn scope_dir_ignored_dir(name: &str) -> bool {
+    matches!(
+        name,
+        "__pycache__" | "tests" | "target" | "venv" | "site-packages" | "node_modules"
+    )
 }
 
 pub fn scope_check_impl(

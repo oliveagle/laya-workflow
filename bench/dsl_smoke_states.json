@@ -7141,5 +7141,39 @@
       "ev_action": "run",
       "ev_code": "missing"
     }
+  },
+  "parity_gate": {
+    "pass": {
+      "ev_bin": "ok",
+      "ev_trace": "ok",
+      "ev_model": "ok",
+      "ev_weights": "ok",
+      "ev_run": "pass"
+    },
+    "no_bin": {
+      "ev_bin": "missing"
+    },
+    "no_trace": {
+      "ev_bin": "ok",
+      "ev_trace": "missing"
+    },
+    "no_model": {
+      "ev_bin": "ok",
+      "ev_trace": "ok",
+      "ev_model": "missing"
+    },
+    "no_weights": {
+      "ev_bin": "ok",
+      "ev_trace": "ok",
+      "ev_model": "ok",
+      "ev_weights": "missing"
+    },
+    "fail": {
+      "ev_bin": "ok",
+      "ev_trace": "ok",
+      "ev_model": "ok",
+      "ev_weights": "ok",
+      "ev_run": "fail"
+    }
   }
 }
