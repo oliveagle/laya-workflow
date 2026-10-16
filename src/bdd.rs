@@ -7836,6 +7836,38 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         return Ok(1);
     }
 
+    // Name the confusion instead of relaying an io error. A `.json` argument is
+    // a compiled workflow spec, not a Gherkin feature; a missing file used to
+    // surface as `<path>: reading <path>` (the context, not the cause), which
+    // reads as if the file were found. Checked only for explicit arguments - the
+    // no-argument corpus above is already the repo's own `bdd/features`.
+    if !o.features.is_empty() {
+        for p in &paths {
+            let name = p.to_string_lossy();
+            if name.ends_with(".json") {
+                eprintln!(
+                    "bdd run: {name} is a compiled workflow spec, not a Gherkin feature — run \
+                     it with `laya-workflow run --spec {name}` (to turn it back into a feature: \
+                     `laya-workflow bdd import {name}`)"
+                );
+                return Ok(1);
+            }
+            if !p.exists() {
+                eprintln!(
+                    "bdd run: {name}: no such file; pass one or more `.feature` paths, or no \
+                     path at all to run this repo's `bdd/features` corpus"
+                );
+                return Ok(1);
+            }
+            if !name.ends_with(".feature") {
+                eprintln!(
+                    "bdd run: {name} is not a `.feature`; bdd run executes Gherkin features"
+                );
+                return Ok(1);
+            }
+        }
+    }
+
     let profile = o.profile.as_str();
     let base_url = if o.live {
         Some(String::new())

@@ -1136,6 +1136,42 @@ fn run_state(state: &str, query: Option<&str>) -> Result<Value> {
     Ok(value)
 }
 
+/// Resolve a `--spec` argument to a `.json` workflow spec, answering the three
+/// ways something else gets passed where a spec was meant: a directory, a BDD
+/// `.feature`, or a path that is not there. Each branch names the next step, so
+/// the failure reads as a fix and not as an errno. Used by every `--spec` entry
+/// point (`run`, `validate`, `resume`, `replay`, `evaluate`).
+fn resolve_spec_arg(spec: &str) -> Result<String> {
+    let p = std::path::Path::new(spec);
+    if spec.ends_with(".feature") {
+        if p.exists() {
+            bail!(
+                "`{spec}` is a BDD `.feature`, not a workflow spec; compile it to JSON first \
+                 with `laya-workflow bdd transpile {spec} --out <spec.json>`, or run the \
+                 feature itself with `laya-workflow bdd run {spec}`"
+            );
+        }
+        bail!(
+            "`{spec}` is a `.feature` and does not exist; `--spec` wants a `.json` workflow \
+             spec — features are run by `laya-workflow bdd run` and compiled by \
+             `laya-workflow bdd transpile`"
+        );
+    }
+    if p.is_dir() {
+        bail!(
+            "`{spec}` is a directory, not a spec; pass the spec `.json` itself \
+             (list the specs on the layered roots with `laya-workflow list`)"
+        );
+    }
+    if !p.exists() {
+        bail!(
+            "spec `{spec}` not found; check the path, or list the specs on the layered roots \
+             with `laya-workflow list`"
+        );
+    }
+    Ok(spec.to_string())
+}
+
 fn main() -> Result<()> {
     // Before anything can print: a reader that leaves early must end this process
     // with SIGPIPE, not with a stdout-write panic (see `laya_workflow::sigpipe`).
@@ -1199,8 +1235,14 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Validate { spec } => {
-            let raw = std::fs::read_to_string(spec)?;
-            let sv: Value = serde_json::from_str(&raw)?;
+            let spec = resolve_spec_arg(spec)?;
+            let raw = std::fs::read_to_string(&spec)?;
+            let sv: Value = serde_json::from_str(&raw).map_err(|e| {
+                anyhow!(
+                    "`{spec}` is not a workflow spec: it does not parse as JSON ({e}); \
+                     `validate` reads a `.json` spec, not a `.feature` or a directory"
+                )
+            })?;
             match laya_workflow::spec::check_version(&sv)? {
                 laya_workflow::spec::VersionCheck::Ok(v) => {
                     println!("# dsl_version: {v} (current)")
@@ -1209,7 +1251,7 @@ fn main() -> Result<()> {
                     println!("# dsl_version: {from} (legacy; engine supports {to})")
                 }
             }
-            let wf = laya_workflow::spec::load_file(spec)?;
+            let wf = laya_workflow::spec::load_file(&spec)?;
             // report external capabilities + the safety policy this spec declares
             let reg = laya_workflow::capability::Registry::from_spec(&sv)?;
             let names = reg.names();
@@ -1296,7 +1338,8 @@ fn main() -> Result<()> {
             query,
             progress,
         } => {
-            let wf = laya_workflow::spec::load_file(spec)?;
+            let spec = resolve_spec_arg(spec)?;
+            let wf = laya_workflow::spec::load_file(&spec)?;
             let st = run_state(state, query.as_deref())?;
             println!("backend: {label}");
             let out = if *progress {
@@ -1346,7 +1389,8 @@ fn main() -> Result<()> {
             from,
             state,
         } => {
-            let wf = laya_workflow::spec::load_file(spec)?;
+            let spec = resolve_spec_arg(spec)?;
+            let wf = laya_workflow::spec::load_file(&spec)?;
             let mut store = laya_workflow::persist::NodeStore::open(dir)?;
             let initial: Option<serde_json::Value> = if state == "{}" {
                 None
@@ -1365,7 +1409,8 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Replay { spec, dir, iter } => {
-            let wf = laya_workflow::spec::load_file(spec)?;
+            let spec = resolve_spec_arg(spec)?;
+            let wf = laya_workflow::spec::load_file(&spec)?;
             let mut store = laya_workflow::persist::NodeStore::open(dir)?;
             let (backend, label) = make_backend(cli.base_url.as_deref());
             println!("backend: {label}");
@@ -2981,7 +3026,8 @@ fn run_evaluate(
 ) -> Result<()> {
     use laya_workflow::evaluate;
 
-    let spec_text = std::fs::read_to_string(spec_path)?;
+    let spec_path = resolve_spec_arg(spec_path)?;
+    let spec_text = std::fs::read_to_string(&spec_path)?;
     let spec_json: Value = serde_json::from_str(&spec_text)?;
     let fingerprint = evaluate::config_sha256(&spec_json)?;
     let departments: Vec<&str> =
@@ -3013,7 +3059,7 @@ fn run_evaluate(
         bail!("no cases match split {split:?}");
     }
 
-    let wf = laya_workflow::spec::load_file(spec_path)?;
+    let wf = laya_workflow::spec::load_file(&spec_path)?;
     let (backend, _label) = make_backend(base_url);
     let summary = evaluate::evaluate(&selected, &departments, |message| {
         let state = serde_json::json!({ "message": message });

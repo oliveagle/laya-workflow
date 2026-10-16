@@ -271,6 +271,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("plugin-checkout-gate", t_plugin::test_plugin_checkout_gate),
         ("build-time-paths", t_paths::test_build_time_paths),
+        ("spec-arg-hints", t_paths::test_spec_arg_hints),
         ("sigpipe-hygiene", t_pipe::test_sigpipe_hygiene),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
