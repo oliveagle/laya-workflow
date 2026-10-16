@@ -548,6 +548,27 @@ enum BddCmd {
         #[arg(long)]
         json: Option<String>,
     },
+    /// Compare System-1 backends over the decision corpus and rank them: drive
+    /// every `@decision` spec's sample states through each backend, then rank the
+    /// usable ones by label agreement (then latency). A backend that fails a
+    /// single-option `choice` preflight probe is marked unusable, never ranked —
+    /// that probe is exactly the P200 stale-code shape. Default backends are the
+    /// keep-list (soft-decider-421m :18405, Laya FT :18400); pass `--backend` to
+    /// add challengers (repeatable).
+    CompareSystems {
+        /// A System-1 backend base URL to compare. Repeatable.
+        #[arg(long)]
+        backend: Vec<String>,
+        /// Only walk features whose path or stem contains this substring.
+        #[arg(long)]
+        filter: Option<String>,
+        /// Write the comparison as JSON here.
+        #[arg(long)]
+        json: Option<String>,
+        /// Walk every backend even if its preflight probe fails.
+        #[arg(long)]
+        no_preflight: bool,
+    },
     /// Round-trip gate: every @decision feature must compile back to the same
     /// decision-graph spec as its checked-in dsl/<cat>/<name>.json counterpart.
     RoundTrip {
@@ -2629,6 +2650,17 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             base_url: base_url.clone(),
             filter: filter.clone(),
             json: json.clone(),
+        })?,
+        BddCmd::CompareSystems {
+            backend,
+            filter,
+            json,
+            no_preflight,
+        } => bdd::compare_systems(&bdd::CompareSystemsOptions {
+            backends: backend.clone(),
+            filter: filter.clone(),
+            json: json.clone(),
+            no_preflight: *no_preflight,
         })?,
         BddCmd::RoundTrip { json } => {
             bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?

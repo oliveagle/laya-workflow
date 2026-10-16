@@ -59,8 +59,15 @@ pub struct LayaBackend {
 
 impl LayaBackend {
     pub fn new(base_url: &str) -> Self {
+        Self::with_timeout(base_url, 600)
+    }
+
+    /// Like [`LayaBackend::new`], but with an explicit request timeout. The
+    /// System-1 comparison's preflight probe (`bdd compare-systems`) must give up
+    /// on a hung backend in seconds, not the 600 s the walk itself allows.
+    pub fn with_timeout(base_url: &str, secs: u64) -> Self {
         let agent = ureq::AgentBuilder::new()
-            .timeout(std::time::Duration::from_secs(600))
+            .timeout(std::time::Duration::from_secs(secs))
             .build();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),

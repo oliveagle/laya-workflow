@@ -8760,6 +8760,132 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
     );
 }
 
+/// P201: `bdd compare-systems` ranks System-1 backends over the decision corpus.
+/// The ranking and the preflight probe are pure enough to pin offline; the
+/// end-to-end arms drive the CLI against an unreachable backend (no model
+/// needed), so the whole section runs anywhere.
+pub fn test_bdd_compare_systems(h: &mut Harness) {
+    use laya_workflow::bdd::{
+        default_system_backends, rank_systems, repo_root, system_probe_questions, LiveSummary,
+        SystemVerdict,
+    };
+
+    // ── the preflight question is the P200 drift shape: a single-option choice ──
+    let q = system_probe_questions();
+    let probe = &q["probe"];
+    h.check(
+        "p201: the preflight probe is a `choice` question",
+        probe.get("type").and_then(|v| v.as_str()) == Some("choice"),
+    );
+    h.check(
+        "p201: the preflight probe has exactly one criterion (the 500 shape)",
+        probe
+            .get("criteria")
+            .and_then(|v| v.as_object())
+            .map(|o| o.len() == 1)
+            .unwrap_or(false),
+    );
+
+    // ── the keep-list is the default, in order ──
+    h.check(
+        "p201: the default backends are the keep-list (soft-decider :18405, then Laya FT :18400)",
+        default_system_backends()
+            == vec![
+                "http://127.0.0.1:18405".to_string(),
+                "http://127.0.0.1:18400".to_string(),
+            ],
+    );
+
+    // ── ranking: agreement desc, then clean desc, then latency asc; unwalked dropped ──
+    let mk = |url: &str, agreed: u32, clean: u32, run: u32, per_state_ms: f64, walked: bool| {
+        SystemVerdict {
+            url: url.to_string(),
+            preflight_error: if walked { None } else { Some("down".into()) },
+            walked,
+            summary: LiveSummary {
+                states_agreed: agreed,
+                specs_clean: clean,
+                states_run: run,
+                latency_ms: per_state_ms * run as f64,
+                ..Default::default()
+            },
+            wall_ms: 0.0,
+        }
+    };
+    let vs = vec![
+        mk("http://a", 10, 5, 20, 20.0, true), // agreed 10
+        mk("http://b", 12, 5, 20, 12.0, true), // agreed 12, fastest
+        mk("http://c", 12, 5, 20, 18.0, true), // agreed 12, slower
+        mk("http://d", 99, 9, 20, 1.0, false), // not walked
+    ];
+    let order = rank_systems(&vs);
+    h.check("p201: ranking prefers the higher agreement", order.first() == Some(&1));
+    h.check("p201: equal agreement falls back to lower latency", order.get(1) == Some(&2));
+    h.check("p201: an un-walked backend is never ranked", !order.contains(&3));
+    h.check("p201: the lower-agreement backend is last", order.get(2) == Some(&0));
+    h.check("p201: ranking covers exactly the walked backends", order.len() == 3);
+    h.check(
+        "p201: mean latency is total/run",
+        (vs[1].mean_ms_per_state() - 12.0).abs() < 1e-9,
+    );
+
+    // ── end to end: an unreachable backend, no model required ──
+    let root = repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+
+    // (a) preflight on a dead backend → unusable, never ranked, exit 2.
+    let out = std::process::Command::new(&bin)
+        .args([
+            "bdd",
+            "compare-systems",
+            "--backend",
+            "http://127.0.0.1:1",
+            "--filter",
+            "refund_policy.v1",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd compare-systems");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check(
+        "p201: a backend that fails the preflight is named unusable, never ranked",
+        stdout.contains("unusable (preflight:") && stdout.contains("best: none"),
+    );
+    h.check(
+        "p201: an unrankable backend exits 2 (inconclusive), not 1 (regression)",
+        out.status.code() == Some(2),
+    );
+
+    // (b) --no-preflight walks it → the backend-error bucket, still exit 2.
+    let out = std::process::Command::new(&bin)
+        .args([
+            "bdd",
+            "compare-systems",
+            "--backend",
+            "http://127.0.0.1:1",
+            "--filter",
+            "refund_policy.v1",
+            "--no-preflight",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd compare-systems --no-preflight");
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check(
+        "p201: --no-preflight walks the dead backend and reports its backend-error bucket",
+        stdout.contains("backend-error"),
+    );
+    h.check(
+        "p201: a walked-but-broken backend exits 2 (inconclusive), not 1 (regression)",
+        out.status.code() == Some(2),
+    );
+}
+
 /// P137/P138: the app-parity gate — every built-in app's reference case replayed
 /// end to end through the app's checked-in BDD port spec. The port is the app's
 /// routing as *data*; the app is *code*. This pins that the two agree on all

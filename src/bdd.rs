@@ -11529,6 +11529,10 @@ pub struct SpecLiveResult {
     pub states_skipped: u32,
     pub states_nonterminating: u32,
     pub states_looped: u32,
+    /// P201: sum of every walk's `trace.total_latency_ms` (the backend-facing
+    /// time — node latency is dominated by the System-1 decide call). Zero on a
+    /// validate-only spec. Lets `bdd compare-systems` rank models on latency.
+    pub latency_ms: f64,
 }
 
 /// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
@@ -11542,7 +11546,7 @@ pub fn walk_outcome_clean(final_action: &str) -> bool {
     final_action != "max_iterations" && final_action != "error_node_missing"
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct LiveSummary {
     pub specs_total: u32,
     pub specs_clean: u32,
@@ -11556,6 +11560,9 @@ pub struct LiveSummary {
     pub states_skipped: u32,
     pub states_nonterminating: u32,
     pub states_looped: u32,
+    /// P201: total backend-facing latency over every walk (see
+    /// [`SpecLiveResult::latency_ms`]).
+    pub latency_ms: f64,
 }
 
 /// Fold per-spec live verdicts into the gate's numbers. Pure, so the regression
@@ -11580,6 +11587,7 @@ pub fn summarize_live(per_spec: &[SpecLiveResult]) -> LiveSummary {
         s.states_skipped += r.states_skipped;
         s.states_nonterminating += r.states_nonterminating;
         s.states_looped += r.states_looped;
+        s.latency_ms += r.latency_ms;
     }
     s
 }
@@ -11619,36 +11627,69 @@ fn load_bench_table(name: &str) -> Result<BTreeMap<String, Value>> {
     }
 }
 
-pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
-    let root = repo_root();
-    let wf_root = root.join("bdd").join("workflows");
-    let mut features: Vec<PathBuf> = Vec::new();
-    if wf_root.is_dir() {
-        walk_features(&wf_root, &mut features);
-    }
-    features.sort();
+/// The decision corpus, parsed once: every `@decision` feature, the sample
+/// states to drive through a System-1 backend, and the offline expectation
+/// table. Shared by [`live_decisions`] (one backend) and [`compare_systems`]
+/// (many), so the gate and the comparison can never drift apart.
+struct DecisionCorpus {
+    wf_root: PathBuf,
+    features: Vec<PathBuf>,
+    /// How many of `features` carry `@decision` — the walk's denominator,
+    /// independent of any `--filter`.
+    decision_specs: usize,
+    states: BTreeMap<String, Value>,
+    expect: BTreeMap<String, Value>,
+}
 
-    let states = load_bench_table("dsl_smoke_states.json")?;
-    let expect = load_bench_table("dsl_smoke_expect.json")?;
-    // Guarantee the scratch env vars a decision spec may reference resolve, so
-    // `from_spec_with_dir` validates in a bare shell (same as `bdd round-trip`).
-    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
-        for (k, v) in env_map {
-            std::env::set_var(k, v);
+impl DecisionCorpus {
+    fn load() -> Result<Self> {
+        let root = repo_root();
+        let wf_root = root.join("bdd").join("workflows");
+        let mut features: Vec<PathBuf> = Vec::new();
+        if wf_root.is_dir() {
+            walk_features(&wf_root, &mut features);
         }
-        let _ = crate::capability::secret::init(None);
+        features.sort();
+        let mut decision_specs = 0usize;
+        for f in &features {
+            if let Ok(text) = std::fs::read_to_string(f) {
+                if let Ok(feat) = parse(&text, &f.to_string_lossy()) {
+                    if has_tag(&feat.tags, "decision") {
+                        decision_specs += 1;
+                    }
+                }
+            }
+        }
+        // Guarantee the scratch env vars a decision spec may reference resolve,
+        // so `from_spec_with_dir` validates in a bare shell (same as
+        // `bdd round-trip` and, before P201, `bdd live-decisions`).
+        if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+            for (k, v) in env_map {
+                std::env::set_var(k, v);
+            }
+            let _ = crate::capability::secret::init(None);
+        }
+        let states = load_bench_table("dsl_smoke_states.json")?;
+        let expect = load_bench_table("dsl_smoke_expect.json")?;
+        Ok(Self { wf_root, features, decision_specs, states, expect })
     }
+}
 
-    let base_url = o
-        .base_url
-        .clone()
-        .or_else(|| std::env::var("BDD_BASE_URL").ok())
-        .filter(|u| !u.trim().is_empty())
-        .unwrap_or_else(|| "http://127.0.0.1:18405".to_string());
-    let backend = crate::backend::LayaBackend::new(&base_url);
-
+/// Drive every `@decision` spec's registered sample states through `backend`,
+/// with the same compile / validate / skip / error-classification rules the
+/// live gate uses. Generic over the backend, so [`live_decisions`] calls it once
+/// and [`compare_systems`] calls it once per System-1 model.
+///
+/// `quiet` suppresses the per-state "skipped, validate only" lines — the
+/// comparison walks the corpus several times and would otherwise repeat them.
+fn walk_decision_corpus(
+    corpus: &DecisionCorpus,
+    filter: Option<&str>,
+    quiet: bool,
+    backend: &dyn crate::workflow::Decide,
+) -> Result<Vec<SpecLiveResult>> {
     let mut per_spec: Vec<SpecLiveResult> = Vec::new();
-    for f in &features {
+    for f in &corpus.features {
         let text = std::fs::read_to_string(f)
             .with_context(|| format!("reading {}", f.display()))?;
         let feature = parse(&text, &f.to_string_lossy())?;
@@ -11656,7 +11697,7 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             continue;
         }
         let rel = f
-            .strip_prefix(&wf_root)
+            .strip_prefix(&corpus.wf_root)
             .map(|p| p.to_string_lossy().trim_start_matches('/').to_string())
             .unwrap_or_else(|_| f.to_string_lossy().into_owned());
         let name = f
@@ -11664,8 +11705,8 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        if let Some(filt) = &o.filter {
-            if !rel.contains(filt.as_str()) && !name.contains(filt.as_str()) {
+        if let Some(filt) = filter {
+            if !rel.contains(filt) && !name.contains(filt) {
                 continue;
             }
         }
@@ -11692,7 +11733,7 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                 continue;
             }
         };
-        let Some(state_map) = states.get(&name).and_then(Value::as_object) else {
+        let Some(state_map) = corpus.states.get(&name).and_then(Value::as_object) else {
             // validate-only is a clean walk: there was nothing to drive.
             per_spec.push(SpecLiveResult { rel, ..Default::default() });
             continue;
@@ -11706,14 +11747,20 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         let mut res = SpecLiveResult { rel, ..Default::default() };
         for (label, st) in state_map {
             if let Some(why) = &env_gap {
-                eprintln!(
-                    "       {label}: {why} — skipped, validate only (this host cannot exercise it)"
-                );
+                if !quiet {
+                    eprintln!(
+                        "       {label}: {why} — skipped, validate only (this host cannot exercise it)"
+                    );
+                }
                 res.states_skipped += 1;
                 continue;
             }
-            match wf.run(&backend, st) {
+            match wf.run(backend, st) {
                 Ok(out) => {
+                    // P201: node latency is dominated by the System-1 decide
+                    // call, and `total_latency_ms` sums it over the walk — the
+                    // number `bdd compare-systems` ranks models on.
+                    res.latency_ms += out.trace.total_latency_ms;
                     // `run` returns Ok even at the safety valve (see
                     // `walk_outcome_clean`), so "returned" is not "terminated":
                     // a walk that ended at `max_iterations` / `error_node_missing`
@@ -11730,7 +11777,8 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                     if out.trace.loop_detected {
                         res.states_looped += 1;
                     }
-                    let want = expect
+                    let want = corpus
+                        .expect
                         .get(&name)
                         .and_then(Value::as_object)
                         .and_then(|m| m.get(label))
@@ -11776,6 +11824,19 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         }
         per_spec.push(res);
     }
+    Ok(per_spec)
+}
+
+pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
+    let corpus = DecisionCorpus::load()?;
+    let base_url = o
+        .base_url
+        .clone()
+        .or_else(|| std::env::var("BDD_BASE_URL").ok())
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:18405".to_string());
+    let backend = crate::backend::LayaBackend::new(&base_url);
+    let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), false, &backend)?;
 
     let s = summarize_live(&per_spec);
     for r in &per_spec {
@@ -11853,6 +11914,273 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         return Ok(2);
     }
     Ok(0)
+}
+
+// ── System-1 comparison (`laya-workflow bdd compare-systems`) ───────────────
+//
+// `bdd live-decisions` answers "is the decision corpus structurally clean
+// against *one* live backend". This answers the other question the project keeps
+// asking — "which System-1 model is best" — so the keep-list can be re-decided
+// with one command instead of a pile of ad-hoc runs. It drives the same corpus
+// (same compile / validate / skip rules, same expectation table) through each
+// backend, ranks the usable ones by label agreement, and refuses to rank a
+// backend that fails the preflight probe.
+
+pub struct CompareSystemsOptions {
+    /// Base URLs to compare, in the given order. Empty → the decision keep-list
+    /// on this host (soft-decider-421m `:18405`, then Laya FT `:18400`).
+    pub backends: Vec<String>,
+    /// Only walk features whose path or stem contains this substring.
+    pub filter: Option<String>,
+    /// Write the comparison as JSON here.
+    pub json: Option<String>,
+    /// Walk a backend even if its preflight probe fails (default: skip it and
+    /// mark it unusable — an unprobeable backend must never be ranked).
+    pub no_preflight: bool,
+}
+
+impl Default for CompareSystemsOptions {
+    fn default() -> Self {
+        Self { backends: Vec::new(), filter: None, json: None, no_preflight: false }
+    }
+}
+
+/// The two System-1 models this project keeps: soft-decider-421m and the
+/// fine-tuned Laya. Challengers are added explicitly with `--backend`.
+pub fn default_system_backends() -> Vec<String> {
+    vec![
+        "http://127.0.0.1:18405".to_string(),
+        "http://127.0.0.1:18400".to_string(),
+    ]
+}
+
+/// The preflight question: one **single-option** `choice`. That is the exact
+/// request shape a stale `rl_common.py` 500s (P200), so a backend that cannot
+/// answer it is running drifted code or is otherwise unfit — and it would fail
+/// the one-option specs in the corpus anyway. Pure (no I/O), so the regression
+/// can pin the shape without a live backend.
+pub fn system_probe_questions() -> Value {
+    json!({
+        "probe": {
+            "type": "choice",
+            "instructions": "System-1 compatibility probe",
+            "criteria": { "A": "yes" }
+        }
+    })
+}
+
+/// Probe `url` with [`system_probe_questions`]; `None` when the backend
+/// answered, `Some(why)` when it did not. Short timeout, so a hung backend does
+/// not stall the whole comparison.
+pub fn preflight_backend(url: &str) -> Option<String> {
+    let b = crate::backend::LayaBackend::with_timeout(url, 20);
+    match crate::workflow::Decide::decide(&b, &json!({}), &system_probe_questions()) {
+        Ok(_) => None,
+        Err(e) => Some(format!("{e:#}")),
+    }
+}
+
+/// One backend's outcome in the comparison.
+#[derive(Clone, Debug, Default)]
+pub struct SystemVerdict {
+    pub url: String,
+    /// `None` = the preflight passed (or was skipped); `Some(why)` = it failed
+    /// and the backend was not walked.
+    pub preflight_error: Option<String>,
+    /// Did we walk the corpus with this backend?
+    pub walked: bool,
+    pub summary: LiveSummary,
+    /// Wall time for the whole corpus walk. Includes the local engine's own
+    /// work, so it is only meaningful next to the other backends' walks.
+    pub wall_ms: f64,
+}
+
+impl SystemVerdict {
+    /// Mean backend-facing latency per state (0 when nothing ran). Derived from
+    /// `trace.total_latency_ms`, which is node latency — dominated by the
+    /// System-1 decide call.
+    pub fn mean_ms_per_state(&self) -> f64 {
+        if self.summary.states_run == 0 {
+            0.0
+        } else {
+            self.summary.latency_ms / self.summary.states_run as f64
+        }
+    }
+}
+
+/// Rank the **walked** backends best-first: label agreement (desc), then clean
+/// specs (desc), then mean latency (asc), then URL (stable). Backends that were
+/// not walked (preflight failed) are dropped — never ranked. Pure, so the
+/// regression pins the order without any live backend.
+pub fn rank_systems(vs: &[SystemVerdict]) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..vs.len()).filter(|&i| vs[i].walked).collect();
+    idx.sort_by(|&a, &b| {
+        let (x, y) = (&vs[a], &vs[b]);
+        y.summary
+            .states_agreed
+            .cmp(&x.summary.states_agreed)
+            .then(y.summary.specs_clean.cmp(&x.summary.specs_clean))
+            .then(
+                x.mean_ms_per_state()
+                    .partial_cmp(&y.mean_ms_per_state())
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+            .then(x.url.cmp(&y.url))
+    });
+    idx
+}
+
+/// Compare the decision corpus across several System-1 backends and rank them.
+pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
+    let corpus = DecisionCorpus::load()?;
+    let backends = if o.backends.is_empty() {
+        default_system_backends()
+    } else {
+        o.backends.clone()
+    };
+
+    let mut vs: Vec<SystemVerdict> = Vec::new();
+    for url in &backends {
+        let mut v = SystemVerdict { url: url.clone(), ..Default::default() };
+        if !o.no_preflight {
+            if let Some(why) = preflight_backend(url) {
+                v.preflight_error = Some(why);
+                vs.push(v);
+                continue;
+            }
+        }
+        let t0 = std::time::Instant::now();
+        let backend = crate::backend::LayaBackend::new(url);
+        let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), true, &backend)?;
+        v.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        v.summary = summarize_live(&per_spec);
+        v.walked = true;
+        vs.push(v);
+    }
+
+    let ranking = rank_systems(&vs);
+    let rank_of: std::collections::HashMap<usize, usize> =
+        ranking.iter().enumerate().map(|(pos, &i)| (i, pos + 1)).collect();
+    let specs_registered = corpus.decision_specs;
+    let states_registered: usize = corpus
+        .states
+        .values()
+        .map(|m| m.as_object().map(|o| o.len()).unwrap_or(0))
+        .sum();
+
+    let scope = match &o.filter {
+        Some(f) => format!("; filter {f:?}"),
+        None => String::new(),
+    };
+    println!(
+        "system-1 comparison over the decision corpus ({specs_registered} specs / {states_registered} states registered, {} backend(s){scope})",
+        vs.len()
+    );
+    println!(
+        "  {:>4}  {:<28}  {:>9}  {:>9}  {:>9}  {:>10}  {}",
+        "rank", "backend", "clean", "agree", "wall", "ms/state", "status"
+    );
+    for (i, v) in vs.iter().enumerate() {
+        let rank = rank_of.get(&i).map(|r| r.to_string()).unwrap_or_else(|| "-".to_string());
+        if let Some(why) = &v.preflight_error {
+            println!(
+                "  {:>4}  {:<28}  {:>9}  {:>9}  {:>9}  {:>10}  unusable (preflight: {})",
+                rank, v.url, "-", "-", "-", "-", sys_truncate(&sys_one_line(why), 64)
+            );
+            continue;
+        }
+        let mut buckets: Vec<String> = Vec::new();
+        if v.summary.specs_structural_failure > 0 {
+            buckets.push(format!("{} structural-failure", v.summary.specs_structural_failure));
+        }
+        if v.summary.specs_backend_error > 0 {
+            buckets.push(format!("{} backend-error", v.summary.specs_backend_error));
+        }
+        println!(
+            "  {:>4}  {:<28}  {:>9}  {:>9}  {:>8.1}s  {:>9.1}ms  ok{}",
+            rank,
+            v.url,
+            format!("{}/{}", v.summary.specs_clean, v.summary.specs_total),
+            format!("{}/{}", v.summary.states_agreed, v.summary.states_run),
+            v.wall_ms / 1000.0,
+            v.mean_ms_per_state(),
+            if buckets.is_empty() { String::new() } else { format!(" [{}]", buckets.join(", ")) }
+        );
+    }
+    if let Some(best) = ranking.first() {
+        println!(
+            "best: {} (agreement {}/{}, {:.1} ms/state)",
+            vs[*best].url,
+            vs[*best].summary.states_agreed,
+            vs[*best].summary.states_run,
+            vs[*best].mean_ms_per_state()
+        );
+    } else {
+        println!("best: none (no backend could be ranked)");
+    }
+
+    if let Some(path) = &o.json {
+        let report = json!({
+            "corpus": {
+                "specs_registered": specs_registered,
+                "states_registered": states_registered,
+                "filter": o.filter,
+            },
+            "backends": vs.iter().map(|v| json!({
+                "url": v.url,
+                "walked": v.walked,
+                "preflight_error": v.preflight_error,
+                "summary": {
+                    "specs_total": v.summary.specs_total,
+                    "specs_clean": v.summary.specs_clean,
+                    "specs_structural_failure": v.summary.specs_structural_failure,
+                    "specs_backend_error": v.summary.specs_backend_error,
+                    "states_run": v.summary.states_run,
+                    "states_agreed": v.summary.states_agreed,
+                    "states_skipped": v.summary.states_skipped,
+                    "states_nonterminating": v.summary.states_nonterminating,
+                    "states_looped": v.summary.states_looped,
+                    "latency_ms": (v.summary.latency_ms * 10.0).round() / 10.0,
+                },
+                "wall_ms": (v.wall_ms * 10.0).round() / 10.0,
+                "mean_ms_per_state": (v.mean_ms_per_state() * 100.0).round() / 100.0,
+            })).collect::<Vec<_>>(),
+            "ranking": ranking.iter().map(|&i| vs[i].url.clone()).collect::<Vec<_>>(),
+        });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&report)?))?;
+    }
+
+    if vs.iter().any(|v| v.summary.specs_structural_failure > 0) {
+        return Ok(1);
+    }
+    let inconclusive = ranking.is_empty()
+        || vs.iter().any(|v| v.preflight_error.is_some())
+        || vs.iter().any(|v| v.summary.specs_backend_error > 0);
+    if inconclusive {
+        return Ok(2);
+    }
+    Ok(0)
+}
+
+/// Collapse a (possibly multi-line) error chain into one line for the table.
+fn sys_one_line(s: &str) -> String {
+    s.lines().collect::<Vec<_>>().join(" ")
+}
+
+/// Truncate to `n` chars, appending `…` when it was cut.
+fn sys_truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
 }
 
 // ── BDD vs pure JSON DSL (`laya-workflow bdd compare`) ──────────────────────
