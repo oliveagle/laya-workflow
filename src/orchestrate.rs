@@ -25,12 +25,20 @@ use std::time::{Duration, Instant};
 
 /// Default CDP port (`LAYA_CDP_PORT` overrides).
 pub const DEFAULT_CDP_PORT: u16 = 9222;
+/// Default CDP port for the *headless* instance (`LAYA_CDP_HEADLESS_PORT`
+/// overrides). Distinct from [`DEFAULT_CDP_PORT`] so the GUI and headless
+/// singletons can run at the same time.
+pub const DEFAULT_CDP_HEADLESS_PORT: u16 = 9232;
 /// Default server port (the old script's `DEFAULT_PORT`).
 pub const DEFAULT_SERVER_PORT: u16 = 18766;
 /// Default liveness path for the server probe.
 pub const DEFAULT_HEALTH_PATH: &str = "/healthz";
 /// Default isolated Chrome profile for the CDP endpoint.
 pub const DEFAULT_CDP_PROFILE: &str = "/tmp/laya-chrome-cdp-profile";
+/// Default isolated Chrome profile for the *headless* instance. Separate from
+/// [`DEFAULT_CDP_PROFILE`]: Chrome cannot share a `--user-data-dir` between two
+/// live instances.
+pub const DEFAULT_CDP_HEADLESS_PROFILE: &str = "/tmp/laya-chrome-cdp-profile-headless";
 /// How long a freshly spawned server gets to start answering.
 const SPAWN_WAIT: Duration = Duration::from_secs(60);
 
@@ -74,50 +82,101 @@ impl BrowserBackend {
 /// Inputs for [`ensure_browser`]: the backend selector plus the per-backend
 /// knobs. `None` fields fall back to the env var the old shell script read
 /// (`LAYA_CDP_PORT` / `CHROME_BIN` / `LAYA_CDP_PROFILE`).
+///
+/// There are exactly two launch modes, and they are independent singletons
+/// (different defaults, so both can be up at once):
+///
+/// * **GUI** (default) — a normal windowed Chrome. This is the preferred way to
+///   drive a real page: `navigator.webdriver` is `false`, the full viewport is
+///   available, and it looks like a browser a person would use. The CDP
+///   endpoint is bound to loopback only.
+/// * **headless** (`--headless`) — the same Chrome with `--headless=new`
+///   (+ `--no-sandbox --disable-gpu`) for servers / CI where no window can
+///   exist. Use it only when a GUI is impossible.
 #[derive(Clone, Debug)]
 pub struct BrowserEnsureRequest {
     pub backend: BrowserBackend,
     pub port: Option<u16>,
     pub chrome_bin: Option<String>,
     pub profile: Option<String>,
+    /// Launch windowless (`--headless=new`). Also turned on by
+    /// `LAYA_CDP_HEADLESS=1`.
+    pub headless: bool,
 }
 
 impl BrowserEnsureRequest {
     /// Resolve the request against the environment exactly like the script did.
+    ///
+    /// `headless` (the `--headless` flag) selects the headless kind; when it is
+    /// false, `LAYA_CDP_HEADLESS=1` still turns it on. The headless kind reads
+    /// its *own* port/profile env vars (`LAYA_CDP_HEADLESS_PORT` /
+    /// `LAYA_CDP_HEADLESS_PROFILE`) so a globally-exported `LAYA_CDP_PORT`
+    /// cannot collide the two instances onto one endpoint.
     pub fn from_env(
         backend: BrowserBackend,
         port: Option<u16>,
         chrome_bin: Option<String>,
         profile: Option<String>,
+        headless: bool,
     ) -> Self {
+        let headless = headless || env_truthy("LAYA_CDP_HEADLESS");
+        let port_env = if headless {
+            "LAYA_CDP_HEADLESS_PORT"
+        } else {
+            backend.port_env()
+        };
+        let default_port = if headless {
+            DEFAULT_CDP_HEADLESS_PORT
+        } else {
+            backend.default_port()
+        };
         let port = port
             .or_else(|| {
-                std::env::var(backend.port_env())
+                std::env::var(port_env)
                     .ok()
                     .and_then(|v| v.parse().ok())
             })
-            .or(Some(backend.default_port()));
+            .or(Some(default_port));
         let chrome_bin = chrome_bin
             .or_else(|| nonempty(std::env::var("CHROME_BIN").ok()))
             .or_else(|| nonempty(std::env::var("LAYA_CHROME_BINARY").ok()));
-        let profile = profile.or_else(|| nonempty(std::env::var("LAYA_CDP_PROFILE").ok()));
+        let profile_env = if headless {
+            "LAYA_CDP_HEADLESS_PROFILE"
+        } else {
+            "LAYA_CDP_PROFILE"
+        };
+        let profile = profile.or_else(|| nonempty(std::env::var(profile_env).ok()));
         Self {
             backend,
             port,
             chrome_bin,
             profile,
+            headless,
         }
     }
 
     fn port(&self) -> u16 {
-        self.port.unwrap_or_else(|| self.backend.default_port())
+        self.port.unwrap_or_else(|| {
+            if self.headless {
+                DEFAULT_CDP_HEADLESS_PORT
+            } else {
+                self.backend.default_port()
+            }
+        })
     }
 
     fn profile(&self) -> String {
         self.profile
             .clone()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| DEFAULT_CDP_PROFILE.to_string())
+            .unwrap_or_else(|| {
+                if self.headless {
+                    DEFAULT_CDP_HEADLESS_PROFILE
+                } else {
+                    DEFAULT_CDP_PROFILE
+                }
+                .to_string()
+            })
     }
 
     fn chrome_bin(&self) -> String {
@@ -126,6 +185,19 @@ impl BrowserEnsureRequest {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(crate::capability::browser::default_chrome_binary)
     }
+}
+
+/// True when `name` is set to an affirmative value (`1`/`true`/`yes`/`on`).
+fn env_truthy(name: &str) -> bool {
+    truthy(std::env::var(name).ok().as_deref())
+}
+
+/// Pure half of [`env_truthy`]: is this raw string an affirmative flag value?
+fn truthy(v: Option<&str>) -> bool {
+    matches!(
+        v.map(|s| s.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
 }
 
 fn nonempty(v: Option<String>) -> Option<String> {
@@ -164,16 +236,23 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
 
     let mut cmd = Command::new(&chrome);
     cmd.arg(format!("--remote-debugging-port={port}"))
-        .arg(format!("--user-data-dir={profile}"))
-        .args([
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--no-service-autorun",
-            "about:blank",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .arg(format!("--user-data-dir={profile}"));
+    if req.headless {
+        // Servers / CI have no display: a windowed Chrome can never expose CDP
+        // there. Use the new headless mode (CDP and `Extensions.loadUnpacked`
+        // both work) and drop the sandbox, which a container without user
+        // namespaces cannot start.
+        cmd.arg("--headless=new").arg("--no-sandbox").arg("--disable-gpu");
+    }
+    cmd.args([
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-service-autorun",
+        "about:blank",
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null());
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn Chrome {chrome:?} failed"))?;
@@ -668,12 +747,53 @@ mod tests {
             port: None,
             chrome_bin: Some("/bin/sh".to_string()),
             profile: Some("/tmp/x".to_string()),
+            headless: false,
         };
         assert_eq!(req.port(), DEFAULT_CDP_PORT);
         assert_eq!(req.backend.default_port(), DEFAULT_CDP_PORT);
         assert_eq!(req.backend.as_str(), "chrome");
         assert_eq!(req.profile(), "/tmp/x");
         assert_eq!(req.chrome_bin(), "/bin/sh");
+    }
+
+    #[test]
+    fn headless_kind_is_a_separate_singleton_by_default() {
+        // The headless kind must not collide with the GUI one: distinct port
+        // and profile, and the flag recorded on the request.
+        let req = BrowserEnsureRequest {
+            backend: BrowserBackend::Chrome,
+            port: None,
+            chrome_bin: Some("/bin/sh".to_string()),
+            profile: None,
+            headless: true,
+        };
+        assert!(req.headless);
+        assert_eq!(req.port(), DEFAULT_CDP_HEADLESS_PORT);
+        assert_ne!(DEFAULT_CDP_HEADLESS_PORT, DEFAULT_CDP_PORT);
+        assert_eq!(req.profile(), DEFAULT_CDP_HEADLESS_PROFILE);
+        assert_ne!(DEFAULT_CDP_HEADLESS_PROFILE, DEFAULT_CDP_PROFILE);
+
+        // An explicit port / profile still wins for the headless kind.
+        let pinned = BrowserEnsureRequest {
+            backend: BrowserBackend::Chrome,
+            port: Some(9999),
+            chrome_bin: None,
+            profile: Some("/tmp/hl".to_string()),
+            headless: true,
+        };
+        assert_eq!(pinned.port(), 9999);
+        assert_eq!(pinned.profile(), "/tmp/hl");
+    }
+
+    #[test]
+    fn truthy_accepts_common_affirmatives() {
+        for v in ["1", "true", "TRUE", "yes", " on ", "ON"] {
+            assert!(truthy(Some(v)), "{v:?} should be truthy");
+        }
+        for v in ["0", "false", "no", "off", "", "  "] {
+            assert!(!truthy(Some(v)), "{v:?} should be falsy");
+        }
+        assert!(!truthy(None));
     }
 
     #[test]
@@ -698,6 +818,7 @@ mod tests {
             port: Some(port),
             chrome_bin: Some("/nonexistent/chrome".to_string()),
             profile: None,
+            headless: false,
         };
         assert!(ensure_browser(&req).expect("ensure ok"));
     }

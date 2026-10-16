@@ -964,9 +964,15 @@ enum BrowserCmd {
         #[arg(long = "chrome-bin")]
         chrome_bin: Option<String>,
         /// Isolated profile dir (chrome backend; default $LAYA_CDP_PROFILE, else
-        /// /tmp/...).
+        /// /tmp/...). The headless kind reads $LAYA_CDP_HEADLESS_PROFILE.
         #[arg(long)]
         profile: Option<String>,
+        /// Launch windowless (`--headless=new`) — the headless singleton, on its
+        /// own default port 9232 + profile, so it can run alongside the GUI one.
+        /// For servers / CI where no window can exist; the GUI kind is preferred
+        /// for driving real pages. Also enabled by LAYA_CDP_HEADLESS=1.
+        #[arg(long)]
+        headless: bool,
     },
 }
 
@@ -981,6 +987,9 @@ enum ChromeAliasCmd {
         chrome_bin: Option<String>,
         #[arg(long)]
         profile: Option<String>,
+        /// Same as `browser ensure --headless` (windowless instance).
+        #[arg(long)]
+        headless: bool,
     },
 }
 
@@ -1492,12 +1501,14 @@ fn run_browser(cmd: &BrowserCmd) -> Result<()> {
             port,
             chrome_bin,
             profile,
+            headless,
         } => {
             let req = orch::BrowserEnsureRequest::from_env(
                 *backend,
                 *port,
                 chrome_bin.clone(),
                 profile.clone(),
+                *headless,
             );
             if !orch::ensure_browser(&req)? {
                 std::process::exit(1);
@@ -1515,12 +1526,14 @@ fn run_chrome_alias(cmd: &ChromeAliasCmd) -> Result<()> {
             port,
             chrome_bin,
             profile,
+            headless,
         } => {
             let req = orch::BrowserEnsureRequest::from_env(
                 orch::BrowserBackend::Chrome,
                 *port,
                 chrome_bin.clone(),
                 profile.clone(),
+                *headless,
             );
             if !orch::ensure_browser(&req)? {
                 std::process::exit(1);

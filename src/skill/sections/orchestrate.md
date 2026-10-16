@@ -10,9 +10,10 @@ repo.
 ## `browser ensure` — a browser backend on 127.0.0.1:<port>
 
 ```sh
-laya-workflow browser ensure                        # default backend: chrome
+laya-workflow browser ensure                        # default backend: chrome (GUI)
 laya-workflow browser ensure --backend chrome       # explicit (same thing)
 laya-workflow browser ensure --backend chrome --port 9223
+laya-workflow browser ensure --headless             # windowless singleton on :9232
 ```
 
 `--backend chrome` (the default, and the only one today) ensures a **CDP
@@ -28,6 +29,28 @@ later without changing the call shape a workflow already uses. Chrome-specific
 knobs (`--chrome-bin`, `--profile`) and env fallbacks (`CHROME_BIN` /
 `LAYA_CDP_PROFILE`; port via `LAYA_CDP_PORT`) apply to that backend — flags win
 over env. `chrome ensure` remains as a hidden alias for the chrome backend.
+
+### Exactly two modes: GUI (default) and `--headless`
+
+There are only two launch modes. The **GUI** one is the preferred way to drive
+a real page: a windowed Chrome with `navigator.webdriver === false`, the full
+viewport, and no automation marker — it behaves like a browser a person would
+use. Its CDP endpoint is bound to `127.0.0.1` (loopback) only.
+
+**`--headless`** (or `LAYA_CDP_HEADLESS=1`) is the same Chrome with
+`--headless=new` (+ `--no-sandbox --disable-gpu`), for servers / CI where no
+window can exist. Use it only when a GUI is impossible.
+
+They are **independent singletons** — the defaults differ so both can be up at
+once, and `--port` / `--profile` still pin either one explicitly:
+
+| mode | port | profile |
+|---|---|---|
+| GUI (default) | `9222` (`LAYA_CDP_PORT`) | `/tmp/laya-chrome-cdp-profile` (`LAYA_CDP_PROFILE`) |
+| headless | `9232` (`LAYA_CDP_HEADLESS_PORT`) | `/tmp/laya-chrome-cdp-profile-headless` (`LAYA_CDP_HEADLESS_PROFILE`) |
+
+Note the headless mode reads its **own** env vars: a globally-exported
+`LAYA_CDP_PORT` cannot collide the two instances onto one endpoint.
 
 Point a spec's `chrome_cdp` capability endpoint at `http://127.0.0.1:<port>` and
 `ensure` it via an `exec` capability — or just set `launch: true` on the
