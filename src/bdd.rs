@@ -6900,6 +6900,24 @@ fn free_port() -> Result<u16> {
 }
 
 /// The port of a `http[s]://host:port[/...]` CDP endpoint, if it names one.
+/// A CDP port no earlier worker holds.
+///
+/// `free_port()` binds and releases, so two calls can hand back the same port
+/// before either is bound. Serially that never mattered (there is one endpoint);
+/// with `--jobs N` two workers would race for one Chrome and their scenarios would
+/// fight over one endpoint. So draw again until the port is unused, and let a failing
+/// draw propagate - a worker is never handed a port another worker holds. `free` is a
+/// parameter so the draw can be driven from a test without opening sockets.
+pub fn unique_worker_port(taken: &[u16], free: impl FnMut() -> Result<u16>) -> Result<u16> {
+    let mut free = free;
+    loop {
+        let port = free()?;
+        if !taken.contains(&port) {
+            return Ok(port);
+        }
+    }
+}
+
 pub fn cdp_url_port(url: &str) -> Option<u16> {
     let rest = url
         .strip_prefix("https://")
@@ -7363,6 +7381,119 @@ pub fn run_browser_gate(have_browser: bool, require_browser: bool) -> RunBrowser
     }
 }
 
+/// Run one planned scenario on one CDP endpoint and turn the child's exit code
+/// into a verdict.
+///
+/// Shared by both execution paths: `--jobs 1` calls it in plan order (the
+/// original loop, byte-identical output), `--jobs N` calls it from N workers,
+/// one endpoint each.
+#[allow(clippy::too_many_arguments)]
+fn run_plan_item(
+    feature: &Feature,
+    scenario: &Scenario,
+    spec: &Value,
+    config: &Value,
+    endpoint: &(u16, String),
+    base_url: &str,
+    out_dir: &Path,
+    timeout_secs: u64,
+    xfail_tag: &str,
+) -> (RunResult, String) {
+    let (port, profile_dir) = endpoint.clone();
+    let xfail = scenario
+        .tags
+        .iter()
+        .any(|t| t == xfail_tag || t.starts_with(&format!("{xfail_tag}(")));
+    let name = format!(
+        "{} :: {}",
+        Path::new(&feature.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        scenario.name
+    );
+    let spec_file = format!("{}.json", spec["name"].as_str().unwrap_or(""));
+    let spec_path = out_dir.join(&spec_file);
+    let wrote = serde_json::to_string_pretty(&public_spec(spec))
+        .map_err(|e| e.to_string())
+        .and_then(|t| std::fs::write(&spec_path, format!("{t}\n")).map_err(|e| e.to_string()));
+    if let Err(e) = wrote {
+        // The compiled spec could not be written, so the scenario can never run.
+        // Report it as this scenario's failure instead of aborting the gate, so a
+        // full disk names the one spec that could not be staged.
+        return (
+            RunResult {
+                label: "FAIL".into(),
+                ok: false,
+                name,
+                rc: -1,
+                out: format!("could not stage the compiled spec {}: {e}", spec_path.display()),
+                xfail,
+                elapsed: 0.0,
+            },
+            String::new(),
+        );
+    }
+    let mut state = Map::new();
+    state.insert("base_url".into(), json!(base_url));
+    state.insert("cdp_port".into(), json!(port));
+    state.insert("cdp_profile".into(), json!(profile_dir));
+    if let Some(init) = config.get("initial_state").and_then(Value::as_object) {
+        for (k, v) in init {
+            state.insert(k.clone(), v.clone());
+        }
+    }
+    let started = std::time::Instant::now();
+    let (rc, out) = run_scenario(&spec_path, &Value::Object(state), timeout_secs);
+    let elapsed = started.elapsed().as_secs_f64();
+    let (ok, label, why) = if xfail {
+        // Failing is not enough - the run has to fail *for the stated reason*.
+        // The reason lives in the tag:
+        //   @expected_failure(bdd.assert: FAIL equals)
+        let want = tag_reason(scenario, xfail_tag);
+        if rc == 0 {
+            (
+                false,
+                "XFAIL-WRONG-REASON",
+                "the scenario passed, so the check it was written to disprove no \
+                 longer fails"
+                    .to_string(),
+            )
+        } else if want.is_none() {
+            (
+                false,
+                "XFAIL-WRONG-REASON",
+                "the tag declares no reason, so any failure at all would count".into(),
+            )
+        } else if !out.contains(want.as_deref().unwrap_or("")) {
+            (
+                false,
+                "XFAIL-WRONG-REASON",
+                format!(
+                    "it failed, but never said {:?}, so it failed for some other reason",
+                    want.unwrap()
+                ),
+            )
+        } else {
+            (true, "xfail", String::new())
+        }
+    } else {
+        (rc == 0, if rc == 0 { "PASS" } else { "FAIL" }, String::new())
+    };
+    (
+        RunResult {
+            label: label.to_string(),
+            ok,
+            name,
+            rc,
+            out,
+            xfail,
+            elapsed,
+        },
+        why,
+    )
+}
+
 pub fn run(o: &RunOptions) -> Result<i32> {
     let root = repo_root();
     let feature_dir = root.join("bdd").join("features");
@@ -7591,7 +7722,7 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     // Laya bookkeeping dir (never the target's own profile, which we do not own).
     let mut endpoints: Vec<(u16, String)> = Vec::new();
     for w in 0..jobs {
-        let (port, profile) = match &attach {
+        let (mut port, profile) = match &attach {
             Some(url) => (
                 cdp_url_port(url).unwrap_or(0),
                 std::env::temp_dir().join(format!("laya-bdd-attach-w{w}-{}", std::process::id())),
@@ -7601,6 +7732,15 @@ pub fn run(o: &RunOptions) -> Result<i32> {
                 std::env::temp_dir().join(format!("laya-bdd-chrome-w{w}-{}", std::process::id())),
             ),
         };
+        // `free_port()` binds and releases, so two calls can hand back the same
+        // port before either is bound. Serially that never mattered; with
+        // `--jobs N` racing, two workers on one port would fight over one Chrome.
+        // An attach endpoint is the same port for every worker by construction,
+        // so only a Laya-launched endpoint is redrawn.
+        if attach.is_none() {
+            let taken: Vec<u16> = endpoints.iter().map(|(p, _)| *p).collect();
+            port = unique_worker_port(&taken, free_port)?;
+        }
         std::fs::create_dir_all(&profile)?;
         endpoints.push((port, profile.to_string_lossy().into_owned()));
     }
@@ -7637,94 +7777,105 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     }
     let mut results: Vec<RunResult> = Vec::new();
     let mut failures: Vec<(String, String)> = Vec::new();
-    let mut done = 0usize;
+    let out_dir = PathBuf::from(&o.out);
 
-    // Serial execution (the measured default; the Python runner's --jobs path
-    // spun threads, but scenario work here is dominated by Chrome startup and
-    // the report must print in plan order anyway).
-    for (feature, scenario, spec, config) in &plan {
-        let (port, profile_dir) = endpoints[0].clone();
-        let xfail = scenario.tags.iter().any(|t| {
-            t == xfail_tag || t.starts_with(&format!("{xfail_tag}("))
-        });
-        let spec_file = format!("{}.json", spec["name"].as_str().unwrap_or(""));
-        let spec_path = Path::new(&o.out).join(&spec_file);
-        std::fs::write(
-            &spec_path,
-            format!("{}\n", serde_json::to_string_pretty(&public_spec(spec))?),
-        )?;
-        let mut state = Map::new();
-        state.insert("base_url".into(), json!(base_url));
-        state.insert("cdp_port".into(), json!(port));
-        state.insert("cdp_profile".into(), json!(profile_dir));
-        if let Some(init) = config.get("initial_state").and_then(Value::as_object) {
-            for (k, v) in init {
-                state.insert(k.clone(), v.clone());
+    if jobs == 1 {
+        // Serial execution: the original loop, same output line for line. Attach
+        // mode and `--port` always land here - both pin a single endpoint.
+        let mut done = 0usize;
+        for (feature, scenario, spec, config) in &plan {
+            let (r, why) = run_plan_item(
+                feature,
+                scenario,
+                spec,
+                config,
+                &endpoints[0],
+                &base_url,
+                &out_dir,
+                o.timeout_secs,
+                xfail_tag,
+            );
+            done += 1;
+            if !why.is_empty() {
+                eprintln!("  {}: {why}", r.name);
             }
+            let (label, rc) = (r.label.clone(), r.rc);
+            results.push(r);
+            println!(
+                "  ... {label:14} {}  [{rc}]  ({done}/{})",
+                results.last().unwrap().name,
+                plan.len()
+            );
         }
-        let started = std::time::Instant::now();
-        let (rc, out) = run_scenario(&spec_path, &Value::Object(state), o.timeout_secs);
-        let elapsed = started.elapsed().as_secs_f64();
-        let name = format!(
-            "{} :: {}",
-            Path::new(&feature.path)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            scenario.name
-        );
-        let (ok, label, why) = if xfail {
-            // Failing is not enough — the run has to fail *for the stated
-            // reason*. The reason lives in the tag:
-            //   @expected_failure(bdd.assert: FAIL equals)
-            let want = tag_reason(scenario, xfail_tag);
-            if rc == 0 {
-                (
-                    false,
-                    "XFAIL-WRONG-REASON",
-                    "the scenario passed, so the check it was written to disprove no \
-                     longer fails"
-                        .to_string(),
-                )
-            } else if want.is_none() {
-                (
-                    false,
-                    "XFAIL-WRONG-REASON",
-                    "the tag declares no reason, so any failure at all would count".into(),
-                )
-            } else if !out.contains(want.as_deref().unwrap_or("")) {
-                (
-                    false,
-                    "XFAIL-WRONG-REASON",
-                    format!(
-                        "it failed, but never said {:?}, so it failed for some other reason",
-                        want.unwrap()
-                    ),
-                )
-            } else {
-                (true, "xfail", String::new())
+    } else {
+        // `--jobs N`: N scenarios at once, each on its own CDP endpoint (worker
+        // `index % N`). Every worker keeps its own port and profile, so each pays
+        // one Chrome launch at most and then adopts the instance it started -
+        // exactly what the serial path does, only overlapped. The verdicts are
+        // stitched back in plan order, so the report is identical to a serial run
+        // and only the wall clock changes.
+        let slots: Vec<std::sync::Mutex<Option<(RunResult, String)>>> =
+            (0..plan.len()).map(|_| std::sync::Mutex::new(None)).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for w in 0..jobs {
+                let slots = &slots;
+                let next = &next;
+                let plans = plan.as_slice();
+                let endpoints = &endpoints;
+                let base_url = base_url.as_str();
+                let out_dir = &out_dir;
+                scope.spawn(move || loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    match plans.get(i) {
+                        Some((feature, scenario, spec, config)) => {
+                            let item = run_plan_item(
+                                feature,
+                                scenario,
+                                spec,
+                                config,
+                                &endpoints[w],
+                                base_url,
+                                out_dir,
+                                o.timeout_secs,
+                                xfail_tag,
+                            );
+                            *slots[i].lock().unwrap() = Some(item);
+                        }
+                        None => break,
+                    }
+                });
             }
-        } else {
-            (rc == 0, if rc == 0 { "PASS" } else { "FAIL" }, String::new())
-        };
-        if !why.is_empty() {
-            eprintln!("  {name}: {why}", );
-        }
-        results.push(RunResult {
-            label: label.to_string(),
-            ok,
-            name,
-            rc,
-            out,
-            xfail,
-            elapsed,
         });
-        done += 1;
-        println!(
-            "  ... {label:14} {}  [{rc}]  ({done}/{})",
-            results.last().unwrap().name,
-            plan.len()
-        );
+        let mut done = 0usize;
+        for (i, slot) in slots.into_iter().enumerate() {
+            done += 1;
+            let (r, why) = match slot.into_inner() {
+                Ok(Some(v)) => v,
+                _ => (
+                    RunResult {
+                        label: "FAIL".into(),
+                        ok: false,
+                        name: format!("plan item {i}: the worker that owned it did not report"),
+                        rc: -1,
+                        out: String::new(),
+                        xfail: false,
+                        elapsed: 0.0,
+                    },
+                    String::new(),
+                ),
+            };
+            if !why.is_empty() {
+                eprintln!("  {}: {why}", r.name);
+            }
+            let (label, rc) = (r.label.clone(), r.rc);
+            results.push(r);
+            println!(
+                "  ... {label:14} {}  [{rc}]  ({done}/{})",
+                results.last().unwrap().name,
+                plan.len()
+            );
+        }
     }
 
     // Hand-written probes (local profile only: they exercise local fixtures).

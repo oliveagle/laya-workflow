@@ -3037,6 +3037,31 @@ pub fn test_bdd_browser_gate(h: &mut Harness) {
     }
 }
 
+/// `bdd run --jobs N` gives every worker its own CDP endpoint, so two workers
+/// must never be handed the same port. `free_port()` binds and releases, so it
+/// can hand back a port an earlier worker already holds; the draw below is pinned
+/// to the sequence a real host produced (4100, 4100, 4101).
+pub fn test_bdd_jobs_ports(h: &mut Harness) {
+    use laya_workflow::bdd::unique_worker_port;
+
+    h.eq(
+        "bdd jobs: the first draw is taken as-is",
+        unique_worker_port(&[], || Ok(4100)).ok(),
+        Some(4100u16),
+    );
+    let draws = std::cell::RefCell::new(vec![4100u16, 4100, 4101]);
+    h.eq(
+        "bdd jobs: a port an earlier worker holds is redrawn, never reused",
+        unique_worker_port(&[4100], || Ok(draws.borrow_mut().remove(0))).ok(),
+        Some(4101u16),
+    );
+    h.eq(
+        "bdd jobs: a failing draw propagates instead of handing over a held port",
+        unique_worker_port(&[4100], || Err(anyhow::anyhow!("no port"))).is_err(),
+        true,
+    );
+}
+
 /// `bdd port-check`: the cross-repo conversion is closed. The pure
 /// symmetric-difference rules are pinned here, plus one real IO round-trip
 /// against the checked-in `ole_eval` ports using a throwaway source tree.

@@ -11,6 +11,13 @@
 # nothing. Headless fixes it; this is the least invasive way to get it without
 # touching the capability's launch path.
 #
+# --password-store=basic: on Linux Chrome keeps the cookie-encryption key in
+# the freedesktop Secret Service (`org.freedesktop.secrets`) over the session
+# D-Bus. On a headless box whose login keyring is locked that call never
+# returns, so the browser main thread stalls inside it: every http(s)
+# navigation then sits at `about:blank` while file: and data: still load.
+# "basic" keeps the key in the profile, so the gate stops depending on the
+# host keyring being unlockable.
 # `exec` matters twice over: the pid stays the same (so the capability's owner
 # marker and process-command-line check still identify this instance), and no
 # wrapper process lingers holding the profile lock.
@@ -41,6 +48,7 @@ fi
 # land off-screen and have to be scrolled into; pin a realistic one.
 exec "$real" \
   --headless=new \
+  --password-store=basic \
   --disable-gpu \
   --hide-scrollbars \
   --window-size=1280,900 \
