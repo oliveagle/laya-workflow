@@ -3559,3 +3559,96 @@ pub fn test_validate_heuristic_blanks(h: &mut Harness) {
             && ok(&choice(json!({"answer_field": "", "p_hit": 0.9}))),
     );
 }
+
+pub fn test_validate_threshold_when_values(h: &mut Harness) {
+    // P187: P122 checked *which* operator a leaf uses against its question's
+    // declared type; this checks the operator's *value* type. `rule_matches`
+    // starts `ok = true` and only ANDs a comparison once the value is readable
+    // (`as_f64()` / `as_str()` / `as_array()`), so a gate written as the wrong
+    // JSON type is silently skipped and the rule matches on what is left - a
+    // `when` left with no readable operator matches *everything*, including the
+    // fallback rule it was written to guard. The compiler cannot emit one, so
+    // only a hand-written / sidecar spec carries it.
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    let score = |first: Value| {
+        thr_node(json!([first, {"when": {"always": true}, "label": "Z"}]))
+    };
+    let choice = |first: Value| {
+        base_spec(
+            "a",
+            json!([node(
+                "a",
+                json!({"c": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}}),
+                json!({"condition": {}, "default": "STOP"}),
+                json!({"kind": "threshold", "question": "c",
+                       "rules": [first, {"when": {"always": true}, "label": "Z"}]})
+            )]),
+        )
+    };
+
+    // ── well-typed leaves stay accepted ──
+    h.check(
+        "validate threshold values: a numeric `value_gte` / `value_lt` is OK",
+        ok(&score(json!({"when": {"value_gte": 1.5}, "label": "P"})))
+            && ok(&score(json!({"when": {"value_lt": 0.5}, "label": "P"}))),
+    );
+    h.check(
+        "validate threshold values: a string `option` + numeric `gte`, and a string array `answer_in`, are OK",
+        ok(&choice(json!({"when": {"option": "B", "gte": 0.5}, "label": "P"})))
+            && ok(&choice(json!({"when": {"answer_in": ["A", "B"]}, "label": "P"}))),
+    );
+
+    // ── a numeric gate written as a string is refused ──
+    let e = err(&score(json!({"when": {"value_gte": "1.5"}, "label": "P"})));
+    h.check(
+        "validate threshold values: a string `value_gte` is rejected",
+        e.contains("key \"value_gte\"") && e.contains("as_f64()") && e.contains("a number"),
+    );
+    h.check(
+        "validate threshold values: the message says the gate disappears",
+        e.contains("gate disappears") && e.contains("matches more broadly"),
+    );
+    h.check(
+        "validate threshold values: a string `value_lt` is rejected too",
+        err(&score(json!({"when": {"value_lt": "0.5"}, "label": "P"}))).contains("key \"value_lt\""),
+    );
+    h.check(
+        "validate threshold values: a string `gte` inside an option block is rejected",
+        err(&choice(json!({"when": {"option": "B", "gte": "0.5"}, "label": "P"})))
+            .contains("key \"gte\""),
+    );
+
+    // ── a text / set operator written with the wrong type is refused ──
+    h.check(
+        "validate threshold values: a numeric `answer` is rejected",
+        err(&choice(json!({"when": {"answer": 5}, "label": "P"}))).contains("key \"answer\""),
+    );
+    h.check(
+        "validate threshold values: an `answer_in` that is a bare string is rejected",
+        err(&choice(json!({"when": {"answer_in": "B"}, "label": "P"})))
+            .contains("array of strings"),
+    );
+    h.check(
+        "validate threshold values: an `answer_in` with a non-string element is rejected",
+        err(&choice(json!({"when": {"answer_in": ["A", 3]}, "label": "P"})))
+            .contains("key \"answer_in\""),
+    );
+    h.check(
+        "validate threshold values: a numeric `question` is rejected",
+        err(&choice(json!({"when": {"question": 5, "answer": "A"}, "label": "P"})))
+            .contains("key \"question\""),
+    );
+    h.check(
+        "validate threshold values: an `all` that is not an array is rejected",
+        err(&choice(json!({"when": {"all": "x"}, "label": "P"})))
+            .contains("array of conditions"),
+    );
+
+    // ── boundaries: a `null` / `${...}` value is not judged (round-trip shape) ──
+    h.check(
+        "validate threshold values: `null` and a `${...}` template are left alone",
+        ok(&score(json!({"when": {"value_gte": null}, "label": "P"})))
+            && ok(&score(json!({"when": {"value_gte": "${state.t}"}, "label": "P"}))),
+    );
+}

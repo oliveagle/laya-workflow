@@ -752,6 +752,41 @@ fn validate_threshold_when(
             );
         }
     }
+    // P187: the *value* of every operator leaf. `rule_matches` starts `ok = true`
+    // and only ANDs a comparison once its value is readable, so a gate written as
+    // the wrong JSON type is never a runtime error - it is silently skipped and
+    // the rule matches on what is left. A `when` whose only operator is unreadable
+    // then matches *everything*, including the fallback rule it was written to
+    // guard: a `value_gte` typed `"1.5"` escalates every request, a `gte` typed
+    // `"0.5"` flags every request as violating, an `answer_in` typed `"B"` fires
+    // on every answer. The compiler cannot emit one (its numeric operators come
+    // from `parse_num`), so only a hand-written or sidecar spec carries it.
+    let unjudged = |v: &Value| v.is_null() || v.as_str().is_some_and(|s| s.contains("${"));
+    for (k, v) in w {
+        if unjudged(v) {
+            continue;
+        }
+        let (ok, want, accessor) = match k.as_str() {
+            "question" | "option" | "answer" => (v.as_str().is_some(), "a string", "as_str()"),
+            "answer_in" => (
+                v.as_array()
+                    .is_some_and(|a| a.iter().all(|x| x.as_str().is_some())),
+                "an array of strings",
+                "as_array()",
+            ),
+            "all" => (v.as_array().is_some(), "an array of conditions", "as_array()"),
+            "gte" | "lt" | "value_gte" | "value_lt" => {
+                (v.as_f64().is_some(), "a number", "as_f64()")
+            }
+            _ => continue,
+        };
+        if !ok {
+            bail!(
+                "node {node}: threshold rule key {k:?} is {} - the engine reads it with `{accessor}` and silently skips the comparison on any other type, so the gate disappears and the rule matches more broadly than you declared (write {want})",
+                json_kind_name(v)
+            );
+        }
+    }
     // P122: a leaf may only read the answer the way its question's *declared
     // type* produces it. The operators read the `Decision` three different ways:
     //   * `option` / `gte` / `lt` -> `d.prob(key)`
