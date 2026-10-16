@@ -1,0 +1,99 @@
+{
+  "name": "ar_coding_gate",
+  "_bdd": {
+    "feature": "ar_coding_gate",
+    "feature_path": "bdd/workflows/guards/ar_coding_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval AR-coding sanity check's front-door gate\n(code/dllm/eval/eval_ar_coding.py): the diagnostic that loads base + LoRA, generates\nwith HF generate() (causal, low temperature) instead of the diffusion sampler,\nexecutes each candidate against the benchmark's unit tests and reports pass@1. It\ndecides whether the requested run is well-formed enough to start -- it exits non-zero\nwhen a `--sources` name is not a known benchmark, or when no problems loaded -- so it\nnames its verdict rather than reporting a number; whether the candidates passed is\ndrawn by hand from the jsonl it writes.\nTwo questions are asked, in the source's own order:\n- sources: is every `--sources` entry a known benchmark? `load_all` walks the\ncomma-separated names in order and raises SystemExit on the first one that is not\n`humaneval` / `mbpp` / `bigcodebench`. An unknown source name (a typo, a benchmark\nthat does not exist yet) is refused before anything runs.\n- problems: did any problem load? After the load, `if not recs: raise SystemExit` with\na no-problems-loaded message. An empty corpus, or a `--limit` that sliced to\nnothing, ends the run here.\nThe walk encodes exactly that: sources -> problems. A request that clears both questions\nreaches the generation loop; the first question that fails names itself and ends the walk.\nFolds are documented:\n- the two SystemExits are the *only* exits before the loop, so the graph stops there;\nthe rest is the run. `build_test_file` raises a plain ValueError for a fourth source,\nbut `load_all` only ever produces the three known ones, so that branch is unreachable\nfrom the front door and is not modeled.\n- the generation and execution loop is a body, not a gate: a candidate that fails its\nunit tests is written to the jsonl as passed=false and the loop carries on. `run_test`\nnever raises for a failing candidate -- a subprocess that times out returns\n(False, TIMEOUT) -- so once the run has started it always exits 0, printing an\n`=== AR pass@1 ===` summary whose promote/reject is drawn by hand. The last label is\ntherefore AR_PASS_AT_1_REPORTED, not a pass/fail verdict.\n- the AR-specific mode switches (`--no-lora`, `--causal`, the default `--temperature`\n0.2, the Qwen3_5 hybrid-cache patch) only change what the model produces; none of\nthem can exit non-zero, so none of them becomes a node.\nEverything the run produced stays in the harness -- the generated completions, the\nsubprocess tails, the per-source pass@1 rates, the jsonl rows. The graph reads none of it,\nonly whether the request cleared the two front-door checks.\nReference walk (eval_ar_coding.py, module level): `load_all(args.sources, limit)` -> an\nunknown source raises SystemExit -> exit 1; `if not recs: raise SystemExit` -> exit 1;\nelse loop, write the jsonl, print the summary -> exit 0.",
+  "start": "sources",
+  "max_iterations": 4,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "sources",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Is every `--sources` entry a known benchmark? `load_all` walks the comma-separated names in order and raises SystemExit on the first one that is not `humaneval` / `mbpp` / `bigcodebench`, so an unknown source is refused before anything runs. An unknown source ends the walk.",
+          "criteria": {
+            "ok": "every `--sources` entry is one of the three known benchmarks",
+            "unknown": "at least one `--sources` entry is not a known benchmark: the run exits 1"
+          },
+          "heuristic": {
+            "answer_field": "ev_sources"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "unknown": "STOP"
+        },
+        "default": "problems"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "unknown"
+            },
+            "label": "UNKNOWN_SOURCE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "KNOWN_SOURCES"
+          }
+        ]
+      }
+    },
+    {
+      "name": "problems",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Did any problem load? After the load, `if not recs: raise SystemExit` ends the run: an empty corpus, or a `--limit` that sliced to nothing. This is the last question, so clearing it means the run starts and then always exits 0, writing a jsonl and printing an `=== AR pass@1 ===` summary.",
+          "criteria": {
+            "none": "no problem loaded: the run exits 1",
+            "some": "at least one problem loaded: the run starts"
+          },
+          "heuristic": {
+            "answer_field": "ev_problems"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "none"
+            },
+            "label": "NO_PROBLEMS_LOADED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "AR_PASS_AT_1_REPORTED"
+          }
+        ]
+      }
+    }
+  ]
+}

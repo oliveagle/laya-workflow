@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 29 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + dflash2 int4_patch_applier + index report_gen + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 31 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + dflash2 int4_patch_applier + index report_gen + dllm ar_coding + dllm diffusion_coding + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
         counts.ported,
-        29,
+        31,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 2 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 0 gate-shaped modules registered as pending gates (every gate-shaped module is now ported)",
         counts.gate_pending,
-        2,
+        0,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3427,6 +3427,39 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: the index universe has no pending gate left (every gate-shaped module is ported)",
         ix.get("gate_pending").is_none(),
+    );
+
+    // P236: the two dllm pass@1 runners under `code/dllm` - the AR-coding sanity check
+    // (code/dllm/eval/eval_ar_coding.py) and the diffusion-coding runner
+    // (code/dllm/eval/eval_diffusion_coding.py). Both refuse a request whose `--sources`
+    // names an unknown benchmark, or that loads no problems; once started they always exit
+    // 0 and print a pass@1 summary drawn by hand. Pinned by name and by the feature each
+    // ports; with them, the dllm universe has no gate-shaped module left unported, and the
+    // census holds no pending gate at all.
+    let dl = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_dllm")
+        .expect("ole_eval_dllm universe");
+    h.eq(
+        "bdd scope-check: dllm ports three modules (the S4 coherence gate and the two pass@1 runners)",
+        dl["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        3,
+    );
+    h.check(
+        "bdd scope-check: dllm ports the AR-coding runner as a @decision feature",
+        dl["ported"]["eval/eval_ar_coding"]
+            == serde_json::json!("bdd/workflows/guards/ar_coding_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: dllm ports the diffusion-coding runner as a @decision feature",
+        dl["ported"]["eval/eval_diffusion_coding"]
+            == serde_json::json!("bdd/workflows/guards/diffusion_coding_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: the dllm universe has no pending gate left (every gate-shaped module is ported)",
+        dl.get("gate_pending").is_none(),
     );
 
     // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
@@ -3656,32 +3689,35 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     // not yet ported. It is not a `not_a_workflow` (that would be false) and not a
     // `ported` (no such feature exists), so two failures are named: an empty reason, and
     // a name that is double-listed.
-    // P233: the distill routing gate is now ported (the plant above is gone), so this
-    // negative moved to a still-pending gate. P235: the report generator it moved to is
-    // now ported too, so it moves once more - the dllm AR-coding runner.
+    // P233 and P235 moved this plant from one still-pending gate to the next. P236 ports
+    // the last two (the dllm pass@1 runners), so the live census no longer holds a pending
+    // gate at all - but the `gate_pending` rule is still live code. The honest way to keep
+    // it covered once the data that exercised it is gone is to *inject* a synthetic pending
+    // gate into the census text rather than to let the rule go untested.
     let gate_empty = census.replace(
-        concat!(
-            "\"eval/eval_ar_coding\": \"",
-            "the AR-coding pass@1 runner: the autoregressive counterpart of the diffusion-coding ",
-            "runner on the same benchmarks - it executes each candidate against the unit tests ",
-            "and reports pass@1. Verdict-adjacent; port pending.\""
-        ),
-        "\"eval/eval_ar_coding\": \"\"",
+        "\"id\": \"ole_eval_dllm\",",
+        "\"id\": \"ole_eval_dllm\", \"gate_pending\": {\"eval/synthetic_gate\": \"\"},",
+    );
+    h.check(
+        "bdd scope-check: the negative plants a synthetic pending gate (anchor is live)",
+        gate_empty != census,
     );
     let (_, drifted_g) = scope_check_impl(&root, &gate_empty, Some(&base)).unwrap();
     h.check(
         "bdd scope-check: a pending gate with an empty reason is named",
-        any(&drifted_g, "gate_pending[\"eval/eval_ar_coding\"] needs a non-empty reason"),
+        any(&drifted_g, "gate_pending[\"eval/synthetic_gate\"] needs a non-empty reason"),
     );
 
-    // P232: `e2e_awq_int4_wld` used to be the pending gate this planted; it is now
-    // ported. P233 moved it to the distill routing gate (also now ported), and P234 to
-    // the DFlash2 INT4 applier (also now ported), so the plant moves once more to a
-    // module that is still a pending gate - the dllm diffusion-coding runner - listed a
-    // second time as a (same-universe) not-a-workflow.
+    // P232 -> P234 moved this plant from one pending gate to the next; P236 ports the last
+    // two, so it too injects a synthetic pending gate - one whose name is *also* a
+    // not-a-workflow (`data/coding_corpus` under code/dllm), which must be named.
     let gate_dup = census.replace(
-        "\"data/coding_corpus\"",
-        "\"eval/eval_diffusion_coding\"",
+        "\"id\": \"ole_eval_dllm\",",
+        "\"id\": \"ole_eval_dllm\", \"gate_pending\": {\"data/coding_corpus\": \"a gate-shaped module\"},",
+    );
+    h.check(
+        "bdd scope-check: the negative plants a synthetic double-listed pending gate (anchor is live)",
+        gate_dup != census,
     );
     let (_, drifted_gd) = scope_check_impl(&root, &gate_dup, Some(&base)).unwrap();
     h.check(

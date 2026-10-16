@@ -7421,5 +7421,31 @@
       "ev_model": "given",
       "ev_compare": "provided"
     }
+  },
+  "ar_coding_gate": {
+    "unknown_source": {
+      "ev_sources": "unknown"
+    },
+    "no_problems": {
+      "ev_sources": "ok",
+      "ev_problems": "none"
+    },
+    "reported": {
+      "ev_sources": "ok",
+      "ev_problems": "some"
+    }
+  },
+  "diffusion_coding_gate": {
+    "unknown_source": {
+      "ev_sources": "unknown"
+    },
+    "no_problems": {
+      "ev_sources": "ok",
+      "ev_problems": "none"
+    },
+    "reported": {
+      "ev_sources": "ok",
+      "ev_problems": "some"
+    }
   }
 }

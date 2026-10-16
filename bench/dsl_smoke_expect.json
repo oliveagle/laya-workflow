@@ -4562,5 +4562,77 @@
       "trace.steps.2.action": "stop",
       "trace.steps.2.answer": "provided"
     }
+  },
+  "ar_coding_gate": {
+    "unknown_source": {
+      "result.label": "UNKNOWN_SOURCE",
+      "result.ev_sources": "unknown",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "unknown"
+    },
+    "no_problems": {
+      "result.label": "NO_PROBLEMS_LOADED",
+      "result.ev_sources": "ok",
+      "result.ev_problems": "none",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "ok",
+      "trace.steps.0.next": "problems",
+      "trace.steps.1.node": "problems",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "none"
+    },
+    "reported": {
+      "result.label": "AR_PASS_AT_1_REPORTED",
+      "result.ev_sources": "ok",
+      "result.ev_problems": "some",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "ok",
+      "trace.steps.0.next": "problems",
+      "trace.steps.1.node": "problems",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "some"
+    }
+  },
+  "diffusion_coding_gate": {
+    "unknown_source": {
+      "result.label": "UNKNOWN_SOURCE",
+      "result.ev_sources": "unknown",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "unknown"
+    },
+    "no_problems": {
+      "result.label": "NO_PROBLEMS_LOADED",
+      "result.ev_sources": "ok",
+      "result.ev_problems": "none",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "ok",
+      "trace.steps.0.next": "problems",
+      "trace.steps.1.node": "problems",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "none"
+    },
+    "reported": {
+      "result.label": "DIFFUSION_PASS_AT_1_REPORTED",
+      "result.ev_sources": "ok",
+      "result.ev_problems": "some",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "sources",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "ok",
+      "trace.steps.0.next": "problems",
+      "trace.steps.1.node": "problems",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "some"
+    }
   }
 }

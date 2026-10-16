@@ -1,0 +1,99 @@
+{
+  "name": "diffusion_coding_gate",
+  "_bdd": {
+    "feature": "diffusion_coding_gate",
+    "feature_path": "bdd/workflows/guards/diffusion_coding_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval diffusion-coding pass@1 runner's front-door gate\n(code/dllm/eval/eval_diffusion_coding.py, main()): the runner that samples from the\nmasked-diffusion LM (sample_llada, low-confidence remasking), executes each candidate\nagainst the benchmark's unit tests in a subprocess and reports pass@1. It decides\nwhether the requested run is well-formed enough to start -- it exits non-zero when a\n`--sources` name is not a known benchmark, or when no problems loaded -- so it names its\nverdict rather than reporting a number; whether the candidates passed is drawn by hand\nfrom the jsonl.\nThis module *defines* the shared `load_all` / `build_test_file` / `run_test` helpers, and\n`eval_ar_coding.py` imports them; the front door it owns is the same two questions, asked\nin the source's own order:\n- sources: is every `--sources` entry a known benchmark? `load_all` walks the\ncomma-separated names in order and raises SystemExit on the first one that is not\n`humaneval` / `mbpp` / `bigcodebench`. The default is all three. An unknown source\nname is refused before anything runs.\n- problems: did any problem load? After the load, `if not recs: raise SystemExit` with\na no-problems-loaded message. An empty corpus, or a `--limit` that sliced to nothing,\nends the run here.\nThe walk encodes exactly that: sources -> problems. A request that clears both questions\nreaches the sampling loop; the first question that fails names itself and ends the walk.\nFolds are documented:\n- the two SystemExits are the *only* exits before the loop, so the graph stops there;\nthe rest is the run. `build_test_file` raises a plain ValueError for a fourth source,\nbut `load_all` only ever produces the three known ones, so that branch is unreachable\nfrom the front door and is not modeled.\n- the sampling and execution loop is a body, not a gate: a candidate that fails its unit\ntests is written as passed=false and the loop carries on. `run_test` never raises for a\nfailing candidate -- a subprocess that times out returns (False, TIMEOUT) -- so once\nthe run has started it always exits 0, printing an `=== pass@1 ===` summary (per source\nand OVERALL) whose promote/reject is drawn by hand. The last label is therefore\nDIFFUSION_PASS_AT_1_REPORTED, not a pass/fail verdict.\n- the diffusion-specific knobs (`--steps`, `--gen-length`, the `--out` path defaulting to\nstdout, the qlora 4bit load) only change what the model produces or where it goes;\nnone of them can exit non-zero, so none of them becomes a node.\nEverything the run produced stays in the harness -- the generated completions, the\nsubprocess tails, the per-source and OVERALL pass@1 rates, the jsonl rows. The graph reads\nnone of it, only whether the request cleared the two front-door checks.\nReference walk (eval_diffusion_coding.py, main()): `load_all(args.sources, limit)` -> an\nunknown source raises SystemExit -> exit 1; `if not recs: raise SystemExit` -> exit 1;\nelse loop, write the jsonl, print the summary -> exit 0.",
+  "start": "sources",
+  "max_iterations": 4,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "sources",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Is every `--sources` entry a known benchmark? `load_all` walks the comma-separated names in order and raises SystemExit on the first one that is not `humaneval` / `mbpp` / `bigcodebench` (the default is all three), so an unknown source is refused before anything runs. An unknown source ends the walk.",
+          "criteria": {
+            "ok": "every `--sources` entry is one of the three known benchmarks",
+            "unknown": "at least one `--sources` entry is not a known benchmark: the run exits 1"
+          },
+          "heuristic": {
+            "answer_field": "ev_sources"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "unknown": "STOP"
+        },
+        "default": "problems"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "unknown"
+            },
+            "label": "UNKNOWN_SOURCE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "KNOWN_SOURCES"
+          }
+        ]
+      }
+    },
+    {
+      "name": "problems",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Did any problem load? After the load, `if not recs: raise SystemExit` ends the run: an empty corpus, or a `--limit` that sliced to nothing. This is the last question, so clearing it means the run starts and then always exits 0, writing a jsonl and printing an `=== pass@1 ===` summary.",
+          "criteria": {
+            "none": "no problem loaded: the run exits 1",
+            "some": "at least one problem loaded: the run starts"
+          },
+          "heuristic": {
+            "answer_field": "ev_problems"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "none"
+            },
+            "label": "NO_PROBLEMS_LOADED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "DIFFUSION_PASS_AT_1_REPORTED"
+          }
+        ]
+      }
+    }
+  ]
+}

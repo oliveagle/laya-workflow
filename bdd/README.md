@@ -299,7 +299,7 @@ The browser-step corpus above is one BDD mode. There is a second, and it is the
 one that drives the agentic *decision* layer: an `@decision` feature is a whole
 **decision graph** — `Feature` = the graph, each `Scenario` = one decision node.
 It compiles to a decision spec (`nodes/start/max_iterations/policy/capabilities`),
-not a browser step list. Every one of the 175 checked-in `dsl/<cat>/<name>.json`
+not a browser step list. Every one of the 177 checked-in `dsl/<cat>/<name>.json`
 specs is the compiled output of a `@decision` feature under
 `bdd/workflows/<cat>/`, and the two are proven equivalent in both directions by
 `laya-workflow bdd round-trip` (a dsl spec with no BDD source, or a feature that
@@ -379,7 +379,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
 2. **`dsl smoke`** — every spec under `dsl/` must validate, and where a labelled
    sample state is registered (`bench/dsl_smoke_states.json`) it must route to
    the expected label (`bench/dsl_smoke_expect.json`) through the real engine.
-   140 of 175 specs carry behavioural states today (139 labelled expectation sets — and since P126 a state that
+   142 of 177 specs carry behavioural states today (141 labelled expectation sets — and since P126 a state that
    runs is a *hard failure* unless its expect entry is a non-empty label or object, so none of them asserts
    nothing; +76 pinned in the decision workflows: model_drift_detector/dead_letter_queue_guard/compliance_audit_evidence_guard/workflow_dag_validator/incident_response_guard/shipping_route_guard/credential_issuance_guard/refactor_plan_guard/data_retention_expiry_guard/subscription_churn_retention_guard/pricing_discount_guard/inventory_replenishment_guard/credential_rotation_guard/config_schema_migration_guard/feature_flag_rollout_guard/cache_invalidation_guard/rate_limit_budget_guard/rate_limiter_config_guard/network_bandwidth_allocation_guard/api_key_rotation_guard/query_complexity_limiter/webhook_signature_verifier/endpoint_health_checker/file_upload_scanner/circuit_breaker_guard/cache_policy_enforcer/log_redaction_guard/dns_record_validator/session_token_validator/api_quota_guard/sla_checker/ loan_dialogue/ self_healing_gate/ alert_noise_reduction/ approval_workflow/ order_tracker/ support_ticket_router/intake_pipeline_nested/content_policy_gate/content_safety_guard/adaptive_risk_control/aml_screener/deployment_canary_guard/intrusion_signal_guard/agent_command_gate/triage_then_moderate/privacy_retention_guard/shift_assignment_guard/settlement_allocation_guard/subscription_entitlement_guard/contract_conflict_guard/accessibility_content_guard/experiment_design_gate/crawler_schema_guard/rpa_action_guard/knowledge_graph_guard/data_contract_schema_guard/resource_scheduler_guard/policy_as_code/test_case_generator/bracket_matcher/indentation_guard/keyword_order_guard/protocol_parser/verifiable_cot/formal_checker/reasoning_audit/code_review_gate/code_self_repair/literature_synthesis_guard/agent_permission_gate/email_triage/draft_scorer/reliable_state_reader/deploy_gate/longhorizon_action_gate; +web_research's full `search`→`read_page` and `read`/`markdown`→`web_fetch` chains over the local web mock).
    Network-bound stems follow an **offline detection** rule: when a spec's
@@ -445,7 +445,7 @@ and `dsl smoke` additionally asserts the **bdd/json separation invariant**:
    offline smoke cannot (`reason`). `dsl smoke` fails on a spec that is neither
    (a workflow nothing would ever flag), and on a stale entry (its spec became
    registered, or vanished), so coverage cannot silently shrink. Today:
-   140 offline-verified + 35 live-declared = 175.
+   142 offline-verified + 35 live-declared = 177.
 4. **`bdd build`** on every `@decision` feature — compile + `validate` + 100%
    step coverage.
    Since P45 `validate` also refuses four shapes that used to compile but
@@ -866,7 +866,7 @@ perf-measurement scripts); and under `code` itself, `ole_eval_code_root` (1).
 `ole_eval_dllm` also ports the S4 coherence gate `sanity_ar_base` to
 `bdd/workflows/guards/s4_gate.feature`, and nine gate-shaped modules the audit found
 but this round did not port are named under `gate_pending` —
-390 modules named (29 ported + 9 search-space + 350 not-a-workflow + 2 pending-gate). Every one of these gates reads *this*
+390 modules named (31 ported + 9 search-space + 350 not-a-workflow + 0 pending-gate). Every one of these gates reads *this*
 repo's own tree, and an installed or tarball binary carries the path of the
 machine it was **built** on — so point `LAYA_WORKFLOW_REPO` at a laya-workflow
 checkout and they run against that checkout instead. With no checkout in reach

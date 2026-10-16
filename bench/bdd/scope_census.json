@@ -688,10 +688,12 @@
     {
       "id": "ole_eval_dllm",
       "upstream": "code/dllm",
-      "kind": "mixed (the masked-diffusion LM + a ported coherence gate + two pass@1 runners)",
+      "kind": "mixed (the masked-diffusion LM + a ported coherence gate + two ported pass@1 runners)",
       "recursive": true,
       "ported": {
-        "eval/sanity_ar_base": "bdd/workflows/guards/s4_gate.feature"
+        "eval/sanity_ar_base": "bdd/workflows/guards/s4_gate.feature",
+        "eval/eval_diffusion_coding": "bdd/workflows/guards/diffusion_coding_gate.feature",
+        "eval/eval_ar_coding": "bdd/workflows/guards/ar_coding_gate.feature"
       },
       "not_a_workflow": [
         {
@@ -709,11 +711,7 @@
           ]
         }
       ],
-      "gate_pending": {
-        "eval/eval_diffusion_coding": "the diffusion-coding pass@1 runner: it samples from the diffusion LM, executes each candidate against the benchmark's unit tests in a subprocess and reports pass@1. A candidate's verdict, though the promote/reject is drawn by hand from the JSON. Verdict-adjacent; port pending.",
-        "eval/eval_ar_coding": "the AR-coding pass@1 runner: the autoregressive counterpart of the diffusion-coding runner on the same benchmarks - it executes each candidate against the unit tests and reports pass@1. Verdict-adjacent; port pending."
-      },
-      "note": "The diffusion-LM line: the model / training / conversion modules (named), the S4 coherence gate (ported this round to bdd/workflows/guards/s4_gate.feature), and the two pass@1 runners registered as pending."
+      "note": "The diffusion-LM line: the model / training / conversion modules (named), the S4 coherence gate (ported to bdd/workflows/guards/s4_gate.feature), and the two pass@1 runners - which refuse a request whose --sources names an unknown benchmark, or that loads no problems - ported this round to bdd/workflows/guards/{ar_coding_gate,diffusion_coding_gate}.feature."
     },
     {
       "id": "ole_eval_index",
