@@ -1,5 +1,5 @@
 {
-  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* of workflows (a directory in another repo) and how this repo's BDD corpus accounts for every workflow inside it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy). `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream workflow cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it).",
+  "what": "The audit that makes 'convert all known workflows to BDD' a bounded, checkable claim. Each entry is an upstream *universe* and how this repo's BDD corpus accounts for every module in it: `ported` maps an upstream name to the BDD feature that is its decision-graph port; `search_space` names a workflow that is deliberately NOT ported, with the reason (an optimizer search-space, not a decision policy, so a BDD decision graph would have to invent the policy); `not_a_workflow` names a module that is not a workflow at all (engine / model / harness), one reason per group, so that code is named rather than quietly absent. `ported_all` means the whole universe is a 1:1 BDD port whose closure is proven by `bdd port-check`. A universe enumerates the `.py` files directly under `upstream`; set `recursive: true` when its workflows are not all in one directory (a package whose root holds gates next to a `workflows/` dir) - names are then the `/`-joined path minus the extension. `bdd scope-check` reads this file; `bdd scope-check --sources <ole-eval root>` puts it on trial against a live checkout (the listed names must equal the .py files on disk, so a new upstream module cannot be silently skipped). `enumerate: false` marks a universe whose upstream is not publicly enumerable (its names are pinned here and every ported feature is still existence-checked; `--sources` cannot list such an upstream, so it does not demand a directory for it).",
   "universes": [
     {
       "id": "ole_eval_app_scenarios",
@@ -13,24 +13,83 @@
       "note": "66 deterministic guard scenarios, every one a @decision graph under bdd/workflows/ole_eval/ with its dsl/ole_eval/ spec; the closure is proven by `bdd port-check --cat ole_eval --pin bench/bdd/port_pins/ole_eval.json`."
     },
     {
-      "id": "self_evolving_workflows",
-      "upstream": "code/qwen_vm/self_evolving/workflows",
-      "kind": "mixed (one decision state-machine + a family of optimizer search-spaces)",
+      "id": "self_evolving_package",
+      "upstream": "code/qwen_vm/self_evolving",
+      "kind": "mixed (one decision state-machine + a family of optimizer search-spaces + the package's own engine / model / harness modules)",
+      "recursive": true,
       "ported": {
-        "agent_permission": "bdd/workflows/guards/agent_permission_gate.feature"
+        "workflows/agent_permission": "bdd/workflows/guards/agent_permission_gate.feature"
       },
       "search_space": {
-        "anomaly_detection": "optimizer search-space over (window, z_threshold, method, fill); eval_fn scores against ground truth, there is no deterministic policy to encode",
-        "c_program_runner": "search-space over (program, input_value) where program is a compiled C/WASM artifact; the correct pick is data-dependent",
-        "data_cleaning": "search-space over (program, input_offset) choosing a per-column C cleaning program; the program is discovered, not ruled",
-        "data_cleaning_columnar": "column-level variant of data_cleaning; same search-space shape",
-        "data_cleaning_multistep": "multi-step (12 cols x 2 steps) variant of data_cleaning; same search-space shape",
-        "data_cleaning_real": "real-CSV variant with an LLM proposer; the proposer is the (learned) policy, so there is no fixed decision graph",
-        "label_stability": "optimizer search-space over (window, similarity_threshold, consensus); no deterministic policy",
-        "outlier_detect": "optimizer search-space over (window, threshold, fill); no deterministic policy",
-        "wasm_action_picker": "search-space over (action, window, threshold, low, high); the action is looked up in a shared registry and the correct pick is data-dependent"
+        "workflows/anomaly_detection": "optimizer search-space over (window, z_threshold, method, fill); eval_fn scores against ground truth, there is no deterministic policy to encode",
+        "workflows/c_program_runner": "search-space over (program, input_value) where program is a compiled C/WASM artifact; the correct pick is data-dependent",
+        "workflows/data_cleaning": "search-space over (program, input_offset) choosing a per-column C cleaning program; the program is discovered, not ruled",
+        "workflows/data_cleaning_columnar": "column-level variant of data_cleaning; same search-space shape",
+        "workflows/data_cleaning_multistep": "multi-step (12 cols x 2 steps) variant of data_cleaning; same search-space shape",
+        "workflows/data_cleaning_real": "real-CSV variant with an LLM proposer; the proposer is the (learned) policy, so there is no fixed decision graph",
+        "workflows/label_stability": "optimizer search-space over (window, similarity_threshold, consensus); no deterministic policy",
+        "workflows/outlier_detect": "optimizer search-space over (window, threshold, fill); no deterministic policy",
+        "workflows/wasm_action_picker": "search-space over (action, window, threshold, low, high); the action is looked up in a shared registry and the correct pick is data-dependent"
       },
-      "note": "`agent_permission` is a permission state-machine + calibrated risk gate, so it IS a decision graph and was ported (P79). The other nine are parameter search-spaces for the LLM-as-optimizer loop; porting them would mean inventing a policy, so they are named here, with reasons, rather than forced into the decision vocabulary."
+      "not_a_workflow": [
+        {
+          "reason": "the LLM-as-optimizer engine: the propose -> evaluate -> accept loop, its state / registry plumbing, its entry points, and the training of the proposal policy. They *run* a workflow; they are not one, and the pick the loop makes is a learned / bandit proposal, not a decision graph.",
+          "names": [
+            "optimizer_loop",
+            "workflow",
+            "workflow_state",
+            "workflow_registry",
+            "cli",
+            "server",
+            "multi_restart",
+            "cross_workflow",
+            "meta_controller",
+            "policy_network",
+            "phase_b_active",
+            "online_train",
+            "train_policy",
+            "learning_curve"
+          ]
+        },
+        {
+          "reason": "the learned proposer / calibrated head: an LLM or a risk model that *supplies* the answer. The decision is theirs (weights, prompts), so a BDD graph would have to invent it - what this corpus ports is the deterministic consumer of their output (workflows/agent_permission takes the risk band as a field).",
+          "names": [
+            "llm_extractor",
+            "llm_extract_engine",
+            "evolving_extractor",
+            "adaptive_extractor",
+            "real_llm_base",
+            "real_llm_proposer",
+            "real_llm_data_cleaning",
+            "hybrid_llm_policy",
+            "laya_prefilter",
+            "decision_head"
+          ]
+        },
+        {
+          "reason": "harness: benchmark runners, dataset export / bake, the hold-out auditor, the continuing-decision-stream simulator, the computer-use demo, the browser agent that drives it, and the WASM action registry / executor bridge the loop uses. They measure or feed the loop; none decides.",
+          "names": [
+            "benchmark_suite",
+            "bench_ablation",
+            "bench_gate_advantage",
+            "export_dataset",
+            "real_data",
+            "holdout_eval",
+            "table_stream",
+            "demo_computer_use_permission",
+            "browser_agent",
+            "wasm_actions",
+            "wasm_executor_bridge"
+          ]
+        },
+        {
+          "reason": "the browser-aware *variant* of the ported agent_permission decision graph: the state machine and the verdict thresholds (risk >= 0.5 -> BLOCK, confidence < 0.6 -> ESCALATE) are the same, and this module only swaps in browser-specific risk *features* for the model that supplies the risk band. It is not a second decision graph, so there is nothing separate to port.",
+          "names": [
+            "browser_gate"
+          ]
+        }
+      ],
+      "note": "The package is the upstream, not just its `workflows/` dir: `browser_gate.py` sits at the root and is a decision gate of exactly the same kind as `workflows/agent_permission.py`. Enumerating only the subdirectory left every root-level module outside the bound, so a new one there was silently unaccounted. `workflows/agent_permission` is a permission state-machine + calibrated risk gate, so it IS a decision graph and was ported (P79); the other nine `workflows/*` are parameter search-spaces for the optimizer loop; the rest of the package is named in `not_a_workflow` groups (engine / model / harness), one reason per group."
     },
     {
       "id": "agent_toolbox",

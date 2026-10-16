@@ -823,11 +823,16 @@ the seal as well — the live names must equal the seal's, and any fingerprint t
 seal carries must still match the source. A third gate, `laya-workflow bdd
 scope-check`, bounds the wider claim "every known workflow is in BDD":
 `bench/bdd/scope_census.json` names each upstream workflow *universe* and how
-this corpus accounts for every workflow in it — either ported (proven by `bdd
-port-check`) or explicitly a parameter search-space, with the reason it is not a
-decision graph. A universe whose upstream is *not publicly enumerable* (a private
-repo) is pinned by name with `enumerate: false`, so it is accounted for instead of
-being silently left out of the bound. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
+this corpus accounts for every module in it — either ported (proven by `bdd
+port-check`), explicitly a parameter search-space with the reason it is not a
+decision graph, or named as `not_a_workflow` (engine / model / harness code, one
+reason per group) so that non-workflows are named rather than quietly absent. A
+universe enumerates the `.py` files directly under `upstream`; `recursive: true`
+covers a package whose decision modules are not all in one directory (a gate at
+the package root next to a `workflows/` dir), where names become the `/`-joined
+path minus the extension. A universe whose upstream is *not publicly enumerable*
+(a private repo) is pinned by name with `enumerate: false`, so it is accounted for
+instead of being silently left out of the bound. Point `LAYA_OLE_EVAL_ROOT` at an ole-eval *checkout root* and the
 census must name exactly the live upstream workflows, so a new one nobody ported
 fails the gate instead of going unnoticed. Every one of these gates reads *this*
 repo's own tree, and an installed or tarball binary carries the path of the

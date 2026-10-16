@@ -2997,8 +2997,8 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         &format!(
             "bdd scope-check: the checked-in census is green ({} universe(s), {} ported + {} \
-             search-space)",
-            counts.universes, counts.ported, counts.search_space
+             search-space + {} not-a-workflow)",
+            counts.universes, counts.ported, counts.search_space, counts.not_a_workflow
         ),
         problems.is_empty(),
     );
@@ -3022,6 +3022,11 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         "bdd scope-check: 1 non-enumerable universe (agent_toolbox - a private upstream)",
         counts.non_enumerable,
         1,
+    );
+    h.eq(
+        "bdd scope-check: 36 self_evolving package modules named as not-a-workflow (engine/model/harness)",
+        counts.not_a_workflow,
+        36,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3067,41 +3072,71 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
 
     // Negative 2: a search-space with no reason is a silent skip.
     let no_reason = census.replace(
-        "\"outlier_detect\": \"optimizer search-space over (window, threshold, fill); no deterministic policy\"",
-        "\"outlier_detect\": \"\"",
+        "\"workflows/outlier_detect\": \"optimizer search-space over (window, threshold, fill); no deterministic policy\"",
+        "\"workflows/outlier_detect\": \"\"",
     );
     h.check(
         "bdd scope-check: a search-space entry with no reason is named",
         any(
             &probs_of(&no_reason),
-            "search_space[\"outlier_detect\"] needs a non-empty reason",
+            "search_space[\"workflows/outlier_detect\"] needs a non-empty reason",
         ),
     );
 
-    // Negative 3 (the real failure): against a checkout, an upstream workflow the
-    // census never mentions must be caught. Build a temp root that holds exactly
-    // the 10 self_evolving names, prove it is green, then add an 11th.
+    // Negative 3: a `not_a_workflow` group with no reason is a silent skip with a
+    // different shape - the whole point of naming engine code is that the reason is
+    // written down, not that the name exists.
+    let no_group_reason = census.replace(
+        "\"the LLM-as-optimizer engine:",
+        "\"\",\n      \"zzz_ignored\": \"the LLM-as-optimizer engine:",
+    );
+    h.check(
+        "bdd scope-check: a not-a-workflow group with no reason is named",
+        any(&probs_of(&no_group_reason), "not_a_workflow[0] needs a non-empty reason"),
+    );
+
+    // Negative 4 (the real failure): against a checkout, an upstream module the
+    // census never mentions must be caught. Build a temp root whose files are
+    // exactly the census's own names (so being green there is not an accident of a
+    // short hand-list), prove it is green, then add a *root-level* module - the
+    // module class that used to live outside the bound because the universe
+    // enumerated only `self_evolving/workflows/`.
     let tag = std::process::id();
     let base = std::env::temp_dir().join(format!("laya-scope-{tag}"));
     let _ = std::fs::remove_dir_all(&base);
-    let se = base.join("code/qwen_vm/self_evolving/workflows");
+    let se = base.join("code/qwen_vm/self_evolving");
     std::fs::create_dir_all(&se).unwrap();
-    for n in [
-        "agent_permission",
-        "anomaly_detection",
-        "c_program_runner",
-        "data_cleaning",
-        "data_cleaning_columnar",
-        "data_cleaning_multistep",
-        "data_cleaning_real",
-        "label_stability",
-        "outlier_detect",
-        "wasm_action_picker",
-    ] {
-        std::fs::write(se.join(format!("{n}.py")), "pass\n").unwrap();
+    let uni = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "self_evolving_package")
+        .expect("self_evolving_package universe");
+    let mut planted: Vec<String> = Vec::new();
+    for k in uni["ported"].as_object().unwrap().keys() {
+        planted.push(k.clone());
+    }
+    for k in uni["search_space"].as_object().unwrap().keys() {
+        planted.push(k.clone());
+    }
+    for g in uni["not_a_workflow"].as_array().unwrap() {
+        for n in g["names"].as_array().unwrap() {
+            planted.push(n.as_str().unwrap().to_string());
+        }
+    }
+    for name in &planted {
+        let f = se.join(format!("{name}.py"));
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "pass\n").unwrap();
     }
     std::fs::write(se.join("__init__.py"), "\n").unwrap();
+    std::fs::write(se.join("workflows/__init__.py"), "\n").unwrap();
     std::fs::create_dir_all(base.join("code/qwen_vm/app_scenarios")).unwrap();
+    h.eq(
+        "bdd scope-check: the planted tree holds every name the census lists",
+        planted.len(),
+        46,
+    );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
     h.check(
@@ -3109,12 +3144,22 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         clean.is_empty(),
     );
 
-    std::fs::write(se.join("brand_new_workflow.py"), "pass\n").unwrap();
+    std::fs::write(se.join("brand_new_gate.py"), "pass\n").unwrap();
     let (_, drifted) = scope_check_impl(&root, &census, Some(&base)).unwrap();
     h.check(
-        "bdd scope-check: a new upstream workflow not in the census is named (the real failure)",
+        "bdd scope-check: a new *root-level* module not in the census is named (the whole point of recursion)",
         any(
             &drifted,
+            "code/qwen_vm/self_evolving/brand_new_gate.py is not in the census",
+        ),
+    );
+
+    std::fs::write(se.join("workflows/brand_new_workflow.py"), "pass\n").unwrap();
+    let (_, drifted2) = scope_check_impl(&root, &census, Some(&base)).unwrap();
+    h.check(
+        "bdd scope-check: a new workflow in the subdirectory is still named (P124's original failure)",
+        any(
+            &drifted2,
             "code/qwen_vm/self_evolving/workflows/brand_new_workflow.py is not in the census",
         ),
     );

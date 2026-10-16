@@ -10939,6 +10939,10 @@ pub struct ScopeCounts {
     /// list; their names are pinned in the census and every ported feature is still
     /// existence-checked.
     pub non_enumerable: usize,
+    /// Upstream names that are *not* workflows at all (`not_a_workflow`), each group
+    /// carrying one reason - so an engine / model / harness module is still named
+    /// rather than silently absent.
+    pub not_a_workflow: usize,
     /// Live upstream workflow files enumerated (only with `--sources`).
     pub sources: usize,
 }
@@ -10963,9 +10967,59 @@ impl Default for ScopeCheckOptions {
 /// code report it. A *universe* is an upstream directory of workflows; every
 /// workflow in it is either `ported` (with the BDD feature that is its
 /// decision-graph port) or `search_space` (deliberately not ported, with the
-/// reason). A name that is neither, once `--sources` is given, is an upstream
-/// workflow nobody accounted for - exactly the failure "convert all known
-/// workflows" must not have.
+/// reason), or `not_a_workflow` (named, with one reason per group, because it is
+/// engine / model / harness code rather than a workflow). A name that is none of
+/// the three, once `--sources` is given, is an upstream module nobody accounted for
+/// - exactly the failure "convert all known workflows" must not have. A universe may
+/// set `recursive: true` when its workflows are not all directly under `upstream`
+/// (a package whose root holds gates next to its `workflows/` directory); names are
+/// then the `/`-joined path minus the extension.
+/// The upstream `.py` names a universe enumerates. Non-recursive (the default) is the
+/// stems directly under `dir`. Recursive (`recursive: true`) walks the tree and yields
+/// the `/`-joined path minus the extension, so a package whose decision modules are not
+/// all in one directory (gates at the package root next to a `workflows/` dir) can still
+/// pin every one. `__init__.py`, `__pycache__/`, `tests/`, `test_*.py` and anything whose
+/// name starts with `.` or `_` are not workflows.
+fn scope_enumerate_py(dir: &Path, recursive: bool) -> Result<BTreeSet<String>> {
+    let mut out: BTreeSet<String> = BTreeSet::new();
+    if !recursive {
+        for e in std::fs::read_dir(dir)?.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = n.strip_suffix(".py") {
+                if !stem.is_empty() && stem != "__init__" {
+                    out.insert(stem.to_string());
+                }
+            }
+        }
+        return Ok(out);
+    }
+    let mut stack: Vec<(PathBuf, String)> = vec![(dir.to_path_buf(), String::new())];
+    while let Some((d, prefix)) = stack.pop() {
+        for e in std::fs::read_dir(&d)?.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                if name == "__pycache__" || name == "tests" {
+                    continue;
+                }
+                stack.push((p, format!("{prefix}{name}/")));
+            } else if let Some(stem) = name.strip_suffix(".py") {
+                if stem.is_empty() || stem == "__init__" || stem.starts_with('_') {
+                    continue;
+                }
+                if stem.starts_with("test_") {
+                    continue;
+                }
+                out.insert(format!("{prefix}{stem}"));
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub fn scope_check_impl(
     root: &Path,
     census: &str,
@@ -10989,13 +11043,15 @@ pub fn scope_check_impl(
         counts.universes += 1;
         let ported = u.get("ported").and_then(Value::as_object);
         let search = u.get("search_space").and_then(Value::as_object);
+        let not_workflow = u.get("not_a_workflow").and_then(Value::as_array);
+        let recursive = u.get("recursive").and_then(Value::as_bool).unwrap_or(false);
         let ported_all = u.get("ported_all").and_then(Value::as_bool).unwrap_or(false);
         if ported_all {
             counts.ported_all += 1;
-        } else if ported.is_none() && search.is_none() {
+        } else if ported.is_none() && search.is_none() && not_workflow.is_none() {
             problems.push(format!(
-                "{id}: a universe must carry `ported`, `search_space`, or `ported_all` - \
-                 silence is not a disposition"
+                "{id}: a universe must carry `ported`, `search_space`, `not_a_workflow`, \
+                 or `ported_all` - silence is not a disposition"
             ));
             continue;
         }
@@ -11038,6 +11094,47 @@ pub fn scope_check_impl(
                 }
             }
         }
+        if let Some(groups) = not_workflow {
+            for (gi, g) in groups.iter().enumerate() {
+                let reason = g.get("reason").and_then(Value::as_str).unwrap_or("");
+                if reason.trim().is_empty() {
+                    problems.push(format!(
+                        "{id}: not_a_workflow[{gi}] needs a non-empty reason - a module is \
+                         never quietly skipped either"
+                    ));
+                }
+                match g.get("names").and_then(Value::as_array) {
+                    None => problems.push(format!(
+                        "{id}: not_a_workflow[{gi}] needs a `names` array"
+                    )),
+                    Some(names) => {
+                        if names.is_empty() {
+                            problems.push(format!(
+                                "{id}: not_a_workflow[{gi}] has no names - an empty group \
+                                 accounts for nothing"
+                            ));
+                        }
+                        for n in names {
+                            let Some(n) = n.as_str() else {
+                                problems.push(format!(
+                                    "{id}: not_a_workflow[{gi}].names entries must be strings"
+                                ));
+                                continue;
+                            };
+                            counts.not_a_workflow += 1;
+                            if ported.map_or(false, |p| p.contains_key(n))
+                                || search.map_or(false, |s| s.contains_key(n))
+                            {
+                                problems.push(format!(
+                                    "{id}: {n} is listed both as not-a-workflow and as \
+                                     ported/search-space - pick one"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // A universe may declare `enumerate: false` when its upstream is not publicly
         // enumerable (a private repo, e.g. a set of ops scripts). Its names are pinned
@@ -11058,15 +11155,7 @@ pub fn scope_check_impl(
                         src.display()
                     ));
                 } else {
-                    let mut live: BTreeSet<String> = BTreeSet::new();
-                    for e in std::fs::read_dir(&dir)?.flatten() {
-                        let n = e.file_name().to_string_lossy().into_owned();
-                        if let Some(stem) = n.strip_suffix(".py") {
-                            if !stem.is_empty() && stem != "__init__" {
-                                live.insert(stem.to_string());
-                            }
-                        }
-                    }
+                    let live = scope_enumerate_py(&dir, recursive)?;
                     if ported_all {
                         // A fully-ported universe is checked name-by-name by
                         // `bdd port-check`; here it only contributes to the count.
@@ -11079,11 +11168,20 @@ pub fn scope_check_impl(
                         if let Some(s) = search {
                             listed.extend(s.keys().cloned());
                         }
+                        if let Some(groups) = not_workflow {
+                            for g in groups {
+                                if let Some(names) = g.get("names").and_then(Value::as_array) {
+                                    listed.extend(
+                                        names.iter().filter_map(|n| n.as_str().map(String::from)),
+                                    );
+                                }
+                            }
+                        }
                         counts.sources += listed.len();
                         for n in live.difference(&listed) {
                             problems.push(format!(
                                 "{id}: the upstream {upstream}/{n}.py is not in the census - port it, \
-                                 or list it (with a reason) as a search-space"
+                                 or list it (with a reason) as a search-space or a not-a-workflow module"
                             ));
                         }
                         for n in listed.difference(&live) {
@@ -11122,6 +11220,7 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
                 "universes": counts.universes,
                 "ported": counts.ported,
                 "search_space": counts.search_space,
+                "not_a_workflow": counts.not_a_workflow,
                 "ported_all": counts.ported_all,
                 "non_enumerable": counts.non_enumerable,
                 "sources": counts.sources
@@ -11144,12 +11243,14 @@ pub fn scope_check(o: &ScopeCheckOptions) -> Result<i32> {
     }
     println!(
         "bdd scope-check: {} upstream universe(s) accounted for - {} ported in full (proven by \
-         `bdd port-check`), {} workflow(s) named ({} ported + {} search-space), {} non-enumerable{}",
+         `bdd port-check`), {} module(s) named ({} ported + {} search-space + {} not-a-workflow), \
+         {} non-enumerable{}",
         counts.universes,
         counts.ported_all,
-        counts.ported + counts.search_space,
+        counts.ported + counts.search_space + counts.not_a_workflow,
         counts.ported,
         counts.search_space,
+        counts.not_a_workflow,
         counts.non_enumerable,
         if sources.is_some() {
             " - the census matches the live checkout"
