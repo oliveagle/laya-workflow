@@ -9568,10 +9568,10 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 /// needed), so the whole section runs anywhere.
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
-        agnostic_agreement, attribute_split, default_system_backends, diff_systems, format_diff,
-        format_split_attribution, format_strata, rank_systems, repo_root, spec_is_echo,
-        stratify_systems, system_probe_questions, CategorySplit, LiveSummary, SpecLiveResult,
-        SystemVerdict,
+        agnostic_agreement, attribute_split, default_system_backends, derive_agreement,
+        diff_systems, format_diff, format_split_attribution, format_strata, rank_systems, repo_root,
+        spec_is_echo, stratify_systems, system_probe_questions, CategorySplit, LiveSummary,
+        SpecLiveResult, SystemVerdict,
     };
     use laya_workflow::dsl_smoke::{expect_pins_backend_number, BACKEND_AGNOSTIC_NUMBER_KEYS};
 
@@ -10066,6 +10066,38 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
             let ds = stratify_systems(&vec![dx, dy], &[0, 1]);
             ds.iter().find(|s| s.feature == "d2.feature").map(|s| s.echo.shared).unwrap_or(9) == 0
         },
+    );
+
+    // ── P241: derive_agreement — the honest basis ──
+    // Backend-agnostic states on derivation specs only: the echo class's states
+    // have the answer key for free (P240) and the reference-pinned ones fail every
+    // live model by construction. Pure, so the number pins offline.
+    let dg = mk_echo(
+        "http://x",
+        vec![
+            ("echo/e.feature", vec![("s1", true)], true),
+            ("der/d.feature", vec![("s1", true), ("s2", false)], false),
+        ],
+    );
+    h.check(
+        "p241: derive agreement counts derivation specs only",
+        derive_agreement(&dg) == (1, 2),
+    );
+    h.check(
+        "p241: with no echo specs, derive agreement equals agnostic agreement",
+        derive_agreement(&sx) == agnostic_agreement(&sx),
+    );
+    h.check(
+        "p241: derive agreement still excludes reference-pinned states",
+        derive_agreement(&mk_stratum(
+            "http://y",
+            vec![("der/d.feature", vec![("s1", true), ("s2", false)], vec!["s2"])],
+        )) == (1, 1),
+    );
+    h.check(
+        "p241: an all-echo backend has no derivation states to compare",
+        derive_agreement(&mk_echo("http://z", vec![("echo/e.feature", vec![("s1", true)], true)]))
+            == (0, 0),
     );
 
     // ── P204: attribute the states two backends disagree on ──

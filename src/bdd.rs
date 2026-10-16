@@ -12447,6 +12447,7 @@ fn walk_decision_corpus(
     corpus: &DecisionCorpus,
     filter: Option<&str>,
     quiet: bool,
+    derive_only: bool,
     backend: &dyn crate::workflow::Decide,
 ) -> Result<Vec<SpecLiveResult>> {
     let mut per_spec: Vec<SpecLiveResult> = Vec::new();
@@ -12483,6 +12484,13 @@ fn walk_decision_corpus(
                 continue;
             }
         };
+        // P241: `--derive-only` walks the honest basis — the derivation specs. An
+        // echo spec's sample state carries the answer key (P240), so walking it
+        // measures field-name lookup, not judgement; skip it entirely so the
+        // ranking and the strata are computed where the model was actually asked.
+        if derive_only && spec_is_echo(&spec) {
+            continue;
+        }
         let wf = match crate::spec::from_spec_with_dir(&spec, None, None) {
             Ok(w) => w,
             Err(e) => {
@@ -12611,7 +12619,7 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         .filter(|u| !u.trim().is_empty())
         .unwrap_or_else(|| "http://127.0.0.1:18405".to_string());
     let backend = crate::backend::LayaBackend::new(&base_url);
-    let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), false, &backend)?;
+    let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), false, false, &backend)?;
 
     let s = summarize_live(&per_spec);
     for r in &per_spec {
@@ -12712,11 +12720,15 @@ pub struct CompareSystemsOptions {
     /// Walk a backend even if its preflight probe fails (default: skip it and
     /// mark it unusable — an unprobeable backend must never be ranked).
     pub no_preflight: bool,
+    /// P241: walk only the **derivation** specs. An echo spec's sample state
+    /// carries the answer key (P240), so it measures field-name lookup, not
+    /// judgement; skipping them ranks the backends on the honest basis.
+    pub derive_only: bool,
 }
 
 impl Default for CompareSystemsOptions {
     fn default() -> Self {
-        Self { backends: Vec::new(), filter: None, json: None, no_preflight: false }
+        Self { backends: Vec::new(), filter: None, json: None, no_preflight: false, derive_only: false }
     }
 }
 
@@ -13110,6 +13122,36 @@ pub fn agnostic_agreement(v: &SystemVerdict) -> (usize, usize) {
     (agreed, comparable)
 }
 
+/// P241: a ranked backend's agreement over the states that are **both**
+/// backend-agnostic and on a **derivation** spec — the honest basis the echo
+/// class (P240) is subtracted from. An echo state's expectation *is* the state's
+/// own answer key, so counting it measures field-name lookup, not judgement; and a
+/// reference-pinned state fails every live model by construction. This is the
+/// number to read when asking "which System-1 model judges better". Pure, so the
+/// split pins offline.
+pub fn derive_agreement(v: &SystemVerdict) -> (usize, usize) {
+    let pinned = pinned_state_keys(v);
+    let echo_specs: std::collections::BTreeSet<String> =
+        v.per_spec.iter().filter(|sp| sp.echo).map(|sp| sp.rel.clone()).collect();
+    let mut agreed = 0usize;
+    let mut comparable = 0usize;
+    for sp in &v.per_spec {
+        if echo_specs.contains(&sp.rel) {
+            continue;
+        }
+        for (label, ok) in &sp.label_agreements {
+            if pinned.contains(&(sp.rel.clone(), label.clone())) {
+                continue;
+            }
+            comparable += 1;
+            if *ok {
+                agreed += 1;
+            }
+        }
+    }
+    (agreed, comparable)
+}
+
 /// Render the [`stratify_systems`] report: the agnostic / pinned totals, then the
 /// honest hard tail (specs no ranked backend passes, backend-agnostic states
 /// only) and the discriminating specs (where the ranked backends split), each
@@ -13384,7 +13426,7 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         }
         let t0 = std::time::Instant::now();
         let backend = crate::backend::LayaBackend::new(url);
-        let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), true, &backend)?;
+        let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), true, o.derive_only, &backend)?;
         v.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
         v.summary = summarize_live(&per_spec);
         v.walked = true;
@@ -13406,20 +13448,25 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         Some(f) => format!("; filter {f:?}"),
         None => String::new(),
     };
+    let basis = if o.derive_only {
+        "; derive-only (echo specs skipped: their state carries the answer key)"
+    } else {
+        ""
+    };
     println!(
-        "system-1 comparison over the decision corpus ({specs_registered} specs / {states_registered} states registered, {} backend(s){scope})",
+        "system-1 comparison over the decision corpus ({specs_registered} specs / {states_registered} states registered, {} backend(s){scope}{basis})",
         vs.len()
     );
     println!(
-        "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>8}  {:>9}  {}",
-        "rank", "backend", "clean", "agree", "agnostic", "wall", "ms/state", "status"
+        "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>11}  {:>8}  {:>9}  {}",
+        "rank", "backend", "clean", "agree", "agnostic", "derive", "wall", "ms/state", "status"
     );
     for (i, v) in vs.iter().enumerate() {
         let rank = rank_of.get(&i).map(|r| r.to_string()).unwrap_or_else(|| "-".to_string());
         if let Some(why) = &v.preflight_error {
             println!(
-                "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>8}  {:>9}  unusable (preflight: {})",
-                rank, v.url, "-", "-", "-", "-", "-", sys_truncate(&sys_one_line(why), 64)
+                "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>11}  {:>8}  {:>9}  unusable (preflight: {})",
+                rank, v.url, "-", "-", "-", "-", "-", "-", sys_truncate(&sys_one_line(why), 64)
             );
             continue;
         }
@@ -13434,13 +13481,19 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         // that actually measures the model, next to the raw one that also counts
         // the states only the reference backend can meet.
         let (ag_ok, ag_all) = agnostic_agreement(v);
+        // P241: `derive` is the honest basis — backend-agnostic states on
+        // derivation specs only (the echo class's states carry the answer key).
+        // Added alongside `agnostic`, not in place of it, exactly as P203 added
+        // `agnostic` alongside `agree`.
+        let (dv_ok, dv_all) = derive_agreement(v);
         println!(
-            "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>7.1}s  {:>8.1}ms  ok{}",
+            "  {:>4}  {:<28}  {:>9}  {:>9}  {:>11}  {:>11}  {:>7.1}s  {:>8.1}ms  ok{}",
             rank,
             v.url,
             format!("{}/{}", v.summary.specs_clean, v.summary.specs_total),
             format!("{}/{}", v.summary.states_agreed, v.summary.states_run),
             format!("{ag_ok}/{ag_all}"),
+            format!("{dv_ok}/{dv_all}"),
             v.wall_ms / 1000.0,
             v.mean_ms_per_state(),
             if buckets.is_empty() { String::new() } else { format!(" [{}]", buckets.join(", ")) }
@@ -13510,6 +13563,10 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 "agnostic_agreement": {
                     "agreed": agnostic_agreement(v).0,
                     "comparable": agnostic_agreement(v).1,
+                },
+                "derive_agreement": {
+                    "agreed": derive_agreement(v).0,
+                    "comparable": derive_agreement(v).1,
                 },
                 "pinned_number_states": v.per_spec.iter().map(|sp| sp.pinned_number_labels.len()).sum::<usize>(),
                 // P202: the raw per-state verdicts, so any two backends can be

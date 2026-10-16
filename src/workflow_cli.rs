@@ -568,6 +568,12 @@ enum BddCmd {
         /// Walk every backend even if its preflight probe fails.
         #[arg(long)]
         no_preflight: bool,
+        /// Rank on the honest basis: walk only the derivation specs. An echo
+        /// spec's sample state carries the answer key (every question answered
+        /// offline from a named field), so it measures field-name lookup, not
+        /// judgement; this skips those specs entirely.
+        #[arg(long)]
+        derive_only: bool,
     },
     /// Round-trip gate: every @decision feature must compile back to the same
     /// decision-graph spec as its checked-in dsl/<cat>/<name>.json counterpart.
@@ -2799,11 +2805,13 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             filter,
             json,
             no_preflight,
+            derive_only,
         } => bdd::compare_systems(&bdd::CompareSystemsOptions {
             backends: backend.clone(),
             filter: filter.clone(),
             json: json.clone(),
             no_preflight: *no_preflight,
+            derive_only: *derive_only,
         })?,
         BddCmd::RoundTrip { json } => {
             bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?
