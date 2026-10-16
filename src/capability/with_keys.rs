@@ -99,6 +99,8 @@ const SOURCES: &[(&str, &str)] = &[
 /// `with` is matched by hand in [`has_word`].
 struct Rx {
     fn_sig: Regex,
+    /// The same signature shape, but matched against a single line (see [`fn_sigs`]).
+    fn_sig_one: Regex,
     kind_var: Regex,
     kind_lit: Regex,
     var_fn: Regex,
@@ -118,6 +120,7 @@ fn rx() -> &'static Rx {
     static R: OnceLock<Rx> = OnceLock::new();
     R.get_or_init(|| Rx {
         fn_sig: Regex::new(r"(?m)^\s*(?:pub\s+)?fn\s+(\w+)\s*[(<]").unwrap(),
+        fn_sig_one: Regex::new(r"^\s*(?:pub\s+)?fn\s+(\w+)\s*[(<]").unwrap(),
         kind_var: Regex::new(
             r#"((?:"[a-z0-9_-]+"\s*\|\s*)*"[a-z0-9_-]+")\s*=>\s*Ok\(Capability::(\w+)"#,
         )
@@ -147,46 +150,20 @@ fn rx() -> &'static Rx {
 }
 
 fn build() -> BTreeMap<String, BTreeSet<String>> {
-    let r = rx();
-    // Comment-free, string-intact sources. Comments are blanked so a `with.get`
-    // in a doc comment cannot contribute; strings are left so a literal key can.
-    let stripped: Vec<(&str, String)> =
-        SOURCES.iter().map(|(n, s)| (*n, strip_comments(s))).collect();
-    let src_of = |name: &str| stripped.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str());
+    let s = sources();
+    let (kind2var, var2fn) = dispatch();
 
     let mut funcs: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (_, src) in &stripped {
-        for m in r.fn_sig.captures_iter(src) {
-            let whole = m.get(0).unwrap();
-            let name = m.get(1).unwrap().as_str().to_string();
-            if let Some(body) = body_after(src, whole.end()) {
+    for (_, src) in &s.stripped {
+        for (name, end) in fn_sigs(src) {
+            if let Some(body) = body_after(src, end) {
                 funcs.entry(name).or_default().push(body);
             }
         }
     }
 
-    // kind string -> Capability variant (parse_kind), variant -> module::fn (dispatch)
-    let mut kind2var: BTreeMap<String, String> = BTreeMap::new();
-    if let Some(p) = src_of("parse") {
-        for m in r.kind_var.captures_iter(p) {
-            let var = m.get(2).unwrap().as_str().to_string();
-            for k in r.kind_lit.captures_iter(m.get(1).unwrap().as_str()) {
-                kind2var.entry(k[1].to_string()).or_insert_with(|| var.clone());
-            }
-        }
-    }
-    let mut var2fn: BTreeMap<String, (String, String)> = BTreeMap::new();
-    if let Some(p) = src_of("mod") {
-        for m in r.var_fn.captures_iter(p) {
-            let var = m[1].to_string();
-            let module = m.get(2).map(|x| x.as_str()).unwrap_or("mod").to_string();
-            let f = m[3].to_string();
-            var2fn.entry(var).or_insert((module, f));
-        }
-    }
-
     let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (kind, var) in &kind2var {
+    for (kind, var) in kind2var {
         let ck = canon_kind(kind);
         if OPEN.contains(&ck) {
             continue; // an open kind is absent from the map
@@ -208,6 +185,103 @@ fn build() -> BTreeMap<String, BTreeSet<String>> {
         out.remove(*k);
     }
     out
+}
+
+/// The capability sources, comment-blanked, plus the same text with every
+/// whitespace character removed.
+///
+/// The P164 / P166 tables used to re-strip every source and re-scan all of them
+/// with one regex each; `compact` lets a `with\s*\.\s*get\s*\(` scan be gated by a
+/// plain substring search for `with.get(`, which is a *necessary* condition: it
+/// can only ever skip a source the regex would not have matched. Same for the
+/// other whole-source scans, which gate on a plain `contains` of their literal.
+struct Sources {
+    stripped: Vec<(&'static str, String)>,
+    compact: Vec<(&'static str, String)>,
+}
+
+fn sources() -> &'static Sources {
+    static S: OnceLock<Sources> = OnceLock::new();
+    S.get_or_init(|| {
+        let stripped: Vec<(&'static str, String)> =
+            SOURCES.iter().map(|(n, s)| (*n, strip_comments(s))).collect();
+        let compact: Vec<(&'static str, String)> =
+            stripped.iter().map(|(n, s)| (*n, compact_ws(s))).collect();
+        Sources { stripped, compact }
+    })
+}
+
+impl Sources {
+    fn src(&self, name: &str) -> Option<&str> {
+        self.stripped.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str())
+    }
+}
+
+fn compact_ws(src: &str) -> String {
+    src.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Every `fn` definition in `src`, as `(name, offset just past the signature)`.
+///
+/// A line scan rather than a `(?m)` regex over the whole file: `fn` opens a
+/// definition only where the line (after optional spaces and a `pub`) begins
+/// with it, which is exactly where `(?m)^\s*(?:pub\s+)?fn` can anchor, and the
+/// name and end offset come out identical either way. `fn_sigs_matches_the_regex`
+/// pins that for every source.
+fn fn_sigs(src: &str) -> Vec<(String, usize)> {
+    let r = rx();
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    for line in src.split_inclusive('\n') {
+        let t = line.trim_start();
+        let body = match t.strip_prefix("pub") {
+            Some(rest) if rest.starts_with(char::is_whitespace) => rest.trim_start(),
+            _ => t,
+        };
+        if body.starts_with("fn") {
+            if let Some(m) = r.fn_sig_one.captures(line) {
+                out.push((m[1].to_string(), off + m.get(0).unwrap().end()));
+            }
+        }
+        off += line.len();
+    }
+    out
+}
+
+/// `parse_kind`'s `"kind" => Ok(Capability::Variant)` table and the dispatch table
+/// `Capability::Variant(c) => module::fn(c, ..)`. [`build`] needs the dispatched
+/// function, [`kind_module`] needs its module, and both derive from these same two
+/// scans - so they happen once, not once per table.
+fn dispatch() -> &'static (BTreeMap<String, String>, BTreeMap<String, (String, String)>) {
+    static D: OnceLock<(BTreeMap<String, String>, BTreeMap<String, (String, String)>)> =
+        OnceLock::new();
+    D.get_or_init(|| {
+        let r = rx();
+        let s = sources();
+        let mut kind2var: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(p) = s.src("parse") {
+            if p.contains("Ok(Capability::") {
+                for m in r.kind_var.captures_iter(p) {
+                    let var = m.get(2).unwrap().as_str().to_string();
+                    for k in r.kind_lit.captures_iter(m.get(1).unwrap().as_str()) {
+                        kind2var.entry(k[1].to_string()).or_insert_with(|| var.clone());
+                    }
+                }
+            }
+        }
+        let mut var2fn: BTreeMap<String, (String, String)> = BTreeMap::new();
+        if let Some(p) = s.src("mod") {
+            if p.contains("Capability::") {
+                for m in r.var_fn.captures_iter(p) {
+                    let var = m[1].to_string();
+                    let module = m.get(2).map(|x| x.as_str()).unwrap_or("mod").to_string();
+                    let f = m[3].to_string();
+                    var2fn.entry(var).or_insert((module, f));
+                }
+            }
+        }
+        (kind2var, var2fn)
+    })
 }
 
 /// The body of a function, from the `{` that opens it to its matching `}`.
@@ -461,32 +535,11 @@ fn with_types() -> &'static BTreeMap<String, BTreeMap<String, ReadTy>> {
 fn kind_module() -> &'static BTreeMap<String, String> {
     static M: OnceLock<BTreeMap<String, String>> = OnceLock::new();
     M.get_or_init(|| {
-        let r = rx();
-        let stripped: Vec<(&str, String)> =
-            SOURCES.iter().map(|(n, s)| (*n, strip_comments(s))).collect();
-        let src_of =
-            |name: &str| stripped.iter().find(|(n, _)| *n == name).map(|(_, s)| s.as_str());
-        let mut kind2var: BTreeMap<String, String> = BTreeMap::new();
-        if let Some(p) = src_of("parse") {
-            for m in r.kind_var.captures_iter(p) {
-                let var = m.get(2).unwrap().as_str().to_string();
-                for k in r.kind_lit.captures_iter(m.get(1).unwrap().as_str()) {
-                    kind2var.entry(k[1].to_string()).or_insert_with(|| var.clone());
-                }
-            }
-        }
-        let mut var2mod: BTreeMap<String, String> = BTreeMap::new();
-        if let Some(p) = src_of("mod") {
-            for m in r.var_fn.captures_iter(p) {
-                var2mod.entry(m[1].to_string()).or_insert_with(|| {
-                    m.get(2).map(|x| x.as_str()).unwrap_or("mod").to_string()
-                });
-            }
-        }
+        let (kind2var, var2fn) = dispatch();
         let mut out: BTreeMap<String, String> = BTreeMap::new();
-        for (kind, var) in &kind2var {
-            if let Some(m) = var2mod.get(var) {
-                out.insert(canon_kind(kind).to_string(), m.clone());
+        for (kind, var) in kind2var {
+            if let Some((module, _)) = var2fn.get(var) {
+                out.insert(canon_kind(kind).to_string(), module.clone());
             }
         }
         out
@@ -512,10 +565,10 @@ fn build_types() -> BTreeMap<String, BTreeMap<String, ReadTy>> {
     let r = rx();
     // Only the non-test half speaks for the engine: a typed `with.get` inside a
     // `#[cfg(test)]` module would otherwise pin a key nothing read types.
-    let stripped: Vec<(&str, String)> = SOURCES
+    let stripped: Vec<(&str, String)> = sources()
+        .stripped
         .iter()
         .map(|(n, s)| {
-            let s = strip_comments(s);
             let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
             (*n, s[..cut].to_string())
         })
@@ -523,23 +576,34 @@ fn build_types() -> BTreeMap<String, BTreeMap<String, ReadTy>> {
     let mut per_mod: BTreeMap<String, BTreeMap<String, Option<ReadTy>>> = BTreeMap::new();
     for (name, src) in &stripped {
         let m = per_mod.entry((*name).to_string()).or_default();
-        for c in r.with_get_lit.captures_iter(src) {
-            let key = c[1].to_string();
-            let seg = read_segment(src, c.get(0).unwrap().end());
-            note_ty(m, &key, ty_in(&seg));
+        // `with\s*\.\s*get\s*\(` can only match where `with.get(` survives once
+        // whitespace is gone - a necessary condition, so this gate can only skip a
+        // source the regex would not have matched.
+        if compact_ws(src).contains("with.get(\"") {
+            for c in r.with_get_lit.captures_iter(src) {
+                let key = c[1].to_string();
+                let seg = read_segment(src, c.get(0).unwrap().end());
+                note_ty(m, &key, ty_in(&seg));
+            }
         }
-        // `effective_op(op, with, …)` reads `with.op` as a string, and only a
+        // `effective_op(op, with, ...)` reads `with.op` as a string, and only a
         // non-empty string overrides the definition (P: `queue` op override).
-        for _ in r.effective_op.captures_iter(src) {
-            note_ty(m, "op", Some(ReadTy::Str));
+        if src.contains("effective_op") {
+            for _ in r.effective_op.captures_iter(src) {
+                note_ty(m, "op", Some(ReadTy::Str));
+            }
         }
-        for c in r.str_field_lit.captures_iter(src) {
-            note_ty(m, &c[1].to_string(), Some(ReadTy::Str));
+        if src.contains("str_field") {
+            for c in r.str_field_lit.captures_iter(src) {
+                note_ty(m, &c[1].to_string(), Some(ReadTy::Str));
+            }
         }
         // `get_text` runs the value through `stringify`, so any JSON type is
         // accepted - the key must not be judged.
-        for c in r.get_text_lit.captures_iter(src) {
-            note_ty(m, &c[1].to_string(), None);
+        if src.contains("get_text") {
+            for c in r.get_text_lit.captures_iter(src) {
+                note_ty(m, &c[1].to_string(), None);
+            }
         }
     }
     let km = kind_module();
@@ -682,10 +746,10 @@ fn with_bands() -> &'static BTreeMap<String, BTreeMap<String, Band>> {
 
 fn build_bands() -> BTreeMap<String, BTreeMap<String, Band>> {
     let r = rx();
-    let stripped: Vec<(&str, String)> = SOURCES
+    let stripped: Vec<(&str, String)> = sources()
+        .stripped
         .iter()
         .map(|(n, s)| {
-            let s = strip_comments(s);
             let cut = s.find("#[cfg(test)]").unwrap_or(s.len());
             (*n, s[..cut].to_string())
         })
@@ -695,15 +759,18 @@ fn build_bands() -> BTreeMap<String, BTreeMap<String, Band>> {
         BTreeMap::new();
     for (name, src) in &stripped {
         let m = per_mod.entry((*name).to_string()).or_default();
-        for c in r.with_get_lit.captures_iter(src) {
-            let key = c[1].to_string();
-            let seg = band_segment(src, c.get(0).unwrap().end());
-            let band = band_in(&seg);
-            let e = m.entry(key).or_insert((0, None));
-            if e.0 == 0 {
-                e.1 = band;
+        // Same necessary-condition gate as `build_types`.
+        if compact_ws(src).contains("with.get(\"") {
+            for c in r.with_get_lit.captures_iter(src) {
+                let key = c[1].to_string();
+                let seg = band_segment(src, c.get(0).unwrap().end());
+                let band = band_in(&seg);
+                let e = m.entry(key).or_insert((0, None));
+                if e.0 == 0 {
+                    e.1 = band;
+                }
+                e.0 += 1;
             }
-            e.0 += 1;
         }
     }
     let km = kind_module();
@@ -1060,5 +1127,26 @@ pub fn with_issue_body(issue: &WithIssue) -> String {
         } => format!(
             "`call the capability {cap:?}` passes `with.{key}` as {value}, but a {kind:?} call clamps it to {band} - a value outside that band is silently replaced at the read site, so the setting that runs is not the one written."
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`fn_sigs`] must find exactly what the `(?m)` regex it replaced found -
+    /// same names, same offsets, same order - on every capability source.
+    #[test]
+    fn fn_sigs_matches_the_regex() {
+        let r = rx();
+        for (name, src) in SOURCES {
+            let want: Vec<(String, usize)> = r
+                .fn_sig
+                .captures_iter(src)
+                .map(|m| (m[1].to_string(), m.get(0).unwrap().end()))
+                .collect();
+            assert!(!want.is_empty(), "source {name} defines no fn (sanity)");
+            assert_eq!(fn_sigs(src), want, "source {name}");
+        }
     }
 }
