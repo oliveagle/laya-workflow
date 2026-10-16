@@ -1117,10 +1117,38 @@ fn make_backend(url: Option<&str>) -> (Box<dyn Decide>, String) {
     }
 }
 
+/// The message for a `--state` that is not valid JSON, or `None` when it is.
+/// `--state` takes *inline* JSON (`--state '{"text":"..."}'`), not a filename --
+/// the most common way to get it "wrong" is to pass a path, which then surfaces
+/// as a bare serde position (`expected value at line 1 column 1`) naming neither
+/// the flag nor the fix. The same guard covers `resume --state`.
+fn state_arg_problem(state: &str) -> Option<String> {
+    let err = match serde_json::from_str::<Value>(state) {
+        Ok(_) => return None,
+        Err(e) => e,
+    };
+    let t = state.trim();
+    let path_shaped = !t.starts_with(['{', '[', '"'])
+        && (t.ends_with(".json")
+            || t.ends_with(".jsonl")
+            || t.contains('/')
+            || std::path::Path::new(t).exists());
+    if path_shaped {
+        return Some(format!(
+            "`--state` takes inline JSON, not a path (`{t}`); read the file in with \
+             --state \"$(cat {t})\""
+        ));
+    }
+    Some(format!("`--state` is not valid JSON: {err}"))
+}
+
 /// Build run state, supporting the human-friendly `--query TEXT` shorthand.
 /// Any JSON remains valid for `--state`; when `--query` is present, that value
 /// is inserted into the object's `query` field.
 fn run_state(state: &str, query: Option<&str>) -> Result<Value> {
+    if let Some(msg) = state_arg_problem(state) {
+        bail!("{msg}");
+    }
     let mut value: Value = serde_json::from_str(state)?;
     let Some(query) = query else {
         return Ok(value);
@@ -1395,6 +1423,9 @@ fn main() -> Result<()> {
             let initial: Option<serde_json::Value> = if state == "{}" {
                 None
             } else {
+                if let Some(msg) = state_arg_problem(state) {
+                    bail!("{msg}");
+                }
                 Some(serde_json::from_str(state)?)
             };
             let (backend, label) = make_backend(cli.base_url.as_deref());

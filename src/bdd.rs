@@ -9010,6 +9010,11 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
                 "e2e_secs_total": total_e2e
             }
         });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
         std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
         println!("bdd score: wrote {path}");
     }
@@ -13799,6 +13804,11 @@ pub fn compare(o: &CompareOptions) -> Result<i32> {
                 "json_structural_fault_caught_offline": [json_struct_caught, n],
             }
         });
+        if let Some(parent) = Path::new(path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
         std::fs::write(path, serde_json::to_string_pretty(&report)?)?;
         println!("bdd compare: wrote {path}");
     }

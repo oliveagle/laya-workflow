@@ -297,3 +297,118 @@ pub fn test_bdd_arg_hints(h: &mut Harness) {
 
     let _ = std::fs::remove_dir_all(&cwd);
 }
+
+/// P239: the `--state` argument contract. `--state` takes *inline* JSON
+/// (`--state '{"text":"..."}'`), not a filename; the `run` / `resume` sites that
+/// parse it used to relay a bare serde position (`expected value at line 1
+/// column 1`, `expected ident at line 1 column 2`) that names neither the flag nor
+/// the fix. They now name it. The second half is the `--json` out-path: every
+/// `bdd` report writer but two already created the `--json` parent directory, so a
+/// path under a not-yet-existing directory is now created, not answered with a
+/// bare `No such file or directory (os error 2)`.
+pub fn test_state_arg_hints(h: &mut Harness) {
+    let cwd = std::env::temp_dir().join(format!("laya-statearg-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cwd);
+    std::fs::create_dir_all(&cwd).unwrap();
+    let spec = json!({
+        "dsl_version": 2, "name": "hint_ok", "start": "a",
+        "max_iterations": 3, "convergence_window": 2, "convergence_eps": 0.001,
+        "nodes": [{
+            "name": "a", "primary_q": "q",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "no", "B": "yes"}}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+            "min_confidence": 0.0, "max_retries": 1,
+            "action": {"kind": "copy_keys", "keys": ["q"]}
+        }]
+    });
+    std::fs::write(cwd.join("ok.json"), serde_json::to_string_pretty(&spec).unwrap()).unwrap();
+
+    // Happy paths: inline JSON, and the `--query` shorthand, still run.
+    let (code, _) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "{\"q\":\"A\"}"], &[]);
+    h.eq("state-arg: `run --state <inline json>` rc=0", code, Some(0));
+    let (code, _) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "{}", "--query", "hi?"], &[]);
+    h.eq("state-arg: `run --state {} --query` rc=0", code, Some(0));
+
+    // A missing path (was `expected value at line 1 column 1`).
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "ghost.json"], &[]);
+    h.eq("state-arg: `run --state <missing .json>` rc=1", code, Some(1));
+    h.check(
+        "state-arg: a missing state path names `--state` and the inline-JSON fix",
+        text.contains("`--state` takes inline JSON, not a path")
+            && text.contains("cat ghost.json")
+            && !text.contains("os error"),
+    );
+
+    // A file that really exists on disk is still not inline JSON.
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "ok.json"], &[]);
+    h.eq("state-arg: `run --state <existing file>` rc=1", code, Some(1));
+    h.check(
+        "state-arg: an existing path is named as a path, not parsed",
+        text.contains("`--state` takes inline JSON, not a path") && !text.contains("expected value"),
+    );
+
+    // A bare word / truncated object: the serde detail is wrapped, not relayed bare.
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "notjson"], &[]);
+    h.eq("state-arg: `run --state notjson` rc=1", code, Some(1));
+    h.check(
+        "state-arg: a non-JSON bare word says `--state is not valid JSON`",
+        text.contains("`--state` is not valid JSON") && text.contains("expected ident"),
+    );
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "{\"a\":1"], &[]);
+    h.eq("state-arg: `run --state <truncated object>` rc=1", code, Some(1));
+    h.check(
+        "state-arg: a truncated object keeps the serde detail under one `--state` line",
+        text.contains("`--state` is not valid JSON") && text.contains("EOF while parsing"),
+    );
+
+    // `resume` parses the same flag and answers in the same voice.
+    let (code, text) = run_code_in(
+        &cwd,
+        &["resume", "--spec", "ok.json", "--dir", "store", "--state", "notjson"],
+        &[],
+    );
+    h.eq("state-arg: `resume --state notjson` rc=1", code, Some(1));
+    h.check(
+        "state-arg: resume names `--state` too",
+        text.contains("`--state` is not valid JSON") && text.contains("expected ident"),
+    );
+    let (code, text) = run_code_in(
+        &cwd,
+        &["resume", "--spec", "ok.json", "--dir", "store", "--state", "ghost.json"],
+        &[],
+    );
+    h.eq("state-arg: `resume --state <missing>` rc=1", code, Some(1));
+    h.check(
+        "state-arg: resume on a path gives the inline-JSON hint",
+        text.contains("`--state` takes inline JSON, not a path") && !text.contains("os error"),
+    );
+
+    // The `--query` shorthands keep their own, already-named refusals.
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "{}", "--query", ""], &[]);
+    h.eq("state-arg: empty `--query` rc=1", code, Some(1));
+    h.check("state-arg: empty `--query` still names itself", text.contains("--query must not be empty"));
+    let (code, text) = run_code_in(&cwd, &["run", "--spec", "ok.json", "--state", "[]", "--query", "x"], &[]);
+    h.eq("state-arg: `--query` with a non-object rc=1", code, Some(1));
+    h.check(
+        "state-arg: `--query` with a non-object still names itself",
+        text.contains("--query can only be combined with a JSON object"),
+    );
+
+    // The `--json` out-path: a not-yet-existing parent directory is created, not
+    // answered with `No such file or directory (os error 2)`. These are the two
+    // report writers that used to skip the parent `create_dir_all` the rest do.
+    let (code, text) = run_code_in(&cwd, &["bdd", "score", "--json", "reports/deep/score.json"], &[]);
+    h.eq("state-arg: `bdd score --json <missing parent>` rc=0", code, Some(0));
+    h.check(
+        "state-arg: `bdd score --json` created its parent and wrote",
+        cwd.join("reports/deep/score.json").is_file() && text.contains("bdd score: wrote"),
+    );
+    let (code, _) = run_code_in(&cwd, &["bdd", "compare", "--json", "reports/deep/compare.json"], &[]);
+    h.eq("state-arg: `bdd compare --json <missing parent>` rc=0", code, Some(0));
+    h.check(
+        "state-arg: `bdd compare --json` created its parent and wrote",
+        cwd.join("reports/deep/compare.json").is_file(),
+    );
+
+    let _ = std::fs::remove_dir_all(&cwd);
+}
