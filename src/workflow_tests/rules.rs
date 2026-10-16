@@ -303,6 +303,87 @@ pub fn test_rules_runner(h: &mut Harness) {
     );
 }
 
+pub fn test_rules_heuristic_added_lines(h: &mut Harness) {
+    // (1) diff splitter: file headers dropped, `+`/`-` bodies kept verbatim.
+    let (added, removed) = ab::split_diff_added_removed(
+        "diff --git a/f b/f\nindex 111..222 100644\n--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n ctx\n-old1\n+new1\n+new2\n",
+    );
+    h.eq("split: added bodies", added, "new1\nnew2\n".to_string());
+    h.eq("split: removed bodies", removed, "old1\n".to_string());
+
+    // (2) an added line that merely begins with `+` is still content.
+    let (added, _) = ab::split_diff_added_removed("+++ b/f\n+++x;\n");
+    h.eq("split: `+++` w/o space is content", added, "++x;\n".to_string());
+
+    // (3) state walk: `diff` -> added/removed buckets; other strings -> added.
+    let state = json!({
+        "file": "AGENTS.md",
+        "task": "update the index row",
+        "diff": "+++ b/AGENTS.md\n@@ -1 +1 @@\n-k /mnt/data\n+k /mnt/data v2\n"
+    });
+    let (added, removed) = ab::heuristic_diff_text(&state);
+    h.check("walk: task text in added", added.contains("update the index row"));
+    h.check("walk: file path in added", added.contains("AGENTS.md"));
+    h.check("walk: kept token in added", added.contains("k /mnt/data v2"));
+    h.check("walk: same token in removed", removed.contains("k /mnt/data"));
+
+    let rule = model_rule(
+        "no-mnt",
+        ab::RuleWhen::Edit,
+        boolean_q(Some(ab::Heuristic {
+            match_any: Some(vec!["/mnt/".to_string()]),
+            p_violated: Some(0.95),
+            p_ok: Some(0.05),
+        })),
+        None,
+    );
+    let backend = ab::RulesHeuristicBackend;
+    let judge = |text: &str| {
+        let request = ab::CheckRequest {
+            phase: ab::RuleWhen::Edit,
+            file_diffs: vec![ab::FileDiff { file: "AGENTS.md".to_string(), text: text.to_string() }],
+            task: None,
+            rules: vec![rule.clone()],
+            thresholds: ab::DEFAULT_THRESHOLDS,
+            include_heuristic: true,
+        };
+        ab::run_check(&request, &backend).unwrap().verdicts[0].band
+    };
+
+    // (4) a brand-new line introducing `/mnt/` is a violation.
+    h.eq(
+        "new private path -> act",
+        judge("+++ b/AGENTS.md\n@@ -1 +1,2 @@\n keep\n+see /mnt/data/foo\n"),
+        ab::Band::Act,
+    );
+    // (5) touching a line that *already* carried `/mnt/` (it appears on both the
+    //     removed and the added side) is grandfathered, not a new leak.
+    h.eq(
+        "rewriting an existing private path -> clear",
+        judge("+++ b/AGENTS.md\n@@ -1 +1 @@\n-row 2026-09-19 /mnt/data\n+row 2026-09-20 /mnt/data\n"),
+        ab::Band::Clear,
+    );
+    // (6) deleting a line that carries `/mnt/` is a cleanup, never a violation.
+    h.eq(
+        "deleting a private path -> clear",
+        judge("+++ b/AGENTS.md\n@@ -1,2 +1 @@\n-see /mnt/data/foo\n keep\n"),
+        ab::Band::Clear,
+    );
+    // (7) a token seen only in context (unchanged) lines is not a hit.
+    h.eq(
+        "context-only private path -> clear",
+        judge("+++ b/AGENTS.md\n@@ -1,3 +1,3 @@\n line /mnt/data here\n-old\n+new\n"),
+        ab::Band::Clear,
+    );
+    // (8) suppression is per token: a genuinely new `/mnt/` still fires even
+    //     when some *other* line (a different token) was removed in the same diff.
+    h.eq(
+        "new token among removed token -> act",
+        judge("+++ b/AGENTS.md\n@@ -1,2 +1,2 @@\n-old /root/x\n+see /mnt/data for logs\n"),
+        ab::Band::Act,
+    );
+}
+
 pub fn test_rules_check_offline(h: &mut Harness) {
     // Offline check: heuristic rule matches a bad diff, clears a good one.
     let rule = model_rule(
@@ -368,6 +449,137 @@ pub fn test_rules_check_offline(h: &mut Harness) {
     };
     let out = ab::run_check(&docs, &backend).unwrap();
     h.eq("out-of-scope yields no verdicts", out.verdicts.len(), 0usize);
+}
+
+pub fn test_rules_check_diff_json_file(h: &mut Harness) {
+    // `rules check` used to take the whole diff only as an argv (`--diff-json`).
+    // A single argument over MAX_ARG_STRLEN (128 KiB) fails with E2BIG *before*
+    // the binary runs, and a pre-commit hook swallowing that failure silently
+    // leaves a commit ungated. `--diff-json-file <PATH>` (or `-` for stdin)
+    // removes the ceiling; this test proves the three routes agree and that a
+    // >128 KiB payload survives the file route.
+    let saved_laya_home = std::env::var_os("LAYA_HOME");
+    let laya_home = tmpdir("check-file-laya-home");
+    std::env::set_var("LAYA_HOME", &laya_home);
+
+    let root = tmpdir("check-file");
+    ab::cmd_init(&root).unwrap();
+    // The staged file must exist under the root: an act verdict on a file that
+    // is not there downgrades to a notice (there is nothing to repair).
+    std::fs::write(root.join("AGENTS.md"), "hello\n").unwrap();
+    let rubric = ab::Rubric {
+        version: 1,
+        compiled_at: "2026-10-16T00:00:00Z".to_string(),
+        compiled_by: Some("test".to_string()),
+        sources: vec![ab::RubricSource {
+            path: "AGENTS.md".to_string(),
+            sha: Some("a".repeat(64)),
+            scope: None,
+        }],
+        thresholds: None,
+        rules: vec![model_rule(
+            "no-mnt",
+            ab::RuleWhen::Edit,
+            boolean_q(Some(ab::Heuristic {
+                match_any: Some(vec!["/mnt/".to_string()]),
+                p_violated: Some(0.95),
+                p_ok: Some(0.05),
+            })),
+            None,
+        )],
+    };
+    ab::write_rubric(&ab::rubric_path(&root), &rubric).unwrap();
+
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let run = |args: &[&str], stdin: Option<&str>| {
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.args(args);
+        cmd.stdin(if stdin.is_some() {
+            std::process::Stdio::piped()
+        } else {
+            std::process::Stdio::null()
+        });
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().expect("spawn laya-workflow");
+        if let Some(text) = stdin {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(text.as_bytes())
+                .unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let kind = serde_json::from_str::<serde_json::Value>(&stdout)
+            .ok()
+            .and_then(|v| v.get("kind").and_then(|k| k.as_str()).map(String::from))
+            .unwrap_or_default();
+        (out.status.success(), kind)
+    };
+
+    // A diff that introduces a fresh `/mnt/` line must block on every route.
+    let bad = json!([{"file": "AGENTS.md", "text": "+++ b/AGENTS.md\n@@ -1 +1,2 @@\n keep\n+see /mnt/data for logs\n"}]);
+    let root_s = root.to_string_lossy().to_string();
+    let (ok_argv, kind_argv) = run(
+        &["rules", "check", "--root", &root_s, "--diff-json", &bad.to_string(), "--phase", "edit"],
+        None,
+    );
+    h.check("check: --diff-json runs", ok_argv);
+    h.eq("check: --diff-json blocks", kind_argv.clone(), "block".to_string());
+
+    let jf = laya_home.join("diff.json");
+    std::fs::write(&jf, bad.to_string()).unwrap();
+    let jf_s = jf.to_string_lossy().to_string();
+    let (ok_file, kind_file) = run(
+        &["rules", "check", "--root", &root_s, "--diff-json-file", &jf_s, "--phase", "edit"],
+        None,
+    );
+    h.check("check: --diff-json-file runs", ok_file);
+    h.eq("check: --diff-json-file blocks like argv", kind_file, kind_argv.clone());
+
+    let (ok_stdin, kind_stdin) = run(
+        &["rules", "check", "--root", &root_s, "--diff-json-file", "-", "--phase", "edit"],
+        Some(&bad.to_string()),
+    );
+    h.check("check: stdin '-' runs", ok_stdin);
+    h.eq("check: stdin '-' blocks like argv", kind_stdin, kind_argv.clone());
+
+    // A benign edit passes on the file route.
+    let good = json!([{"file": "AGENTS.md", "text": "+++ b/AGENTS.md\n@@ -1 +1,2 @@\n keep\n+plain text\n"}]);
+    std::fs::write(&jf, good.to_string()).unwrap();
+    let (ok_good, kind_good) = run(
+        &["rules", "check", "--root", &root_s, "--diff-json-file", &jf_s, "--phase", "edit"],
+        None,
+    );
+    h.check("check: benign file diff runs", ok_good);
+    h.eq("check: benign file diff silent", kind_good, "silent".to_string());
+
+    // The point of the flag: a payload well past MAX_ARG_STRLEN (128 KiB) is
+    // handed over intact. (The same payload as an argv would E2BIG *before*
+    // exec, so it cannot be expressed as a `--diff-json` comparison here.)
+    let big_line = "y".repeat(200 * 1024);
+    let big = json!([{"file": "AGENTS.md", "text": format!("+++ b/AGENTS.md\n@@ -1 +1,2 @@\n{big_line}\n+plain text\n")}]);
+    std::fs::write(&jf, big.to_string()).unwrap();
+    h.check("check: 200 KiB payload is written", std::fs::metadata(&jf).map(|m| m.len() > 200 * 1024).unwrap_or(false));
+    let (ok_big, kind_big) = run(
+        &["rules", "check", "--root", &root_s, "--diff-json-file", &jf_s, "--phase", "edit"],
+        None,
+    );
+    h.check("check: 200 KiB payload runs via file", ok_big);
+    h.eq("check: 200 KiB payload silent", kind_big, "silent".to_string());
+
+    match saved_laya_home {
+        Some(v) => std::env::set_var("LAYA_HOME", v),
+        None => std::env::remove_var("LAYA_HOME"),
+    }
 }
 
 pub fn test_rules_hook_output(h: &mut Harness) {

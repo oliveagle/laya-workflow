@@ -696,14 +696,73 @@ pub fn check_with_model(
 
 // ─── offline backend (deterministic; reads the heuristic extension) ──
 
+/// Split a unified diff into the bodies of its added (`+`) and removed (`-`)
+/// lines. The `+++ `/`--- ` file headers are dropped: they name the file, not a
+/// line of its content.
+pub fn split_diff_added_removed(diff: &str) -> (String, String) {
+    let mut added = String::new();
+    let mut removed = String::new();
+    for line in diff.lines() {
+        if line.starts_with("+++ ") || line.starts_with("--- ") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix('+') {
+            added.push_str(rest);
+            added.push('\n');
+        } else if let Some(rest) = line.strip_prefix('-') {
+            removed.push_str(rest);
+            removed.push('\n');
+        }
+    }
+    (added, removed)
+}
+
+/// The heuristic matcher judges what an edit *introduces*, so it reads only the
+/// added lines; a token that also sits on a removed line is grandfathered (it
+/// was already there). `diff` fields are split into added/removed; every other
+/// state string (task, file, …) is matched verbatim in the `added` bucket and
+/// has nothing to grandfather against.
+pub fn heuristic_diff_text(state: &Value) -> (String, String) {
+    fn walk(v: &Value, in_diff: bool, added: &mut String, removed: &mut String) {
+        match v {
+            Value::Object(m) => {
+                for (k, val) in m {
+                    walk(val, in_diff || k == "diff", added, removed);
+                }
+            }
+            Value::Array(a) => {
+                for x in a {
+                    walk(x, in_diff, added, removed);
+                }
+            }
+            Value::String(s) => {
+                if in_diff {
+                    let (a, r) = split_diff_added_removed(s);
+                    added.push_str(&a);
+                    removed.push_str(&r);
+                } else {
+                    added.push_str(s);
+                    added.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut added, mut removed) = (String::new(), String::new());
+    walk(state, false, &mut added, &mut removed);
+    (added, removed)
+}
+
 /// Deterministic rules backend for offline runs and CI. Reads each question's
-/// optional `heuristic` block and answers from token matches on the serialised
-/// state. A question without one is answered compliant (probability ~0).
+/// optional `heuristic` block and answers from token matches on the state's
+/// added lines — a token that also appears on a removed line is pre-existing
+/// and never counts as a hit. A question without one is answered compliant
+/// (probability ~0).
 pub struct RulesHeuristicBackend;
 
 impl Decide for RulesHeuristicBackend {
     fn decide(&self, state: &Value, questions: &Value) -> Result<crate::workflow::Verdict> {
-        let text = serde_json::to_string(state).unwrap_or_default();
+        let (added, removed) = heuristic_diff_text(state);
         let mut answers = HashMap::new();
         let Some(qs) = questions.as_object() else {
             return Ok(crate::workflow::Verdict::default());
@@ -717,7 +776,10 @@ impl Decide for RulesHeuristicBackend {
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|t| t.as_str())
-                        .any(|tok| crate::backend::contains_any(&text, &[tok]))
+                        .any(|tok| {
+                            crate::backend::contains_any(&added, &[tok])
+                                && !crate::backend::contains_any(&removed, &[tok])
+                        })
                 })
                 .unwrap_or(false);
             let p_v = h

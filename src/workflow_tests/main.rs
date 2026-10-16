@@ -78,6 +78,8 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("rules-glob", rules::test_rules_glob),
         ("rules-runner", rules::test_rules_runner),
         ("rules-check-offline", rules::test_rules_check_offline),
+        ("rules-heuristic-added-lines", rules::test_rules_heuristic_added_lines),
+        ("rules-check-diff-json-file", rules::test_rules_check_diff_json_file),
         ("rules-hook-output", rules::test_rules_hook_output),
         ("rules-events", rules::test_rules_events),
         ("rules-compile-prompt", rules::test_rules_compile_prompt),

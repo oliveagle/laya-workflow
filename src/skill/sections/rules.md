@@ -31,6 +31,13 @@ laya-workflow rules check \
   --file-path src/worker.rs \
   --phase edit
 
+# 4b. 多文件改动（hunk 拼成 `[{file,text}]` JSON）—— 从文件或 stdin 传入
+laya-workflow rules check --diff-json-file /tmp/changes.json --phase edit
+laya-workflow rules check --diff-json-file - --phase edit < /tmp/changes.json
+#     注意：`--diff-json <JSON>` 把整段 diff 当 argv 传，单个参数超过
+#     128 KiB（MAX_ARG_STRLEN）会在 exec 前就 E2BIG 失败 —— 大 diff 必须走
+#     `--diff-json-file`，否则调用方（如 pre-commit hook）会静默「门禁没跑」。
+
 # 5. 用真模型判定（laya-tch /v1/systemone）
 laya-workflow rules check \
   --diff-file /tmp/hunk.diff \
@@ -83,6 +90,9 @@ laya-workflow rules audit
 - **lint 型规则**（`check.type = "lint"`）只记录、不判定——那本该是 linter 的活。
 - **`question.heuristic` 是 laya 的离线扩展**：没配它也能跑（离线判定为合规，
   在线用真模型判）；配了它 `rules check` 不用模型也能确定性判。
+  离线判定只看 diff 的**新增行**：某个 token 若同时出现在**被删除行**上，说明它
+  本就存在（历史遗留），不计为本次引入——于是在一行旧内容上做小改动不会误报，
+  只有真正新增的违规才命中。
 
 ## 判定输出
 

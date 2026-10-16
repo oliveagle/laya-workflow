@@ -839,6 +839,10 @@ enum RulesCmd {
         /// Multi-file diff as JSON: a `{file,text}` object or array.
         #[arg(long)]
         diff_json: Option<String>,
+        /// Multi-file diff JSON read from this file (`-` = stdin). Use instead
+        /// of --diff-json when the diff is too large for an argv.
+        #[arg(long)]
+        diff_json_file: Option<String>,
         /// The user's task, given to the model as state.
         #[arg(long)]
         task: Option<String>,
@@ -3081,6 +3085,7 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
             diff_file,
             file_path,
             diff_json,
+            diff_json_file,
             task,
             base_url,
             session_id,
@@ -3100,20 +3105,30 @@ fn run_rules(cmd: &RulesCmd) -> Result<()> {
                 "turn" => ab::RuleWhen::Turn,
                 other => anyhow::bail!("--phase must be `edit` or `turn`, got {other:?}"),
             };
-            let diffs = match (diff_file, file_path, diff_json) {
-                (Some(path), Some(relative), None) => {
+            let diffs = match (diff_file, file_path, diff_json, diff_json_file) {
+                (Some(path), Some(relative), None, None) => {
                     let text = std::fs::read_to_string(path)?;
                     vec![ab::FileDiff {
                         file: relative.clone(),
                         text,
                     }]
                 }
-                (None, None, Some(raw)) => ab::parse_diff_json(raw)?,
-                (None, None, None) => anyhow::bail!(
-                    "no diff given: pass --diff-json <JSON> or --diff-file <PATH> --file-path <REL>"
+                (None, None, Some(raw), None) => ab::parse_diff_json(&raw)?,
+                (None, None, None, Some(path)) => {
+                    let raw = if path == "-" {
+                        let mut buf = String::new();
+                        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)?;
+                        buf
+                    } else {
+                        std::fs::read_to_string(&path)?
+                    };
+                    ab::parse_diff_json(&raw)?
+                }
+                (None, None, None, None) => anyhow::bail!(
+                    "no diff given: pass --diff-json <JSON> / --diff-json-file <PATH>, or --diff-file <PATH> --file-path <REL>"
                 ),
                 _ => anyhow::bail!(
-                    "--diff-file requires --file-path; --diff-json cannot be combined with them"
+                    "--diff-file requires --file-path; --diff-json / --diff-json-file take the whole diff and cannot be combined with them"
                 ),
             };
             let input = ab::CheckCliInput {
