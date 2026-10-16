@@ -8,6 +8,10 @@
     {
       "root": "code/eval",
       "note": "The deployment-validation tree: the deploy gate that must pass before any GPU deployment ships, plus the tier0/tier1 runners and the tier1 quality runner it drives. Every immediate child directory that holds a `.py` must be a universe's `upstream` (deploy_gate, tiers), so a new gate directory under code/eval cannot appear without a universe accounting for it."
+    },
+    {
+      "root": "code/longhorizon",
+      "note": "The long-horizon trusted-state-machine package (R11 Path C): the model may only choose an action, and the executor gates that proposal before it acts. Its one decision module is ported; a new module under this root cannot appear without a universe accounting for it."
     }
   ],
   "universes": [
@@ -261,6 +265,15 @@
           ]
         }
       ]
+    },
+    {
+      "id": "ole_eval_longhorizon",
+      "upstream": "code/longhorizon",
+      "kind": "one decision guard (the model-action gate) plus the package's own plumbing",
+      "ported": {
+        "state_machine": "bdd/workflows/guards/longhorizon_action_gate.feature"
+      },
+      "note": "The model may only choose an action (run a candidate / declare done); parse_model_action decides whether that proposal is the contract shape before the executor acts. Ported as a 4-node validation walk. The executor's syntax/test/record bookkeeping is measurement and is folded into the gate's observable input, so it is not a graph of its own; the package __init__ is a re-export and is not enumerated (scope_enumerate_py skips __init__)."
     }
   ]
 }

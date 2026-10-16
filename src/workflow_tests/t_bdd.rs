@@ -3204,16 +3204,16 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads all nine universes", counts.universes, 9);
+    h.eq("bdd scope-check: reads all ten universes", counts.universes, 10);
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
         9,
     );
     h.eq(
-        "bdd scope-check: 19 explicit ports (agent_permission + reliable_reader + deploy_gate + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 20 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + the 16 agent-toolbox workflows)",
         counts.ported,
-        19,
+        20,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3231,9 +3231,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         66,
     );
     h.eq(
-        "bdd scope-check: 2 declared coverage roots (code/qwen_vm + code/eval)",
+        "bdd scope-check: 3 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon)",
         counts.roots,
-        2,
+        3,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3293,6 +3293,25 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: deploy_gate ports the deployment gate's verdict as its @decision feature",
         dg["ported"]["gate"] == serde_json::json!("bdd/workflows/guards/deploy_gate.feature"),
+    );
+
+    // P226: the long-horizon trusted-state-machine action gate, under the new
+    // `code/longhorizon` coverage root, is pinned by name *and* by the feature it
+    // ports - the same pin the working_mem and deploy_gate ports above carry.
+    let lh = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_longhorizon")
+        .expect("ole_eval_longhorizon universe");
+    h.eq(
+        "bdd scope-check: longhorizon is the one ported module under code/longhorizon",
+        lh["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: longhorizon ports the model-action gate as its @decision feature",
+        lh["ported"]["state_machine"] == serde_json::json!("bdd/workflows/guards/longhorizon_action_gate.feature"),
     );
 
     let probs_of = |c: &str| {
@@ -3389,7 +3408,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.eq(
         "bdd scope-check: the planted tree holds every name the census lists",
         planted.len(),
-        78,
+        79,
     );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();

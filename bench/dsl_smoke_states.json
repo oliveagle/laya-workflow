@@ -7110,5 +7110,36 @@
       "ev_perf": "pass",
       "ev_lmcache": "fail"
     }
+  },
+  "longhorizon_action_gate": {
+    "accept_run": {
+      "ev_parse": "valid",
+      "ev_shape": "object",
+      "ev_action": "run",
+      "ev_code": "ok"
+    },
+    "accept_done": {
+      "ev_parse": "valid",
+      "ev_shape": "object",
+      "ev_action": "done"
+    },
+    "reject_no_json": {
+      "ev_parse": "no_json"
+    },
+    "reject_not_object": {
+      "ev_parse": "valid",
+      "ev_shape": "not_object"
+    },
+    "reject_unknown_action": {
+      "ev_parse": "valid",
+      "ev_shape": "object",
+      "ev_action": "unknown"
+    },
+    "reject_missing_code": {
+      "ev_parse": "valid",
+      "ev_shape": "object",
+      "ev_action": "run",
+      "ev_code": "missing"
+    }
   }
 }

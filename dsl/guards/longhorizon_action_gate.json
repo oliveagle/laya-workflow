@@ -1,0 +1,194 @@
+{
+  "name": "longhorizon_action_gate",
+  "_bdd": {
+    "feature": "longhorizon_action_gate",
+    "feature_path": "bdd/workflows/guards/longhorizon_action_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval long-horizon trusted-state-machine action gate\n(code/longhorizon/state_machine.py, `parse_model_action`, pinned upstream by the\nmodule's own `_self_test`): the model may only choose an action -- run a candidate\nimplementation, or declare itself done -- and the executor decides whether that\nproposal is the contract shape before it is allowed to act. A response whose\nleading code fence is stripped and which is then a JSON object whose action is\n\"run\" with a non-empty string code, or \"done\", is accepted; anything else is\nrefused and named: not JSON, not an object, an action outside run/done, or a run\nwith no code.\nThe walk reads no number the model wrote: only the action name and the presence of\na code string enter the decision. That is the reader's F6 guarantee (the model can\nchoose an action, never dictate a value) expressed as the graph's shape.\nOne fold is documented: stripping an optional leading code fence is a transform\nwith no decision, so it is folded into the `parse` node's observable input (the\nfence-stripped text). Unlike the working-memory reader, this gate has no\nJSON-object *search* fallback - the fence-stripped text must be JSON on its own.\nReference walk (code/longhorizon/state_machine.py, parse_model_action): strip an\noptional leading fence, json.loads, require a dict, require action in {run, done},\nand for run require a non-empty string code. The first refusal ends the walk.",
+  "start": "parse",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "parse",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Is the response, after any leading code fence is stripped, valid JSON on its own?",
+          "criteria": {
+            "valid": "json.loads accepts the fence-stripped text",
+            "no_json": "the fence-stripped text is not valid JSON"
+          },
+          "heuristic": {
+            "answer_field": "ev_parse"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "no_json": "STOP"
+        },
+        "default": "shape"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "no_json"
+            },
+            "label": "REJECT_NO_JSON"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PARSE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "shape",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "Is the parsed value a JSON object -- a dict -- and not a list, string or number?",
+          "criteria": {
+            "object": "the parsed value is a JSON object",
+            "not_object": "the parsed value is not an object"
+          },
+          "heuristic": {
+            "answer_field": "ev_shape"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "not_object": "STOP"
+        },
+        "default": "action"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "not_object"
+            },
+            "label": "REJECT_NOT_OBJECT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "SHAPE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "What does the object's action field say? It must be exactly run or done.",
+          "criteria": {
+            "run": "action is run: the model wants to execute a candidate implementation",
+            "done": "action is done: the model declares the task finished",
+            "unknown": "action is missing, or outside run/done"
+          },
+          "heuristic": {
+            "answer_field": "ev_action"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "unknown": "STOP",
+          "done": "STOP"
+        },
+        "default": "code"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "unknown"
+            },
+            "label": "REJECT_UNKNOWN_ACTION"
+          },
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "done"
+            },
+            "label": "ACCEPT_DONE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ACTION_RUN"
+          }
+        ]
+      }
+    },
+    {
+      "name": "code",
+      "primary_q": "proposal",
+      "questions": {
+        "proposal": {
+          "type": "choice",
+          "instructions": "action is run: is code a non-empty string? A run with no code cannot be executed. This is the last gate: a run with code is accepted.",
+          "criteria": {
+            "ok": "code is a string holding at least one non-space character",
+            "missing": "code is absent, is not a string, or is blank"
+          },
+          "heuristic": {
+            "answer_field": "ev_code"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proposal",
+        "rules": [
+          {
+            "when": {
+              "question": "proposal",
+              "answer": "ok"
+            },
+            "label": "ACCEPT_RUN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "REJECT_MISSING_CODE"
+          }
+        ]
+      }
+    }
+  ]
+}
