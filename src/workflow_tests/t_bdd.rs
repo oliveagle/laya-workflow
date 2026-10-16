@@ -8766,9 +8766,9 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 /// needed), so the whole section runs anywhere.
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
-        agnostic_agreement, default_system_backends, diff_systems, format_diff, format_strata,
-        rank_systems, repo_root, stratify_systems, system_probe_questions, LiveSummary,
-        SpecLiveResult, SystemVerdict,
+        agnostic_agreement, attribute_split, default_system_backends, diff_systems, format_diff,
+        format_split_attribution, format_strata, rank_systems, repo_root, stratify_systems,
+        system_probe_questions, CategorySplit, LiveSummary, SpecLiveResult, SystemVerdict,
     };
     use laya_workflow::dsl_smoke::{expect_pins_backend_number, BACKEND_AGNOSTIC_NUMBER_KEYS};
 
@@ -9193,6 +9193,121 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
     h.check(
         "p203: an empty stratification renders nothing",
         format_strata(&[], 5).is_empty(),
+    );
+
+    // ── P204: attribute the states two backends disagree on ──
+    // a = :18400-style winner on cat2, b = the other on cat1; s3 is pinned.
+    let ma = mk_stratum(
+        "http://a",
+        vec![
+            ("cat1/one.feature", vec![("s1", true), ("s2", false), ("s3", true)], vec!["s3"]),
+            ("cat1/two.feature", vec![("s1", false)], vec![]),
+            ("cat2/three.feature", vec![("s1", true), ("s2", true)], vec![]),
+        ],
+    );
+    let mb = mk_stratum(
+        "http://b",
+        vec![
+            ("cat1/one.feature", vec![("s1", true), ("s2", true), ("s3", true)], vec!["s3"]),
+            ("cat1/two.feature", vec![("s1", true)], vec![]),
+            ("cat2/three.feature", vec![("s1", true), ("s2", false)], vec![]),
+        ],
+    );
+    let att = attribute_split(&ma, &mb);
+    h.check(
+        "p204: the attribution counts each side's sole wins, reference-pinned excluded",
+        att.a_only == 1 && att.b_only == 2 && att.pinned_excluded == 1,
+    );
+    h.check(
+        "p204: every counted win is a disagreement the head-to-head reports",
+        att.a_only + att.b_only == diff_systems(&ma, &mb, usize::MAX).disagree,
+    );
+    h.check(
+        "p204: a pinned state both backends got right is still excluded, not a win",
+        {
+            let pv =
+                mk_stratum("http://pv", vec![("pin/only.feature", vec![("s1", true)], vec!["s1"])]);
+            let pw =
+                mk_stratum("http://pw", vec![("pin/only.feature", vec![("s1", true)], vec!["s1"])]);
+            let e = attribute_split(&pv, &pw);
+            e.pinned_excluded == 1
+                && e.a_only == 0
+                && e.b_only == 0
+                && e.a_specs.is_empty()
+                && e.b_specs.is_empty()
+        },
+    );
+    h.check(
+        "p204: per-spec wins are ordered count desc, then name",
+        att.a_specs == vec![("cat2/three.feature".to_string(), 1)]
+            && att.b_specs
+                == vec![
+                    ("cat1/one.feature".to_string(), 1),
+                    ("cat1/two.feature".to_string(), 1),
+                ],
+    );
+    h.check(
+        "p204: categories roll up by path prefix, ordered by total desc",
+        att.categories
+            == vec![
+                CategorySplit { category: "cat1".into(), a_only: 0, b_only: 2 },
+                CategorySplit { category: "cat2".into(), a_only: 1, b_only: 0 },
+            ],
+    );
+    h.check(
+        "p204: a pin recorded by either backend excludes the state",
+        {
+            let mp = mk_stratum("http://p", vec![("c/one.feature", vec![("s1", true)], vec![])]);
+            let mq = mk_stratum(
+                "http://q",
+                vec![("c/one.feature", vec![("s1", false)], vec!["s1"])],
+            );
+            let e = attribute_split(&mp, &mq);
+            e.a_only == 0 && e.b_only == 0 && e.pinned_excluded == 1
+        },
+    );
+    h.check(
+        "p204: two backends that split nothing attribute nothing",
+        {
+            let e = attribute_split(&ma, &ma);
+            e.a_only == 0 && e.b_only == 0 && format_split_attribution(&e, 5).is_empty()
+        },
+    );
+    let dead2 = SystemVerdict {
+        url: "http://dead".into(),
+        preflight_error: Some("down".into()),
+        ..Default::default()
+    };
+    let disjoint = mk_stratum("http://z", vec![("z/f.feature", vec![("s1", true)], vec![])]);
+    h.check(
+        "p204: an un-walked or disjoint backend attributes nothing",
+        attribute_split(&ma, &dead2).a_only == 0
+            && attribute_split(&ma, &dead2).b_only == 0
+            && attribute_split(&ma, &disjoint).a_only == 0
+            && attribute_split(&ma, &disjoint).b_only == 0,
+    );
+    let report = format_split_attribution(&att, 5);
+    h.check(
+        "p204: the report names both sides and their win counts",
+        report.contains("split attribution (http://a vs http://b)")
+            && report.contains("http://a only 1")
+            && report.contains("http://b only 2")
+            && report.contains("1 reference-pinned state(s) excluded"),
+    );
+    h.check(
+        "p204: the category line carries the signed net, capped at top",
+        report.contains("cat1 0/2 (-2)")
+            && report.contains("cat2 1/0 (+1)")
+            && {
+                let one = format_split_attribution(&att, 1);
+                one.contains("by category (2): cat1 0/2 (-2)") && !one.contains("cat2 1/0")
+            },
+    );
+    h.check(
+        "p204: each side's spec list is capped at top and names its count",
+        report.contains("http://b wins (2 spec(s), top 2): cat1/one.feature 1, cat1/two.feature 1")
+            && format_split_attribution(&att, 1)
+                .contains("http://b wins (2 spec(s), top 1): cat1/one.feature 1"),
     );
 }
 

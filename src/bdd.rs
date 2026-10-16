@@ -12382,6 +12382,160 @@ pub fn format_strata(strata: &[SpecStratum], top: usize) -> String {
     out
 }
 
+/// P204: one category's split wins — how many states under this path prefix each
+/// backend alone got right.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CategorySplit {
+    pub category: String,
+    pub a_only: usize,
+    pub b_only: usize,
+}
+
+/// P204: of the states two walked backends **disagree** on, how many each one
+/// alone passes. When two models tie on aggregate agreement (the keep-list pair
+/// both sits at 645/989) the only thing that separates them is *which* states
+/// each one wins — this is that attribution, so "who is better" no longer falls
+/// through to latency noise. Reference-pinned states are excluded from the join
+/// (a live model fails them by construction), so every counted win is a state the
+/// other model really got wrong. Pure and deterministic (`BTreeMap` join; the
+/// per-spec lists are sorted count desc then name, the categories by total desc
+/// then name).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SplitAttribution {
+    pub a_url: String,
+    pub b_url: String,
+    /// States A passes and B fails.
+    pub a_only: usize,
+    /// States B passes and A fails.
+    pub b_only: usize,
+    /// Shared reference-pinned states left out of the join — not wins.
+    pub pinned_excluded: usize,
+    /// `(spec rel, count)` for the states only A passes: count desc, then name.
+    pub a_specs: Vec<(String, usize)>,
+    /// `(spec rel, count)` for the states only B passes: same order.
+    pub b_specs: Vec<(String, usize)>,
+    /// Per-category totals (the first path segment): total desc, then name.
+    pub categories: Vec<CategorySplit>,
+}
+
+/// The directory-like prefix of a spec path (`ole_eval/foo.feature` ->
+/// `ole_eval`); a path with no `/` is its own category.
+fn spec_category(rel: &str) -> &str {
+    rel.split_once('/').map(|(c, _)| c).unwrap_or(rel)
+}
+
+/// `(name, count)` pairs by count desc, then name asc — the deterministic order
+/// the attribution prints in.
+fn sort_split_counts(mut v: Vec<(String, usize)>) -> Vec<(String, usize)> {
+    v.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.cmp(&y.0)));
+    v
+}
+
+/// P204: join two walked backends on `(spec rel, label)` and attribute every
+/// state they disagree on to the backend that passes it, skipping the
+/// reference-pinned states neither live model can meet. Pure, so the join /
+/// counts / ordering pin offline without any live backend.
+pub fn attribute_split(a: &SystemVerdict, b: &SystemVerdict) -> SplitAttribution {
+    let mut out =
+        SplitAttribution { a_url: a.url.clone(), b_url: b.url.clone(), ..Default::default() };
+    let av = state_verdicts(a);
+    let bv = state_verdicts(b);
+    let pinned: std::collections::BTreeSet<(String, String)> =
+        pinned_state_keys(a).union(&pinned_state_keys(b)).cloned().collect();
+    let mut a_specs: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut b_specs: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut cats: std::collections::BTreeMap<String, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for (key, &a_ok) in &av {
+        let Some(&b_ok) = bv.get(key) else { continue };
+        // A reference-pinned state is dropped whether or not the two happen to
+        // agree on it — a live model cannot be credited with the reference's own
+        // number, so it is never a win.
+        if pinned.contains(key) {
+            out.pinned_excluded += 1;
+            continue;
+        }
+        if a_ok == b_ok {
+            continue;
+        }
+        let e = cats.entry(spec_category(&key.0).to_string()).or_insert((0, 0));
+        if a_ok {
+            out.a_only += 1;
+            *a_specs.entry(key.0.clone()).or_insert(0) += 1;
+            e.0 += 1;
+        } else {
+            out.b_only += 1;
+            *b_specs.entry(key.0.clone()).or_insert(0) += 1;
+            e.1 += 1;
+        }
+    }
+    out.a_specs = sort_split_counts(a_specs.into_iter().collect());
+    out.b_specs = sort_split_counts(b_specs.into_iter().collect());
+    out.categories = cats
+        .into_iter()
+        .map(|(category, (a_only, b_only))| CategorySplit { category, a_only, b_only })
+        .collect();
+    out.categories.sort_by(|x, y| {
+        (y.a_only + y.b_only).cmp(&(x.a_only + x.b_only)).then(x.category.cmp(&y.category))
+    });
+    out
+}
+
+/// Render the [`SplitAttribution`] the way `compare_systems` prints it: both
+/// sides' win counts, then the per-category net and each side's top specs, capped
+/// at `top`. Empty when the two backends disagreed on no agnostic state — nothing
+/// to attribute. Pure, so the wording pins offline.
+pub fn format_split_attribution(s: &SplitAttribution, top: usize) -> String {
+    if s.a_only + s.b_only == 0 {
+        return String::new();
+    }
+    let mut out = format!(
+        "split attribution ({} vs {}) — backend-agnostic only, {} reference-pinned state(s) excluded:\n",
+        s.a_url, s.b_url, s.pinned_excluded
+    );
+    out.push_str(&format!(
+        "  {} only {}  /  {} only {}\n",
+        s.a_url, s.a_only, s.b_url, s.b_only
+    ));
+    if !s.categories.is_empty() {
+        let shown: Vec<String> = s
+            .categories
+            .iter()
+            .take(top)
+            .map(|c| {
+                let net = c.a_only as isize - c.b_only as isize;
+                format!(
+                    "{} {}/{} ({}{})",
+                    c.category,
+                    c.a_only,
+                    c.b_only,
+                    if net >= 0 { "+" } else { "" },
+                    net
+                )
+            })
+            .collect();
+        out.push_str(&format!(
+            "  by category ({}): {}\n",
+            s.categories.len(),
+            shown.join(", ")
+        ));
+    }
+    for (url, list) in [(&s.a_url, &s.a_specs), (&s.b_url, &s.b_specs)] {
+        if list.is_empty() {
+            continue;
+        }
+        let shown: Vec<String> = list.iter().take(top).map(|(f, n)| format!("{f} {n}")).collect();
+        out.push_str(&format!(
+            "  {} wins ({} spec(s), top {}): {}\n",
+            url,
+            list.len(),
+            top.min(list.len()),
+            shown.join(", ")
+        ));
+    }
+    out
+}
+
 /// Compare the decision corpus across several System-1 backends and rank them.
 pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
     let corpus = DecisionCorpus::load()?;
@@ -12484,6 +12638,13 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
     if ranking.len() >= 2 {
         for &j in ranking.iter().skip(1) {
             print!("{}", format_diff(&diff_systems(&vs[ranking[0]], &vs[j], 10)));
+            // P204: of the states they disagree on, who won which — the
+            // attribution the agreement rate cannot give (the keep-list pair ties
+            // on aggregate agreement). Reference-pinned states are excluded.
+            print!(
+                "{}",
+                format_split_attribution(&attribute_split(&vs[ranking[0]], &vs[j]), 5)
+            );
         }
         // P203: `shared`/`agree` above lumps in states no backend can meet. The
         // stratification separates those from the honest hard tail and the specs
@@ -12541,6 +12702,7 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
             // the head-to-head block printed above.
             "head_to_head": ranking.iter().skip(1).map(|&j| {
                 let d = diff_systems(&vs[ranking[0]], &vs[j], usize::MAX);
+                let sa = attribute_split(&vs[ranking[0]], &vs[j]);
                 json!({
                     "a": d.a_url,
                     "b": d.b_url,
@@ -12554,6 +12716,27 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                         "a": e.a,
                         "b": e.b,
                     })).collect::<Vec<_>>(),
+                    // P204: which of the two won the states they disagree on
+                    // (reference-pinned states excluded), so a tie in
+                    // `agreement_rate` still has a machine-readable attribution.
+                    "split_attribution": {
+                        "a_only": sa.a_only,
+                        "b_only": sa.b_only,
+                        "pinned_excluded": sa.pinned_excluded,
+                        "a_specs": sa.a_specs.iter().map(|(spec, count)| json!({
+                            "spec": spec,
+                            "count": count,
+                        })).collect::<Vec<_>>(),
+                        "b_specs": sa.b_specs.iter().map(|(spec, count)| json!({
+                            "spec": spec,
+                            "count": count,
+                        })).collect::<Vec<_>>(),
+                        "categories": sa.categories.iter().map(|c| json!({
+                            "category": c.category,
+                            "a_only": c.a_only,
+                            "b_only": c.b_only,
+                        })).collect::<Vec<_>>(),
+                    },
                 })
             }).collect::<Vec<_>>(),
             // P203: per spec, the comparable states split into backend-agnostic
