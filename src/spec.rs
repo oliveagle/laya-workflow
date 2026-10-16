@@ -970,6 +970,84 @@ fn policy_ceiling(k: &str) -> Option<(u64, &'static str)> {
     }
 }
 
+/// P183: a question's `heuristic` block is a small *typed* contract. Each key is
+/// read with a specific accessor — the offline backend (`backend.rs`), the rules
+/// backend (`rules.rs`) or the BDD tooling (`bdd.rs` / `bdd_mcp.rs`) — and a value
+/// of the wrong JSON type is silently replaced by that reader's default. Same
+/// "a declared value the engine throws away" class as P168 (`policy`) and P179
+/// (node / spec), one level deeper: *inside* a question's `heuristic`. The
+/// compiler always emits well-typed values (it parses the `.feature` step), so
+/// this only ever fires on a hand-written or sidecar spec — exactly where it was
+/// silent.
+fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
+    // weights / probabilities: read with `as_f64()`; the `.unwrap_or(default)`
+    // keeps the default on any other type, so the confidence that runs is not the
+    // one written.
+    const NUM: &[&str] = &[
+        "p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok",
+        "score_hit", "score_mid", "score_miss",
+    ];
+    // literal needles / regex patterns: read with `as_array()`; a non-array is an
+    // *empty* needle set, so the signal never fires.
+    const ARR: &[&str] = &["match_any", "match_mid_any", "match_regex"];
+    // field names / fallbacks / literal answers: read with `as_str()`; a non-string
+    // is silently dropped (for `field` that means the whole state envelope is
+    // matched instead of the named field — the P126 cross-fire hazard).
+    const STR: &[&str] = &["field", "extract_numeric", "fallback", "answer_field", "answer"];
+    if NUM.contains(&k) {
+        if v.as_f64().is_none() {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be a number — the offline backend reads it with `as_f64()` and silently keeps its default, so the confidence it was meant to set is not the one that runs",
+                json_kind_name(v)
+            ));
+        }
+        return None;
+    }
+    if ARR.contains(&k) {
+        return match v.as_array() {
+            None => Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an array of strings — the backend reads it with `as_array()` and silently matches *no* token when it is not, so the question never fires its signal",
+                json_kind_name(v)
+            )),
+            Some(a) => a.iter().find(|x| !x.is_string()).map(|bad| {
+                format!(
+                    "`heuristic` key {k:?} must be an array of strings, but it holds {} — the backend's `filter_map(|x| x.as_str())` silently drops a non-string needle, so that token never matches",
+                    json_kind_name(bad)
+                )
+            }),
+        };
+    }
+    if STR.contains(&k) {
+        if v.as_str().is_none() {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be a string — the engine reads it with `as_str()` and silently ignores it on any other type, so the field / fallback it names is not the one used",
+                json_kind_name(v)
+            ));
+        }
+        return None;
+    }
+    // `match_rules` (multi-class routing): an object mapping each option to its
+    // array of trigger tokens. Read with `as_object()`, then each value with
+    // `filter_map(|x| x.as_str())`.
+    if k == "match_rules" {
+        let Some(m) = v.as_object() else {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an object mapping each option to an array of trigger tokens — the backend reads it with `as_object()` and silently falls back to the empty rule set, so no option ever fires and the answer always falls to the fallback",
+                json_kind_name(v)
+            ));
+        };
+        for (opt, toks) in m {
+            if !toks.as_array().map(|a| a.iter().all(Value::is_string)).unwrap_or(false) {
+                return Some(format!(
+                    "`heuristic` key {k:?} entry {opt:?} is {}, but it must be an array of strings — the backend's `filter_map(|x| x.as_str())` silently drops a non-string trigger, so that option can never win",
+                    json_kind_name(toks)
+                ));
+            }
+        }
+    }
+    None
+}
+
 fn json_kind_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -1552,6 +1630,14 @@ fn validate_graph_semantics(
                                 "node {qn}: question {qid:?} heuristic carries an unrecognised key {k:?}{} — the offline backend never reads it, so it is silently ignored",
                                 suggest(k, KNOWN_HEURISTIC_KEYS)
                             );
+                        }
+                    }
+                    // P183: a heuristic *value* of the wrong JSON type is read
+                    // with a typed accessor and silently replaced by its default
+                    // (the P168 policy / P179 node-spec mirror, one level deeper).
+                    for (k, v) in h {
+                        if let Some(msg) = heuristic_value_error(k, v) {
+                            bail!("node {qn}: question {qid:?} {msg}");
                         }
                     }
                 }

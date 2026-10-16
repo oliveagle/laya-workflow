@@ -3220,3 +3220,114 @@ pub fn test_validate_question_criteria_shape(h: &mut Harness) {
             .contains("array of level names"),
     );
 }
+/// P183: a question's `heuristic` block is a typed contract. Each key is read
+/// with a specific accessor in the offline backend, the rules backend or the
+/// BDD tooling; a value of the wrong JSON type is silently replaced by that
+/// reader's default — the P168 (`policy`) / P179 (node / spec) class, one level
+/// deeper. These specs pin each accessor down.
+pub fn test_validate_heuristic_values(h: &mut Harness) {
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    // A one-node `choice` spec: `criteria` {A,B} and matching edge keys (so P182's
+    // criteria-shape check and the edge-key check are both satisfied).
+    let choice = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "heuristic": heur}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+        }]})
+    };
+    // A one-node `score` spec: a levels array, no edge conditions.
+    let score = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "score", "instructions": "?", "criteria": ["low", "mid", "high"], "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
+    // A one-node `boolean` spec (the rules backend reads `p_violated` / `p_ok`).
+    let boolean = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "boolean", "instructions": "?", "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
+
+    // ── well-typed heuristics stay accepted ──
+    h.check(
+        "validate heuristic: `match_any` of strings + numeric weights is OK",
+        ok(&choice(json!({"match_any": ["refund"], "p_hit": 0.9, "p_miss": 0.1}))),
+    );
+    h.check(
+        "validate heuristic: `match_mid_any` / `match_regex` arrays are OK",
+        ok(&choice(json!({"match_any": ["a"], "match_mid_any": ["b"], "match_regex": ["^c"], "p_hit": 0.9, "p_mid": 0.5}))),
+    );
+    h.check(
+        "validate heuristic: `match_rules` object of token arrays is OK",
+        ok(&choice(json!({"match_rules": {"A": ["a", "aa"], "B": ["b"]}, "p_hit": 0.9, "p_miss": 0.1, "fallback": "B"}))),
+    );
+    h.check(
+        "validate heuristic: `field` / `extract_numeric` string names are OK",
+        ok(&score(json!({"extract_numeric": "amount", "field": "note", "score_hit": 2.0, "score_mid": 1.25, "score_miss": 0.5}))),
+    );
+    h.check(
+        "validate heuristic: `answer_field` / `answer` strings are OK",
+        ok(&choice(json!({"answer_field": "label", "answer": "B", "p_hit": 0.9}))),
+    );
+    h.check(
+        "validate heuristic: `p_violated` / `p_ok` numbers are OK (rules backend)",
+        ok(&boolean(json!({"match_any": ["bad"], "p_violated": 0.95, "p_ok": 0.05}))),
+    );
+
+    // ── a value of the wrong type is rejected, naming key, accessor and default ──
+    let e = err(&choice(json!({"match_any": "refund", "p_hit": 0.9})));
+    h.check(
+        "validate heuristic: a `match_any` that is a bare string is rejected",
+        e.contains("key \"match_any\"") && e.contains("array of strings") && e.contains("as_array()"),
+    );
+    h.check(
+        "validate heuristic: a non-string element in `match_any` is rejected",
+        err(&choice(json!({"match_any": ["refund", 3], "p_hit": 0.9}))).contains("array of strings"),
+    );
+    h.check(
+        "validate heuristic: a string `p_hit` is rejected and names `as_f64()`",
+        err(&choice(json!({"match_any": ["refund"], "p_hit": "0.1"}))).contains("as_f64()"),
+    );
+    h.check(
+        "validate heuristic: a numeric `field` is rejected and names `as_str()`",
+        err(&choice(json!({"match_any": ["refund"], "field": 5}))).contains("as_str()"),
+    );
+    h.check(
+        "validate heuristic: a `match_rules` that is an array is rejected",
+        err(&choice(json!({"match_rules": ["a"], "p_hit": 0.9}))).contains("object mapping"),
+    );
+    h.check(
+        "validate heuristic: a `match_rules` entry that is not a token array is rejected",
+        err(&choice(json!({"match_rules": {"A": "a"}, "p_hit": 0.9}))).contains("array of strings"),
+    );
+    h.check(
+        "validate heuristic: a numeric `extract_numeric` is rejected",
+        err(&score(json!({"extract_numeric": 5, "score_miss": 0.5}))).contains("extract_numeric"),
+    );
+    h.check(
+        "validate heuristic: a numeric `answer_field` is rejected",
+        err(&choice(json!({"answer_field": 3, "p_hit": 0.9}))).contains("answer_field"),
+    );
+    h.check(
+        "validate heuristic: a numeric `answer` is rejected",
+        err(&choice(json!({"answer": 3, "p_hit": 0.9}))).contains("key \"answer\""),
+    );
+    h.check(
+        "validate heuristic: a numeric `fallback` is rejected",
+        err(&choice(json!({"match_rules": {"A": ["a"]}, "fallback": 3}))).contains("fallback"),
+    );
+    h.check(
+        "validate heuristic: a numeric `p_violated` is rejected",
+        err(&boolean(json!({"match_any": ["bad"], "p_violated": "0.95"}))).contains("p_violated"),
+    );
+    h.check(
+        "validate heuristic: a wrong-typed value is still judged when the key names are all known",
+        err(&choice(json!({"match_any": ["ok"], "p_miss": true}))).contains("p_miss"),
+    );
+}
