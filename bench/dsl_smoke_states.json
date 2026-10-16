@@ -7397,5 +7397,29 @@
       "ev_fused_kv_materialize": "pass",
       "ev_compressed_tensors_skip": "pass"
     }
+  },
+  "report_gen_gate": {
+    "auto_ok": {
+      "ev_mode": "auto"
+    },
+    "missing_model": {
+      "ev_mode": "explicit",
+      "ev_model": "missing"
+    },
+    "comparison_needs_compare": {
+      "ev_mode": "explicit",
+      "ev_model": "given",
+      "ev_compare": "missing"
+    },
+    "rendered": {
+      "ev_mode": "explicit",
+      "ev_model": "given",
+      "ev_compare": "not_required"
+    },
+    "rendered_with_compare": {
+      "ev_mode": "explicit",
+      "ev_model": "given",
+      "ev_compare": "provided"
+    }
   }
 }

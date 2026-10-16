@@ -4485,5 +4485,82 @@
       "trace.steps.4.action": "stop",
       "trace.steps.4.answer": "pass"
     }
+  },
+  "report_gen_gate": {
+    "auto_ok": {
+      "result.label": "ALL_REPORTS_RENDERED",
+      "result.ev_mode": "auto",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "mode",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "auto"
+    },
+    "missing_model": {
+      "result.label": "MISSING_MODEL",
+      "result.ev_mode": "explicit",
+      "result.ev_model": "missing",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "mode",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "explicit",
+      "trace.steps.0.next": "model",
+      "trace.steps.1.node": "model",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "missing"
+    },
+    "comparison_needs_compare": {
+      "result.label": "COMPARISON_NEEDS_COMPARE",
+      "result.ev_mode": "explicit",
+      "result.ev_model": "given",
+      "result.ev_compare": "missing",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "mode",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "explicit",
+      "trace.steps.0.next": "model",
+      "trace.steps.1.node": "model",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "given",
+      "trace.steps.1.next": "compare",
+      "trace.steps.2.node": "compare",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "missing"
+    },
+    "rendered": {
+      "result.label": "REPORT_RENDERED",
+      "result.ev_mode": "explicit",
+      "result.ev_model": "given",
+      "result.ev_compare": "not_required",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "mode",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "explicit",
+      "trace.steps.0.next": "model",
+      "trace.steps.1.node": "model",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "given",
+      "trace.steps.1.next": "compare",
+      "trace.steps.2.node": "compare",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "not_required"
+    },
+    "rendered_with_compare": {
+      "result.label": "REPORT_RENDERED",
+      "result.ev_mode": "explicit",
+      "result.ev_model": "given",
+      "result.ev_compare": "provided",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "mode",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "explicit",
+      "trace.steps.0.next": "model",
+      "trace.steps.1.node": "model",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "given",
+      "trace.steps.1.next": "compare",
+      "trace.steps.2.node": "compare",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "provided"
+    }
   }
 }

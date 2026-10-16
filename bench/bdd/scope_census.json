@@ -718,7 +718,7 @@
     {
       "id": "ole_eval_index",
       "upstream": "code/eval_index",
-      "kind": "mixed (the eval-results index + tooling + a report generator registered pending)",
+      "kind": "mixed (the eval-results index + tooling + a ported report-generator gate)",
       "recursive": true,
       "not_a_workflow": [
         {
@@ -735,10 +735,10 @@
           ]
         }
       ],
-      "gate_pending": {
-        "report_gen": "the unified eval-report generator: it renders eval JSON into a standard markdown report and exits non-zero when the requested input or arguments are missing (and prints the threshold legend it calls 判定标准). Verdict-adjacent; port pending."
+      "ported": {
+        "report_gen": "bdd/workflows/guards/report_gen_gate.feature"
       },
-      "note": "The eval-results index: the store, the ingest / query / report tooling and the perf benches (named), plus the report generator, registered as a pending gate."
+      "note": "The eval-results index: the store, the ingest / query / report tooling and the perf benches (named), plus the unified report generator - which gates a request on its arguments (a missing --model, or a comparison without --compare, exits non-zero) - ported this round to bdd/workflows/guards/report_gen_gate.feature."
     },
     {
       "id": "ole_eval_inference",

@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 28 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + dflash2 int4_patch_applier + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 29 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + dflash2 int4_patch_applier + index report_gen + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
         counts.ported,
-        28,
+        29,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 3 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 2 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        3,
+        2,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3402,6 +3402,31 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: the dflash2 universe has no pending gate left (every gate-shaped module is ported)",
         df.get("gate_pending").is_none(),
+    );
+
+    // P235: the unified report generator under `code/eval_index` - the reporting tool's
+    // argument gate: a request with no `--model`, or a comparison without `--compare`,
+    // exits non-zero. Pinned by name and by the feature it ports; with it, the index
+    // universe has no gate-shaped module left unported.
+    let ix = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_index")
+        .expect("ole_eval_index universe");
+    h.eq(
+        "bdd scope-check: index has exactly 1 ported module",
+        ix["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: index ports the report generator as its @decision feature",
+        ix["ported"]["report_gen"]
+            == serde_json::json!("bdd/workflows/guards/report_gen_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: the index universe has no pending gate left (every gate-shaped module is ported)",
+        ix.get("gate_pending").is_none(),
     );
 
     // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
@@ -3632,21 +3657,21 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     // `ported` (no such feature exists), so two failures are named: an empty reason, and
     // a name that is double-listed.
     // P233: the distill routing gate is now ported (the plant above is gone), so this
-    // negative moves to a module that is still a pending gate - the eval-index report
-    // generator.
+    // negative moved to a still-pending gate. P235: the report generator it moved to is
+    // now ported too, so it moves once more - the dllm AR-coding runner.
     let gate_empty = census.replace(
         concat!(
-            "\"report_gen\": \"",
-            "the unified eval-report generator: it renders eval JSON into a standard markdown ",
-            "report and exits non-zero when the requested input or arguments are missing (and ",
-            "prints the threshold legend it calls 判定标准). Verdict-adjacent; port pending.\""
+            "\"eval/eval_ar_coding\": \"",
+            "the AR-coding pass@1 runner: the autoregressive counterpart of the diffusion-coding ",
+            "runner on the same benchmarks - it executes each candidate against the unit tests ",
+            "and reports pass@1. Verdict-adjacent; port pending.\""
         ),
-        "\"report_gen\": \"\"",
+        "\"eval/eval_ar_coding\": \"\"",
     );
     let (_, drifted_g) = scope_check_impl(&root, &gate_empty, Some(&base)).unwrap();
     h.check(
         "bdd scope-check: a pending gate with an empty reason is named",
-        any(&drifted_g, "gate_pending[\"report_gen\"] needs a non-empty reason"),
+        any(&drifted_g, "gate_pending[\"eval/eval_ar_coding\"] needs a non-empty reason"),
     );
 
     // P232: `e2e_awq_int4_wld` used to be the pending gate this planted; it is now

@@ -1,0 +1,143 @@
+{
+  "name": "report_gen_gate",
+  "_bdd": {
+    "feature": "report_gen_gate",
+    "feature_path": "bdd/workflows/guards/report_gen_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval unified eval-report generator's argument gate\n(code/eval_index/report_gen.py): the front door of the eval-index reporting tool,\nwhich renders eval JSON (held in a SQLite index) into a standard markdown report.\nIt decides whether the requested report is well-formed enough to render -- it exits\nnon-zero when the requested input or arguments are missing -- so it names its verdict\nrather than reporting a number.\nThree questions are asked, in the source's own order:\n- mode: was `--auto` asked for? `main` checks `--auto` first: when set it renders\nevery model's reports into the output directory and never looks at `--model` or\n`--compare` at all.\n- model: was `--model` given? On the explicit (non-auto) path, a request with no\n`--model` prints `错误: 需要指定 --model` and exits 1. This check comes before the\ntype dispatch, so it fires first even when the type's own argument is missing too.\n- compare: is `--compare` present whenever it is needed? Only `--type comparison`\nrequires it; a comparison request with no `--compare` prints\n`错误: 对比报告需要指定 --compare` and exits 1.\nThe walk encodes exactly that: mode -> model -> compare. A request that clears every\nquestion reaches the render; the first question that fails names itself and ends the\nwalk.\nThree folds are documented:\n- `--auto` is modeled as the `mode` node, not folded away: unlike a restore/reverse\npath, it produces the reports -- it is an accepted input shape of the same\n\"generate reports\" request (exit 0), so the graph names it ALL_REPORTS_RENDERED\nrather than pretending every request must carry `--model`.\n- the `--type` dispatch (performance / capability / comparison / trend / all) only\nselects which report method runs and carries no verdict of its own; the only type\nthat adds a requirement is `comparison` (which needs `--compare`). The graph folds\nthe other four types into the `compare` node's `not_required` answer, so the\ndispatch never becomes a node.\n- a report over an index with no matching rows is still exit 0: the generator prints\n`没有找到数据` (or `没有找到最近 30 天的数据`) and returns the report text. The gate\njudges the *request's* shape, not whether the index holds data -- so the last node's\nlabel is REPORT_RENDERED whether the report carries numbers or the no-data notice.\nEverything the generator produced stays in the harness -- the markdown body, the\nno-data notices, the threshold legend it calls 判定标准, and the saved file paths. The\ngraph reads none of it, only whether the request passed the two argument checks.\nReference walk (report_gen.py, main()): if `--auto`, generate all reports and exit 0;\nelse if not `--model`, print the error and exit 1; else if `--type comparison` and not\n`--compare`, print the error and exit 1; else render (and optionally save) and exit 0.",
+  "start": "mode",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "mode",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Was `--auto` asked for? `main` checks it first: when set, the generator renders every model's reports and never looks at `--model` or `--compare`. A request that asked for auto ends here, rendered.",
+          "criteria": {
+            "auto": "`--auto` was set: every model's reports are rendered",
+            "explicit": "no `--auto`: the request is checked for `--model` next"
+          },
+          "heuristic": {
+            "answer_field": "ev_mode"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "auto": "STOP"
+        },
+        "default": "model"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "auto"
+            },
+            "label": "ALL_REPORTS_RENDERED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "EXPLICIT_REQUEST"
+          }
+        ]
+      }
+    },
+    {
+      "name": "model",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Was `--model` given? On the explicit path a request with no `--model` prints `错误: 需要指定 --model` and exits 1 -- and this check comes before the type dispatch, so it fires first even when the type's own argument is missing too. A missing model ends the walk.",
+          "criteria": {
+            "missing": "no `--model`: the generator exits 1 with the error",
+            "given": "`--model` was given: check the type's own argument next"
+          },
+          "heuristic": {
+            "answer_field": "ev_model"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "missing": "STOP"
+        },
+        "default": "compare"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "missing"
+            },
+            "label": "MISSING_MODEL"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "MODEL_GIVEN"
+          }
+        ]
+      }
+    },
+    {
+      "name": "compare",
+      "primary_q": "request",
+      "questions": {
+        "request": {
+          "type": "choice",
+          "instructions": "Is `--compare` present whenever it is needed? Only `--type comparison` requires it, and a comparison request with no `--compare` prints `错误: 对比报告需要指定 --compare` and exits 1. This is the last question: clearing it means the request is well-formed, and the generator renders the report (a no-data report is still exit 0).",
+          "criteria": {
+            "missing": "`--type comparison` without `--compare`: the generator exits 1 with the error",
+            "not_required": "the type is not comparison, so `--compare` is not needed",
+            "provided": "`--compare` was given for a comparison request"
+          },
+          "heuristic": {
+            "answer_field": "ev_compare"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "request",
+        "rules": [
+          {
+            "when": {
+              "question": "request",
+              "answer": "missing"
+            },
+            "label": "COMPARISON_NEEDS_COMPARE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "REPORT_RENDERED"
+          }
+        ]
+      }
+    }
+  ]
+}
