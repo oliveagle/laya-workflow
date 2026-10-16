@@ -184,6 +184,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("dsl-smoke-cwd-independent", t_bdd::test_dsl_smoke_cwd_independent),
         ("dsl-smoke-tally", t_bdd::test_dsl_smoke_tally),
         ("bdd-live-decisions", t_bdd::test_bdd_live_decisions),
+        ("bdd-live-decisions-env-gap", t_bdd::test_bdd_live_decisions_env_gap),
         ("bdd-coverage-ledger", t_bdd::test_bdd_dsl_coverage_ledger),
         ("bdd-list-routes", t_bdd::test_bdd_list_routes),
         ("bdd-label-accounted", t_bdd::test_bdd_label_accounted),

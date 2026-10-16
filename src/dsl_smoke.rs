@@ -977,16 +977,15 @@ pub fn run(opts: &DslSmokeOptions) -> Result<u32> {
         // once per state.
         let external_bound = opts.base_url.is_none() && network_bound_external(&raw_spec);
         let platform_bound = platform_bound_here(&raw_spec);
-        let asset_bound = if opts.base_url.is_none() {
-            offline_asset_bound(&raw_spec)
-        } else {
-            None
-        };
-        let program_bound = if opts.base_url.is_none() {
-            binary_bound(&raw_spec)
-        } else {
-            None
-        };
+        // P198: these two predicates describe the *machine*, not the backend
+        // choice. A capability whose optional on-device asset is not installed,
+        // or a `shell` capability whose program is missing, cannot run in either
+        // mode — gating them on `--base-url` made a live run fail on a host that
+        // simply lacks the tool, which is the very environment gap the offline
+        // run skips. (`external_bound` stays backend-dependent on purpose: it is
+        // about the offline run never doing real internet I/O.)
+        let asset_bound = offline_asset_bound(&raw_spec);
+        let program_bound = binary_bound(&raw_spec);
         for (label, st) in state_map {
             // P33: the offline smoke must not perform real internet I/O. A
             // spec that is network-bound to an external (non-local) host has

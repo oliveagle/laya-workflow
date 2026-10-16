@@ -11568,6 +11568,29 @@ pub fn summarize_live(per_spec: &[SpecLiveResult]) -> LiveSummary {
     s
 }
 
+/// The environment gap a live decision walk must skip instead of failing: a
+/// capability gated to another platform, an optional on-device asset that is not
+/// installed (the needle engine/weights), or a `shell` command whose fixed
+/// program is not on `$PATH`. Pure, so the regression can pin the rule without a
+/// live backend.
+///
+/// P198: `bdd live-decisions` is a gate over the **decision corpus**, not over
+/// the host. The three families are exactly the ones `dsl smoke` already skips
+/// (`platform_bound_here` / `offline_asset_bound` / `binary_bound`); a host that
+/// cannot exercise a state must report it *skipped*, never as a model
+/// regression. The run-time sibling of the third family — a bare not-found
+/// spawn error from an `exec` / `db` / plugin-spawned program — is classified by
+/// `dsl_smoke::missing_program` at the call site.
+pub fn live_env_gap(spec: &Value) -> Option<String> {
+    if crate::dsl_smoke::platform_bound_here(spec) {
+        return Some("platform-bound capability (not available on this OS)".to_string());
+    }
+    if let Some(why) = crate::dsl_smoke::offline_asset_bound(spec) {
+        return Some(why);
+    }
+    crate::dsl_smoke::binary_bound(spec)
+}
+
 fn load_bench_table(name: &str) -> Result<BTreeMap<String, Value>> {
     let path = repo_root().join("bench").join(name);
     let raw = std::fs::read_to_string(&path)
@@ -11659,11 +11682,17 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             continue;
         };
 
+        // P198: `live-decisions` gates the *decision corpus*, not the host — the
+        // same three "environment gap" families `dsl smoke` skips mean this host
+        // cannot exercise the spec, not that the deployed model regressed.
+        // Evaluated once per spec: they depend only on the spec and the machine.
+        let env_gap = live_env_gap(&spec);
         let mut res = SpecLiveResult { rel, ..Default::default() };
         for (label, st) in state_map {
-            // A capability gated to another platform cannot run here; skip it
-            // (informational) rather than fail a spec this host cannot exercise.
-            if crate::dsl_smoke::platform_bound_here(&spec) {
+            if let Some(why) = &env_gap {
+                eprintln!(
+                    "       {label}: {why} — skipped, validate only (this host cannot exercise it)"
+                );
                 res.states_skipped += 1;
                 continue;
             }
@@ -11697,6 +11726,15 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                     }
                 }
                 Err(e) => {
+                    // P198: an `exec` / `db` (or plugin-spawned) program that is
+                    // not installed surfaces as this spawn error; a bare name the
+                    // OS cannot find is the environment lacking a tool, not a
+                    // defect in the spec — skip validate-only, exactly like
+                    // `dsl smoke`, instead of failing the spec.
+                    if crate::dsl_smoke::missing_program(&e.to_string()).is_some() {
+                        res.states_skipped += 1;
+                        continue;
+                    }
                     // A spec whose declared *local* endpoints are unreachable is
                     // an environment gap, not a model regression — skip it the
                     // way `dsl smoke` does.

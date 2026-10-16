@@ -8556,6 +8556,119 @@ pub fn test_bdd_live_decisions(h: &mut Harness) {
     );
 }
 
+/// P198: `bdd live-decisions` must not blame the **host** for a missing external
+/// program. The live decision gate skips the same three "environment gap"
+/// families `dsl smoke` does — a capability gated to another platform, an
+/// optional on-device asset that is not installed, a `shell` command whose
+/// program is missing — and the run-time sibling (a bare not-found spawn error
+/// from an `exec` / `db` / plugin-spawned program) is skipped too, never failed.
+///
+/// The measured defect: under a stripped `$PATH` the gate reported `161/163`,
+/// the two failures being exactly the `sh` (`feishu_unread_digest`) and
+/// `sqlite3` (`persist_memory`) specs P197 had already taught the **offline**
+/// smoke to skip. Both gates must answer "can this host exercise the state",
+/// not "did the deployed model change".
+pub fn test_bdd_live_decisions_env_gap(h: &mut Harness) {
+    use laya_workflow::bdd::{live_env_gap, repo_root};
+    let root = repo_root();
+    let load = |p: &str| -> Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(p)).unwrap()).unwrap()
+    };
+
+    // ── The rule, machine-independent ──
+    // A called `shell` capability naming a program that cannot exist is a gap…
+    let fake_shell = json!({
+        "capabilities": { "run": { "kind": "shell", "command": "p198-nosuch-program-xyz --flag" } },
+        "nodes": [ { "name": "start", "action": { "kind": "call", "capability": "run" } } ]
+    });
+    let why = live_env_gap(&fake_shell).expect("a missing shell program is an environment gap");
+    h.check(
+        "p198: a missing `shell` program names itself as the environment gap",
+        why.contains("p198-nosuch-program-xyz"),
+    );
+    // …and the gap can never widen past `shell`: a spec that calls no such
+    // capability carries none, so an ordinary failure still fails.
+    h.check(
+        "p198: a shell-free spec has no environment gap",
+        live_env_gap(&load("dsl/versioned/refund_policy.v1.json")).is_none(),
+    );
+    h.check(
+        "p198: a db-only spec has no static environment gap",
+        live_env_gap(&load("dsl/laya_mem/persist_memory.json")).is_none(),
+    );
+
+    // ── End to end under a stripped $PATH (dead base URL: no backend needed) ──
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let home = std::env::temp_dir().join(format!("laya-p198-nopath-{}", std::process::id()));
+    std::fs::create_dir_all(&home).expect("tmp home");
+    let run = |args: &[&str]| {
+        std::process::Command::new(&bin)
+            .args(args)
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("PATH", "/nonexistent")
+            .output()
+            .expect("run laya-workflow")
+    };
+
+    let out = run(&[
+        "bdd", "live-decisions",
+        "--base-url", "http://127.0.0.1:1",
+        "--filter", "feishu_unread_digest",
+    ]);
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check(
+        "p198: a host gap is skipped by `bdd live-decisions`, not failed",
+        out.status.success(),
+    );
+    h.check(
+        "p198: the host-gap state is named and skipped, never a [FAIL]",
+        !err.contains("[FAIL]")
+            && err.contains("needs the external program `sh` on $PATH")
+            && err.contains("skipped, validate only"),
+    );
+    h.check(
+        "p198: the host-gap spec walks clean with its state skipped",
+        stdout.contains("1/1 specs walked structurally clean") && stdout.contains("1 skipped"),
+    );
+
+    // The same stripped $PATH, a spec that needs no external program: no host
+    // gap is manufactured for it (its state is not skipped for that reason).
+    let out2 = run(&[
+        "bdd", "live-decisions",
+        "--base-url", "http://127.0.0.1:1",
+        "--filter", "refund_policy.v1",
+    ]);
+    let err2 = String::from_utf8_lossy(&out2.stderr).to_string();
+    h.check(
+        "p198: an external-program-free spec gets no host-gap skip",
+        !err2.contains("this host cannot exercise it"),
+    );
+
+    // ── The sibling gate, same host gap: the predicate is about the machine,
+    //    not about `--base-url` (`dsl smoke --base-url` used to *fail* here) ──
+    let out3 = run(&[
+        "dsl", "smoke",
+        "--base-url", "http://127.0.0.1:1",
+        "--filter", "feishu_unread_digest",
+    ]);
+    let err3 = String::from_utf8_lossy(&out3.stderr).to_string();
+    let stdout3 = String::from_utf8_lossy(&out3.stdout).to_string();
+    h.check(
+        "p198: `dsl smoke --base-url` skips the same host gap (backend-independent)",
+        out3.status.success()
+            && !err3.contains("[FAIL]")
+            && err3.contains("skipped, validate only")
+            && stdout3.contains("1/1 specs OK"),
+    );
+}
+
 /// P137/P138: the app-parity gate — every built-in app's reference case replayed
 /// end to end through the app's checked-in BDD port spec. The port is the app's
 /// routing as *data*; the app is *code*. This pins that the two agree on all
