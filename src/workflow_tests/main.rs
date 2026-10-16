@@ -122,6 +122,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("validate-heuristic-values", t_validate::test_validate_heuristic_values),
         ("validate-heuristic-ranges", t_validate::test_validate_heuristic_ranges),
         ("validate-heuristic-needles", t_validate::test_validate_heuristic_needles),
+        ("validate-heuristic-blanks", t_validate::test_validate_heuristic_blanks),
         ("validate-action-keys", t_validate::test_validate_action_keys),
         ("validate-spec-keys", t_validate::test_validate_spec_keys),
         ("validate-capability-runnable", t_validate::test_validate_capability_runnable),

@@ -1105,6 +1105,65 @@ fn heuristic_needle_error(k: &str, v: &Value) -> Option<String> {
     None
 }
 
+/// P186: a `heuristic` *needle* - or the state-key name a heuristic reads
+/// through - written as a blank string. An empty needle is not a harmless
+/// no-op: [`crate::backend::contains_any`] (like a `Regex`) finds it at offset
+/// 0, so the declared signal either fires on *every* input (a silent
+/// always-hit - the tokens the author wrote are gone) or, when the matched
+/// text starts with a word character, the word-boundary scan cannot advance
+/// past the empty match and the engine spins without end (a livelock, not a
+/// miss). A blank `field` / `extract_numeric` is the same slip one level in: it
+/// names no state key, so the read falls to the empty match space and the
+/// signal never fires. The compiler cannot emit either (its needle grammar is
+/// `"([^"]+)"` and its field capture is `[^"]+`), so only a hand-written or
+/// sidecar spec carries one - which is exactly what `validate` is for.
+///
+/// `fallback: ""` and a blank `answer_field` are judged elsewhere: the
+/// answer-space guard refuses the former at run time, and the latter fails
+/// closed to `"none"` by design (P41/P103), so neither is a silent lie.
+fn heuristic_blank_error(k: &str, v: &Value) -> Option<String> {
+    const BLANK_FIELD: &[&str] = &["field", "extract_numeric"];
+    if BLANK_FIELD.contains(&k) {
+        if let Some(s) = v.as_str() {
+            if s.trim().is_empty() {
+                return Some(format!(
+                    "`heuristic` key {k:?} is a blank string - it is read as a state key name, so the lookup goes to `state[\"\"]` (a key no author means) and the question silently falls to its miss / `score_miss` / fallback answer; name the state key you mean (a name that is simply absent from the state already gives that clean miss), or drop the key"
+                ));
+            }
+        }
+        return None;
+    }
+    const ARR: &[&str] = &["match_any", "match_mid_any", "match_regex"];
+    if ARR.contains(&k) {
+        if let Some(a) = v.as_array() {
+            for (i, x) in a.iter().enumerate() {
+                if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                    return Some(format!(
+                        "`heuristic` key {k:?} carries a blank needle at index {i} - an empty pattern matches at offset 0, so the signal fires on every input (a silent always-hit) or, when the matched text starts with a word character, the scan can never advance and the engine spins without end; give the element a real token or drop it"
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    if k == "match_rules" {
+        if let Some(m) = v.as_object() {
+            for (opt, toks) in m {
+                if let Some(a) = toks.as_array() {
+                    for (i, x) in a.iter().enumerate() {
+                        if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                            return Some(format!(
+                                "`heuristic` key {k:?} option {opt:?} carries a blank token at index {i} - an empty pattern matches at offset 0, so the option fires on every input (a silent always-hit) or, when the matched text starts with a word character, the scan can never advance and the engine spins without end; give the token a real value or drop it"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn json_kind_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -1696,6 +1755,7 @@ fn validate_graph_semantics(
                         if let Some(msg) = heuristic_value_error(k, v)
                             .or_else(|| heuristic_range_error(k, v))
                             .or_else(|| heuristic_needle_error(k, v))
+                            .or_else(|| heuristic_blank_error(k, v))
                         {
                             bail!("node {qn}: question {qid:?} {msg}");
                         }

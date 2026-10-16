@@ -3472,3 +3472,90 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
         err(&choice(json!({"match_rules": {}, "p_hit": 0.9}))).contains("no option rows"),
     );
 }
+
+pub fn test_validate_heuristic_blanks(h: &mut Harness) {
+    // P186: a needle or state-key name that is *present but blank* is the same
+    // silent-lie family as P185 (present but empty *set*), one level in. An empty
+    // pattern matches at offset 0, so it either fires on every input (a silent
+    // always-hit) or spins forever (the word-boundary scan cannot advance past
+    // an empty match - a livelock, not a miss). `field` / `extract_numeric` name
+    // no state key, so the read falls to the empty match space.
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    let choice = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "heuristic": heur}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+        }]})
+    };
+
+    // ── well-formed needles / field names stay accepted ──
+    h.check(
+        "validate heuristic-blanks: non-blank needles and a real field name are OK",
+        ok(&choice(json!({"field": "message", "match_any": ["refund"], "p_hit": 0.9, "p_miss": 0.1}))),
+    );
+    h.check(
+        "validate heuristic-blanks: a non-blank `match_rules` table is OK",
+        ok(&choice(json!({"match_rules": {"B": ["refund"]}, "p_hit": 0.9, "fallback": "A"}))),
+    );
+
+    // ── a blank needle / token is rejected, naming the index ──
+    let e = err(&choice(json!({"match_any": [""], "p_hit": 0.9, "p_miss": 0.1})));
+    h.check(
+        "validate heuristic-blanks: a blank `match_any` needle is rejected",
+        e.contains("key \"match_any\"") && e.contains("blank needle") && e.contains("index 0"),
+    );
+    h.check(
+        "validate heuristic-blanks: the message names the always-hit / livelock",
+        e.contains("always-hit") && e.contains("spins without end"),
+    );
+    h.check(
+        "validate heuristic-blanks: a whitespace-only needle is rejected too",
+        err(&choice(json!({"match_any": ["  "], "p_hit": 0.9}))).contains("blank needle"),
+    );
+    h.check(
+        "validate heuristic-blanks: the blank element is found behind a real one",
+        err(&choice(json!({"match_any": ["refund", ""], "p_hit": 0.9}))).contains("index 1"),
+    );
+    h.check(
+        "validate heuristic-blanks: a blank `match_mid_any` needle is rejected",
+        err(&choice(json!({"match_any": ["a"], "match_mid_any": [""], "p_hit": 0.9}))).contains("key \"match_mid_any\""),
+    );
+    h.check(
+        "validate heuristic-blanks: a blank `match_regex` pattern is rejected",
+        err(&choice(json!({"match_regex": [""], "p_hit": 0.9}))).contains("key \"match_regex\""),
+    );
+    let r = err(&choice(json!({"match_rules": {"A": ["zzz"], "B": [""]}, "p_hit": 0.9})));
+    h.check(
+        "validate heuristic-blanks: a blank `match_rules` token is rejected, naming the option",
+        r.contains("key \"match_rules\"") && r.contains("option \"B\"") && r.contains("index 0"),
+    );
+
+    // ── a blank state-key name is rejected ──
+    let f = err(&choice(json!({"field": "", "match_any": ["refund"], "p_hit": 0.9})));
+    h.check(
+        "validate heuristic-blanks: a blank `field` name is rejected",
+        f.contains("key \"field\"") && f.contains("state[\"\"]"),
+    );
+    h.check(
+        "validate heuristic-blanks: the blank-field message says the signal never fires",
+        f.contains("never fires") || f.contains("silently falls"),
+    );
+    let sc = json!({"name": "probe", "start": "a", "nodes": [{
+        "name": "a",
+        "questions": {"q": {"type": "score", "instructions": "?", "criteria": ["low", "mid", "high"], "heuristic": {"extract_numeric": "", "score_miss": 0.5}}},
+        "edge": {"default": "STOP"},
+    }]});
+    h.check(
+        "validate heuristic-blanks: a blank `extract_numeric` name is rejected",
+        err(&sc).contains("key \"extract_numeric\""),
+    );
+
+    // ── boundaries: keys whose blank value is handled elsewhere are left alone ──
+    h.check(
+        "validate heuristic-blanks: a blank `fallback` / `answer_field` is left to its own guard",
+        ok(&choice(json!({"match_rules": {"A": ["z"]}, "p_hit": 0.9, "fallback": ""})))
+            && ok(&choice(json!({"answer_field": "", "p_hit": 0.9}))),
+    );
+}
