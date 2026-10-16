@@ -619,6 +619,77 @@ fn is_private_host(host: &str) -> bool {
     }
 }
 
+/// Why a spec cannot be driven in the current run — the environment gap that
+/// explains the skip.
+///
+/// This is the **single source of truth** for the "unreachable here ⇒ validate
+/// only" family. `dsl smoke` (`run`) and the offline harness gates
+/// (`answers-from-list`, `bdd-decide-stepwise`, the decision-trace gate) all
+/// consult it, so a spec this host genuinely cannot run is *named and
+/// explained* instead of being silently dropped. Before this existed the
+/// harness re-derived its own, narrower tolerance and every new capability spec
+/// (on-device asset, missing program, platform) drifted the corpus counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Undriveable {
+    /// Declares a non-private (internet) host. The offline run must never
+    /// perform real internet I/O; the integration job runs it for real.
+    External,
+    /// Declares endpoints and none accepts a connection right now — the pure
+    /// offline case. The same spec becomes drivable with the local mocks up.
+    Unreachable,
+    /// A *called* capability is gated to a platform this host is not.
+    Platform(String),
+    /// An optional on-device asset this machine does not have (the Needle
+    /// engine + weights).
+    Asset(String),
+    /// A `shell` capability whose fixed program is not on `$PATH`.
+    Program(String),
+}
+
+impl Undriveable {
+    /// The reason as a sentence — used by the harness gates in their failure
+    /// messages, so an unexplained skip is always diagnosable.
+    pub fn explain(&self) -> String {
+        match self {
+            Undriveable::External => "declares an external (internet) network target".to_string(),
+            Undriveable::Unreachable => {
+                "declares network endpoints and none is reachable here".to_string()
+            }
+            Undriveable::Platform(tags) => {
+                format!("platform-bound capability (not available on {tags})")
+            }
+            Undriveable::Asset(why) => why.clone(),
+            Undriveable::Program(why) => why.clone(),
+        }
+    }
+}
+
+/// `Some(reason)` when this spec cannot be driven here; `None` when it **must**
+/// be drivable (so any failure is a real regression, not an environment gap).
+///
+/// `offline` = the caller must not perform real internet I/O (the offline
+/// smoke, and the offline harness job). Every predicate below is spec-derived
+/// except `network_bound_offline`, which probes the declared endpoints and is
+/// therefore the one that flips between the offline and the mocks-up run.
+pub fn undriveable_here(spec: &Value, offline: bool) -> Option<Undriveable> {
+    if offline && network_bound_external(spec) {
+        return Some(Undriveable::External);
+    }
+    if platform_bound_here(spec) {
+        return Some(Undriveable::Platform(current_platform_tags().join("/")));
+    }
+    if let Some(why) = offline_asset_bound(spec) {
+        return Some(Undriveable::Asset(why));
+    }
+    if let Some(why) = binary_bound(spec) {
+        return Some(Undriveable::Program(why));
+    }
+    if network_bound_offline(spec) {
+        return Some(Undriveable::Unreachable);
+    }
+    None
+}
+
 /// P43 coverage ledger. `dsl smoke` behaviour-verifies only the specs that
 /// carry sample states; a spec with no states used to be silently "validate
 /// only" — a workflow nothing would ever flag as unverified. This makes the
@@ -1015,71 +1086,71 @@ pub fn run(opts: &DslSmokeOptions) -> Result<i32> {
         // These three predicates depend only on the raw spec — and, for the
         // asset one, on the machine — so evaluate them once per spec instead of
         // once per state.
-        let external_bound = opts.base_url.is_none() && network_bound_external(&raw_spec);
-        let platform_bound = platform_bound_here(&raw_spec);
-        // P198: these two predicates describe the *machine*, not the backend
-        // choice. A capability whose optional on-device asset is not installed,
-        // or a `shell` capability whose program is missing, cannot run in either
-        // mode — gating them on `--base-url` made a live run fail on a host that
-        // simply lacks the tool, which is the very environment gap the offline
-        // run skips. (`external_bound` stays backend-dependent on purpose: it is
-        // about the offline run never doing real internet I/O.)
-        let asset_bound = offline_asset_bound(&raw_spec);
-        let program_bound = binary_bound(&raw_spec);
+        // The single "cannot be driven here, and why" judgement, shared with the
+        // offline harness gates (see `undriveable_here`). `Unreachable` is
+        // deliberately *not* pre-skipped: a network-bound spec with mixed states
+        // keeps running (and asserting) the states that never touch the network —
+        // offline coverage is preserved — and only a state that actually errors
+        // consults it, below.
+        let undriveable = undriveable_here(&raw_spec, opts.base_url.is_none());
         for (label, st) in state_map {
-            // P33: the offline smoke must not perform real internet I/O. A
-            // spec that is network-bound to an external (non-local) host has
-            // its states skipped here (validate-only) — e.g. the
-            // `hf_trending` plugin reaching huggingface.co was costing ~16 s
-            // per run before the static plugin-script scan classified it.
-            // The integration / live job runs these states for real.
-            if external_bound {
-                if !opts.quiet {
-                    eprintln!(
-                        "       {label}: external network target(s) — skipped, validate only (runs in the integration job)"
-                    );
+            match &undriveable {
+                // P33: the offline smoke must not perform real internet I/O. A
+                // spec that is network-bound to an external (non-local) host has
+                // its states skipped here (validate-only) — e.g. the
+                // `hf_trending` plugin reaching huggingface.co was costing ~16 s
+                // per run before the static plugin-script scan classified it.
+                // The integration / live job runs these states for real.
+                Some(Undriveable::External) => {
+                    if !opts.quiet {
+                        eprintln!(
+                            "       {label}: external network target(s) — skipped, validate only (runs in the integration job)"
+                        );
+                    }
+                    skipped += 1;
+                    continue;
                 }
-                skipped += 1;
-                continue;
-            }
-            // A capability gated to another platform (e.g. a POSIX
-            // `exec`/`shell` command on Windows) cannot run here; skip
-            // validate-only rather than report a regression the host cannot
-            // actually demonstrate.
-            if platform_bound {
-                if !opts.quiet {
-                    eprintln!(
-                        "       {label}: platform-bound capability (not available on {}) — skipped, validate only",
-                        current_platform_tags().join("/")
-                    );
+                // A capability gated to another platform (e.g. a POSIX
+                // `exec`/`shell` command on Windows) cannot run here; skip
+                // validate-only rather than report a regression the host cannot
+                // actually demonstrate.
+                Some(Undriveable::Platform(tags)) => {
+                    if !opts.quiet {
+                        eprintln!(
+                            "       {label}: platform-bound capability (not available on {tags}) — skipped, validate only"
+                        );
+                    }
+                    skipped += 1;
+                    continue;
                 }
-                skipped += 1;
-                continue;
-            }
-            // P196: a capability whose optional on-device asset is absent (the
-            // needle engine + weights) cannot run here; skip validate-only
-            // rather than report a regression the host cannot demonstrate.
-            if let Some(why) = &asset_bound {
-                if !opts.quiet {
-                    eprintln!(
-                        "       {label}: {why} — skipped, validate only (runs in the integration job, where the model is installed)"
-                    );
+                // P196: a capability whose optional on-device asset is absent (the
+                // needle engine + weights) cannot run here; skip validate-only
+                // rather than report a regression the host cannot demonstrate.
+                Some(Undriveable::Asset(why)) => {
+                    if !opts.quiet {
+                        eprintln!(
+                            "       {label}: {why} — skipped, validate only (runs in the integration job, where the model is installed)"
+                        );
+                    }
+                    skipped += 1;
+                    continue;
                 }
-                skipped += 1;
-                continue;
-            }
-            // P197: a `shell` capability whose fixed program is not installed
-            // cannot start its command — the shell exits 127 and the workflow
-            // reads that as a plain "no" — so skip validate-only here, exactly
-            // like the network / asset families above.
-            if let Some(why) = &program_bound {
-                if !opts.quiet {
-                    eprintln!(
-                        "       {label}: {why} — skipped, validate only (runs in the integration job)"
-                    );
+                // P197: a `shell` capability whose fixed program is not installed
+                // cannot start its command — the shell exits 127 and the workflow
+                // reads that as a plain "no" — so skip validate-only here, exactly
+                // like the network / asset families above.
+                Some(Undriveable::Program(why)) => {
+                    if !opts.quiet {
+                        eprintln!(
+                            "       {label}: {why} — skipped, validate only (runs in the integration job)"
+                        );
+                    }
+                    skipped += 1;
+                    continue;
                 }
-                skipped += 1;
-                continue;
+                // `Unreachable` is consulted on the error path below; `None`
+                // means this spec must run here — a failure is a real regression.
+                Some(Undriveable::Unreachable) | None => {}
             }
             let out = match wf.run(backend.as_ref(), st) {
                 Ok(o) => o,
@@ -1097,12 +1168,7 @@ pub fn run(opts: &DslSmokeOptions) -> Result<i32> {
                         skipped += 1;
                         continue;
                     }
-                    if network_bound_offline(&raw_spec)
-                        || external_bound
-                        || platform_bound
-                        || asset_bound.is_some()
-                        || program_bound.is_some()
-                    {
+                    if matches!(undriveable, Some(Undriveable::Unreachable)) {
                         if !opts.quiet {
                             eprintln!(
                                 "       {label}: offline (network endpoint(s) unreachable) — skipped, validate only"

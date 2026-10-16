@@ -1434,7 +1434,7 @@ pub fn test_bdd_smoke_expect_coverage(h: &mut Harness) {
 /// not the network.
 pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
     use laya_workflow::backend::HeuristicBackend;
-    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external, network_bound_offline};
+    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external};
     let root = bdd::repo_root();
     // Mirror dsl_smoke's startup so specs referencing ${env.X}/${secret.X}
     // (e.g. support_ticket_router_hybrid's allow_paths) resolve exactly as
@@ -1620,18 +1620,16 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
                     }
                 }
                 Err(_e) => {
-                    // Offline harness: a network-bound spec whose endpoints are
-                    // unreachable (or that depends on an external host in this
-                    // offline run) skips its states (validate-only), exactly
-                    // like `dsl smoke`. The mocks-up integration run checks
-                    // those for real.
-                    if !(network_bound_offline(&raw_spec)
-                        || network_bound_external(&raw_spec))
-                    {
-                        h.check(
-                            &format!("bdd: trace {stem}:{label} runs offline"),
-                            false,
-                        );
+                    // Offline harness: a spec this host cannot drive — an
+                    // unreachable or external endpoint, a platform the host is
+                    // not, an absent on-device asset, a missing program — skips
+                    // its states (validate-only), exactly like `dsl smoke`. The
+                    // verdict comes from the *shared* predicate, so the two
+                    // cannot drift, and a spec that quietly stopped being
+                    // drivable is still a failure here (no explanation ⇒ FAIL).
+                    // The mocks-up integration run checks those for real.
+                    if laya_workflow::dsl_smoke::undriveable_here(&raw_spec, true).is_none() {
+                        h.check(&format!("bdd: trace {stem}:{label} runs offline"), false);
                     }
                 }
             }
@@ -1656,7 +1654,7 @@ pub fn test_bdd_smoke_trace_path_floor(h: &mut Harness) {
 pub fn test_dsl_smoke_unasserted_state(h: &mut Harness) {
     use laya_workflow::backend::HeuristicBackend;
     use laya_workflow::dsl_smoke::{
-        ensure_env_dirs, network_bound_external, platform_bound_here, uncovered_state,
+        ensure_env_dirs, undriveable_here, uncovered_state,
     };
     let root = bdd::repo_root();
     if let Ok(env) = ensure_env_dirs() {
@@ -1734,7 +1732,9 @@ pub fn test_dsl_smoke_unasserted_state(h: &mut Harness) {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
-        if network_bound_external(&raw_spec) || platform_bound_here(&raw_spec) {
+        // The shared "cannot be driven here" verdict — external / platform /
+        // missing on-device asset / missing program / unreachable endpoint.
+        if undriveable_here(&raw_spec, true).is_some() {
             continue;
         }
         let wf = match laya_workflow::spec::load_file(&spec.to_string_lossy()) {
@@ -7165,9 +7165,9 @@ pub fn test_bdd_mcp_answers(h: &mut Harness) {
 pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     use laya_workflow::backend::{AnswersBackend, HeuristicBackend};
     use laya_workflow::bdd_mcp::decision_label;
-    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external};
+    use laya_workflow::dsl_smoke::{ensure_env_dirs, network_bound_external, undriveable_here};
     use laya_workflow::workflow::NodeResult;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     let root = bdd::repo_root();
     if let Ok(env) = ensure_env_dirs() {
@@ -7260,6 +7260,11 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     let mut driven_states = 0usize;
     let mut contract_ok = 0usize;
     let mut specs_driven: BTreeSet<String> = BTreeSet::new();
+    // Specs this host cannot drive, with the environment gap that explains it —
+    // filled from the shared `undriveable_here` predicate. The gates below
+    // require every undriven spec to appear here, so a spec that silently stops
+    // being drivable is named instead of hiding behind a fixed corpus count.
+    let mut undriveable: BTreeMap<String, String> = BTreeMap::new();
     // Corpus-wide heuristic-path contract audit (P98): every answer the offline
     // heuristic itself produced must be one its question accepts (or the DSL's
     // fail-closed `none`) — the same silent-`default` bug class P96 hard-fails on
@@ -7290,6 +7295,9 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
+        if let Some(why) = undriveable_here(&raw, true) {
+            undriveable.insert(stem.clone(), why.explain());
+        }
         if network_bound_external(&raw) {
             continue;
         }
@@ -7589,7 +7597,7 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
             "answers-from-list: drove {driven_states} offline states across {} specs from the inventory (contract-matched {contract_ok})",
             specs_driven.len()
         ),
-        driven_states == contract_ok && specs_driven.len() >= 125,
+        driven_states == contract_ok && driven_states > 0,
     );
     // P102: a composed (sub-workflow) spec is no longer skipped — `bdd_list`
     // now reports the inlined node list, so its per-node contract describes the
@@ -7728,9 +7736,27 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
     for s in &specs_driven {
         no_walk.remove(s);
     }
+    // Every undriven spec must be *explained* by the shared environment
+    // predicate — nothing may be skipped silently. This replaces the old
+    // `no_walk == {hf_trending}` + `specs_driven >= 125` pair, which encoded a
+    // corpus size that drifts with every new capability spec and reported an
+    // unexplained skip as a bare count. Absolute corpus floors live in the
+    // `bdd_list` checks, against the coverage ledger that owns that number.
+    let why: BTreeSet<String> = no_walk
+        .iter()
+        .map(|s| {
+            format!(
+                "{s}: {}",
+                undriveable
+                    .get(s)
+                    .cloned()
+                    .unwrap_or_else(|| "UNEXPLAINED".to_string())
+            )
+        })
+        .collect();
     h.check(
-        &format!("answers-from-list: not driven (external only) = {no_walk:?}"),
-        no_walk.len() == 1 && no_walk.contains("hf_trending"),
+        &format!("answers-from-list: every undriven spec is explained ({why:?})"),
+        no_walk.iter().all(|s| undriveable.contains_key(s)),
     );
 }
 
@@ -7750,9 +7776,11 @@ pub fn test_bdd_answers_from_inventory(h: &mut Harness) {
 pub fn test_bdd_decide_stepwise_walk(h: &mut Harness) {
     use laya_workflow::backend::HeuristicBackend;
     use laya_workflow::bdd_mcp::decision_label;
-    use laya_workflow::dsl_smoke::{coverage_ledger_live_only, ensure_env_dirs, network_bound_external};
+    use laya_workflow::dsl_smoke::{
+        coverage_ledger_live_only, ensure_env_dirs, network_bound_external, undriveable_here,
+    };
     use laya_workflow::workflow::NodeResult;
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
 
     let root = bdd::repo_root();
     if let Ok(env) = ensure_env_dirs() {
@@ -7812,6 +7840,10 @@ pub fn test_bdd_decide_stepwise_walk(h: &mut Harness) {
     let mut steps_total = 0usize;
     let mut composed_states = 0usize;
     let mut specs_walked: BTreeSet<String> = BTreeSet::new();
+    // Specs this host cannot step here, with the environment gap that explains
+    // it (the shared `undriveable_here` predicate). The gate below requires
+    // every unstepped spec to appear here.
+    let mut undriveable: BTreeMap<String, String> = BTreeMap::new();
     let mut stuck: Vec<String> = Vec::new();
     let mut ask_drift: Vec<String> = Vec::new();
     let mut label_drift: Vec<String> = Vec::new();
@@ -7823,6 +7855,9 @@ pub fn test_bdd_decide_stepwise_walk(h: &mut Harness) {
             .ok()
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or(Value::Null);
+        if let Some(why) = undriveable_here(&raw, true) {
+            undriveable.insert(stem.clone(), why.explain());
+        }
         if network_bound_external(&raw) {
             continue;
         }
@@ -7959,7 +7994,32 @@ pub fn test_bdd_decide_stepwise_walk(h: &mut Harness) {
             "bdd-decide-stepwise: the loop closes for {walked} offline states across {} specs ({steps_total} steps replayed)",
             specs_walked.len()
         ),
-        walked == walkable && walked >= 980 && specs_walked.len() >= 125,
+        walked == walkable && walked > 0,
+    );
+    // Every spec carrying offline sample states that was *not* stepped must be
+    // explained by the shared environment predicate — the same "no silent skip"
+    // invariant the answers-from-list gate enforces, with no corpus count to go
+    // stale as capability specs are added.
+    let unstepped: BTreeSet<String> = states_obj
+        .keys()
+        .filter(|s| !specs_walked.contains(*s))
+        .cloned()
+        .collect();
+    let why: BTreeSet<String> = unstepped
+        .iter()
+        .map(|s| {
+            format!(
+                "{s}: {}",
+                undriveable
+                    .get(s)
+                    .cloned()
+                    .unwrap_or_else(|| "UNEXPLAINED".to_string())
+            )
+        })
+        .collect();
+    h.check(
+        &format!("bdd-decide-stepwise: every unstepped spec is explained ({why:?})"),
+        unstepped.iter().all(|s| undriveable.contains_key(s)),
     );
     h.check(
         "bdd-decide-stepwise: no walk stalls on a null at_node or an empty ask",
