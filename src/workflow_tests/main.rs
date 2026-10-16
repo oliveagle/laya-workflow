@@ -235,6 +235,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-selector-tags", t_bdd::test_bdd_selector_tags),
         ("bdd-selector-placement", t_bdd::test_bdd_selector_placement),
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
+        ("plugin-checkout-gate", t_plugin::test_plugin_checkout_gate),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
         ("browser-extension-path", t_bdd::test_browser_extension_path),

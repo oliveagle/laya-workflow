@@ -1691,9 +1691,21 @@ fn run(
 /// Returns the number of problems; 0 means green. Printed unconditionally so
 /// the CI log says something when nothing is wrong.
 pub fn registry_check() -> Result<u32> {
+    registry_check_at(&crate::bdd::repo_root())
+}
+
+/// [`registry_check()`] with the checkout named by the caller.
+///
+/// Pure, so the "nothing here to check" case is testable without a real tree.
+/// The version that read `env!("CARGO_MANIFEST_DIR")` (a) ignored
+/// `LAYA_WORKFLOW_REPO`, so a binary could not be pointed at another checkout,
+/// and (b) answered `plugin registry: no plugins/ with a plugin.json - skipped`
+/// with `Ok(0)` over any tree without a `plugins/` - the same fail-open green
+/// `bdd import-check` had. Measured on the v0.11.0 release asset in a directory
+/// with no checkout: that exact line, rc=0. A gate that examined nothing is not
+/// a pass.
+pub fn registry_check_at(root: &Path) -> Result<u32> {
     use regex_lite::Regex;
-    use std::path::Path;
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let plugin_dir = root.join("plugins");
     let registries = [
         root.join("docs").join("plugins.md"),
@@ -1715,8 +1727,11 @@ pub fn registry_check() -> Result<u32> {
         names
     };
     if shipped.is_empty() {
-        println!("plugin registry: no plugins/ with a plugin.json - skipped");
-        return Ok(0);
+        eprintln!(
+            "plugin registry: no plugins/ with a plugin.json - nothing to check, which is a \
+             problem and not a pass (a gate over an empty tree is a green nobody verified)"
+        );
+        return Ok(1);
     }
     // `## Bundled plugins` table rows look like: | `plugins/<name>` | ...
     let row_re = Regex::new(r"(?m)^\| `(?P<name>plugins/[A-Za-z0-9_.-]+)`").unwrap();
@@ -1871,7 +1886,17 @@ pub fn harness_run(plugin_path: &Path, body: &str) -> Result<Value> {
 ///
 /// Returns the number of problems (0 = green). Mirrors `laya-workflow plugin check`.
 pub fn gate() -> Result<u32> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    gate_at(&crate::bdd::repo_root())
+}
+
+/// [`gate()`] with the checkout named by the caller. Pure, so a tree with no
+/// `websites/` is testable: this read `env!("CARGO_MANIFEST_DIR")`, which ignores
+/// `LAYA_WORKFLOW_REPO` and, with no checkout beside the binary, printed
+/// `goofish plugin missing, skipping routing` / `0 .rhai compiled, 0 problems`
+/// and exited 0 - the v0.11.0 release-asset behaviour. A missing corpus is now a
+/// counted problem, and the CLI answers rc=2 before this runs when the checkout
+/// is absent.
+pub fn gate_at(root: &Path) -> Result<u32> {
     let mut problems: u32 = 0;
     let mut n_files: u32 = 0;
     // ── 1. every shipped .rhai still parses ─────────────────────────────────
@@ -1932,14 +1957,21 @@ let c = plan(#{ query: "索尼 A7M4" });
             }
         }
     } else {
-        eprintln!("plugin gate: goofish plugin missing, skipping routing");
+        eprintln!(
+            "plugin gate: websites/goofish.com/plugin/main.rhai is missing - the \
+             intent-routing check cannot run"
+        );
+        problems += 1;
     }
     // ── 3. goofish fold (must not browse when given only an intent word) ──
     let spec = root.join("dsl").join("browser").join("goofish_item.json");
     if spec.is_file() {
         problems += fold_gate(&spec, root)?;
     } else {
-        eprintln!("plugin gate: goofish_item.json missing, skipping fold");
+        eprintln!(
+            "plugin gate: dsl/browser/goofish_item.json is missing - the fold check cannot run"
+        );
+        problems += 1;
     }
     // ── 4. feishu unread routing (full engine run on the fixture) ──────────
     if let Err(e) = feishu_gate(root) {
@@ -2055,7 +2087,13 @@ fn feishu_gate(root: &Path) -> Result<()> {
     let collect = root.join("websites").join("feishu.com").join("plugin").join("collect.sh");
     let fixture = root.join("scripts").join("rhai").join("fixtures").join("feishu_unread.json");
     if !plugin.is_file() || !fixture.is_file() {
-        return Ok(()); // nothing to gate; the file paths are repo-relative
+        // Not "nothing to gate": both paths are repo-relative and both ship, so a
+        // miss here means the checkout is incomplete and the gate checked nothing.
+        // That was previously a silent green.
+        bail!(
+            "websites/feishu.com/plugin/classify.rhai or the unread fixture is missing - \
+             the feishu gate cannot run"
+        );
     }
     // Failed collection must say so. The dangerous outcome is a digest that
     // reports "you have nothing unread" because the token expired.

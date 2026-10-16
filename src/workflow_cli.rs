@@ -1061,8 +1061,8 @@ enum PluginCmd {
     /// Print where `plugin install` writes and the search path it lands in.
     Dir,
     /// Every bundled plugin must appear in both registries that document it,
-    /// and every row must point at a plugin that ships. Replaces the former
-    /// laya-workflow plugin registry-check; exit 1 on any problem.
+    /// and every row must point at a plugin that ships. Exit 1 on any problem,
+    /// 2 when the binary has no checkout to read.
     RegistryCheck,
     /// Compile a single `.rhai` file through the engine, exit 1 on a parse
     /// error. Replaces laya-workflow plugin compile.
@@ -1072,8 +1072,8 @@ enum PluginCmd {
         file: std::path::PathBuf,
     },
     /// The full plugin gate: compile every shipped .rhai, assert the goofish
-    /// intent routing, and run the fold + feishu integration checks.
-    /// Replaces laya-workflow plugin check.
+    /// intent routing, and run the fold + feishu integration checks. Exit 1 on
+    /// any problem, 2 when the binary has no checkout to read.
     Check,
 }
 
@@ -1847,6 +1847,14 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
             Ok(())
         }
         PluginCmd::RegistryCheck => {
+            // The registries and the `plugins/` tree are repo-relative, so with no
+            // checkout this answered `no plugins/ ... - skipped`, rc=0 - a green
+            // over an empty tree. rc=2 is the "could not run" code the bdd gates
+            // use.
+            if let Err(e) = laya_workflow::bdd::require_checkout("plugin registry-check") {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
             let problems = plg::registry_check()?;
             if problems > 0 {
                 std::process::exit(1);
@@ -1867,6 +1875,13 @@ fn run_plugin(cmd: &PluginCmd) -> Result<()> {
             }
         }
         PluginCmd::Check => {
+            // Same reason as registry-check: everything the gate compiles and
+            // routes lives in the checkout, so a missing one must not read as a
+            // pass.
+            if let Err(e) = laya_workflow::bdd::require_checkout("plugin check") {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
             let problems = plg::gate()?;
             if problems > 0 {
                 std::process::exit(1);

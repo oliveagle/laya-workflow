@@ -691,6 +691,15 @@ table (`websites/developer.mozilla.org` is listed as `websites/mdn`,
 `websites/huggingface.co` as `websites/hf-trending`), and some are mid-flight —
 requiring all of them would make this a nuisance rather than a gate.
 
+Both commands read *this repo's own tree* — `plugins/` and the two registry
+tables — so they need a checkout. Pointed at one that is not there (a release or
+installed binary with `LAYA_WORKFLOW_REPO` unset or wrong) they used to answer
+`no plugins/ with a plugin.json - skipped` / `0 .rhai compiled, 0 problems` and
+exit 0 — a gate over an empty tree passing itself. They now exit 2 with the same
+one-line reason the other corpus gates print, and a missing `plugins/`,
+`websites/goofish.com/…` or the feishu fixture is counted as a problem rather
+than skipped.
+
 ## A test that has to fail
 
 `@expected_failure` covers *assertions*. It cannot cover an *op*, because an op
