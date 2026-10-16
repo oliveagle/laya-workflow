@@ -505,6 +505,16 @@ Feature: support_ticket_router
   - **诚实边界**：① 不改任何 workflow 语义，只把「空转绿」换成「红得说得出原因」；② `bdd run` / `bdd score` 与 MCP 侧的 `repo_root()` 读方不在本轮（前者带显式文件参数时本就不该要求 checkout，后者的降级形态另论）；③ 变量的效力只及于**认它**的二进制 —— 手里那份旧的仍是 fail-open。
   - **关键路径**：`src/bdd.rs`（`repo_root` / `repo_root_with` / `no_checkout_msg` / `checkout_root` + 7 门禁 + `build` 无参路径）、`src/workflow_tests/t_bdd.rs`（`test_bdd_checkout_root`）、`src/workflow_tests/main.rs`（段注册）、`bdd/README.md`、`bdd/AGENT.md`（本条）；`ole-eval/scripts/_laya_bin.sh`、`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§85）。
 
+- **同一个 fail-open 的其余出口（P213，正确性 / 一致性轴）**：P212 收掉了 7 个整语料门禁，但「读本仓语料」的出口还有几个 —— 它们**不是绿，而是红错了原因**（比绿更坏，因为看的人会去追一个不存在的 bug）：
+  * `bdd app-parity` 无 checkout ⇒ `0/32 reference cases reproduce the app's label`，读起来像**真回归**；
+  * `bdd run` 无 checkout ⇒ `no feature files selected`（rc=1），像「过滤器没匹配上」；
+  * `bdd score` / `bdd live` / `bdd live-decisions` / `bdd compare-systems` / `bdd compare` ⇒ `no authoring corpus at …` / `Error: reading …/bench/dsl_smoke_states.json`（rc=1）。
+  * **MCP 侧更糟**：实测 `mcp serve`（`LAYA_WORKFLOW_REPO` 指向不存在的路径）下 `bdd_catalog` 答 **`{"total_dsl_specs": 0, "total_decision_features": 0, "complete": true}`**、`bdd_list` 答空表 —— **对 agent 就是一个绿**（`complete: true` 会被当成「目录完整」直接行动）。
+  * 修法（与 P212 同一条线，不新增判据）：`bdd_mcp` 可用的 `pub fn bdd::require_checkout(what) -> Result<PathBuf>`（`checkout_root` 现在就是它的 `Option` 包装，消息只有一处真源）；`bdd run` / `score` / `live` / `live-decisions` / `compare-systems` / `compare` / `app-parity` 一律在「默认语料」路径上 **rc=2 + 一条说得出怎么办的原因**；MCP 的 `bdd_catalog` / `bdd_list` / `bdd_decide`（按 `name` 在 `dsl/` 里找 spec 的那条支路）改成 **拒绝作答**（`isError: true` + 同一条原因）。**带显式输入的不动**：`bdd build <file>` / `bdd run <file>` / MCP 的 `feature_text` / `spec_json` 是调用方的输入，不要 checkout 也能用。
+  * **回归**：同一段 `bdd-checkout-root` 从 14 → **25 断言**（新增 7 个 CLI 门禁 rc=2 + `bdd_catalog` / `bdd_list` 直接 `is_err()` + 正对照：指回真 checkout 后 `app-parity` rc=0 且 `bdd_catalog` 答 `complete: true`）。**实测**：全量 **6600 passed, 0 failed**（189 段，exit 0）；`mcp serve` 下 `bdd_catalog` / `bdd_list` 均 `isError: true` 并点名 `LAYA_WORKFLOW_REPO`（修前 `bdd_catalog` 返回 `"complete": true`）；CLI 九个门禁（含 P212 的 7 个）在无 checkout 时一致 rc=2。
+  * **诚实边界**：`bdd import --dir <任意目录>` / `bdd transpile` 走的是调用方给的路径，本轮不动；MCP 的 `bdd_validate` / `bdd_transpile` / `bdd_import`（相对路径）本来就报 `cannot read <rel>`，只是消息没有这条提示。
+  * **关键路径**：`src/bdd.rs`（`require_checkout` + 7 个新门禁）、`src/bdd_mcp.rs`（catalog / list / decide）、`src/workflow_tests/t_bdd.rs`、`bdd/README.md`、`bdd/AGENT.md`（本条）；`ole-eval/docs/goals/bdd_agentic_workflow_core_20261013.md`（§86）。
+
 **当前语料现状**（本段每个数都由 `bdd doc-check` 从门禁复算，改了不更新就会点名）：`bench/dsl_smoke_expect.json` 覆盖 **127** 个 spec / **988** 个 state（多节点 spec 的每个样本按 P38 逐步钉 `trace.step_count` + 每步 node/action/answer）；`bench/dsl_smoke_states.json` 注册 **128** 个 spec / **989** 个 state；**分支覆盖门禁** 断言每个 state-registered spec 的可达节点全集被走到（白名单仅 1 条，容器节点已结构性排除）；覆盖台账 `128 offline-verified + 35 live-declared = 163 specs`。门禁实测：`scripts/bdd/check.sh` 全绿、`dsl smoke 163/163`、`bdd round-trip 163/163`（回归断言的条数、全量 `laya-workflow-tests` 的 section / passed 数只出现在 CI 输出里，不再写进文档 —— 一个没人复算的数一周就会变成谎话）。
 
 ### 作者循环（agent 怎么写一个决策 workflow）

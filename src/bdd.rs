@@ -2332,12 +2332,26 @@ fn no_checkout_msg(root: &Path, what: &str) -> String {
 /// trusting it. A gate that examined nothing is not a pass: these answer rc=2
 /// (the "could not run" code `live-decisions` already uses) and say how to fix it.
 fn checkout_root(what: &str) -> Option<PathBuf> {
+    match require_checkout(what) {
+        Ok(root) => Some(root),
+        Err(e) => {
+            eprintln!("{e}");
+            None
+        }
+    }
+}
+
+/// [`repo_root()`] as a `Result`, for callers that cannot answer with an exit
+/// code. The MCP tools are the reason this exists: `bdd_catalog` answered
+/// `{"total_dsl_specs": 0, "complete": true}` over an empty tree when the binary
+/// had no checkout, which is a green an agent will act on. A tool that reads the
+/// corpus must refuse to answer instead.
+pub fn require_checkout(what: &str) -> Result<PathBuf> {
     let root = repo_root();
     if root.is_dir() {
-        return Some(root);
+        return Ok(root);
     }
-    eprintln!("{}", no_checkout_msg(&root, what));
-    None
+    bail!("{}", no_checkout_msg(&root, what))
 }
 
 /// The `chrome_binary` a transpiled scenario gets when its config pins none.
@@ -7573,6 +7587,13 @@ pub fn run(o: &RunOptions) -> Result<i32> {
     let root = repo_root();
     let feature_dir = root.join("bdd").join("features");
     let fixture_dir = root.join("bdd").join("fixtures");
+    // No file arguments means "run this repo's corpus" - the same rule `bdd build`
+    // got in P212. With no checkout "no feature files selected" (rc=1) reads like a
+    // filter that matched nothing.
+    if o.features.is_empty() && !feature_dir.is_dir() {
+        eprintln!("{}", no_checkout_msg(&root, "bdd run"));
+        return Ok(2);
+    }
     let xfail_tag = "expected_failure";
 
     // Hand-written specs the runner executes alongside the compiled ones.
@@ -8284,6 +8305,11 @@ pub fn score(o: &ScoreOptions) -> Result<i32> {
     let root = repo_root();
     let tasks_dir = root.join("bench").join("bdd").join("tasks");
     if !tasks_dir.is_dir() {
+        // A missing *root* is "there is no checkout here" (rc=2); a missing corpus
+        // under a real checkout is a repo problem and stays an error.
+        if checkout_root("bdd score").is_none() {
+            return Ok(2);
+        }
         bail!("no authoring corpus at {} - nothing to score", tasks_dir.display());
     }
     let mut files: Vec<PathBuf> = std::fs::read_dir(&tasks_dir)?
@@ -11421,7 +11447,9 @@ pub fn app_parity_impl(root: &std::path::Path) -> Result<AppParityReport> {
 /// diverges. The cases live in `crate::apps`; the port paths are checked in
 /// under `dsl/`.
 pub fn app_parity_check(o: &AppParityOptions) -> Result<i32> {
-    let root = repo_root();
+    let Some(root) = checkout_root("bdd app-parity") else {
+        return Ok(2);
+    };
     let report = app_parity_impl(&root)?;
     if let Some(p) = &o.json {
         let out = root.join(p);
@@ -11516,6 +11544,11 @@ pub fn live_features() -> Result<Vec<PathBuf>> {
 }
 
 pub fn live(o: &LiveOptions) -> Result<i32> {
+    // Same rule as `bdd run`: the default corpus is this repo's, explicit file
+    // arguments are the caller's.
+    if o.features.is_empty() && checkout_root("bdd live").is_none() {
+        return Ok(2);
+    }
     let mut features = if o.features.is_empty() {
         live_features()?.iter().map(|p| p.to_string_lossy().into_owned()).collect()
     } else {
@@ -11923,6 +11956,9 @@ fn walk_decision_corpus(
 }
 
 pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
+    if checkout_root("bdd live-decisions").is_none() {
+        return Ok(2);
+    }
     let corpus = DecisionCorpus::load()?;
     let base_url = o
         .base_url
@@ -12610,6 +12646,9 @@ pub fn format_split_attribution(s: &SplitAttribution, top: usize) -> String {
 
 /// Compare the decision corpus across several System-1 backends and rank them.
 pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
+    if checkout_root("bdd compare-systems").is_none() {
+        return Ok(2);
+    }
     let corpus = DecisionCorpus::load()?;
     let backends = if o.backends.is_empty() {
         default_system_backends()
@@ -12914,6 +12953,9 @@ fn noncomment_lines(text: &str) -> usize {
 }
 
 pub fn compare(o: &CompareOptions) -> Result<i32> {
+    if checkout_root("bdd compare").is_none() {
+        return Ok(2);
+    }
     let feats = live_features()?;
     let tmp = tempfile_build_dir()?;
     let mut cases: Vec<CaseCompare> = Vec::new();

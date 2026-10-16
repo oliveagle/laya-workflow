@@ -10593,6 +10593,58 @@ pub fn test_bdd_checkout_root(h: &mut Harness) {
         2,
     );
 
+    // P213: the same rule for the rest of the corpus readers - the ones that used
+    // to answer a *red for the wrong reason* (`bdd app-parity` reported "0/32
+    // reference cases reproduce the app's label", which reads like a regression;
+    // `bdd run` said "no feature files selected", like a filter that matched
+    // nothing) or, over MCP, a green (`bdd_catalog` answered `"complete": true`).
+    h.eq(
+        "bdd run refuses a checkout-less root (rc=2, not 'no feature files selected')",
+        bdd::run(&bdd::RunOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd score refuses a checkout-less root (rc=2)",
+        bdd::score(&bdd::ScoreOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd live refuses a checkout-less root (rc=2)",
+        bdd::live(&bdd::LiveOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd live-decisions refuses a checkout-less root (rc=2)",
+        bdd::live_decisions(&bdd::LiveDecisionsOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd compare-systems refuses a checkout-less root (rc=2)",
+        bdd::compare_systems(&bdd::CompareSystemsOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd compare refuses a checkout-less root (rc=2)",
+        bdd::compare(&bdd::CompareOptions::default()).unwrap(),
+        2,
+    );
+    h.eq(
+        "bdd app-parity refuses a checkout-less root (rc=2, not '0/32 diverged')",
+        bdd::app_parity_check(&bdd::AppParityOptions::default()).unwrap(),
+        2,
+    );
+
+    // The agent-facing half: an MCP tool that reads the corpus must refuse to
+    // answer, not answer over an empty tree.
+    h.check(
+        "bdd_catalog refuses a checkout-less root (no `complete: true` over nothing)",
+        bdd_tool("bdd_catalog").call(&json!({})).is_err(),
+    );
+    h.check(
+        "bdd_list refuses a checkout-less root (an empty list is not a corpus)",
+        bdd_tool("bdd_list").call(&json!({})).is_err(),
+    );
+
     // Positive control: pointed back at a real checkout, the same gates really
     // run and really read the corpus (rc=0, and the counts are printed).
     std::env::set_var("LAYA_WORKFLOW_REPO", &crate_dir);
@@ -10610,5 +10662,17 @@ pub fn test_bdd_checkout_root(h: &mut Harness) {
         "bdd features-check runs green once a checkout is named",
         bdd::features_check(&bdd::FeaturesCheckOptions { json: None }).unwrap(),
         0,
+    );
+    h.eq(
+        "bdd app-parity runs green once a checkout is named",
+        bdd::app_parity_check(&bdd::AppParityOptions::default()).unwrap(),
+        0,
+    );
+    h.check(
+        "bdd_catalog answers a real corpus once a checkout is named",
+        bdd_tool("bdd_catalog")
+            .call(&json!({}))
+            .map(|r| r["complete"].as_bool().unwrap_or(false))
+            .unwrap_or(false),
     );
 }

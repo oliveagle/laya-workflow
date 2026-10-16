@@ -1279,6 +1279,14 @@ into a browser it launched. Two consequences that are easy to trip over:
   from its build machine has none of it, so each used to report a green over an
   empty corpus (`0/0`, rc=0). They now refuse with `rc=2` and name
   `LAYA_WORKFLOW_REPO` — set it to a checkout, or run a binary built inside one.
+  `bdd run` / `score` / `live` / `live-decisions` / `compare-systems` / `compare`
+  (their default corpus) and `bdd app-parity` answer the same way: the last used
+  to report `0/32 reference cases reproduce the app's label`, which reads like a
+  regression rather than a missing checkout. The MCP tools that read the corpus
+  refuse as well — with no checkout `bdd_catalog` used to answer
+  `"complete": true` and `bdd_list` an empty list, which is a green an agent acts
+  on. (Tools that take their input as text, `feature_text` / `spec_json`, still
+  work with no checkout: that is the authoring loop.)
 * **Attach mode does not need it at all.** The BDD and `browser_base` ops are
   pure CDP; measured 20/20 with `extensions/laya-browser` moved away. If an
   attached flow needs extension-backed ops, set `extension_path` explicitly

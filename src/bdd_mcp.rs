@@ -181,7 +181,11 @@ impl McpTool for CatalogTool {
         json!({"type": "object", "properties": {}})
     }
     fn call(&self, _args: &Value) -> Result<Value> {
-        let root = bdd::repo_root();
+        // Refuse to answer at all with no checkout: over an empty tree this used
+        // to return `{"total_dsl_specs": 0, "complete": true}`, which is a green an
+        // agent acts on (measured: `mcp serve` with LAYA_WORKFLOW_REPO pointed
+        // nowhere). A catalog that read nothing is not a complete catalog.
+        let root = bdd::require_checkout("bdd_catalog")?;
         let wf_root = root.join("bdd").join("workflows");
         let mut features: Vec<(String, String)> = Vec::new(); // (cat, name)
         let mut cats: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
@@ -728,7 +732,7 @@ impl McpTool for DecideTool {
         } else if let Some(name) = args.get("name").and_then(Value::as_str) {
             // Resolve a workflow by its port name across the repo dsl tree, so
             // `bdd_list` -> `bdd_decide {name}` composes without a path.
-            let dsl = bdd::repo_root().join("dsl");
+            let dsl = bdd::require_checkout("bdd_decide")?.join("dsl");
             let hits: Vec<std::path::PathBuf> = crate::spec::discover(&dsl.to_string_lossy())
                 .map_err(|e| anyhow!("bdd_decide: scanning dsl/: {e:#}"))?
                 .into_iter()
@@ -1369,7 +1373,9 @@ impl McpTool for ListTool {
         let name_filter = args.get("name").and_then(Value::as_str);
         let query = args.get("query").and_then(Value::as_str);
         let summary = args.get("summary").and_then(Value::as_bool).unwrap_or(false);
-        let dsl = bdd::repo_root().join("dsl");
+        // An empty list is not a list of nothing: with no checkout this used to
+        // report "0 workflows" as a success.
+        let dsl = bdd::require_checkout("bdd_list")?.join("dsl");
         // The specs the corpus cannot behaviour-verify offline (chrome/network/
         // manual), from the same ledger `dsl smoke` counts. An agent that only
         // calls over MCP needs to know which graphs it can actually trust.
