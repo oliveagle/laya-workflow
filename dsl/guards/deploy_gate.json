@@ -1,0 +1,228 @@
+{
+  "name": "deploy_gate",
+  "_bdd": {
+    "feature": "deploy_gate",
+    "feature_path": "bdd/workflows/guards/deploy_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval deployment validation gate (code/eval/deploy_gate/gate.py):\na change to a served deployment may not ship unless every one of five checks\npasses. The gate runs smoke, config, quality, perf and lmcache in that order and\nreturns PASS only when all five pass; otherwise it refuses and names the first\ncheck that failed, so the operator sees the blocking check rather than a generic\nred. That ladder -- which checks gate a ship, that all must pass, and the first\nfailure in the gate's own order -- is the decision this graph encodes.\nOne fold is documented: each check's own pass/fail is the observable input here.\nTurning a measurement into pass/fail is threshold arithmetic over live-server\nnumbers that live in code/eval/deploy_gate/thresholds.json and is applied by the\nharness that produces the check status (the smoke conditions, the config bounds\nmax_model_len >= 1048576 and the expected model id, the tier1 pass_rate >= 0.9 and\nthe deterministic golden match_rate >= 0.9, the per-context prefill/gen/ttft\nbounds, the lmcache metrics 200 / valkey L2 dbsize > 0 / warm speedup >= 1.2). So\nthe graph is the gate's policy over five check outcomes, not the measurement.\nReference order (gate.py main()): results are appended smoke, config, quality,\nperf, lmcache; `all_pass = all(status == \"PASS\")`, and the first non-PASS result\nis the blocking check.",
+  "start": "smoke",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "smoke",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "smoke: is the server up? /health returns 200, /v1/models lists at least one model, a chat completion reports ok, and its output is non-empty.",
+          "criteria": {
+            "pass": "every smoke condition held",
+            "fail": "at least one smoke condition failed"
+          },
+          "heuristic": {
+            "answer_field": "ev_smoke"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "config"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "FAIL_SMOKE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "SMOKE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "config",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "config: does the served model match the deployment? max_model_len is at least the required length and the model id is the expected one.",
+          "criteria": {
+            "pass": "both config conditions held",
+            "fail": "max_model_len is below the bound, or the model id is not the expected one"
+          },
+          "heuristic": {
+            "answer_field": "ev_config"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "quality"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "FAIL_CONFIG"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "CONFIG_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "quality",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "quality: does the tier1 corpus pass the bar? pass_rate is at least the threshold, and when a golden file is present the deterministic match_rate is at least its threshold.",
+          "criteria": {
+            "pass": "the pass_rate, and any golden match, cleared their thresholds",
+            "fail": "pass_rate, or a golden match, fell below its threshold"
+          },
+          "heuristic": {
+            "answer_field": "ev_quality"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "perf"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "FAIL_QUALITY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "QUALITY_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "perf",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "perf: is throughput good enough at every measured context? prefill and generation tokens/s are at least their floors and time-to-first-token is within its ceiling, for each context band.",
+          "criteria": {
+            "pass": "every context band met its prefill, generation and ttft bounds",
+            "fail": "a context band missed a prefill, generation or ttft bound, or its measurement did not succeed"
+          },
+          "heuristic": {
+            "answer_field": "ev_perf"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fail": "STOP"
+        },
+        "default": "lmcache"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "FAIL_PERF"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PERF_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "lmcache",
+      "primary_q": "check",
+      "questions": {
+        "check": {
+          "type": "choice",
+          "instructions": "lmcache: is the shared KV cache link live end to end? the lmcache metrics endpoint is 200, the valkey L2 dbsize is above zero, and a warm request is faster than the cold one by at least the speedup floor. The last check: a pass here ships.",
+          "criteria": {
+            "pass": "the lmcache endpoint, the valkey L2 store and the warm speedup all held",
+            "fail": "the endpoint, the L2 store or the warm speedup did not hold"
+          },
+          "heuristic": {
+            "answer_field": "ev_lmcache"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "check",
+        "rules": [
+          {
+            "when": {
+              "question": "check",
+              "answer": "fail"
+            },
+            "label": "FAIL_LMCACHE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PASS"
+          }
+        ]
+      }
+    }
+  ]
+}

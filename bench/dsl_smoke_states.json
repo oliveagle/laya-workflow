@@ -7076,5 +7076,39 @@
       "body": "Hi, we were billed twice for March. Please refund today or we cancel.",
       "from": "user@acme.com"
     }
+  },
+  "deploy_gate": {
+    "all_pass": {
+      "ev_smoke": "pass",
+      "ev_config": "pass",
+      "ev_quality": "pass",
+      "ev_perf": "pass",
+      "ev_lmcache": "pass"
+    },
+    "smoke_first_fail": {
+      "ev_smoke": "fail"
+    },
+    "config_first_fail": {
+      "ev_smoke": "pass",
+      "ev_config": "fail"
+    },
+    "quality_first_fail": {
+      "ev_smoke": "pass",
+      "ev_config": "pass",
+      "ev_quality": "fail"
+    },
+    "perf_first_fail": {
+      "ev_smoke": "pass",
+      "ev_config": "pass",
+      "ev_quality": "pass",
+      "ev_perf": "fail"
+    },
+    "lmcache_first_fail": {
+      "ev_smoke": "pass",
+      "ev_config": "pass",
+      "ev_quality": "pass",
+      "ev_perf": "pass",
+      "ev_lmcache": "fail"
+    }
   }
 }

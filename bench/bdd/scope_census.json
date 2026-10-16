@@ -4,6 +4,10 @@
     {
       "root": "code/qwen_vm",
       "note": "The workflow home of the qwen_vm line. Every immediate child directory that holds a `.py` must be a universe's `upstream` (app_scenarios, self_evolving, hybrid, lang, working_mem), and the root's own modules need one too (qwen_vm_root). So a new upstream directory under qwen_vm cannot appear without a universe accounting for it - the one-level generalisation of the per-universe check."
+    },
+    {
+      "root": "code/eval",
+      "note": "The deployment-validation tree: the deploy gate that must pass before any GPU deployment ships, plus the tier0/tier1 runners and the tier1 quality runner it drives. Every immediate child directory that holds a `.py` must be a universe's `upstream` (deploy_gate, tiers), so a new gate directory under code/eval cannot appear without a universe accounting for it."
     }
   ],
   "universes": [
@@ -226,6 +230,37 @@
         }
       ],
       "note": "Working memory of the long-horizon line (F3/F5/F6): the store, the tiering and the readout heads, plus the one proposal guard - `reliable_reader` is ported as a `@decision` graph (`bdd/workflows/guards/reliable_state_reader.feature`), which resolves P221's flagged borderline call. `test_reliable_reader.py` is the upstream reference and is skipped by the recursive enumeration."
+    },
+    {
+      "id": "ole_eval_deploy_gate",
+      "upstream": "code/eval/deploy_gate",
+      "kind": "the deployment validation gate + its tier1 quality runner",
+      "ported": {
+        "gate": "bdd/workflows/guards/deploy_gate.feature"
+      },
+      "not_a_workflow": [
+        {
+          "reason": "the tier1 quality runner: it asks a fixed corpus and computes a pass_rate and a deterministic golden match. It *measures*; the gate decides. Its outputs are exactly the `quality` check's observable input, folded into that check's pass/fail in the port.",
+          "names": [
+            "quality"
+          ]
+        }
+      ],
+      "note": "The gate that must pass before any GPU deployment ships. Its verdict -- all five checks pass, else the first failing check in the gate's own order (smoke, config, quality, perf, lmcache) -- is a @decision graph (bdd/workflows/guards/deploy_gate.feature). The thresholds that turn a measurement into each check's pass/fail live in code/eval/deploy_gate/thresholds.json and belong to the harness, so they are folded into the check outcome."
+    },
+    {
+      "id": "ole_eval_tiers",
+      "upstream": "code/eval/tiers",
+      "kind": "the tier0 (smoke) and tier1 (quality) eval runners",
+      "not_a_workflow": [
+        {
+          "reason": "the tier runners: they drive a server and print PASS/FAIL over measured thresholds, wrapping the same checks the deploy gate chains. They are harnesses (a measurement), not the gate's verdict -- which is ported as deploy_gate.",
+          "names": [
+            "run_tier0",
+            "run_tier1"
+          ]
+        }
+      ]
     }
   ]
 }

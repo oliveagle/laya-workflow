@@ -3108,7 +3108,7 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     // (the census held 18/63) because nothing recomputed it. Plant a stale ported
     // count in each document; both must be named against the live breakdown.
     let named_re = regex_lite::Regex::new(
-        r"(\d+) modules named \((\d+) ported \+ (\d+)\s+search-space \+ (\d+) not-a-workflow\)",
+        r"(\d+) modules named\s+\((\d+) ported \+ (\d+)\s+search-space \+ (\d+) not-a-workflow\)",
     )
     .unwrap();
     let caps = named_re
@@ -3136,7 +3136,7 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
     );
 
     let agent_named_re = regex_lite::Regex::new(
-        r"(\d+) module\(s\) named \((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
+        r"(\d+) module\(s\) named\s+\((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
     )
     .unwrap();
     let agent_stale = agent_named_re
@@ -3204,16 +3204,16 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         ),
         problems.is_empty(),
     );
-    h.eq("bdd scope-check: reads all seven universes", counts.universes, 7);
+    h.eq("bdd scope-check: reads all nine universes", counts.universes, 9);
     h.eq(
         "bdd scope-check: 9 self_evolving workflows named as search-spaces",
         counts.search_space,
         9,
     );
     h.eq(
-        "bdd scope-check: 18 explicit ports (agent_permission + reliable_reader + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 19 explicit ports (agent_permission + reliable_reader + deploy_gate + the 16 agent-toolbox workflows)",
         counts.ported,
-        18,
+        19,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3226,14 +3226,14 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         1,
     );
     h.eq(
-        "bdd scope-check: 63 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root)",
+        "bdd scope-check: 66 modules named as not-a-workflow (36 self_evolving package + 11 hybrid + 1 lang + 14 working_mem + 1 qwen_vm root + 3 ole_eval deploy_gate/tiers)",
         counts.not_a_workflow,
-        63,
+        66,
     );
     h.eq(
-        "bdd scope-check: 1 declared coverage root (code/qwen_vm)",
+        "bdd scope-check: 2 declared coverage roots (code/qwen_vm + code/eval)",
         counts.roots,
-        1,
+        2,
     );
     // The agent-toolbox universe is a private upstream (`--sources` cannot list it), so
     // its 16 names are pinned here. A census that *dropped* it would report 2, which the
@@ -3274,6 +3274,25 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: working_mem ports reliable_reader as its @decision feature",
         wm["ported"]["reliable_reader"] == serde_json::json!("bdd/workflows/guards/reliable_state_reader.feature"),
+    );
+
+    // P225: the deploy gate under the new `code/eval` coverage root is pinned by name
+    // *and* by the feature it ports, so neither its classification nor its port target
+    // can drift silently - the same pin the working_mem port above carries.
+    let dg = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "ole_eval_deploy_gate")
+        .expect("ole_eval_deploy_gate universe");
+    h.eq(
+        "bdd scope-check: deploy_gate is the one ported module under code/eval",
+        dg["ported"].as_object().map(|m| m.len()).unwrap_or(0),
+        1,
+    );
+    h.check(
+        "bdd scope-check: deploy_gate ports the deployment gate's verdict as its @decision feature",
+        dg["ported"]["gate"] == serde_json::json!("bdd/workflows/guards/deploy_gate.feature"),
     );
 
     let probs_of = |c: &str| {
@@ -3370,7 +3389,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.eq(
         "bdd scope-check: the planted tree holds every name the census lists",
         planted.len(),
-        74,
+        78,
     );
 
     let (_, clean) = scope_check_impl(&root, &census, Some(&base)).unwrap();
