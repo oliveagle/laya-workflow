@@ -1071,6 +1071,40 @@ fn heuristic_range_error(k: &str, v: &Value) -> Option<String> {
     None
 }
 
+/// P185: the *shape* half of the P182 / P183 / P184 question-value family, on the
+/// heuristic's needle sets. A `match_any` / `match_mid_any` / `match_regex` that
+/// is present but *empty*, or a `match_rules` with no rows, declares a signal that
+/// can never fire: the backend finds no needle, so the question always falls to
+/// its miss / fallback answer and any edge keyed on the intended hit is silently
+/// dead. The compiler refuses to emit these (`heuristic needs at least one
+/// needle` / `match_rules needs at least one row`), so only a hand-written or
+/// sidecar spec can carry one. The *element types* (P183) and the *weights*
+/// (P184) are judged separately.
+fn heuristic_needle_error(k: &str, v: &Value) -> Option<String> {
+    if k == "match_rules" {
+        if let Some(m) = v.as_object() {
+            if m.is_empty() {
+                return Some(format!(
+                    "`heuristic` key {k:?} has no option rows — the backend reads an empty rule set and the answer always falls to the `fallback` (default \"other\"), so every branch keyed on a real option is silently dead; give it at least one `option -> tokens` row"
+                ));
+            }
+        }
+        return None;
+    }
+    const ARR: &[&str] = &["match_any", "match_mid_any", "match_regex"];
+    if !ARR.contains(&k) {
+        return None;
+    }
+    if let Some(a) = v.as_array() {
+        if a.is_empty() {
+            return Some(format!(
+                "`heuristic` key {k:?} is an empty list — the backend matches no token, so the signal can never fire and the question silently falls to its miss / fallback answer; give it at least one needle"
+            ));
+        }
+    }
+    None
+}
+
 fn json_kind_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -1659,7 +1693,10 @@ fn validate_graph_semantics(
                     // with a typed accessor and silently replaced by its default
                     // (the P168 policy / P179 node-spec mirror, one level deeper).
                     for (k, v) in h {
-                        if let Some(msg) = heuristic_value_error(k, v).or_else(|| heuristic_range_error(k, v)) {
+                        if let Some(msg) = heuristic_value_error(k, v)
+                            .or_else(|| heuristic_range_error(k, v))
+                            .or_else(|| heuristic_needle_error(k, v))
+                        {
                             bail!("node {qn}: question {qid:?} {msg}");
                         }
                     }

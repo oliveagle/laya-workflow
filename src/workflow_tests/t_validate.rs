@@ -3410,3 +3410,65 @@ pub fn test_validate_heuristic_ranges(h: &mut Harness) {
         err(&boolean(json!({"match_any": ["a"], "p_violated": 1.2}))).contains("must lie in [0, 1]"),
     );
 }
+/// P185: the shape half of the question-value family, on a heuristic's needle
+/// sets. A present-but-empty `match_any` / `match_mid_any` / `match_regex`, or a
+/// `match_rules` with no rows, declares a signal that can never fire: the
+/// backend finds no needle and the question always falls to its miss / fallback
+/// answer, so an edge keyed on the intended hit is silently dead. The compiler
+/// refuses to emit any of these, so only a hand-written spec can carry one.
+pub fn test_validate_heuristic_needles(h: &mut Harness) {
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    let choice = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "heuristic": heur}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+        }]})
+    };
+
+    // ── a non-empty needle set / rule table stays accepted ──
+    h.check(
+        "validate heuristic-needles: a non-empty `match_any` is OK",
+        ok(&choice(json!({"match_any": ["refund"], "p_hit": 0.9, "p_miss": 0.1}))),
+    );
+    h.check(
+        "validate heuristic-needles: a non-empty `match_mid_any` / `match_regex` is OK",
+        ok(&choice(json!({"match_any": ["a"], "match_mid_any": ["maybe"], "match_regex": ["^x"], "p_hit": 0.9}))),
+    );
+    h.check(
+        "validate heuristic-needles: a `match_rules` with one row is OK",
+        ok(&choice(json!({"match_rules": {"B": ["refund"]}, "p_hit": 0.9, "fallback": "A"}))),
+    );
+    h.check(
+        "validate heuristic-needles: a question with no heuristic at all is OK",
+        ok(&{
+            let mut s = choice(json!({}));
+            s["nodes"][0]["questions"]["q"].as_object_mut().unwrap().remove("heuristic");
+            s
+        }),
+    );
+
+    // ── an empty needle set / rule table is rejected ──
+    let e = err(&choice(json!({"match_any": [], "p_hit": 0.9})));
+    h.check(
+        "validate heuristic-needles: an empty `match_any` is rejected",
+        e.contains("key \"match_any\"") && e.contains("empty list"),
+    );
+    h.check(
+        "validate heuristic-needles: the message says the signal can never fire",
+        e.contains("never fire") && e.contains("fallback"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_mid_any` is rejected",
+        err(&choice(json!({"match_any": ["a"], "match_mid_any": [], "p_hit": 0.9}))).contains("key \"match_mid_any\""),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_regex` is rejected",
+        err(&choice(json!({"match_regex": [], "p_hit": 0.9}))).contains("key \"match_regex\""),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_rules` object is rejected",
+        err(&choice(json!({"match_rules": {}, "p_hit": 0.9}))).contains("no option rows"),
+    );
+}
