@@ -64,7 +64,7 @@ pub(crate) fn run_spec(spec_dir: &Path, backend: &dyn Decide, name: &str, state:
     .with_context(|| format!("loading {}", path.display()))?;
     let outcome = wf
         .run(backend, state)
-        .with_context(|| format!("running spec {name}"))?;
+        .with_context(|| format!("running spec {name} from {}", path.display()))?;
     Ok(outcome.to_json())
 }
 

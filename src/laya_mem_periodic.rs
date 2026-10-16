@@ -190,6 +190,30 @@ mod tests {
         p
     }
 
+    /// A *private* spec dir materialised from the embedded specs, one per test.
+    ///
+    /// These tests used `LayaMemTools::default_spec_dir()`, which resolves from
+    /// process-wide `LAYA_MEM_SPEC_DIR` / `LAYA_HOME` / `HOME` - siblings under
+    /// `cargo test --lib` rewrite exactly those (`state.rs`, `laya_mem_util.rs`
+    /// do it under `ENV_LOCK`; a reader that does not hold that lock can land on
+    /// a sibling's tmpdir *while it is being deleted*, or on a stale dir an older
+    /// binary left behind, since `ensure_specs` only ever writes *missing* files).
+    /// Either way `run_spec` then read the wrong - or no - `consolidation.json`,
+    /// the sweep errored, nothing was stamped and the bounded loop below could
+    /// not converge: measured 4-5 of 12 parallel `--lib` runs failed, 0 of 60 with
+    /// this test selected alone. The subject here is the *sweep*, not
+    /// `default_spec_dir()`, so the spec dir is private and deterministic.
+    fn own_spec_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "laya-mem-specs-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        crate::laya_mem_util::ensure_specs(&d).unwrap();
+        d
+    }
+
     fn insert(db: &Path, content: &str, node_type: &str, consolidated_at: Option<&str>) -> i64 {
         ensure_schema(db).unwrap();
         let ca = match consolidated_at {
@@ -242,7 +266,7 @@ mod tests {
     fn sweep_once_runs_without_panicking_on_empty_store() {
         let db = tmpdb("empty");
         ensure_schema(&db).unwrap();
-        let spec_dir = crate::laya_mem::LayaMemTools::default_spec_dir();
+        let spec_dir = own_spec_dir("empty");
         let out = sweep_once(&db, &spec_dir, None, 0, 10, 0.85).unwrap();
         assert_eq!(out.get("due_count").and_then(|v| v.as_i64()).unwrap(), 0);
         assert_eq!(out.get("actions").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0), 0);
@@ -251,7 +275,7 @@ mod tests {
     #[test]
     fn sweep_consolidates_a_near_duplicate_pair() {
         let db = tmpdb("sweep");
-        let spec_dir = crate::laya_mem::LayaMemTools::default_spec_dir();
+        let spec_dir = own_spec_dir("sweep");
         insert(&db, "user bought a red car last week", "OBSERVATION", None);
         insert(&db, "user bought a red car last week", "OBSERVATION", None);
         let out = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
@@ -268,11 +292,20 @@ mod tests {
         // sweep count that a different candidate order can outrun.
         let mut due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
         let mut sweeps = 0;
+        let mut last = Value::Null;
         while !due2.is_empty() && sweeps < 5 {
-            let _ = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
+            last = sweep_once(&db, &spec_dir, None, 0, 10, 0.30).unwrap();
             due2 = due_memories(&db, 86_400 * 30, 10).unwrap();
             sweeps += 1;
         }
-        assert_eq!(due2.len(), 0, "both stamped after {sweeps} extra sweep(s), nothing re-due");
+        // A sweep that errored stamps nothing, so the loop can never converge: the
+        // error (if any) is the diagnosis, not the count. Name it.
+        assert_eq!(
+            due2.len(),
+            0,
+            "both stamped after {sweeps} extra sweep(s), nothing re-due; spec_dir={} \
+             still_due={due2:?} last_sweep={last}",
+            spec_dir.display()
+        );
     }
 }
