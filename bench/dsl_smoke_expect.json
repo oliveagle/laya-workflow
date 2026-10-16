@@ -4311,5 +4311,59 @@
       "trace.steps.3.action": "stop",
       "trace.steps.3.answer": "mismatch"
     }
+  },
+  "routing_gate": {
+    "qwopus_below": {
+      "result.label": "NOT_RECOMMENDED",
+      "result.ev_route": "easy",
+      "result.ev_gate": "below",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "easy",
+      "trace.steps.0.next": "gate",
+      "trace.steps.1.node": "gate",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "below"
+    },
+    "qwopus_pass": {
+      "result.label": "RECOMMENDED",
+      "result.ev_route": "easy",
+      "result.ev_gate": "pass",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "easy",
+      "trace.steps.0.next": "gate",
+      "trace.steps.1.node": "gate",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "pass"
+    },
+    "r26s75_below": {
+      "result.label": "NOT_RECOMMENDED",
+      "result.ev_route": "hard",
+      "result.ev_gate": "below",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "hard",
+      "trace.steps.0.next": "gate",
+      "trace.steps.1.node": "gate",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "below"
+    },
+    "r26s75_pass": {
+      "result.label": "RECOMMENDED",
+      "result.ev_route": "hard",
+      "result.ev_gate": "pass",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "route",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "hard",
+      "trace.steps.0.next": "gate",
+      "trace.steps.1.node": "gate",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "pass"
+    }
   }
 }

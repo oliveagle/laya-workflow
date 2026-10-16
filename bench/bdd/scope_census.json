@@ -458,10 +458,11 @@
     {
       "id": "ole_eval_distill",
       "upstream": "code/distill",
-      "kind": "mixed (SFT/distill pipeline: generators + training loops + runners + a ported A/B promotion gate + one promotion gate pending)",
+      "kind": "mixed (two ported gates: the A/B promotion gate and the model-routing promotion gate, plus training/eval/data-gen scripts named)",
       "recursive": true,
       "ported": {
-        "scripts/eval_longhorizon_gamma": "bdd/workflows/guards/ab_promote_gate.feature"
+        "scripts/eval_longhorizon_gamma": "bdd/workflows/guards/ab_promote_gate.feature",
+        "scripts/r28d_gamma_routing": "bdd/workflows/guards/routing_gate.feature"
       },
       "not_a_workflow": [
         {
@@ -574,10 +575,7 @@
           ]
         }
       ],
-      "gate_pending": {
-        "scripts/r28d_gamma_routing": "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> RECOMMENDED`). A promote/reject verdict on a candidate. Port pending."
-      },
-      "note": "The SFT / distillation pipeline: the data generators, the training loops, the measurement runners, and the long-horizon A/B promotion gate (ported this round to bdd/workflows/guards/ab_promote_gate.feature) with the routing promotion gate still registered as pending."
+      "note": "The distill training/eval/data-gen scripts (named), and the two verdict-bearing gates: the long-horizon A/B promotion gate (ported to bdd/workflows/guards/ab_promote_gate.feature) and the model-routing promotion gate (ported to bdd/workflows/guards/routing_gate.feature)."
     },
     {
       "id": "ole_eval_llama_eval",

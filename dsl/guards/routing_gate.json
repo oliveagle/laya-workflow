@@ -1,0 +1,97 @@
+{
+  "name": "routing_gate",
+  "_bdd": {
+    "feature": "routing_gate",
+    "feature_path": "bdd/workflows/guards/routing_gate.feature",
+    "mode": "decision"
+  },
+  "description": "Port of the ole-eval r28d-Gamma model-routing eval\n(code/distill/scripts/r28d_gamma_routing.py): a 60-task x 4-sample pass@4 run that\nroutes each task to one of two served models -- easy tasks (index below the threshold\nof 28) to Qwopus v6, the rest to r26s75 -- and then decides whether the routed mix\nbeats the best single-model baseline. It is the verdict the R9 routing line leans on\nto call the routing RECOMMENDED or not, so it names its decision rather than\nreporting a number.\nIt makes two calls, in the source's own order:\n- route: which arm does this task go to? `route_for(i)` sends tasks with `i < 28`\nto Qwopus v6 (:11035) and `i >= 28` to r26s75 (:11043). Routing never rejects --\nboth arms are run and both reach the gate.\n- gate: does the routed overall pass@4 rate beat the best single-model baseline?\nThe docstring names the rule `Gate: routed > 61.25% -> RECOMMENDED`; the code\nrecords it as `gate.passed = overall > 0.6125`, i.e. strictly above the\nr26s75+s10 baseline of 0.6125.\nThe walk encodes exactly that: route -> gate. Routing names its arm and continues;\nthe gate's below-threshold answer ends the walk.\nTwo folds are documented:\n- the upstream never exits on the verdict: it computes `gate.passed`, writes it into\nthe output JSON, prints the three rates, and exits 0 either way -- its exit code\ncarries nothing about RECOMMENDED. The docstring's \"-> RECOMMENDED\" is a\ndocumented convention that the script never even prints. The graph names the\nverdict the JSON records; the port's job is to make that verdict explicit, not to\ninvent an exit code the upstream does not have.\n- pass@4 is any-pass over four samples per task, and the rate arithmetic (total pass\nover task count, per arm) stays in the harness; the graph reads only the routing\nbucket and the gate verdict, no number the eval wrote.\nReference walk (r28d_gamma_routing.py, main()): route each task (i < 28 -> Qwopus,\nelse r26s75), run 4 samples, pass@4 per task, overall = total_pass / len(tasks);\n`gate.passed = overall > 0.6125`; save the result JSON.",
+  "start": "route",
+  "max_iterations": 6,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "route",
+      "primary_q": "advise",
+      "questions": {
+        "advise": {
+          "type": "choice",
+          "instructions": "Which arm does this task go to? The routing sends tasks below the easy threshold (index 28) to Qwopus v6 and the rest to r26s75. It never rejects: both arms run and both reach the promotion gate.",
+          "criteria": {
+            "easy": "task index < 28: run on Qwopus v6",
+            "hard": "task index >= 28: run on r26s75"
+          },
+          "heuristic": {
+            "answer_field": "ev_route"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "gate"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "advise",
+        "rules": [
+          {
+            "when": {
+              "question": "advise",
+              "answer": "hard"
+            },
+            "label": "ROUTE_R26S75"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ROUTE_QWOPUS"
+          }
+        ]
+      }
+    },
+    {
+      "name": "gate",
+      "primary_q": "advise",
+      "questions": {
+        "advise": {
+          "type": "choice",
+          "instructions": "Does the routed overall pass@4 rate beat the best single-model baseline? The docstring's rule is routed > 61.25% -> RECOMMENDED, i.e. strictly above 0.6125. This is the last call: a rate not above the baseline is not recommended.",
+          "criteria": {
+            "pass": "the routed overall rate is strictly above the baseline (0.6125)",
+            "below": "the routed overall rate is at or below the baseline"
+          },
+          "heuristic": {
+            "answer_field": "ev_gate"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "advise",
+        "rules": [
+          {
+            "when": {
+              "question": "advise",
+              "answer": "below"
+            },
+            "label": "NOT_RECOMMENDED"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "RECOMMENDED"
+          }
+        ]
+      }
+    }
+  ]
+}

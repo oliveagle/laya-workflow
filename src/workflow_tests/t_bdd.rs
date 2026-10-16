@@ -3218,9 +3218,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         9,
     );
     h.eq(
-        "bdd scope-check: 26 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
+        "bdd scope-check: 27 explicit ports (agent_permission + reliable_reader + deploy_gate + longhorizon state_machine + laya-tch parity_check + dllm sanity_ar_base + distill eval_longhorizon_gamma + distill r28d_gamma_routing + inference vllm_deadlock_watchdog + inference toolcall_fix_verify + inference wld_e2e + the 16 agent-toolbox workflows)",
         counts.ported,
-        26,
+        27,
     );
     h.eq(
         "bdd scope-check: 1 universe ported in full (ole_eval)",
@@ -3238,9 +3238,9 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         350,
     );
     h.eq(
-        "bdd scope-check: 5 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
+        "bdd scope-check: 4 gate-shaped modules registered as pending gates (not dismissed as not-a-workflow)",
         counts.gate_pending,
-        5,
+        4,
     );
     h.eq(
         "bdd scope-check: 5 declared coverage roots (code/qwen_vm + code/eval + code/longhorizon + code/laya-tch + code, which nests the other four)",
@@ -3347,7 +3347,7 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
 
     // P229: the long-horizon A/B promotion gate under the `code/distill` coverage root
     // is pinned by name *and* by the feature it ports - the same pin the ports above
-    // carry. Its sibling, the routing promotion gate, stays registered as a pending gate.
+    // carry. Its sibling, the routing promotion gate, is ported in P233 below.
     let ds = census_json["universes"]
         .as_array()
         .unwrap()
@@ -3355,14 +3355,28 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
         .find(|u| u["id"] == "ole_eval_distill")
         .expect("ole_eval_distill universe");
     h.eq(
-        "bdd scope-check: eval_longhorizon_gamma is the one ported module under code/distill",
+        "bdd scope-check: distill ports two modules (the A/B promotion gate and the routing promotion gate)",
         ds["ported"].as_object().map(|m| m.len()).unwrap_or(0),
-        1,
+        2,
     );
     h.check(
         "bdd scope-check: distill ports the A/B promotion gate as its @decision feature",
         ds["ported"]["scripts/eval_longhorizon_gamma"]
             == serde_json::json!("bdd/workflows/guards/ab_promote_gate.feature"),
+    );
+
+    // P233: the routing promotion gate under `code/distill` - the model-routing eval that
+    // sends easy tasks to Qwopus v6 and the rest to r26s75 and decides whether the routed
+    // mix beats the best single-model baseline. Pinned by name and by the feature it ports;
+    // with it, the distill universe has no gate-shaped module left unported.
+    h.check(
+        "bdd scope-check: distill ports the routing promotion gate as its @decision feature",
+        ds["ported"]["scripts/r28d_gamma_routing"]
+            == serde_json::json!("bdd/workflows/guards/routing_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: the distill universe has no pending gate left (every gate-shaped module is ported)",
+        ds.get("gate_pending").is_none(),
     );
 
     // P230: the vLLM deadlock watchdog under the `code/inference` coverage root - the
@@ -3592,19 +3606,22 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     // not yet ported. It is not a `not_a_workflow` (that would be false) and not a
     // `ported` (no such feature exists), so two failures are named: an empty reason, and
     // a name that is double-listed.
+    // P233: the distill routing gate is now ported (the plant above is gone), so this
+    // negative moves to a module that is still a pending gate - the eval-index report
+    // generator.
     let gate_empty = census.replace(
         concat!(
-            "\"scripts/r28d_gamma_routing\": \"",
-            "the routing promotion gate: it compares routed vs baseline pass-rates on the 60x4 set ",
-            "and declares RECOMMENDED when routed beats the baseline (`Gate: routed > 61.25% -> ",
-            "RECOMMENDED`). A promote/reject verdict on a candidate. Port pending.\""
+            "\"report_gen\": \"",
+            "the unified eval-report generator: it renders eval JSON into a standard markdown ",
+            "report and exits non-zero when the requested input or arguments are missing (and ",
+            "prints the threshold legend it calls 判定标准). Verdict-adjacent; port pending.\""
         ),
-        "\"scripts/r28d_gamma_routing\": \"\"",
+        "\"report_gen\": \"\"",
     );
     let (_, drifted_g) = scope_check_impl(&root, &gate_empty, Some(&base)).unwrap();
     h.check(
         "bdd scope-check: a pending gate with an empty reason is named",
-        any(&drifted_g, "gate_pending[\"scripts/r28d_gamma_routing\"] needs a non-empty reason"),
+        any(&drifted_g, "gate_pending[\"report_gen\"] needs a non-empty reason"),
     );
 
     // P232: `e2e_awq_int4_wld` used to be the pending gate this planted; it is now

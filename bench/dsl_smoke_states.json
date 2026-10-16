@@ -7345,5 +7345,23 @@
       "ev_warm": "pass",
       "ev_content": "mismatch"
     }
+  },
+  "routing_gate": {
+    "qwopus_below": {
+      "ev_route": "easy",
+      "ev_gate": "below"
+    },
+    "qwopus_pass": {
+      "ev_route": "easy",
+      "ev_gate": "pass"
+    },
+    "r26s75_below": {
+      "ev_route": "hard",
+      "ev_gate": "below"
+    },
+    "r26s75_pass": {
+      "ev_route": "hard",
+      "ev_gate": "pass"
+    }
   }
 }
