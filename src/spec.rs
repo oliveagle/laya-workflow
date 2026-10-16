@@ -1048,6 +1048,29 @@ fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
     None
 }
 
+/// P184: the *range* half of P183. A heuristic's weight keys are probabilities —
+/// `backend.rs` turns them straight into a `confidence` and `bchoice` / `bscore`
+/// then reports `max(p, 1 - p)`, while `Edge::resolve` compares that confidence
+/// against the node's `min_confidence` (which is itself constrained to [0, 1]).
+/// A weight outside [0, 1] is therefore not "a large confidence": it silently
+/// defeats every confidence gate (a `p_hit: 2.0` clears a `min_confidence: 1.0`
+/// gate that the intended `0.9` would fail), exactly the P173 / P180 "a value
+/// outside the domain its reader assumes" class. Only the *probability* keys are
+/// bounded — `score_hit` / `score_mid` / `score_miss` are scores (arbitrary reals).
+fn heuristic_range_error(k: &str, v: &Value) -> Option<String> {
+    const PROB: &[&str] = &["p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok"];
+    if !PROB.contains(&k) {
+        return None;
+    }
+    let n = v.as_f64()?; // the type half (P183) already rejected a non-number
+    if !(0.0..=1.0).contains(&n) {
+        return Some(format!(
+            "`heuristic` key {k:?} is {n}, but it is a probability and must lie in [0, 1] — the backend reports it as the answer's confidence, which `Edge::resolve` compares against the node's `min_confidence` (itself in [0, 1]), so a value above 1 silently clears every confidence gate and one below 0 defeats them all",
+        ));
+    }
+    None
+}
+
 fn json_kind_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -1636,7 +1659,7 @@ fn validate_graph_semantics(
                     // with a typed accessor and silently replaced by its default
                     // (the P168 policy / P179 node-spec mirror, one level deeper).
                     for (k, v) in h {
-                        if let Some(msg) = heuristic_value_error(k, v) {
+                        if let Some(msg) = heuristic_value_error(k, v).or_else(|| heuristic_range_error(k, v)) {
                             bail!("node {qn}: question {qid:?} {msg}");
                         }
                     }

@@ -3331,3 +3331,82 @@ pub fn test_validate_heuristic_values(h: &mut Harness) {
         err(&choice(json!({"match_any": ["ok"], "p_miss": true}))).contains("p_miss"),
     );
 }
+/// P184: the *range* half of P183. A heuristic's weight keys are probabilities;
+/// the backend reports them as the answer's confidence, which `Edge::resolve`
+/// compares against the node's `min_confidence` (itself in [0, 1]). A weight
+/// outside [0, 1] therefore silently clears (or defeats) every confidence gate.
+/// `score_*` are scores, not probabilities, so they are *not* bounded.
+pub fn test_validate_heuristic_ranges(h: &mut Harness) {
+    let ok = |s: &Value| spec::from_spec(s).is_ok();
+    let err = |s: &Value| spec::from_spec(s).err().map(|e| e.to_string()).unwrap_or_default();
+    let choice = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "choice", "instructions": "?", "criteria": {"A": "a", "B": "b"}, "heuristic": heur}},
+            "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
+        }]})
+    };
+    let boolean = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "boolean", "instructions": "?", "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
+    let score = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "score", "instructions": "?", "criteria": ["low", "mid", "high"], "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
+
+    // ── weights inside [0, 1] are OK (boundaries included) ──
+    h.check(
+        "validate heuristic-range: p_hit 0 / 1 boundaries are OK",
+        ok(&choice(json!({"match_any": ["a"], "p_hit": 0.0}))) && ok(&choice(json!({"match_any": ["a"], "p_hit": 1.0}))),
+    );
+    h.check(
+        "validate heuristic-range: p_miss / p_mid / p_fallback inside [0,1] are OK",
+        ok(&choice(json!({"match_any": ["a"], "p_hit": 0.9, "p_mid": 0.5, "p_miss": 0.05, "p_fallback": 0.6}))),
+    );
+    h.check(
+        "validate heuristic-range: p_violated / p_ok inside [0,1] are OK",
+        ok(&boolean(json!({"match_any": ["a"], "p_violated": 0.95, "p_ok": 0.05}))),
+    );
+    h.check(
+        "validate heuristic-range: `score_hit` / `score_miss` are scores, not probabilities, and are unbounded",
+        ok(&score(json!({"extract_numeric": "amount", "score_hit": 2.0, "score_mid": 1.25, "score_miss": 0.5}))),
+    );
+
+    // ── a weight outside [0, 1] is rejected, naming the gate it defeats ──
+    let e = err(&choice(json!({"match_any": ["a"], "p_hit": 2.0})));
+    h.check(
+        "validate heuristic-range: p_hit 2.0 is rejected",
+        e.contains("key \"p_hit\"") && e.contains("must lie in [0, 1]"),
+    );
+    h.check(
+        "validate heuristic-range: the message names the confidence gate it defeats",
+        e.contains("min_confidence"),
+    );
+    h.check(
+        "validate heuristic-range: a negative p_hit is rejected",
+        err(&choice(json!({"match_any": ["a"], "p_hit": -0.5}))).contains("must lie in [0, 1]"),
+    );
+    h.check(
+        "validate heuristic-range: p_miss 1.5 is rejected",
+        err(&choice(json!({"match_any": ["a"], "p_miss": 1.5}))).contains("must lie in [0, 1]"),
+    );
+    h.check(
+        "validate heuristic-range: p_mid -1 is rejected",
+        err(&choice(json!({"match_any": ["a"], "p_mid": -1}))).contains("must lie in [0, 1]"),
+    );
+    h.check(
+        "validate heuristic-range: p_fallback 1.01 is rejected",
+        err(&choice(json!({"match_any": ["a"], "p_fallback": 1.01}))).contains("must lie in [0, 1]"),
+    );
+    h.check(
+        "validate heuristic-range: p_violated 1.2 is rejected (rules backend)",
+        err(&boolean(json!({"match_any": ["a"], "p_violated": 1.2}))).contains("must lie in [0, 1]"),
+    );
+}
