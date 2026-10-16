@@ -3062,6 +3062,41 @@ pub fn test_bdd_jobs_ports(h: &mut Harness) {
     );
 }
 
+/// `bdd run --jobs 0` sizes the pool from the core count, capped so a big box
+/// does not cold-start one Chrome per core (the cap is measured - see
+/// `BDD_AUTO_JOBS_CAP`) and never wider than the plan. The header line names
+/// the reduction, so "the gate chose N" is never silently different from what
+/// the flags said (P191).
+pub fn test_bdd_jobs_auto(h: &mut Harness) {
+    use laya_workflow::bdd::{auto_jobs, BDD_AUTO_JOBS_CAP};
+
+    h.eq(
+        "bdd jobs: zero cores still means one worker, never zero",
+        auto_jobs(0, 25),
+        1,
+    );
+    h.eq(
+        "bdd jobs: auto takes one worker per core below the cap",
+        auto_jobs(6, 25),
+        6,
+    );
+    h.eq(
+        "bdd jobs: auto stops at the cap even on a 96-core box",
+        auto_jobs(96, 25),
+        BDD_AUTO_JOBS_CAP,
+    );
+    h.eq(
+        "bdd jobs: auto never spawns a worker with no scenario",
+        auto_jobs(96, 3),
+        3,
+    );
+    h.eq(
+        "bdd jobs: a one-scenario plan stays serial under auto",
+        auto_jobs(96, 1),
+        1,
+    );
+}
+
 /// `bdd port-check`: the cross-repo conversion is closed. The pure
 /// symmetric-difference rules are pinned here, plus one real IO round-trip
 /// against the checked-in `ole_eval` ports using a throwaway source tree.
@@ -7936,6 +7971,48 @@ pub fn test_bdd_cdp_attach(h: &mut Harness) {
         ),
         _ => h.check("cdp attach: capability is a browser", false),
     }
+
+    // A *compiled* browser cap is not the bare shape above: it carries the
+    // launch path's own options too. `--cdp` used to hand exactly that shape to
+    // the registry with only `attach` added, and the registry refused it - so
+    // attach mode failed every scenario (0 passed / 8 failed, on the P190
+    // binary as well). The rewrite must drop the launch-only options, and the
+    // rewritten cap must survive the real registry (P191).
+    let compiled_like = json!({
+        "capabilities": {
+            "chrome": {
+                "kind": "chrome_cdp",
+                "endpoint": "http://127.0.0.1:${state.cdp_port}",
+                "profile_dir": "${state.cdp_profile}",
+                "launch": true,
+                "startup_timeout_ms": 30000,
+                "timeout_ms": 15000,
+                "chrome_binary": "scripts/bdd/chrome-headless.sh"
+            }
+        }
+    });
+    h.check(
+        "cdp attach: a compiled launching cap is accepted as written",
+        capability::Registry::from_spec(&compiled_like).is_ok(),
+    );
+    let mut naive = compiled_like.clone();
+    naive["capabilities"]["chrome"]["attach"] = json!(true);
+    h.check(
+        "cdp attach: attach=true beside the launch-only options is refused",
+        capability::Registry::from_spec(&naive).is_err(),
+    );
+    let mut attached = compiled_like;
+    attach_spec(&mut attached, "http://127.0.0.1:9222");
+    for dead in ["profile_dir", "chrome_binary", "startup_timeout_ms"] {
+        h.check(
+            &format!("cdp attach: {dead} is dropped by the rewrite"),
+            attached["capabilities"]["chrome"].get(dead).is_none(),
+        );
+    }
+    h.check(
+        "cdp attach: a compiled browser cap survives the registry after the rewrite",
+        capability::Registry::from_spec(&attached).is_ok(),
+    );
 }
 
 /// P127: `dsl smoke` is cwd-independent. A spec's relative plugin `dir` resolves

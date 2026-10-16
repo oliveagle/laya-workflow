@@ -465,7 +465,9 @@ enum BddCmd {
         /// Pin the CDP port (serial only).
         #[arg(long, default_value_t = 0)]
         port: u16,
-        /// Maximum concurrent scenarios (currently serial by design).
+        /// Maximum concurrent scenarios. 0 = auto (one worker per core,
+        /// capped at 8); 1 = serial, the byte-identical default. A reduction
+        /// (auto cap, plan size, `--port`) is named on the run's header line.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
         /// Per-scenario timeout in seconds.

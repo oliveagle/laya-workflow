@@ -318,10 +318,12 @@ if [ "${LAYA_BDD_SKIP_BROWSER:-}" = "1" ]; then
   echo "browser run: skipped (LAYA_BDD_SKIP_BROWSER=1)"
 else
   # --jobs: scenarios share no state, so the gate drives one Chrome per
-  # worker. Default 4 (override with LAYA_BDD_JOBS, or 1 for a byte-identical
-  # serial log); the per-scenario verdict lines come back in plan order
-  # either way, so the log above is the same text with a different header.
-  if ! "$BIN" bdd run --jobs "${LAYA_BDD_JOBS:-4}" > "$out/browsers.log" 2>&1; then
+  # worker. Default 0 = auto (one worker per core, capped by the binary at 8 -
+  # past that the wall clock is flat and a 16-worker run flaked; see P191).
+  # Override with LAYA_BDD_JOBS (1 for a byte-identical serial log); the
+  # per-scenario verdict lines come back in plan order either way, so the log
+  # above is the same text with a different header.
+  if ! "$BIN" bdd run --jobs "${LAYA_BDD_JOBS:-0}" > "$out/browsers.log" 2>&1; then
     echo "bdd check: the browser run failed:" >&2
     tail -40 "$out/browsers.log" | sed 's/^/  /' >&2
     exit 1

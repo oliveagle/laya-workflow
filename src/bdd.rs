@@ -6899,7 +6899,6 @@ fn free_port() -> Result<u16> {
     Ok(port)
 }
 
-/// The port of a `http[s]://host:port[/...]` CDP endpoint, if it names one.
 /// A CDP port no earlier worker holds.
 ///
 /// `free_port()` binds and releases, so two calls can hand back the same port
@@ -6918,6 +6917,26 @@ pub fn unique_worker_port(taken: &[u16], free: impl FnMut() -> Result<u16>) -> R
     }
 }
 
+/// The cap on `--jobs 0` (auto).
+///
+/// Past this, more workers stop buying wall-clock: the browser stage measured
+/// 11.9s / 12.5s / 10.5s / 11.5s / 11.5s / 11.8s at 4 / 4 / 6 / 8 / 12 / 16
+/// workers on a 96-core box - flat within run-to-run noise - while a
+/// 16-worker run flaked once in four (a probe that must refuse reported
+/// success). Eight keeps the whole measured gain and stays clear of that.
+/// Each extra worker cold-starts one more Chrome, so past the knee the
+/// concurrency is cold starts and contention, not speed.
+pub const BDD_AUTO_JOBS_CAP: usize = 8;
+
+/// The worker count for `--jobs 0`: one per available core, capped at
+/// [`BDD_AUTO_JOBS_CAP`] and at the plan (a worker with no scenario to run is
+/// pure overhead). `cores` is a parameter so the rule is unit-testable without
+/// depending on the host it runs on.
+pub fn auto_jobs(cores: usize, plan_len: usize) -> usize {
+    cores.max(1).min(BDD_AUTO_JOBS_CAP).min(plan_len.max(1))
+}
+
+/// The port of a `http[s]://host:port[/...]` CDP endpoint, if it names one.
 pub fn cdp_url_port(url: &str) -> Option<u16> {
     let rest = url
         .strip_prefix("https://")
@@ -6979,6 +6998,17 @@ pub fn attach_spec(spec: &mut Value, url: &str) {
             obj.insert("endpoint".into(), json!(url));
             obj.insert("launch".into(), json!(false));
             obj.insert("attach".into(), json!(true));
+            // Every compiled browser cap also carries the launch path's own
+            // options (`profile_dir`, `chrome_binary`, `startup_timeout_ms`).
+            // `attach: true` returns from the runtime before it reads any of
+            // them, and the capability layer refuses the dead pair on purpose
+            // (P176). Leaving them here made `bdd run --cdp <url>` build a spec
+            // the registry rejected, so attach mode failed *every* scenario -
+            // 0 passed / 8 failed, on the P190 binary as well. Drop them, so the
+            // rewritten cap is exactly what the attach branch reads.
+            for dead in ["profile_dir", "chrome_binary", "startup_timeout_ms"] {
+                obj.remove(dead);
+            }
         }
     }
 }
@@ -7693,23 +7723,52 @@ pub fn run(o: &RunOptions) -> Result<i32> {
         return Ok(1);
     }
 
-    // Attach is serial by construction (one shared external browser), so it
-    // pins the job count; `--port` also pins one endpoint and stays serial-only.
-    let jobs = if attach.is_some() {
-        1
+    // The worker count the gate will actually use, and a note when it is not
+    // what the flags literally said. Attach is serial by construction (one
+    // shared external browser); `--port` pins one endpoint; `--jobs 0` means
+    // auto - one worker per core, capped (see `auto_jobs`), so the gate stops
+    // being pinned to whatever number a shell default happened to hard-code.
+    // Every reduction is *named* on the header line rather than applied in
+    // silence: `--jobs 8` on a 3-scenario plan running under 3 workers, or an
+    // auto run that silently chose 1, is exactly the gap a reader must not have
+    // to infer (P191 - "it ran with N workers" and "I asked for N" differ).
+    let (jobs, note) = if attach.is_some() {
+        (1usize, Some("--cdp drives one external browser".to_string()))
+    } else if o.port != 0 {
+        if o.jobs > 1 {
+            eprintln!("error: --port pins one CDP endpoint, so it only works with --jobs 1");
+            return Ok(1);
+        }
+        (1, Some("--port pins one CDP endpoint".to_string()))
+    } else if o.jobs == 0 {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
+        (
+            auto_jobs(cores, plan.len()),
+            Some(format!(
+                "--jobs auto (one per core, capped at {BDD_AUTO_JOBS_CAP})"
+            )),
+        )
+    } else if o.jobs > plan.len() {
+        (
+            plan.len(),
+            Some(format!("--jobs {} clamped to the plan size", o.jobs)),
+        )
     } else {
-        o.jobs.max(1).min(plan.len())
+        (o.jobs.max(1), None)
     };
-    if o.port != 0 && jobs != 1 {
-        eprintln!("error: --port pins one CDP endpoint, so it only works with --jobs 1");
-        return Ok(1);
-    }
 
-    println!(
-        "bdd: {} scenario(s)  ({})",
-        plan.len(),
-        if jobs == 1 { "serial".into() } else { format!("{jobs} workers") }
-    );
+    let mut desc = if jobs == 1 {
+        "serial".to_string()
+    } else {
+        format!("{jobs} workers")
+    };
+    if let Some(n) = &note {
+        desc.push_str(", ");
+        desc.push_str(n);
+    }
+    println!("bdd: {} scenario(s)  ({desc})", plan.len());
     std::fs::create_dir_all(&o.out)?;
 
     // One CDP endpoint per worker: each worker keeps its own port and profile
