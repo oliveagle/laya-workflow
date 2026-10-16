@@ -11,6 +11,46 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::workflow::{Decide, Decision, Verdict};
+
+/// A **live-backend** failure: the decision backend (`laya-tch` / soft-decider)
+/// could not be reached, or answered with a transport / HTTP-status / parse
+/// error instead of a `Verdict`.
+///
+/// This is deliberately a distinct error *type* rather than a string: the live
+/// gate (`bdd live-decisions`) must tell "the deployed System-1 backend is
+/// unreachable or broken" (inconclusive) from "the workflow graph regressed"
+/// (a structural failure). `anyhow`'s error chain preserves the type across the
+/// engine's `?` propagation, so one `downcast_ref` decides it.
+#[derive(Debug)]
+pub struct BackendError {
+    msg: String,
+}
+
+impl BackendError {
+    pub fn new(msg: impl Into<String>) -> Self {
+        Self { msg: msg.into() }
+    }
+
+    /// Wrap a message into an `anyhow::Error` that preserves this type.
+    pub fn err(msg: impl Into<String>) -> anyhow::Error {
+        anyhow::Error::new(Self::new(msg))
+    }
+}
+
+impl std::fmt::Display for BackendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for BackendError {}
+
+/// Is `e` (or anything in its `anyhow` cause chain) a [`BackendError`]? Pure, so
+/// the live gate can pin the rule without a live backend.
+pub fn is_backend_error(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<BackendError>().is_some()
+}
+
 /// HTTP client for `laya-tch`'s `/v1/systemone`.
 pub struct LayaBackend {
     base_url: String,
@@ -42,12 +82,15 @@ impl Decide for LayaBackend {
             .post(&format!("{}/v1/systemone", self.base_url))
             .set("Content-Type", "application/json")
             .send_string(&body.to_string())
-            .map_err(|e| anyhow!("laya backend request failed: {e}"))?;
+            .map_err(|e| BackendError::err(format!("laya backend request failed: {e}")))?;
         let text = resp
             .into_string()
-            .map_err(|e| anyhow!("laya backend read failed: {e}"))?;
-        let raw: Value = serde_json::from_str(&text)?;
-        let mut verdict = verdict_from_response(&raw)?;
+            .map_err(|e| BackendError::err(format!("laya backend read failed: {e}")))?;
+        let raw: Value = serde_json::from_str(&text)
+            .map_err(|e| BackendError::err(format!("laya backend returned malformed JSON: {e}")))?;
+        let mut verdict = verdict_from_response(&raw).map_err(|e| {
+            BackendError::err(format!("laya backend response was unusable: {e:#}"))
+        })?;
         verdict.latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
         Ok(verdict)
     }

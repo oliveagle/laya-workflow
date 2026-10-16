@@ -8669,6 +8669,97 @@ pub fn test_bdd_live_decisions_env_gap(h: &mut Harness) {
     );
 }
 
+/// P199: `bdd live-decisions` must separate "the live System-1 backend failed"
+/// (transport / HTTP status / malformed response — inconclusive) from "the
+/// workflow graph regressed" (a structural failure). Before this, any backend
+/// 5xx / connection error was recorded as `structural_error`, so a live run
+/// against a broken or partially-incompatible backend printed `[FAIL]` on
+/// structurally-fine specs and exited 1 — the same code as a real regression.
+///
+/// Measured: driving the 163 `@decision` graphs through the deployed Laya FT
+/// backend (`:18400`) hit HTTP 500 on 5 specs, each of which asks a `choice`
+/// whose `criteria` has a **single** option (`{A: yes}` / `{noop: …}` / an
+/// expanded `from_state` list that collapsed to `none`) and printed them as
+/// `[FAIL]`. The gate could not tell that from a corpus defect.
+pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
+    use laya_workflow::bdd::{repo_root, summarize_live, SpecLiveResult};
+    use laya_workflow::backend::{is_backend_error, BackendError};
+
+    // ── The rule, machine-independent ──
+    let be = BackendError::err("laya backend request failed: 500");
+    h.check(
+        "p199: a typed backend error is recognized through the anyhow chain",
+        is_backend_error(&be),
+    );
+    let plain = anyhow::anyhow!("node go: the backend answered off-contract");
+    h.check(
+        "p199: an ordinary engine error is not a backend error",
+        !is_backend_error(&plain),
+    );
+
+    // A backend error lands in its own bucket, is never counted clean, and is
+    // never counted as a structural failure.
+    let s = summarize_live(&[
+        SpecLiveResult {
+            rel: "a.feature".into(),
+            backend_error: Some("be".into()),
+            states_run: 1,
+            ..Default::default()
+        },
+        SpecLiveResult {
+            rel: "b.feature".into(),
+            structural_error: Some("se".into()),
+            states_run: 1,
+            ..Default::default()
+        },
+        SpecLiveResult { rel: "c.feature".into(), ..Default::default() },
+    ]);
+    h.check("p199: a backend error gets its own count", s.specs_backend_error == 1);
+    h.check(
+        "p199: a backend error is not a structural failure",
+        s.specs_structural_failure == 1,
+    );
+    h.check("p199: a backend error does not make the spec clean", s.specs_clean == 1);
+
+    // ── End to end: an unreachable backend ──
+    // `versioned/refund_policy.v1` has registered states and no host gap (P198
+    // already runs it under a stripped $PATH), so a dead base URL reaches the
+    // backend and fails *there*, not in the graph.
+    let root = repo_root();
+    let mut bin = std::env::current_exe().expect("test binary path");
+    bin.pop();
+    if bin.ends_with("deps") {
+        bin.pop();
+    }
+    bin.push("laya-workflow");
+    let out = std::process::Command::new(&bin)
+        .args([
+            "bdd",
+            "live-decisions",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--filter",
+            "refund_policy.v1",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("run bdd live-decisions");
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    h.check(
+        "p199: an unreachable backend is named [BACKEND], never [FAIL]",
+        err.contains("[BACKEND]") && !err.contains("[FAIL]"),
+    );
+    h.check(
+        "p199: the summary names the backend-error bucket, not a structural failure",
+        stdout.contains("1 backend-error") && !stdout.contains("structural-failure"),
+    );
+    h.check(
+        "p199: an unreachable backend exits 2 (inconclusive), not 1 (regression)",
+        out.status.code() == Some(2),
+    );
+}
+
 /// P137/P138: the app-parity gate — every built-in app's reference case replayed
 /// end to end through the app's checked-in BDD port spec. The port is the app's
 /// routing as *data*; the app is *code*. This pins that the two agree on all

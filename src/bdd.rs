@@ -11520,6 +11520,10 @@ impl Default for LiveDecisionsOptions {
 pub struct SpecLiveResult {
     pub rel: String,
     pub structural_error: Option<String>,
+    /// P199: the live backend failed (transport / HTTP status / malformed
+    /// response) while walking this spec. Distinct from `structural_error`: the
+    /// graph did not regress, the System-1 backend could not answer.
+    pub backend_error: Option<String>,
     pub states_run: u32,
     pub states_agreed: u32,
     pub states_skipped: u32,
@@ -11542,6 +11546,11 @@ pub fn walk_outcome_clean(final_action: &str) -> bool {
 pub struct LiveSummary {
     pub specs_total: u32,
     pub specs_clean: u32,
+    /// P199: specs that regressed (non-terminating / engine error).
+    pub specs_structural_failure: u32,
+    /// P199: specs the live backend could not answer (inconclusive, not a
+    /// corpus regression).
+    pub specs_backend_error: u32,
     pub states_run: u32,
     pub states_agreed: u32,
     pub states_skipped: u32,
@@ -11556,7 +11565,14 @@ pub struct LiveSummary {
 pub fn summarize_live(per_spec: &[SpecLiveResult]) -> LiveSummary {
     let mut s = LiveSummary { specs_total: per_spec.len() as u32, ..Default::default() };
     for r in per_spec {
-        if r.structural_error.is_none() && r.states_nonterminating == 0 {
+        let structural = r.structural_error.is_some() || r.states_nonterminating > 0;
+        if structural {
+            s.specs_structural_failure += 1;
+        }
+        if r.backend_error.is_some() {
+            s.specs_backend_error += 1;
+        }
+        if !structural && r.backend_error.is_none() {
             s.specs_clean += 1;
         }
         s.states_run += r.states_run;
@@ -11742,6 +11758,16 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
                         res.states_skipped += 1;
                         continue;
                     }
+                    // P199: a live-backend failure (transport / HTTP status /
+                    // malformed response) is NOT a spec regression — the graph
+                    // never got to run. Record it in its own bucket, named
+                    // `[BACKEND]` on stderr, so the gate never blames the corpus
+                    // for a broken / absent System-1 model.
+                    if crate::backend::is_backend_error(&e) {
+                        res.states_run += 1;
+                        res.backend_error = Some(format!("{label}: {e}"));
+                        break;
+                    }
                     res.states_run += 1;
                     res.structural_error = Some(format!("{label}: {e}"));
                     break;
@@ -11757,8 +11783,29 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             eprintln!("[FAIL] {}: {err}", r.rel);
         }
     }
+    // P199: the backend-failure bucket is reported on its own line — a broken /
+    // unreachable live backend must never look like a spec regression.
+    for r in &per_spec {
+        if let Some(err) = &r.backend_error {
+            eprintln!("[BACKEND] {}: {err}", r.rel);
+        }
+    }
+    // Only widen the summary line when the new bucket is non-empty, so the
+    // all-clean output stays byte-identical to the pre-P199 gate.
+    let mut buckets: Vec<String> = Vec::new();
+    if s.specs_structural_failure > 0 {
+        buckets.push(format!("{} structural-failure", s.specs_structural_failure));
+    }
+    if s.specs_backend_error > 0 {
+        buckets.push(format!("{} backend-error", s.specs_backend_error));
+    }
+    let flags = if buckets.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", buckets.join(", "))
+    };
     println!(
-        "live decisions: {}/{} specs walked structurally clean; agreement {}/{} states ({} skipped, {} loop-guard, {} non-terminating); backend={}",
+        "live decisions: {}/{} specs walked structurally clean{flags}; agreement {}/{} states ({} skipped, {} loop-guard, {} non-terminating); backend={}",
         s.specs_clean, s.specs_total, s.states_agreed, s.states_run, s.states_skipped,
         s.states_looped, s.states_nonterminating, base_url
     );
@@ -11769,6 +11816,8 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             "summary": {
                 "specs_total": s.specs_total,
                 "specs_clean": s.specs_clean,
+                "specs_structural_failure": s.specs_structural_failure,
+                "specs_backend_error": s.specs_backend_error,
                 "states_run": s.states_run,
                 "states_agreed": s.states_agreed,
                 "states_skipped": s.states_skipped,
@@ -11777,8 +11826,9 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
             },
             "specs": per_spec.iter().map(|r| json!({
                 "feature": r.rel,
-                "clean": r.structural_error.is_none(),
+                "clean": r.structural_error.is_none() && r.backend_error.is_none(),
                 "error": r.structural_error,
+                "backend_error": r.backend_error,
                 "states_run": r.states_run,
                 "states_agreed": r.states_agreed,
                 "states_skipped": r.states_skipped,
@@ -11794,8 +11844,13 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&report)?))?;
     }
 
-    if s.specs_clean < s.specs_total {
+    if s.specs_structural_failure > 0 {
         return Ok(1);
+    }
+    if s.specs_backend_error > 0 {
+        // Inconclusive: the decision corpus could not be walked because the
+        // live backend failed. Distinct from a structural regression (rc=1).
+        return Ok(2);
     }
     Ok(0)
 }
