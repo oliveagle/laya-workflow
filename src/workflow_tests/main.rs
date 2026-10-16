@@ -27,6 +27,7 @@ mod t_bdd;
 mod t_plugin;
 mod timeouts;
 mod update;
+mod runner;
 
 pub use laya_workflow::apps;
 pub use laya_workflow::backend::{choice, noul, score, verdict, ScriptedBackend};
@@ -269,6 +270,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("persist", persist::test_persistence),
         ("accuracy", heuristics::test_accuracy),
         ("heuristic-answer-field", heuristics::test_answer_field_authority),
+        ("runner-unknown-section", runner::test_unknown_section_is_an_error),
         ("update-version", update::test_update),
         ("update-install", update::test_extract_and_install),
     ]
@@ -307,6 +309,23 @@ fn main() {
                 filters.push(s.to_string());
             }
         }
+    }
+    // A filter that matches no section is a typo, or a stale binary. Either
+    // way it must not read as a green run: a binary that lacks a section prints
+    // "0 passed, 0 failed" and exits 0 for it (measured: the 184-section build
+    // answered exactly that for `bdd-compare-systems`, which the current source
+    // has). A selection that runs nothing is not a pass - name the offender and
+    // stop before running anything.
+    let unknown: Vec<&str> = filters
+        .iter()
+        .filter(|f| f.as_str() != "all" && !sections().iter().any(|(n, _)| n.starts_with(f.as_str())))
+        .map(|f| f.as_str())
+        .collect();
+    if !unknown.is_empty() {
+        eprintln!("laya-workflow-tests: no section matches {}", unknown.join(", "));
+        eprintln!("  (a stale binary answers '0 passed, 0 failed' for a name it does not know;");
+        eprintln!("   run `laya-workflow-tests --list` to see the names this binary actually has.)");
+        std::process::exit(2);
     }
     for (name, run) in sections() {
         let selected = filters.is_empty()

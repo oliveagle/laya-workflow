@@ -7,11 +7,13 @@
 #   scripts/verify.sh --no-build   tests only (you already built)
 #   scripts/verify.sh spec engine  only these sections
 #
-# Why the split: `laya-workflow-tests` has 103 sections and 102 of them finish
-# in about 10s. The other one, `capability-timeouts`, takes 168.9s on its own - it is
-# almost the entire runtime of a "full" run, and almost none of it is needed to
-# answer "did I break something". Running the whole thing by reflex is how a
-# 3-second question turns into a 3-minute one.
+# Why the split: all but one of `laya-workflow-tests`'s sections finish in about
+# 10s (the run prints the exact counts, so none is pinned here - the "103" this
+# comment used to carry had long since rotted). The one exception,
+# `capability-timeouts`, takes ~169s on its own - it is almost the entire runtime
+# of a "full" run, and almost none of it is needed to answer "did I break
+# something". Running the whole thing by reflex is how a 3-second question turns
+# into a 3-minute one.
 #
 # There is deliberately no baseline of "known failures" here. A baseline is a
 # fixture that rots: this repo shipped a test asserting a spec named
