@@ -1135,6 +1135,9 @@ fn run_state(state: &str, query: Option<&str>) -> Result<Value> {
 }
 
 fn main() -> Result<()> {
+    // Before anything can print: a reader that leaves early must end this process
+    // with SIGPIPE, not with a stdout-write panic (see `laya_workflow::sigpipe`).
+    laya_workflow::sigpipe::restore_sigpipe();
     let cli = Cli::parse();
     // Pin the spec root only when asked (`--dsl-dir` > `LAYA_DSL_DIR`); otherwise
     // leave it unpinned so the layered lookup (repo → user → builtin) applies.

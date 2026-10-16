@@ -26,6 +26,7 @@ mod t_state;
 mod t_bdd;
 mod t_plugin;
 mod t_paths;
+mod t_pipe;
 mod timeouts;
 mod update;
 mod runner;
@@ -269,6 +270,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("plugin-chrome-discovery", t_plugin::test_plugin_chrome_discovery),
         ("plugin-checkout-gate", t_plugin::test_plugin_checkout_gate),
         ("build-time-paths", t_paths::test_build_time_paths),
+        ("sigpipe-hygiene", t_pipe::test_sigpipe_hygiene),
         ("bdd-browser-binding", t_bdd::test_bdd_browser_binding),
         ("bdd-browser-gate", t_bdd::test_bdd_browser_gate),
         ("browser-extension-path", t_bdd::test_browser_extension_path),
@@ -314,6 +316,9 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
 }
 
 fn main() {
+    // `laya-workflow-tests --list | head -1` must die by SIGPIPE, not print a
+    // stdout-write panic (see `laya_workflow::sigpipe`).
+    laya_workflow::sigpipe::restore_sigpipe();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
         eprintln!("laya-workflow-tests [--list] [SECTION ...]");

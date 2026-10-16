@@ -38,4 +38,5 @@ pub mod orchestrate;
 pub mod persist;
 pub mod spec;
 pub mod state;
+pub mod sigpipe;
 pub mod workflow;
