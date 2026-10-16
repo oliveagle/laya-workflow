@@ -6798,6 +6798,50 @@ pub fn doc_check_impl(
         }
     }
 
+    // The census's own accounting, quoted in bdd/README.md's scope-check paragraph and
+    // in AGENT.md's P124 bullet: "N modules named (P ported + S search-space + U
+    // not-a-workflow)". Both said 17/64 through conversions that added a port - the
+    // census held 18/63 - because nothing recomputed them. This is not a *label* (it
+    // changes nothing about the labelled-count total); it is a claim about the gate,
+    // checked from the gate's own output like the round-trip claim above.
+    let census_txt =
+        std::fs::read_to_string(root.join("bench").join("bdd").join("scope_census.json"))
+            .unwrap_or_default();
+    let (scope_counts, _) = scope_check_impl(&root, &census_txt, None)?;
+    let named_modules =
+        scope_counts.ported + scope_counts.search_space + scope_counts.not_a_workflow;
+    let named_want = vec![
+        named_modules as i64,
+        scope_counts.ported as i64,
+        scope_counts.search_space as i64,
+        scope_counts.not_a_workflow as i64,
+    ];
+    let named_rx = Regex::new(
+        r"(\d+) module(?:\(s\)|s) named \((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
+    )
+    .unwrap();
+    for (doc, flat) in [(README, &flat_readme), (AGENT, &flat_agent)] {
+        let got: Vec<Vec<i64>> = named_rx
+            .captures_iter(flat)
+            .map(|c| {
+                (1..c.len())
+                    .map(|i| c[i].parse::<i64>().unwrap_or(0))
+                    .collect()
+            })
+            .collect();
+        if got.is_empty() {
+            problems.push(format!(
+                "{doc} no longer quotes the census's accounting (\"N modules named (P ported + S \
+                 search-space + U not-a-workflow)\") - restore it or the number is unchecked"
+            ));
+        } else if got.iter().any(|g| g != &named_want) {
+            problems.push(format!(
+                "{doc} says {got:?} where the census's accounting is {named_want:?} - the \
+                 breakdown drifted through a conversion nobody recounted"
+            ));
+        }
+    }
+
     for (block, src) in &quoted_blocks {
         let Some(m) = block.captures(&readme) else {
             problems.push(format!(
@@ -11199,6 +11243,20 @@ pub fn scope_check_impl(
     // Every universe's `upstream`, so the coverage-root sweep below can ask "is this
     // directory claimed?" without a second pass over the universes.
     let mut universe_upstreams: BTreeSet<String> = BTreeSet::new();
+    // Every feature some universe ports, so a `variant_of` claim - a module dismissed
+    // as "not a second decision graph, just a variant of one we ported" - can be held
+    // to a real port instead of to prose. Built in a pre-pass because a universe may
+    // point at a feature another universe ports.
+    let mut ported_features: BTreeSet<String> = BTreeSet::new();
+    for u in universes {
+        if let Some(p) = u.get("ported").and_then(Value::as_object) {
+            for feat in p.values() {
+                if let Some(f) = feat.as_str() {
+                    ported_features.insert(f.to_string());
+                }
+            }
+        }
+    }
     for u in universes {
         let id = u.get("id").and_then(Value::as_str).unwrap_or("<unnamed>");
         let Some(upstream) = u.get("upstream").and_then(Value::as_str) else {
@@ -11299,6 +11357,29 @@ pub fn scope_check_impl(
                                 ));
                             }
                         }
+                    }
+                }
+                // A group may carry `variant_of`: the claim that its module(s) are not a
+                // separate decision graph but a *variant* of a graph the census already
+                // ports (e.g. `browser_gate` = the ported `agent_permission_gate` with
+                // browser risk features). That is a claim about a real artifact, so the
+                // path must be a feature some universe ports - otherwise the dismissal is
+                // prose and a genuine second graph could hide behind it.
+                if let Some(vo) = g.get("variant_of") {
+                    match vo.as_str() {
+                        None => problems.push(format!(
+                            "{id}: not_a_workflow[{gi}].variant_of must be a feature path string"
+                        )),
+                        Some(s) if s.trim().is_empty() => problems.push(format!(
+                            "{id}: not_a_workflow[{gi}].variant_of is empty - a variant claim \
+                             must name the ported graph it is a variant of"
+                        )),
+                        Some(s) if !ported_features.contains(s) => problems.push(format!(
+                            "{id}: not_a_workflow[{gi}] says it is a variant of {s}, but no \
+                             universe ports that feature - a variant claim must point at a \
+                             ported @decision graph, not at prose"
+                        )),
+                        Some(_) => {}
                     }
                 }
             }

@@ -3102,6 +3102,71 @@ pub fn test_bdd_doc_check(h: &mut Harness) {
         h.check(&format!("bdd doc-check: live quickstart problem - {x}"), false);
     }
 
+    // Negative 11 (P224): the census's own accounting drifts. "N modules named
+    // (P ported + S search-space + U not-a-workflow)" is a claim about `bdd
+    // scope-check`, and it sat at 17/64 through two conversions that added a port
+    // (the census held 18/63) because nothing recomputed it. Plant a stale ported
+    // count in each document; both must be named against the live breakdown.
+    let named_re = regex_lite::Regex::new(
+        r"(\d+) modules named \((\d+) ported \+ (\d+)\s+search-space \+ (\d+) not-a-workflow\)",
+    )
+    .unwrap();
+    let caps = named_re
+        .captures(&readme)
+        .expect("bdd/README.md quotes the census's accounting");
+    let want_accounting = format!("[{}, {}, {}, {}]", &caps[1], &caps[2], &caps[3], &caps[4]);
+    let stale_ported = caps[2].parse::<u64>().unwrap() - 1;
+    let drifted_acct = named_re
+        .replace(
+            &readme,
+            format!(
+                "{} modules named ({stale_ported} ported + {} search-space + {} not-a-workflow)",
+                &caps[1], &caps[3], &caps[4]
+            ),
+        )
+        .into_owned();
+    h.check(
+        "bdd doc-check: the negative plants a real census-accounting drift (anchor is live)",
+        drifted_acct != readme,
+    );
+    let p = problems_of(&drifted_acct, &agent);
+    h.check(
+        "bdd doc-check: a stale census-accounting breakdown in the README is named",
+        any(&p, &format!("where the census's accounting is {want_accounting}")),
+    );
+
+    let agent_named_re = regex_lite::Regex::new(
+        r"(\d+) module\(s\) named \((\d+) ported \+ (\d+) search-space \+ (\d+) not-a-workflow\)",
+    )
+    .unwrap();
+    let agent_stale = agent_named_re
+        .replace(
+            &agent,
+            format!(
+                "{} module(s) named ({stale_ported} ported + {} search-space + {} not-a-workflow)",
+                &caps[1], &caps[3], &caps[4]
+            ),
+        )
+        .into_owned();
+    h.check(
+        "bdd doc-check: the negative plants a real AGENT.md census-accounting drift (anchor is live)",
+        agent_stale != agent,
+    );
+    let p = problems_of(&readme, &agent_stale);
+    h.check(
+        "bdd doc-check: a stale census-accounting breakdown in AGENT.md is named",
+        any(&p, &format!("where the census's accounting is {want_accounting}")),
+    );
+
+    // Negative 12 (P224): the sentence is dropped entirely - the page stops
+    // quoting the census's accounting, so its number is unchecked. Must be named.
+    let dropped_acct = named_re.replace(&readme, "").into_owned();
+    let p = problems_of(&dropped_acct, &agent);
+    h.check(
+        "bdd doc-check: a README that no longer quotes the census's accounting is named",
+        any(&p, "no longer quotes the census's accounting"),
+    );
+
     // ...and the checked-in docs quote no missing path (the negatives above are
     // real detections, not a blanket failure). The distinct (doc, path) count is a
     // second, structural witness of the widened scope: the three docs the gate used
@@ -3357,6 +3422,77 @@ pub fn test_bdd_scope_census(h: &mut Harness) {
     h.check(
         "bdd scope-check: a declared coverage root that is missing is named",
         any(&drifted4, "declared coverage root code/ghost_tree is missing under"),
+    );
+
+    // P224: `variant_of` turns the browser_gate dismissal from prose into a checked
+    // claim. It must name a feature some universe *ports* - the graph the module is
+    // said to be a variant of - so a genuine second decision graph cannot hide behind
+    // the word "variant". The field is a plain string, so the planted-tree count above
+    // (every ported / search-space / not-a-workflow *name*) is unchanged.
+    let se_pkg = census_json["universes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == "self_evolving_package")
+        .expect("self_evolving_package universe");
+    let bg_group = se_pkg["not_a_workflow"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| {
+            g["names"]
+                .as_array()
+                .map(|ns| ns.iter().any(|n| n == "browser_gate"))
+                .unwrap_or(false)
+        })
+        .expect("the browser_gate not-a-workflow group");
+    h.check(
+        "bdd scope-check: browser_gate's dismissal claims it is a variant of the ported agent_permission gate",
+        bg_group["variant_of"] == json!("bdd/workflows/guards/agent_permission_gate.feature"),
+    );
+    h.check(
+        "bdd scope-check: browser_gate's `variant_of` names a feature this package itself ports (the claim is checkable)",
+        se_pkg["ported"]
+            .as_object()
+            .map(|m| {
+                m.values()
+                    .any(|v| v == "bdd/workflows/guards/agent_permission_gate.feature")
+            })
+            .unwrap_or(false),
+    );
+
+    // Negative 7: a `variant_of` naming a feature *no* universe ports is prose, not a
+    // claim about a real artifact - exactly the hole the field exists to close.
+    let ghost_variant = census.replace(
+        "\"variant_of\": \"bdd/workflows/guards/agent_permission_gate.feature\"",
+        "\"variant_of\": \"bdd/workflows/guards/ghost_gate.feature\"",
+    );
+    h.check(
+        "bdd scope-check: a `variant_of` pointing at an un-ported feature is named",
+        any(
+            &probs_of(&ghost_variant),
+            "says it is a variant of bdd/workflows/guards/ghost_gate.feature, but no universe ports that feature",
+        ),
+    );
+
+    // Negative 8: an empty `variant_of` names nothing.
+    let empty_variant = census.replace(
+        "\"variant_of\": \"bdd/workflows/guards/agent_permission_gate.feature\"",
+        "\"variant_of\": \"\"",
+    );
+    h.check(
+        "bdd scope-check: an empty `variant_of` is named",
+        any(&probs_of(&empty_variant), "variant_of is empty"),
+    );
+
+    // Negative 9: a non-string `variant_of` is not a feature path.
+    let list_variant = census.replace(
+        "\"variant_of\": \"bdd/workflows/guards/agent_permission_gate.feature\"",
+        "\"variant_of\": [\"bdd/workflows/guards/agent_permission_gate.feature\"]",
+    );
+    h.check(
+        "bdd scope-check: a non-string `variant_of` is named",
+        any(&probs_of(&list_variant), "variant_of must be a feature path string"),
     );
 
     let _ = std::fs::remove_dir_all(&base);

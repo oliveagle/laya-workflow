@@ -827,6 +827,12 @@ this corpus accounts for every module in it — either ported (proven by `bdd
 port-check`), explicitly a parameter search-space with the reason it is not a
 decision graph, or named as `not_a_workflow` (engine / model / harness code, one
 reason per group) so that non-workflows are named rather than quietly absent. A
+`not_a_workflow` group may also carry `variant_of`, naming the ported feature a
+module is a *variant* of (the same graph with a different feature extractor — e.g.
+`browser_gate` is the ported `agent_permission_gate` with browser-specific risk
+features); the gate recomputes every feature some universe ports and rejects the
+claim if it names anything else, so a dismissal cannot hide behind the word
+"variant". A
 universe enumerates the `.py` files directly under `upstream`; `recursive: true`
 covers a package whose decision modules are not all in one directory (a gate at
 the package root next to a `workflows/` dir), where names become the `/`-joined
@@ -843,8 +849,8 @@ generalisation of the per-universe check. Seven universes now cover the whole
 `code/qwen_vm` tree — `ole_eval_app_scenarios` (66, ported in full),
 `self_evolving_package` (46), `agent_toolbox` (16 ported, private upstream), and the
 four the tree used to leave unclaimed: `qwen_vm_root` (1), `qwen_vm_hybrid` (11),
-`qwen_vm_lang` (1), `qwen_vm_working_mem` (15) — 90 modules named (17 ported + 9
-search-space + 64 not-a-workflow). Every one of these gates reads *this*
+`qwen_vm_lang` (1), `qwen_vm_working_mem` (15) — 90 modules named (18 ported + 9
+search-space + 63 not-a-workflow). Every one of these gates reads *this*
 repo's own tree, and an installed or tarball binary carries the path of the
 machine it was **built** on — so point `LAYA_WORKFLOW_REPO` at a laya-workflow
 checkout and they run against that checkout instead. With no checkout in reach

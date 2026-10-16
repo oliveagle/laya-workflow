@@ -89,7 +89,8 @@
           ]
         },
         {
-          "reason": "the browser-aware *variant* of the ported agent_permission decision graph: the state machine and the verdict thresholds (risk >= 0.5 -> BLOCK, confidence < 0.6 -> ESCALATE) are the same, and this module only swaps in browser-specific risk *features* for the model that supplies the risk band. It is not a second decision graph, so there is nothing separate to port.",
+          "reason": "the browser-aware *variant* of the ported agent_permission decision graph: same gate class, same state machine, same verdict vocabulary and thresholds (risk >= 0.5 -> BLOCK, confidence < 0.6 -> ESCALATE). It only swaps in browser-specific risk *features* for the model that supplies the risk band - driven against the port it agrees on the verdict of every expressible walk (17/17); it differs only in one presentational fold, materialising a walk-stopping refusal as a terminal `refused` node where the upstream leaves the state unchanged. It is not a second decision graph, so there is no separate policy to port; the walk-shape difference is recorded, not hidden.",
+          "variant_of": "bdd/workflows/guards/agent_permission_gate.feature",
           "names": [
             "browser_gate"
           ]
