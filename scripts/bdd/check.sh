@@ -172,21 +172,27 @@ fi
 # one whole workflow per feature, each Scenario one node. A decision step that
 # stops parsing, a generated spec `validate` rejects, or per-feature coverage
 # under the bar must fail CI here, the same way the browser corpus is gated.
-decision_n=0
-decision_bad=0
+#
+# One `bdd build` over the whole selection, not one process per feature: the gate
+# already names every feature it refuses (`<file>: line N: ...` for a step it
+# cannot read, `<file>: step coverage N% < 100% (unmatched: ...)` for a typo), so
+# a single invocation reports the same failures. The per-feature loop this
+# replaces spawned 136 short-lived copies of the binary and was the single
+# slowest stage of this script (10 s -> 0.4 s measured, P188).
+decision_feats=()
 while IFS= read -r feat; do
-  decision_n=$((decision_n + 1))
+  decision_feats+=("$feat")
+done < <(grep -rl --include="*.feature" "^@decision" "$ROOT/bdd/workflows" | sort)
+decision_n=${#decision_feats[@]}
+if [ "$decision_n" -gt 0 ]; then
   dout="$(mktemp -d)"
-  if ! "$BIN" bdd build "$feat" --out "$dout" >/dev/null 2> "$dout/build.err"; then
-    decision_bad=$((decision_bad + 1))
-    echo "bdd check: decision feature failed to build: $feat" >&2
+  if ! "$BIN" bdd build "${decision_feats[@]}" --out "$dout" >/dev/null 2> "$dout/build.err"; then
+    echo "bdd check: decision features failed to build:" >&2
     cat "$dout/build.err" >&2
+    rm -rf "$dout"
+    exit 1
   fi
   rm -rf "$dout"
-done < <(grep -rl --include="*.feature" "^@decision" "$ROOT/bdd/workflows" | sort)
-if [ "$decision_bad" -gt 0 ]; then
-  echo "bdd check: $decision_bad/$decision_n decision features failed" >&2
-  exit 1
 fi
 
 # The round-trip gate: every @decision feature must also reproduce its checked-in

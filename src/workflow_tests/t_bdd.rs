@@ -9330,3 +9330,62 @@ Feature: wrg
         with_range_rejected("browser", "result_count", &json!("50")).is_none(),
     );
 }
+
+
+/// The args gate's verdict assembly, driven as a pure function. The real gate
+/// spawns `laya-workflow run --spec` once per row of `bench/bdd/args_probes.json`
+/// - which the tests binary cannot do for itself, because its `current_exe` is
+/// the test runner and not a CLI - so the rows are handed in with synthetic
+/// outcomes and the verdicts are checked in row order. P188 made those rows run
+/// in parallel; this is what keeps a dropped, duplicated or reordered verdict
+/// from passing unnoticed.
+pub fn test_bdd_args_probe_verdicts(h: &mut Harness) {
+    use laya_workflow::bdd::args_probe_verdicts;
+    use std::path::PathBuf;
+
+    let job = |name: &str| -> (String, String, String, PathBuf) {
+        (
+            name.to_string(),
+            format!("{name} blurb"),
+            format!("refused the {name} call"),
+            PathBuf::from(format!("/tmp/{name}.json")),
+        )
+    };
+    let jobs = vec![job("a"), job("b"), job("c"), job("d")];
+    let outcomes = vec![
+        // a: a cold refusal that says the right thing.
+        Some((1, "Error: refused the a call\n".to_string())),
+        // b: exits zero - the plugin was supposed to refuse.
+        Some((0, String::new())),
+        // c: fails, but not with the documented message.
+        Some((1, "Error: something else\n".to_string())),
+        // d: never came back.
+        None,
+    ];
+    let (ran, problems) = args_probe_verdicts(&jobs, &outcomes);
+    // `ran` counts every row that came back at all - the gate's own wording is
+    // "{ran}/{rows} ... refuse", and it reads 16/16 only because every checked-in
+    // row does refuse. A timeout is the one outcome that is not counted.
+    h.eq(
+        "bdd args-probe-verdicts: every row that returned is counted, a timeout is not",
+        ran,
+        3usize,
+    );
+    h.eq(
+        "bdd args-probe-verdicts: one problem per bad row, none for the good one",
+        problems.len(),
+        3usize,
+    );
+    h.check(
+        "bdd args-probe-verdicts: the exit-0 row is named",
+        problems[0].contains("row \"b\""),
+    );
+    h.check(
+        "bdd args-probe-verdicts: the wrong-message row is named with what it said",
+        problems[1].contains("row \"c\"") && problems[1].contains("something else"),
+    );
+    h.check(
+        "bdd args-probe-verdicts: the timeout row is named",
+        problems[2].contains("row \"d\"") && problems[2].contains("timed out"),
+    );
+}

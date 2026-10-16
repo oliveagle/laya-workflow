@@ -6179,59 +6179,55 @@ fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     }
 
     // 1: does each row actually produce its message?
+    //
+    // Each row is one `run --spec` that must refuse before touching a browser.
+    // A single run costs ~225 ms of process start-up (the 14 MB binary plus the
+    // Rhai plugin), and the table holds 16 rows, so running them one after
+    // another paid ~3.6 s for a gate whose whole point is a handful of cold
+    // refusals. The runs are independent and read-only - each refuses before it
+    // touches anything - so they run in parallel and the verdicts are reported
+    // in row order, byte for byte as before. The spec files are all written up
+    // front on this thread, so the children never race on the scratch dir.
     let tmp = tempfile_build_dir()?;
-    let mut ran = 0usize;
     let exe = std::env::current_exe()?;
-    if let Some(rows) = table.get("rows").and_then(Value::as_array) {
-        for row in rows {
-            let name = row.get("name").and_then(Value::as_str).unwrap_or("");
-            let blurb = row.get("blurb").and_then(Value::as_str).unwrap_or("");
-            let must_contain = row.get("must_contain").and_then(Value::as_str).unwrap_or("");
-            let spec = build_args_spec(&table, row);
-            let spec_path = tmp.join(format!("{name}.json"));
-            std::fs::write(
-                &spec_path,
-                serde_json::to_string(&spec).unwrap_or_default(),
-            )?;
-            let out = CommandTimeout::run(
-                &exe,
-                &[
-                    "run",
-                    "--spec",
-                    &spec_path.to_string_lossy(),
-                    "--state",
-                    "{}",
-                ],
-                30,
-            );
-            match out {
-                None => problems.push(format!(
-                    "row {name:?} ({blurb}): the run timed out; this path is supposed to \
-                     refuse before touching a browser, so a hang is a real defect"
-                )),
-                Some((rc, output)) => {
-                    if rc == 0 {
-                        problems.push(format!(
-                            "row {name:?} ({blurb}): the run exited 0, but the plugin is \
-                             supposed to refuse with {must_contain:?}"
-                        ));
-                    } else if !output.contains(must_contain) {
-                        let first = output
-                            .lines()
-                            .find(|l| l.starts_with("Error:"))
-                            .unwrap_or("")
-                            .to_string();
-                        problems.push(format!(
-                            "row {name:?} ({blurb}): the run failed without saying \
-                             {must_contain:?} - got: {}",
-                            first.chars().take(120).collect::<String>()
-                        ));
-                    }
-                    ran += 1;
-                }
+    let jobs: Vec<(String, String, String, PathBuf)> =
+        if let Some(rows) = table.get("rows").and_then(Value::as_array) {
+            let mut jobs = Vec::with_capacity(rows.len());
+            for row in rows {
+                let name = row.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                let blurb = row.get("blurb").and_then(Value::as_str).unwrap_or("").to_string();
+                let must_contain = row
+                    .get("must_contain")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let spec = build_args_spec(&table, row);
+                let spec_path = tmp.join(format!("{name}.json"));
+                std::fs::write(&spec_path, serde_json::to_string(&spec).unwrap_or_default())?;
+                jobs.push((name, blurb, must_contain, spec_path));
             }
-        }
-    }
+            jobs
+        } else {
+            Vec::new()
+        };
+    let outcomes: Vec<Option<(i32, String)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = jobs
+            .iter()
+            .map(|(_, _, _, spec_path)| {
+                let exe = exe.clone();
+                let spec_arg = spec_path.to_string_lossy().into_owned();
+                scope.spawn(move || {
+                    CommandTimeout::run(&exe, &["run", "--spec", &spec_arg, "--state", "{}"], 30)
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or(None))
+            .collect()
+    });
+    let (ran, row_problems) = args_probe_verdicts(&jobs, &outcomes);
+    problems.extend(row_problems);
     let _ = std::fs::remove_dir_all(&tmp);
 
     let rows = table.get("rows").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
@@ -6251,6 +6247,49 @@ fn check_args_probes_impl(silent: bool) -> Result<(i32, Option<String>)> {
     );
     if !silent { println!("{line}"); }
     Ok((0, Some(line)))
+}
+
+/// Turn the per-row run outcomes into `(ran, problems)`, reported in row order.
+///
+/// Split out of [`check_args_probes_impl`] so a regression can hand in synthetic
+/// outcomes and assert every failure mode is named - the real runs spawn the
+/// CLI, which the tests binary cannot do for itself. Each outcome is the exit
+/// code and combined output of one `run --spec`, or `None` for a timeout.
+pub fn args_probe_verdicts(
+    jobs: &[(String, String, String, PathBuf)],
+    outcomes: &[Option<(i32, String)>],
+) -> (usize, Vec<String>) {
+    let mut ran = 0usize;
+    let mut problems: Vec<String> = Vec::new();
+    for ((name, blurb, must_contain, _), out) in jobs.iter().zip(outcomes) {
+        match out {
+            None => problems.push(format!(
+                "row {name:?} ({blurb}): the run timed out; this path is supposed to \
+                 refuse before touching a browser, so a hang is a real defect"
+            )),
+            Some((rc, output)) => {
+                if *rc == 0 {
+                    problems.push(format!(
+                        "row {name:?} ({blurb}): the run exited 0, but the plugin is \
+                         supposed to refuse with {must_contain:?}"
+                    ));
+                } else if !output.contains(must_contain.as_str()) {
+                    let first = output
+                        .lines()
+                        .find(|l| l.starts_with("Error:"))
+                        .unwrap_or("")
+                        .to_string();
+                    problems.push(format!(
+                        "row {name:?} ({blurb}): the run failed without saying \
+                         {must_contain:?} - got: {}",
+                        first.chars().take(120).collect::<String>()
+                    ));
+                }
+                ran += 1;
+            }
+        }
+    }
+    (ran, problems)
 }
 
 /// Build the spec the args gate runs for one row of bench/bdd/args_probes.json.
