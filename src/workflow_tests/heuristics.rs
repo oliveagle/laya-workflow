@@ -990,6 +990,88 @@ Feature: p248shapes
             "p248: feature -> spec -> feature -> spec is a fixed point on the graph",
             s48["nodes"] == s48b["nodes"],
         );
+
+        // P250: intrusion-style verdicts need ordered labels where one label can
+        // require several signal classes simultaneously. `match_rules` is only an
+        // OR over needles; `match_all` is only one binary answer. This shape maps
+        // label -> alternative conjunctions -> OR-groups -> needles.
+        let src50 = r#"
+@decision
+Feature: p250shapes
+  Scenario: verdict
+    Given a choice question "verdict" asks "which verdict?"
+      | answer    | meaning |
+      | allow     | none    |
+      | monitor   | weak    |
+      | challenge | strong  |
+      | block     | urgent  |
+    And answer by all-group rules on the text with hit 0.9 and miss 0.02 and fallback "allow" at 0.88
+      | label     | all of |
+      | block     | "signature" |
+      | block     | "failed_login", "5 failed" | "port_scan" |
+      | challenge | "failed_login", "5 failed" |
+      | challenge | "unusual_country" | "off_hours" |
+      | monitor   | "unusual_country" |
+    When any other answer goes to "STOP"
+    Then the primary question is "verdict"
+"#;
+        let f50 = laya_workflow::bdd::parse(src50, "<p250>").expect("parse p250 feature");
+        let s50 = laya_workflow::bdd::compile_decision(&f50, &json!({})).expect("compile p250 shape");
+        let v50 = &s50["nodes"][0]["questions"]["verdict"]["heuristic"];
+        h.eq(
+            "p250: all-group rules preserve label, alternative and OR-group nesting",
+            v50["match_rules_all"].clone(),
+            json!({
+                "block": [
+                    [["signature"]],
+                    [["failed_login", "5 failed"], ["port_scan"]]
+                ],
+                "challenge": [
+                    [["failed_login", "5 failed"]],
+                    [["unusual_country"], ["off_hours"]]
+                ],
+                "monitor": [[["unusual_country"]]]
+            }),
+        );
+        h.eq("p250: ... hit probability", v50["p_hit"].clone(), json!(0.9));
+        h.eq("p250: ... miss probability", v50["p_miss"].clone(), json!(0.02));
+        h.eq("p250: ... fallback", v50["fallback"].clone(), json!("allow"));
+        h.eq("p250: ... fallback confidence", v50["p_fallback"].clone(), json!(0.88));
+
+        let be50 = HeuristicBackend;
+        let qs50 = &s50["nodes"][0]["questions"];
+        let pick50 = |state: serde_json::Value| -> String {
+            be50.decide(&state, qs50)
+                .unwrap()
+                .answer_value("verdict")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        h.eq("p250: a single-group alternative fires", pick50(json!({"text":"signature"})), "block".to_string());
+        h.eq("p250: one class alone is not enough for the AND row", pick50(json!({"text":"5 failed routine"})), "challenge".to_string());
+        h.eq("p250: an OR variant still satisfies its group", pick50(json!({"text":"5 failed port_scan"})), "block".to_string());
+        h.eq("p250: two weak classes fire the challenge conjunction", pick50(json!({"text":"unusual_country off_hours"})), "challenge".to_string());
+        h.eq("p250: one weak class falls to monitor", pick50(json!({"text":"unusual_country"})), "monitor".to_string());
+        h.eq("p250: no rule uses the declared fallback", pick50(json!({"text":"routine access"})), "allow".to_string());
+        let out50 = be50.decide(&json!({"text":"routine access"}), qs50).unwrap();
+        h.eq("p250: fallback keeps its declared confidence", out50.confidence("verdict").unwrap(), 0.88);
+        h.eq("p250: fallback probability is emitted", out50.prob("verdict", "allow").unwrap(), 0.88);
+        h.eq("p250: non-fallback options use p_miss", out50.prob("verdict", "block").unwrap(), 0.02);
+
+        let back50 = laya_workflow::bdd::import_spec(&s50).expect("import the p250 spec");
+        h.check(
+            "p250: the all-group rule step round-trips through import",
+            back50.contains("answer by all-group rules on the text with hit 0.9 and miss 0.02 and fallback \"allow\" at 0.88"),
+        );
+        let f50b = laya_workflow::bdd::parse(&back50, "<p250b>").expect("parse the imported p250 feature");
+        let s50b = laya_workflow::bdd::compile_decision(&f50b, &json!({}))
+            .expect("recompile the imported p250 feature");
+        h.check(
+            "p250: feature -> spec -> feature -> spec is a fixed point on the graph",
+            s50["nodes"] == s50b["nodes"],
+        );
     }
 }
 

@@ -3276,6 +3276,10 @@ pub fn test_validate_heuristic_values(h: &mut Harness) {
         ok(&score(json!({"score_rules": {"100": ["a"], "45.5": ["b"]}, "score_miss": 10.0}))),
     );
     h.check(
+        "validate heuristic: P250 `match_rules_all` nested conjunctions are OK",
+        ok(&choice(json!({"match_rules_all": {"B": [[["a", "aa"], ["b"]]]}, "p_hit": 0.9, "p_miss": 0.02, "fallback": "A", "p_fallback": 0.9}))),
+    );
+    h.check(
         "validate heuristic: `field` / `extract_numeric` string names are OK",
         ok(&score(json!({"extract_numeric": "amount", "field": "note", "score_hit": 2.0, "score_mid": 1.25, "score_miss": 0.5}))),
     );
@@ -3313,6 +3317,22 @@ pub fn test_validate_heuristic_values(h: &mut Harness) {
     h.check(
         "validate heuristic: a `match_rules` entry that is not a token array is rejected",
         err(&choice(json!({"match_rules": {"A": "a"}, "p_hit": 0.9}))).contains("array of strings"),
+    );
+    h.check(
+        "validate heuristic: a `match_rules_all` that is not an object is rejected",
+        err(&choice(json!({"match_rules_all": ["a"], "p_hit": 0.9}))).contains("object mapping"),
+    );
+    h.check(
+        "validate heuristic: a non-array `match_rules_all` label is rejected",
+        err(&choice(json!({"match_rules_all": {"B": "x"}, "p_hit": 0.9}))).contains("alternative conjunctions"),
+    );
+    h.check(
+        "validate heuristic: a non-array `match_rules_all` alternative is rejected",
+        err(&choice(json!({"match_rules_all": {"B": ["x"]}, "p_hit": 0.9}))).contains("array of OR-groups"),
+    );
+    h.check(
+        "validate heuristic: a non-array `match_rules_all` group is rejected",
+        err(&choice(json!({"match_rules_all": {"B": [[3]]}, "p_hit": 0.9}))).contains("array of strings"),
     );
     h.check(
         "validate heuristic: a `match_all` that is not a nested token array is rejected",
@@ -3480,6 +3500,10 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
         ok(&score(json!({"score_rules": {"100": ["refund"]}, "score_miss": 10.0}))),
     );
     h.check(
+        "validate heuristic-needles: a nested `match_rules_all` rule is OK",
+        ok(&choice(json!({"match_rules_all": {"B": [[["refund"], ["public"]]]}, "p_hit": 0.9}))),
+    );
+    h.check(
         "validate heuristic-needles: a question with no heuristic at all is OK",
         ok(&{
             let mut s = choice(json!({}));
@@ -3525,6 +3549,22 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
     h.check(
         "validate heuristic-needles: an empty `score_rules` row is rejected",
         err(&score(json!({"score_rules": {"100": []}, "score_miss": 10.0}))).contains("has no needles"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_rules_all` object is rejected",
+        err(&choice(json!({"match_rules_all": {}, "p_hit": 0.9}))).contains("has no labels"),
+    );
+    h.check(
+        "validate heuristic-needles: a `match_rules_all` label with no alternatives is rejected",
+        err(&choice(json!({"match_rules_all": {"B": []}, "p_hit": 0.9}))).contains("label \"B\" has no alternatives"),
+    );
+    h.check(
+        "validate heuristic-needles: a `match_rules_all` alternative with no groups is rejected",
+        err(&choice(json!({"match_rules_all": {"B": [[]]}, "p_hit": 0.9}))).contains("alternative 0 has no groups"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_rules_all` group is rejected",
+        err(&choice(json!({"match_rules_all": {"B": [[["a"], []]]}, "p_hit": 0.9}))).contains("group 1 is empty"),
     );
 }
 
@@ -3606,6 +3646,12 @@ pub fn test_validate_heuristic_blanks(h: &mut Harness) {
     h.check(
         "validate heuristic-blanks: a blank `score_rules` token is rejected, naming the score",
         err(&score(json!({"score_rules": {"100": [""]}, "score_miss": 10.0}))).contains("score \"100\""),
+    );
+    h.check(
+        "validate heuristic-blanks: a blank `match_rules_all` token is rejected, naming all levels",
+        err(&choice(json!({"match_rules_all": {"B": [[["a"], [""]]]}, "p_hit": 0.9})))
+            .contains("label \"B\" alternative 0 group 1")
+            && err(&choice(json!({"match_rules_all": {"B": [[["a"], [""]]]}, "p_hit": 0.9}))).contains("index 0"),
     );
 
     // ── a blank state-key name is rejected ──

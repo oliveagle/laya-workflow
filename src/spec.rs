@@ -1149,6 +1149,42 @@ fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
         }
         return None;
     }
+    // `match_rules_all` (ordered multi-class conjunctions): label ->
+    // alternatives -> groups -> needles. The backend silently drops a malformed
+    // level, which can turn a high-priority label into a dead branch.
+    if k == "match_rules_all" {
+        let Some(labels) = v.as_object() else {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an object mapping each option to alternative conjunctions — the backend reads it with `as_object()` and an invalid shape silently becomes the empty rule set",
+                json_kind_name(v)
+            ));
+        };
+        for (opt, alternatives) in labels {
+            let Some(alternatives) = alternatives.as_array() else {
+                return Some(format!(
+                    "`heuristic` key {k:?} label {opt:?} is {}, but it must be an array of alternative conjunctions — a malformed label can never fire",
+                    json_kind_name(alternatives)
+                ));
+            };
+            for (ai, alternative) in alternatives.iter().enumerate() {
+                let Some(groups) = alternative.as_array() else {
+                    return Some(format!(
+                        "`heuristic` key {k:?} label {opt:?} alternative {ai} is {}, but it must be an array of OR-groups",
+                        json_kind_name(alternative)
+                    ));
+                };
+                for (gi, group) in groups.iter().enumerate() {
+                    if !group.as_array().is_some_and(|a| a.iter().all(Value::is_string)) {
+                        return Some(format!(
+                            "`heuristic` key {k:?} label {opt:?} alternative {ai} group {gi} is {}, but it must be an array of strings — a malformed group is silently dropped and weakens the conjunction",
+                            json_kind_name(group)
+                        ));
+                    }
+                }
+            }
+        }
+        return None;
+    }
     // `match_rules` (multi-class routing): an object mapping each option to its
     // array of trigger tokens. Read with `as_object()`, then each value with
     // `filter_map(|x| x.as_str())`.
@@ -1204,6 +1240,37 @@ fn heuristic_range_error(k: &str, v: &Value) -> Option<String> {
 /// sidecar spec can carry one. The *element types* (P183) and the *weights*
 /// (P184) are judged separately.
 fn heuristic_needle_error(k: &str, v: &Value) -> Option<String> {
+    if k == "match_rules_all" {
+        if let Some(labels) = v.as_object() {
+            if labels.is_empty() {
+                return Some("`heuristic` key \"match_rules_all\" has no labels — the backend always falls to `fallback`, so every branch keyed on a real option is silently dead".to_string());
+            }
+            for (opt, alternatives) in labels {
+                let Some(alternatives) = alternatives.as_array() else { continue };
+                if alternatives.is_empty() {
+                    return Some(format!(
+                        "`heuristic` key \"match_rules_all\" label {opt:?} has no alternatives — that label can never fire"
+                    ));
+                }
+                for (ai, alternative) in alternatives.iter().enumerate() {
+                    let Some(groups) = alternative.as_array() else { continue };
+                    if groups.is_empty() {
+                        return Some(format!(
+                            "`heuristic` key \"match_rules_all\" label {opt:?} alternative {ai} has no groups — an empty conjunction is silently skipped"
+                        ));
+                    }
+                    for (gi, group) in groups.iter().enumerate() {
+                        if group.as_array().is_some_and(Vec::is_empty) {
+                            return Some(format!(
+                                "`heuristic` key \"match_rules_all\" label {opt:?} alternative {ai} group {gi} is empty — that group can never fire, so the whole conjunction is silently dead"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
     if k == "match_rules" {
         if let Some(m) = v.as_object() {
             if m.is_empty() {
@@ -1324,6 +1391,27 @@ fn heuristic_blank_error(k: &str, v: &Value) -> Option<String> {
                             return Some(format!(
                                 "`heuristic` key \"score_rules\" score {score:?} carries a blank token at index {i} - an empty pattern matches at offset 0, so that row fires on every input and the ordered ladder no longer means first-match-wins; give the token a real value or drop it"
                             ));
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+    if k == "match_rules_all" {
+        if let Some(labels) = v.as_object() {
+            for (opt, alternatives) in labels {
+                let Some(alternatives) = alternatives.as_array() else { continue };
+                for (ai, alternative) in alternatives.iter().enumerate() {
+                    let Some(groups) = alternative.as_array() else { continue };
+                    for (gi, group) in groups.iter().enumerate() {
+                        let Some(needles) = group.as_array() else { continue };
+                        for (i, x) in needles.iter().enumerate() {
+                            if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                                return Some(format!(
+                                    "`heuristic` key {k:?} label {opt:?} alternative {ai} group {gi} carries a blank token at index {i} - an empty pattern matches at offset 0, so the group fires on every input and the conjunction no longer means AND; give the token a real value or drop it"
+                                ));
+                            }
                         }
                     }
                 }
@@ -1845,7 +1933,7 @@ fn validate_graph_semantics(
         ];
         const KNOWN_HEURISTIC_KEYS: &[&str] = &[
             "answer_field", "field", "extract_numeric", "match_any", "match_mid_any",
-            "match_regex", "match_rules", "match_all", "score_rules", "fallback", "answer",
+            "match_regex", "match_rules", "match_rules_all", "match_all", "score_rules", "fallback", "answer",
             "p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok", "score_hit",
             "score_mid", "score_miss",
         ];

@@ -1,8 +1,15 @@
 {
   "name": "intrusion_signal_guard",
-  "description": "Port of ole-eval code/qwen_vm/app_scenarios/intrusion_signal_guard. Verdict ladder mirrors Python _decide: known_signature OR strong>=2 OR (strong>=1 AND weak>=2) -> block; strong==1 OR weak>=2 -> challenge; weak==1 -> monitor; else allow. Actions: block=quarantine_proposal, challenge=step_up_mfa, monitor=watch, allow=none. No real blocking/quarantine side effect.",
+  "_bdd": {
+    "feature": "intrusion_signal_guard",
+    "feature_path": "bdd/workflows/ole_eval/intrusion_signal_guard.feature",
+    "mode": "decision"
+  },
+  "description": "BDD decision workflow: intrusion_signal_guard",
   "start": "signals",
   "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
   "nodes": [
     {
       "name": "signals",
@@ -11,32 +18,116 @@
         "known_signature": {
           "type": "choice",
           "instructions": "Does the request match a known signature (sql_injection / path_traversal / log4j_injection / shellshock, or sqlmap/nikto/masscan/zgrab user-agent)?",
-          "criteria": { "A": "no signature match", "B": "yes, known signature" }
+          "criteria": {
+            "A": "no signature match",
+            "B": "yes, known signature"
+          },
+          "heuristic": {
+            "match_any": [
+              "sql_injection",
+              "union select",
+              " or 1=1",
+              "sleep(",
+              "../",
+              "/etc/passwd",
+              "${jndi:",
+              "() { :;",
+              "sqlmap",
+              "nikto",
+              "masscan",
+              "zgrab"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
         },
         "failed_login_velocity": {
           "type": "choice",
           "instructions": "Strong signal: >=5 failed logins in the last 600s?",
-          "criteria": { "A": "below threshold", "B": "yes, failed-login velocity" }
+          "criteria": {
+            "A": "below threshold",
+            "B": "yes, failed-login velocity"
+          },
+          "heuristic": {
+            "match_any": [
+              "failed_login_velocity",
+              "failed login velocity",
+              "5 failed",
+              "repeated_failures"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "port_scan_window": {
           "type": "choice",
           "instructions": "Strong signal: >=20 unique ports probed in the last 60s?",
-          "criteria": { "A": "below threshold", "B": "yes, port scan" }
+          "criteria": {
+            "A": "below threshold",
+            "B": "yes, port scan"
+          },
+          "heuristic": {
+            "match_any": [
+              "port_scan",
+              "port scan",
+              "unique_ports",
+              "masscan",
+              "zgrab"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "impossible_travel": {
           "type": "choice",
           "instructions": "Strong signal: country changed with 0 <= delta <= 1800s?",
-          "criteria": { "A": "no impossible travel", "B": "yes, impossible travel" }
+          "criteria": {
+            "A": "no impossible travel",
+            "B": "yes, impossible travel"
+          },
+          "heuristic": {
+            "match_any": [
+              "impossible_travel",
+              "impossible travel",
+              "fast travel"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "unusual_country": {
           "type": "choice",
           "instructions": "Weak signal: current country outside the user's usual countries?",
-          "criteria": { "A": "usual country", "B": "yes, unusual country" }
+          "criteria": {
+            "A": "usual country",
+            "B": "yes, unusual country"
+          },
+          "heuristic": {
+            "match_any": [
+              "unusual_country",
+              "unusual country",
+              "unexpected country"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.2
+          }
         },
         "off_hours_access": {
           "type": "choice",
           "instructions": "Weak signal: event clock hour outside 07:00-20:00?",
-          "criteria": { "A": "within hours", "B": "yes, off-hours access" }
+          "criteria": {
+            "A": "within hours",
+            "B": "yes, off-hours access"
+          },
+          "heuristic": {
+            "match_any": [
+              "off_hours",
+              "off hours",
+              "night access"
+            ],
+            "p_hit": 0.8,
+            "p_miss": 0.2
+          }
         },
         "intrusion_verdict": {
           "type": "choice",
@@ -46,21 +137,243 @@
             "monitor": "exactly one weak signal; action=watch",
             "challenge": "one strong, or two weak, or strong+weak<2; action=step_up_mfa",
             "block": "signature, or >=2 strong, or >=1 strong and >=2 weak; action=quarantine_proposal"
+          },
+          "heuristic": {
+            "match_rules_all": {
+              "block": [
+                [
+                  [
+                    "sql_injection"
+                  ]
+                ],
+                [
+                  [
+                    "union select"
+                  ]
+                ],
+                [
+                  [
+                    " or 1=1"
+                  ]
+                ],
+                [
+                  [
+                    "sleep("
+                  ]
+                ],
+                [
+                  [
+                    "../"
+                  ]
+                ],
+                [
+                  [
+                    "/etc/passwd"
+                  ]
+                ],
+                [
+                  [
+                    "${jndi:"
+                  ]
+                ],
+                [
+                  [
+                    "() { :;"
+                  ]
+                ],
+                [
+                  [
+                    "sqlmap"
+                  ]
+                ],
+                [
+                  [
+                    "nikto"
+                  ]
+                ],
+                [
+                  [
+                    "failed_login_velocity",
+                    "failed login velocity"
+                  ],
+                  [
+                    "port_scan",
+                    "port scan",
+                    "masscan",
+                    "zgrab"
+                  ]
+                ],
+                [
+                  [
+                    "failed_login_velocity",
+                    "failed login velocity"
+                  ],
+                  [
+                    "impossible_travel",
+                    "impossible travel"
+                  ]
+                ],
+                [
+                  [
+                    "port_scan",
+                    "port scan",
+                    "masscan",
+                    "zgrab"
+                  ],
+                  [
+                    "impossible_travel",
+                    "impossible travel"
+                  ]
+                ],
+                [
+                  [
+                    "failed_login_velocity",
+                    "failed login velocity"
+                  ],
+                  [
+                    "unusual_country",
+                    "unusual country"
+                  ],
+                  [
+                    "off_hours",
+                    "off hours"
+                  ]
+                ],
+                [
+                  [
+                    "port_scan",
+                    "port scan",
+                    "masscan",
+                    "zgrab"
+                  ],
+                  [
+                    "unusual_country",
+                    "unusual country"
+                  ],
+                  [
+                    "off_hours",
+                    "off hours"
+                  ]
+                ],
+                [
+                  [
+                    "impossible_travel",
+                    "impossible travel"
+                  ],
+                  [
+                    "unusual_country",
+                    "unusual country"
+                  ],
+                  [
+                    "off_hours",
+                    "off hours"
+                  ]
+                ]
+              ],
+              "challenge": [
+                [
+                  [
+                    "failed_login_velocity",
+                    "failed login velocity"
+                  ]
+                ],
+                [
+                  [
+                    "port_scan",
+                    "port scan",
+                    "masscan",
+                    "zgrab"
+                  ]
+                ],
+                [
+                  [
+                    "impossible_travel",
+                    "impossible travel"
+                  ]
+                ],
+                [
+                  [
+                    "unusual_country",
+                    "unusual country"
+                  ],
+                  [
+                    "off_hours",
+                    "off hours"
+                  ]
+                ]
+              ],
+              "monitor": [
+                [
+                  [
+                    "unusual_country",
+                    "unusual country"
+                  ]
+                ],
+                [
+                  [
+                    "off_hours",
+                    "off hours"
+                  ]
+                ]
+              ]
+            },
+            "p_hit": 0.9,
+            "p_miss": 0.02,
+            "fallback": "allow",
+            "p_fallback": 0.9
           }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "intrusion_verdict",
         "rules": [
-          { "when": { "question": "known_signature", "answer": "B" }, "label": "block" },
-          { "when": { "question": "intrusion_verdict", "answer": "block" }, "label": "block" },
-          { "when": { "question": "intrusion_verdict", "answer": "challenge" }, "label": "challenge" },
-          { "when": { "question": "intrusion_verdict", "answer": "monitor" }, "label": "monitor" },
-          { "when": { "question": "intrusion_verdict", "answer": "allow" }, "label": "allow" },
-          { "when": { "always": true }, "label": "allow" }
+          {
+            "when": {
+              "question": "known_signature",
+              "answer": "B"
+            },
+            "label": "block"
+          },
+          {
+            "when": {
+              "question": "intrusion_verdict",
+              "answer": "block"
+            },
+            "label": "block"
+          },
+          {
+            "when": {
+              "question": "intrusion_verdict",
+              "answer": "challenge"
+            },
+            "label": "challenge"
+          },
+          {
+            "when": {
+              "question": "intrusion_verdict",
+              "answer": "monitor"
+            },
+            "label": "monitor"
+          },
+          {
+            "when": {
+              "question": "intrusion_verdict",
+              "answer": "allow"
+            },
+            "label": "allow"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "allow"
+          }
         ]
       }
     }

@@ -993,6 +993,16 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 .unwrap(),
                 "heur_mid",
             ),
+            // P250: ordered multi-class AND rules. A row is one alternative
+            // conjunction for its label; every additional table cell is one
+            // OR-group, and all cells in the row must fire.
+            (
+                Regex::new(
+                    r#"^answer by all-group rules on the (?:field "(?P<field>[^"]+)"|text) with hit (?P<hit>\d+(?:\.\d+)?) and miss (?P<miss>\d+(?:\.\d+)?) and fallback "(?P<fallback>[^"]+)" at (?P<fallback_conf>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_match_rules_all",
+            ),
             (
                 Regex::new(
                     r#"^answer by rules on the (?:field "(?P<field>[^"]+)"|text) with hit (?P<hit>\d+(?:\.\d+)?)(?: and fallback "(?P<fallback>[^"]+)")?$"#,
@@ -1376,6 +1386,8 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "answer \"<ans>\" when the text matches <patterns> with hit <hit>"),
         ("given", "answer \"<ans>\" with mid <mid> when the field \"<field>\" contains <needles>"),
         ("given", "answer by rules on the field \"<field>\" with hit <hit>"),
+        ("given", "answer by all-group rules on the field \"<field>\" with hit <hit> and miss <miss> and fallback \"<fallback>\" at <c>"),
+        ("given", "answer by all-group rules on the text with hit <hit> and miss <miss> and fallback \"<fallback>\" at <c>"),
         ("given", "answer by rules on the text with hit <hit>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
         ("given", "score \"<ans>\" when the text contains <needles> scoring <hit> miss <miss>"),
@@ -3388,6 +3400,66 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
                 };
                 h.insert("p_miss".into(), json!(miss));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
+            }
+            "heur_match_rules_all" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps.name("field").map(|m| m.as_str().to_string());
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let miss: f64 = caps["miss"].to_string().parse()?;
+                let fallback = caps["fallback"].to_string();
+                let fallback_conf: f64 = caps["fallback_conf"].to_string().parse()?;
+                let mut rules: Map<String, Value> = Map::new();
+                for (i, row) in st.table.iter().enumerate().skip(1) {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: match_rules_all step needs | label | all-of groups | rows",
+                            st.line
+                        );
+                    }
+                    let label = row[0].trim().to_string();
+                    let mut groups: Vec<Value> = Vec::new();
+                    for (ci, cell) in row.iter().enumerate().skip(1) {
+                        if cell.trim().is_empty() {
+                            bail!(
+                                "line {}: match_rules_all label {label:?} has an empty group at column {ci}",
+                                row_line(st, i)
+                            );
+                        }
+                        let needles = quoted_tokens_escaped(cell);
+                        if needles.is_empty() {
+                            bail!(
+                                "line {}: match_rules_all label {label:?} group {ci:?} needs quoted needles",
+                                row_line(st, i)
+                            );
+                        }
+                        groups.push(json!(needles));
+                    }
+                    rules
+                        .entry(label)
+                        .or_insert_with(|| json!([]))
+                        .as_array_mut()
+                        .expect("match_rules_all alternatives are initialised as arrays")
+                        .push(json!(groups));
+                }
+                if rules.is_empty() {
+                    bail!("line {}: match_rules_all needs at least one | label | all-of groups | row", st.line);
+                }
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = &field {
+                    h.insert("field".into(), json!(f));
+                }
+                h.insert("match_rules_all".into(), Value::Object(rules));
+                h.insert("p_hit".into(), json!(hit));
+                h.insert("p_miss".into(), json!(miss));
+                h.insert("fallback".into(), json!(fallback));
+                h.insert("p_fallback".into(), json!(fallback_conf));
                 set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_match_rules" => {
@@ -9527,6 +9599,68 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
         );
         return Ok(());
     }
+    if has("match_rules_all") {
+        let field = s("field");
+        if let Some(f) = field {
+            imp_tok("heuristic.field", f)?;
+        }
+        let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
+        let miss = imp_f64("heuristic.p_miss", h.get("p_miss"))?;
+        let fallback = imp_str("heuristic.fallback", h.get("fallback"))?;
+        imp_tok("heuristic.fallback", fallback)?;
+        let fallback_conf = imp_f64("heuristic.p_fallback", h.get("p_fallback"))?;
+        let rules = h
+            .get("match_rules_all")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("cannot import: match_rules_all is not an object"))?;
+        if rules.is_empty() {
+            bail!("cannot import: match_rules_all has no labels");
+        }
+        let head = match field {
+            Some(f) => format!("the field \"{f}\""),
+            None => "the text".to_string(),
+        };
+        let mut table = vec!["| label | all of |".to_string()];
+        for (label, alternatives) in rules {
+            imp_line("match_rules_all label", label)?;
+            let alternatives = alternatives.as_array().ok_or_else(|| {
+                anyhow!("cannot import: match_rules_all[{label}] is not an array")
+            })?;
+            if alternatives.is_empty() {
+                bail!("cannot import: match_rules_all[{label}] has no alternatives");
+            }
+            for alternative in alternatives {
+                let groups = alternative.as_array().ok_or_else(|| {
+                    anyhow!("cannot import: match_rules_all[{label}][] is not an array")
+                })?;
+                if groups.is_empty() {
+                    bail!("cannot import: match_rules_all[{label}][] has no groups");
+                }
+                let mut cells = Vec::new();
+                for group in groups {
+                    let needles = group.as_array().ok_or_else(|| {
+                        anyhow!("cannot import: match_rules_all[{label}][][] is not an array")
+                    })?;
+                    if needles.is_empty() {
+                        bail!("cannot import: match_rules_all[{label}][][] has no needles");
+                    }
+                    cells.push(imp_tokens_esc("match_rules_all needle", needles)?);
+                }
+                table.push(format!("| {} | {} |", imp_cell(label), cells.join(" | ")));
+            }
+        }
+        st.push(
+            "given",
+            format!(
+                "answer by all-group rules on {head} with hit {} and miss {} and fallback \"{fallback}\" at {}",
+                imp_num(hit)?,
+                imp_num(miss)?,
+                imp_num(fallback_conf)?
+            ),
+            table,
+        );
+        return Ok(());
+    }
     if has("match_rules") {
         // P247: the rule step's field is optional (see the compiler arm): with no
         // `field` the step reads `the text`, i.e. the whole serialised state. Only
@@ -10966,7 +11100,11 @@ impl Default for RoundTripOptions {
 /// dsl that omits them compares equal to a compiler that spells them out.
 fn rt_norm_heuristic(h: &Value) -> Value {
     let mut m = h.as_object().cloned().unwrap_or_default();
-    if m.contains_key("match_rules") {
+    if m.contains_key("match_rules_all") {
+        m.entry("p_hit".to_string()).or_insert(json!(0.9));
+        m.entry("p_miss".to_string()).or_insert(json!(0.02));
+        m.entry("p_fallback".to_string()).or_insert(json!(0.6));
+    } else if m.contains_key("match_rules") {
         m.entry("p_hit".to_string()).or_insert(json!(0.9));
         m.entry("p_miss".to_string()).or_insert(json!(0.02));
         m.entry("p_fallback".to_string()).or_insert(json!(0.6));

@@ -674,6 +674,63 @@ impl Decide for HeuristicBackend {
                 // evaluates them uniformly. Longest-first substring match on the
                 // serialised state, case-insensitive (same helper as the named
                 // handlers below).
+                _ if qdef.get("heuristic").and_then(|h| h.get("match_rules_all")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let rules = h.get("match_rules_all").and_then(|m| m.as_object()).cloned().unwrap_or_default();
+                    let p_hit = h.get("p_hit").and_then(|x| x.as_f64()).unwrap_or(0.9);
+                    let p_miss = h.get("p_miss").and_then(|x| x.as_f64()).unwrap_or(0.02);
+                    let fallback = h.get("fallback").and_then(|x| x.as_str()).unwrap_or("other");
+                    let p_fallback = h.get("p_fallback").and_then(|x| x.as_f64()).unwrap_or(0.6);
+                    let target_text: String = match h.get("field").and_then(|f| f.as_str()) {
+                        Some(k) => state.get(k).map(|v| match v {
+                            Value::String(sv) => sv.clone(),
+                            other => other.to_string(),
+                        }).unwrap_or_default(),
+                        None => text.clone(),
+                    };
+                    // P250: ordered multi-class AND rules. Each label owns
+                    // alternative conjunctions; each conjunction owns OR-groups;
+                    // every group in a conjunction must contribute a hit. The
+                    // first label (in declaration order) with any firing
+                    // conjunction wins, so a priority ladder can be spelled in
+                    // the spec instead of a Rust handler.
+                    let mut pick: Option<String> = None;
+                    'rules: for (opt, alternatives_v) in &rules {
+                        let Some(alternatives) = alternatives_v.as_array() else { continue };
+                        for alternative in alternatives {
+                            let Some(groups) = alternative.as_array() else { continue };
+                            let matched = !groups.is_empty() && groups.iter().all(|group| {
+                                group.as_array().is_some_and(|needles| {
+                                    let toks: Vec<&str> =
+                                        needles.iter().filter_map(|x| x.as_str()).collect();
+                                    contains_any(&target_text, &toks)
+                                })
+                            });
+                            if matched {
+                                pick = Some(opt.clone());
+                                break 'rules;
+                            }
+                        }
+                    }
+                    let matched = pick.is_some();
+                    let chosen = pick.unwrap_or_else(|| fallback.to_string());
+                    let conf = if matched { p_hit } else { p_fallback };
+                    let mut m = Map::new();
+                    // Include every declared option (not only labels with rows)
+                    // so a fallback such as "allow" still carries its probability.
+                    if let Some(criteria) = qdef.get("criteria").and_then(Value::as_object) {
+                        for opt in criteria.keys() {
+                            m.insert(opt.clone(), serde_json::json!(if *opt == chosen { conf } else { p_miss }));
+                        }
+                    }
+                    for opt in rules.keys() {
+                        m.insert(opt.clone(), serde_json::json!(if *opt == chosen { conf } else { p_miss }));
+                    }
+                    if !m.contains_key(fallback) {
+                        m.insert(fallback.to_string(), serde_json::json!(conf));
+                    }
+                    (serde_json::json!(chosen), m, conf)
+                }
                 // multi-class routing: `heuristic.match_rules` maps each
                 // choice option to a list of trigger tokens; the first option
                 // whose tokens appear in the field/text wins (option at p_hit,
