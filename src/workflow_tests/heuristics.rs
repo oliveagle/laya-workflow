@@ -1095,6 +1095,101 @@ Feature: p250shapes
             "p250: feature -> spec -> feature -> spec is a fixed point on the graph",
             s50["nodes"] == s50b["nodes"],
         );
+
+        // P253: migrate adaptive_risk_control without a qid-specific Rust arm.
+        // Compile the checked-in feature, then reconstruct its pre-migration
+        // question contract (no heuristics; the old 0/40/70 score anchors) and
+        // compare every answer, confidence and probability emitted by the named
+        // handlers to the spec-declared rules. The 20 anchor is not a new action
+        // threshold: it declares the handler's existing low/mid/high read-out.
+        let f53 = laya_workflow::bdd::parse(
+            include_str!("../../bdd/workflows/ole_eval/adaptive_risk_control.feature"),
+            "<p253-adaptive>",
+        )
+        .expect("parse the checked-in adaptive risk feature");
+        let s53 = laya_workflow::bdd::compile_decision(&f53, &json!({}))
+            .expect("compile the checked-in adaptive risk feature");
+        let qs53 = &s53["nodes"][0]["questions"];
+        let mut old53 = qs53.clone();
+        for q in old53.as_object_mut().expect("adaptive questions").values_mut() {
+            q.as_object_mut().expect("question object").remove("heuristic");
+        }
+        old53["composite_risk"]["criteria"] = json!([
+            "0 clean", "40 reviewable", "70 deny", "100 maximum"
+        ]);
+        let be53 = HeuristicBackend;
+        let p53_states = [
+            json!({"text":"credential_stuffing micro_transaction_burst mfa_failed"}),
+            json!({"text":"card_testing new_device_payment challenge_pending"}),
+            json!({"text":"account_takeover recovery_then_withdrawal"}),
+            json!({"text":"recovery"}),
+            json!({"text":"micro_transaction"}),
+            json!({"text":"new device repeated failure"}),
+            json!({"text":"inconsistent session signals"}),
+            json!({"text":"unknown routine event"}),
+        ];
+        for state in p53_states.iter() {
+            let before = be53.decide(state, &old53).expect("old adaptive handlers");
+            let after = be53.decide(state, qs53).expect("declared adaptive rules");
+            let equivalent = ["intent", "behaviour", "mfa_failed_pending", "composite_risk"]
+                .iter()
+                .all(|qid| {
+                    let answer_same = before.answer_value(qid).ok() == after.answer_value(qid).ok();
+                    let conf_same =
+                        (before.confidence(qid).unwrap_or(-1.0)
+                            - after.confidence(qid).unwrap_or(-2.0))
+                        .abs()
+                            < 1e-12;
+                    let choice_keys: Vec<String> = old53[*qid]["criteria"]
+                        .as_object()
+                        .map(|o| o.keys().cloned().collect())
+                        .unwrap_or_default();
+                    let score_keys: Vec<String> =
+                        ["0", "1", "2"].iter().map(|k| k.to_string()).collect();
+                    let keys: Vec<String> = if old53[*qid]["type"] == "choice" {
+                        choice_keys
+                    } else {
+                        score_keys
+                    };
+                    let probs_same = keys.iter().all(|k| {
+                        (before.prob(qid, k).unwrap_or(-1.0)
+                            - after.prob(qid, k).unwrap_or(-2.0))
+                        .abs()
+                            < 1e-12
+                    });
+                    answer_same && conf_same && probs_same
+                });
+            h.check(
+                "p253: adaptive answers/confidences/probabilities match the old handlers",
+                equivalent,
+            );
+        }
+        let bands25 = be53
+            .decide(&json!({"text":"repeated_failures"}), qs53)
+            .expect("adaptive low-middle band");
+        h.eq(
+            "p253: a 25 score keeps the handler's middle-band probabilities",
+            (
+                bands25.answer_value("composite_risk").unwrap().as_f64().unwrap(),
+                bands25.prob("composite_risk", "0").unwrap(),
+                bands25.prob("composite_risk", "1").unwrap(),
+                bands25.prob("composite_risk", "2").unwrap(),
+            ),
+            (25.0, 0.02, 0.9, 0.02),
+        );
+        let bands45 = be53
+            .decide(&json!({"text":"new_device_payment"}), qs53)
+            .expect("adaptive high band");
+        h.eq(
+            "p253: a 45 score keeps the handler's high-band probabilities",
+            (
+                bands45.answer_value("composite_risk").unwrap().as_f64().unwrap(),
+                bands45.prob("composite_risk", "0").unwrap(),
+                bands45.prob("composite_risk", "1").unwrap(),
+                bands45.prob("composite_risk", "2").unwrap(),
+            ),
+            (45.0, 0.02, 0.02, 0.9),
+        );
     }
 }
 
