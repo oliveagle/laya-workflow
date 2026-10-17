@@ -853,6 +853,7 @@ Feature: p248shapes
       | score | needles |
       | 100   | "targeted_abuse", "prohibited" |
       | 95    | "graphic_violence", "self_harm" |
+      | 60    | "violence_simulation" |
       | 45    | "contact_information" |
     When any other answer goes to "STOP"
     Then label "BLOCK" when the answer to "age_blocking" is "B"
@@ -883,6 +884,7 @@ Feature: p248shapes
             json!({
                 "100": ["targeted_abuse", "prohibited"],
                 "95": ["graphic_violence", "self_harm"],
+                "60": ["violence_simulation"],
                 "45": ["contact_information"]
             }),
         );
@@ -944,6 +946,30 @@ Feature: p248shapes
             "p248: no row falls to score_miss",
             sev48(json!({"text": "educational_science adult"})),
             10.0,
+        );
+        let sev_conf48 = |state: serde_json::Value| -> (f64, f64, f64, f64) {
+            let v = be48.decide(&state, qs48).unwrap();
+            (
+                v.confidence("effective_severity").unwrap(),
+                v.prob("effective_severity", "0").unwrap(),
+                v.prob("effective_severity", "1").unwrap(),
+                v.prob("effective_severity", "2").unwrap(),
+            )
+        };
+        h.eq(
+            "p249: a wide-scale ladder keeps the handler's miss confidence",
+            sev_conf48(json!({"text": "educational_science adult"})),
+            (0.9, 0.9, 0.02, 0.02),
+        );
+        h.eq(
+            "p249: ... and its review band probability",
+            sev_conf48(json!({"text": "violence_simulation"})),
+            (0.9, 0.02, 0.9, 0.02),
+        );
+        h.eq(
+            "p249: ... and its blocking band probability",
+            sev_conf48(json!({"text": "self_harm targeted_abuse"})),
+            (0.9, 0.02, 0.02, 0.9),
         );
 
         // Both new table steps must survive import and recompile bit-for-bit at

@@ -755,7 +755,7 @@ impl Decide for HeuristicBackend {
                             break;
                         }
                     }
-                    bscore(value)
+                    score_rules_result(qdef, value)
                 }
                 _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_all")).or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
@@ -1381,6 +1381,48 @@ fn bchoice(p_b: f64) -> (Value, Map<String, Value>, f64) {
     // composite-scoring specs. Rounding makes the clean boundary a boundary.
     let conf = (p_b.max(1.0 - p_b) * 1000.0).round() / 1000.0;
     (serde_json::json!(ans), m, conf)
+}
+
+/// P249: `score_rules` commonly lives on a wide 0..100 scale, while `bscore`
+/// models a three-point ordinal scale. Derive the same low/mid/high band
+/// probabilities and 0.9 confidence the migrated Rust handlers used when the
+/// score question declares numeric review/blocking levels.
+fn score_rules_result(qdef: &Value, value: f64) -> (Value, Map<String, Value>, f64) {
+    let levels: Vec<f64> = qdef
+        .get("criteria")
+        .and_then(|c| c.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| {
+                    x.as_str()
+                        .and_then(|s| s.split_whitespace().next())
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .or_else(|| x.as_f64())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if levels.len() >= 3 && levels[1] < levels[2] {
+        let mut m = Map::new();
+        m.insert(
+            "0".to_string(),
+            serde_json::json!(if value < levels[1] { 0.9 } else { 0.02 }),
+        );
+        m.insert(
+            "1".to_string(),
+            serde_json::json!(if value >= levels[1] && value < levels[2] {
+                0.9
+            } else {
+                0.02
+            }),
+        );
+        m.insert(
+            "2".to_string(),
+            serde_json::json!(if value >= levels[2] { 0.9 } else { 0.02 }),
+        );
+        return (serde_json::json!(value), m, 0.9);
+    }
+    bscore(value)
 }
 
 /// ordinal score with a triangular-ish distribution around the value.

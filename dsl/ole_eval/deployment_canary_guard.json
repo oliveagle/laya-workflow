@@ -1,8 +1,15 @@
 {
   "name": "deployment_canary_guard",
-  "description": "Port of ole-eval code/qwen_vm/app_scenarios/deployment_canary_guard. Ordered REJECT rules for hard policy caps (dangerous tokens, malformed stages, cap violations) first; soft risk 30-70 escalates; else APPROVE.",
+  "_bdd": {
+    "feature": "deployment_canary_guard",
+    "feature_path": "bdd/workflows/ole_eval/deployment_canary_guard.feature",
+    "mode": "decision"
+  },
+  "description": "BDD decision workflow: deployment_canary_guard",
   "start": "policy",
   "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
   "nodes": [
     {
       "name": "policy",
@@ -11,54 +18,215 @@
         "service_name_safe": {
           "type": "choice",
           "instructions": "Is the service_name free of dangerous tokens (eval(, exec(, subprocess, os.system, javascript:, data:, rm -rf, ...)?",
-          "criteria": { "A": "yes, safe identifier", "B": "no, dangerous token present" }
+          "criteria": {
+            "A": "yes, safe identifier",
+            "B": "no, dangerous token present"
+          },
+          "heuristic": {
+            "match_any": [
+              "eval(",
+              "exec(",
+              "subprocess",
+              "rm -rf",
+              "javascript:",
+              "os.system"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
         },
         "health_path_safe": {
           "type": "choice",
           "instructions": "Is the health_check_path free of dangerous tokens?",
-          "criteria": { "A": "yes, safe path", "B": "no, dangerous token present" }
+          "criteria": {
+            "A": "yes, safe path",
+            "B": "no, dangerous token present"
+          },
+          "heuristic": {
+            "match_any": [
+              "eval(",
+              "javascript:",
+              "data:",
+              "os.system"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
         },
         "canary_within_cap": {
           "type": "choice",
           "instructions": "Is every stage's canary_percent <= max_canary_percent (default 50)?",
-          "criteria": { "A": "yes, all stages within cap", "B": "no, at least one stage exceeds" }
+          "criteria": {
+            "A": "yes, all stages within cap",
+            "B": "no, at least one stage exceeds"
+          },
+          "heuristic": {
+            "match_any": [
+              "exceed_cap",
+              "over_cap",
+              "canary_percent_high"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
         },
         "rollback_threshold_ok": {
           "type": "choice",
           "instructions": "Is error_rate <= max_error_rate (default 0.05) AND latency_p99_ms <= max_latency_p99_ms (default 5000)?",
-          "criteria": { "A": "yes, both within bounds", "B": "no, one of them is over" }
+          "criteria": {
+            "A": "yes, both within bounds",
+            "B": "no, one of them is over"
+          },
+          "heuristic": {
+            "match_any": [
+              "error_rate_high",
+              "latency_high",
+              "rollback_breach"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
         },
         "stage_shape_ok": {
           "type": "choice",
           "instructions": "Is the stages list non-empty and <= max_stages (default 10), with non-negative percent and hold_minutes?",
-          "criteria": { "A": "yes, valid shape", "B": "no, malformed" }
+          "criteria": {
+            "A": "yes, valid shape",
+            "B": "no, malformed"
+          },
+          "heuristic": {
+            "match_any": [
+              "no_stages",
+              "empty_stages",
+              "too_many_stages",
+              "negative_percent"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
         },
         "hold_within_cap": {
           "type": "choice",
           "instructions": "Is every stage's hold_minutes <= max_hold_minutes (default 120)?",
-          "criteria": { "A": "yes", "B": "no, a stage holds too long" }
+          "criteria": {
+            "A": "yes",
+            "B": "no, a stage holds too long"
+          },
+          "heuristic": {
+            "match_any": [
+              "hold_too_long",
+              "hold_exceeds",
+              "extended_hold"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
+          }
         },
         "canary_risk": {
           "type": "score",
           "instructions": "Overall risky-canary risk 0-100 (stage count, hold magnitude, rollback severity, dangerous tokens).",
-          "criteria": ["0 clean", "30 reviewable", "70 blocking", "100 maximum"]
+          "criteria": [
+            "0 clean",
+            "30 reviewable",
+            "70 blocking",
+            "100 maximum"
+          ],
+          "heuristic": {
+            "score_rules": {
+              "90": [
+                "eval(",
+                "rm -rf",
+                "javascript:",
+                "subprocess"
+              ],
+              "60": [
+                "error_rate_high",
+                "latency_high",
+                "rollback_breach"
+              ],
+              "40": [
+                "exceed_cap",
+                "hold_too_long"
+              ],
+              "45": [
+                "stages_wide"
+              ]
+            },
+            "score_miss": 10.0
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "canary_risk",
         "rules": [
-          { "when": { "question": "service_name_safe", "answer": "B" }, "label": "REJECT" },
-          { "when": { "question": "health_path_safe", "answer": "B" }, "label": "REJECT" },
-          { "when": { "question": "stage_shape_ok", "answer": "B" }, "label": "REJECT" },
-          { "when": { "question": "canary_within_cap", "answer": "B" }, "label": "REJECT" },
-          { "when": { "question": "rollback_threshold_ok", "answer": "B" }, "label": "REJECT" },
-          { "when": { "question": "hold_within_cap", "answer": "B" }, "label": "REJECT" },
-          { "when": { "value_gte": 70.0 }, "label": "REJECT" },
-          { "when": { "value_gte": 30.0 }, "label": "ESCALATE" },
-          { "when": { "always": true }, "label": "APPROVE" }
+          {
+            "when": {
+              "question": "service_name_safe",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "health_path_safe",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "stage_shape_ok",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "canary_within_cap",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "rollback_threshold_ok",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "hold_within_cap",
+              "answer": "B"
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "canary_risk",
+              "value_gte": 70.0
+            },
+            "label": "REJECT"
+          },
+          {
+            "when": {
+              "question": "canary_risk",
+              "value_gte": 30.0
+            },
+            "label": "ESCALATE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "APPROVE"
+          }
         ]
       }
     }

@@ -363,7 +363,8 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   contains ... with hit N`, `answer by rules on the field/text ...`, `answer "X"
   when the field/text matches every group ...` (each table row is an OR group;
   every row must hit), `score "X" when the field "F" contains "H" scoring H and
-  "M" scoring M miss L`, `score "X" by rules on the field/text miss M`, `the
+  "M" scoring M miss L`, `score "X" by rules on the field/text miss M` (when the score levels name a
+  low/review/blocking scale, the emitted probabilities use those bands), `the
   answer is always "X"`, ….
 * **When (edges)** — `the answer "X" goes to "NODE"`, `any other answer goes to "NODE"`.
 * **Then (actions)** — ordered threshold labels (`label "L" when "Q" is at least
