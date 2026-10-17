@@ -401,8 +401,10 @@ Feature: support_ticket_router
 | Background | `the workflow runs at most N iterations` | `max_iterations` |
 | Background | `Given the policy`（后跟 `\| key \| value \|` 表：`allow_exec` bool / `allow_hosts`、`allow_paths` 带引号 tokens / `max_timeout_ms`、`max_output`、`retries` int） | `policy`（原样输出，不做默认填充；缺省即无 policy 块） |
 | Background | `Given the capabilities`（后跟 `\| name \| JSON配置 \|` 表，值 JSON 解析） | `capabilities`（Gherkin 优先，其次 config sidecar） |
-| And（given） | `answer by rules on the field "f" with hit 0.93 and fallback "other"`（后跟 `\| label \| needles \|` 表，首行表头跳过） | `heuristic.field` + `match_rules`（label → 需匹配词列表）+ `p_hit`/`fallback` |
+| And（given） | `answer by rules on the field "f" with hit 0.93 and fallback "other"`（后跟 `\| label \| needles \|` 表，首行表头跳过） | `heuristic.field` + `match_rules`（label → 需匹配词列表）+ `p_hit`/`fallback`；P247 起字段可换成 `the text` |
 | And（given） | `score "Q" when the field "f" contains "high" scoring 1.8 and "mid" scoring 1.0 miss 0.2` | `heuristic` + `match_any`/`match_mid_any` + `score_hit`/`score_mid`/`score_miss`（三带打分） |
+| And（given） | `answer "B" when the text matches every group with hit 0.9 and miss 0.05`（后跟 `\| group \| needles \|` 表） | `heuristic.match_all`（每行是一组 OR 词；**所有行都要命中**）+ `p_hit`/`p_miss` |
+| And（given） | `score "Q" by rules on the text miss 10`（后跟 `\| score \| needles \|` 表，行序即优先级） | `heuristic.score_rules`（首个命中行 → 该分数，否则 `score_miss`） |
 | And（given） | `the answer is always "A"` | `heuristic.answer`（确定性答案） |
 | And（given） | `the answer comes from the field "f"` | `heuristic.answer_field`（答案取自已存字段） |
 | Then | `gate "Q" on option "O" with block 0.6 allow 0.7` | `action {kind:gate, question, option, block_at, allow_at}` |

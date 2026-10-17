@@ -952,6 +952,26 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 .unwrap(),
                 "heur_numeric",
             ),
+            // P248: the AND shape. `match_any` spells “one of these needles”;
+            // the content-safety questions need “one needle from *this* group AND
+            // one from *this* group”. Each table row is one OR-alternative group;
+            // every row must fire, so two groups make a conjunction.
+            (
+                Regex::new(
+                    r#"^answer "(?P<ans>[^"]+)" when the (?:field "(?P<field>[^"]+)"|text) matches every group with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
+                )
+                .unwrap(),
+                "heur_match_all",
+            ),
+            // P248: the ordered score ladder. `score_hit` has one hit value; an
+            // effective-severity table needs “first matching row wins, else miss”.
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" by rules on the (?:field "(?P<field>[^"]+)"|text) miss (?P<miss>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_score_rules",
+            ),
             (
                 Regex::new(
                     r#"^answer "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" matches (?P<patterns>.+) with hit (?P<hit>\d+(?:\.\d+)?)(?: and miss (?P<miss>\d+(?:\.\d+)?))?$"#,
@@ -1360,6 +1380,10 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
         ("given", "score \"<ans>\" when the text contains <needles> scoring <hit> miss <miss>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains <needles> scoring <hit> miss <miss>"),
+        ("given", "answer \"<ans>\" when the field \"<field>\" matches every group with hit <hit> and miss <miss>"),
+        ("given", "answer \"<ans>\" when the text matches every group with hit <hit> and miss <miss>"),
+        ("given", "score \"<ans>\" by rules on the field \"<field>\" miss <miss>"),
+        ("given", "score \"<ans>\" by rules on the text miss <miss>"),
         ("given", "the answer is always \"<a>\""),
         ("given", "the answer comes from the field \"<f>\""),
         ("when", "the answer \"<a>\" goes to \"<node>\""),
@@ -3417,6 +3441,92 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 if let Some(fb) = fallback {
                     h.insert("fallback".into(), json!(fb));
                 }
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
+            }
+            "heur_match_all" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps.name("field").map(|m| m.as_str().to_string());
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let miss: f64 = match caps.name("miss") {
+                    Some(m) => m.as_str().parse()?,
+                    None => ((1.0 - hit) * 1_000_000.0).round() / 1_000_000.0,
+                };
+                let mut groups: Vec<Value> = Vec::new();
+                for row in st.table.iter().skip(1) {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: match_all step needs | group | needles | rows",
+                            st.line
+                        );
+                    }
+                    let needles = quoted_tokens_escaped(&row[1]);
+                    if needles.is_empty() {
+                        bail!("line {}: match_all group {row:?} needs quoted needles", st.line);
+                    }
+                    groups.push(json!(needles));
+                }
+                if groups.len() < 2 {
+                    bail!("line {}: match_all needs at least two groups (use match_any for one)", st.line);
+                }
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = &field {
+                    h.insert("field".into(), json!(f));
+                }
+                h.insert("match_all".into(), json!(groups));
+                h.insert("p_hit".into(), json!(hit));
+                h.insert("p_miss".into(), json!(miss));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
+            }
+            "heur_score_rules" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps.name("field").map(|m| m.as_str().to_string());
+                let miss: f64 = caps["miss"].to_string().parse()?;
+                let mut rules: Map<String, Value> = Map::new();
+                let mut seen: Vec<(String, usize)> = Vec::new();
+                for (i, row) in st.table.iter().enumerate().skip(1) {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: score_rules step needs | score | needles | rows",
+                            st.line
+                        );
+                    }
+                    let score: f64 = row[0].trim().parse().map_err(|e| {
+                        anyhow!("line {}: score_rules score must be a number: {e}", st.line)
+                    })?;
+                    let key = format!("{score}");
+                    table_key_once(
+                        &mut seen,
+                        &key,
+                        row_line(st, i),
+                        "score_rules step",
+                    )?;
+                    let needles = quoted_tokens_escaped(&row[1]);
+                    if needles.is_empty() {
+                        bail!("line {}: score_rules row {row:?} needs quoted needles", st.line);
+                    }
+                    rules.insert(key, json!(needles));
+                }
+                if rules.is_empty() {
+                    bail!("line {}: score_rules needs at least one | score | needles | row", st.line);
+                }
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = &field {
+                    h.insert("field".into(), json!(f));
+                }
+                h.insert("score_rules".into(), Value::Object(rules));
+                h.insert("score_miss".into(), json!(miss));
                 set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_score_bands" => {
@@ -9345,6 +9455,78 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
         );
         return Ok(());
     }
+    if has("match_all") {
+        let field = s("field");
+        if let Some(f) = field {
+            imp_tok("heuristic.field", f)?;
+        }
+        let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
+        let miss = imp_f64("heuristic.p_miss", h.get("p_miss"))?;
+        let groups = h
+            .get("match_all")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("cannot import: match_all is not an array"))?;
+        if groups.len() < 2 {
+            bail!("cannot import: match_all needs at least two groups");
+        }
+        let head = match field {
+            Some(f) => format!("the field \"{f}\""),
+            None => "the text".to_string(),
+        };
+        let mut table = vec!["| group | needles |".to_string()];
+        for (i, group) in groups.iter().enumerate() {
+            let needles = group
+                .as_array()
+                .ok_or_else(|| anyhow!("cannot import: match_all[{i}] is not an array"))?;
+            let toks = imp_tokens_esc("heuristic.match_all[] needle", needles)?;
+            table.push(format!("| {} | {} |", i + 1, toks));
+        }
+        st.push(
+            "given",
+            format!(
+                "answer \"{qname}\" when {head} matches every group with hit {} and miss {}",
+                imp_num(hit)?,
+                imp_num(miss)?
+            ),
+            table,
+        );
+        return Ok(());
+    }
+    if has("score_rules") {
+        let field = s("field");
+        if let Some(f) = field {
+            imp_tok("heuristic.field", f)?;
+        }
+        let miss = imp_f64("heuristic.score_miss", h.get("score_miss"))?;
+        let rules = h
+            .get("score_rules")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("cannot import: score_rules is not an object"))?;
+        if rules.is_empty() {
+            bail!("cannot import: score_rules has no rows");
+        }
+        let head = match field {
+            Some(f) => format!("the field \"{f}\""),
+            None => "the text".to_string(),
+        };
+        let mut table = vec!["| score | needles |".to_string()];
+        for (score, needles) in rules {
+            let value: f64 = score.parse().map_err(|_| {
+                anyhow!("cannot import: score_rules score {score:?} is not a number")
+            })?;
+            let needles = needles
+                .as_array()
+                .ok_or_else(|| anyhow!("cannot import: score_rules[{score}] is not an array"))?;
+            let toks = imp_tokens_esc("heuristic.score_rules needle", needles)?;
+            table.push(format!("| {} | {} |", imp_num(value)?, toks));
+        }
+        st.push(
+            "given",
+            format!("score \"{qname}\" by rules on {head} miss {}", imp_num(miss)?),
+            table,
+        );
+        return Ok(());
+    }
     if has("match_rules") {
         // P247: the rule step's field is optional (see the compiler arm): with no
         // `field` the step reads `the text`, i.e. the whole serialised state. Only
@@ -10788,6 +10970,11 @@ fn rt_norm_heuristic(h: &Value) -> Value {
         m.entry("p_hit".to_string()).or_insert(json!(0.9));
         m.entry("p_miss".to_string()).or_insert(json!(0.02));
         m.entry("p_fallback".to_string()).or_insert(json!(0.6));
+    } else if m.contains_key("match_all") {
+        m.entry("p_hit".to_string()).or_insert(json!(0.9));
+        m.entry("p_miss".to_string()).or_insert(json!(0.1));
+    } else if m.contains_key("score_rules") {
+        m.entry("score_miss".to_string()).or_insert(json!(0.5));
     } else if m.contains_key("match_any")
         || m.contains_key("match_regex")
         || m.contains_key("extract_numeric")

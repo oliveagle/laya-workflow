@@ -1098,6 +1098,57 @@ fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
         }
         return None;
     }
+    // `match_all` (conjunction of OR-groups): an array of token arrays. The
+    // backend silently drops a malformed outer element / inner needle, which
+    // weakens the conjunction exactly where a safety gate relies on it.
+    if k == "match_all" {
+        let Some(groups) = v.as_array() else {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an array of needle arrays — the backend reads each group with `as_array()` and a malformed group can never fire",
+                json_kind_name(v)
+            ));
+        };
+        for (i, group) in groups.iter().enumerate() {
+            let Some(a) = group.as_array() else {
+                return Some(format!(
+                    "`heuristic` key {k:?} group {i} is {}, but it must be an array of strings — the backend's `filter_map(|x| x.as_str())` silently drops a non-string needle",
+                    json_kind_name(group)
+                ));
+            };
+            if let Some(bad) = a.iter().find(|x| !x.is_string()) {
+                return Some(format!(
+                    "`heuristic` key {k:?} group {i} must be an array of strings, but it holds {} — that needle is silently dropped",
+                    json_kind_name(bad)
+                ));
+            }
+        }
+        return None;
+    }
+    // `score_rules` (ordered score ladder): an object whose keys parse as f64 and
+    // whose values are trigger-token arrays; declaration order decides which row
+    // wins when multiple rows match.
+    if k == "score_rules" {
+        let Some(rules) = v.as_object() else {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an object mapping numeric scores to arrays of trigger tokens — the backend reads it with `as_object()` and an invalid shape silently becomes the empty ladder",
+                json_kind_name(v)
+            ));
+        };
+        for (score, toks) in rules {
+            if score.parse::<f64>().is_err() {
+                return Some(format!(
+                    "`heuristic` key {k:?} score {score:?} is not a number — the backend cannot turn it into the score it was meant to return"
+                ));
+            }
+            if !toks.as_array().map(|a| a.iter().all(Value::is_string)).unwrap_or(false) {
+                return Some(format!(
+                    "`heuristic` key {k:?} score {score:?} is {}, but it must be an array of strings — the backend's `filter_map(|x| x.as_str())` silently drops a non-string trigger",
+                    json_kind_name(toks)
+                ));
+            }
+        }
+        return None;
+    }
     // `match_rules` (multi-class routing): an object mapping each option to its
     // array of trigger tokens. Read with `as_object()`, then each value with
     // `filter_map(|x| x.as_str())`.
@@ -1163,6 +1214,36 @@ fn heuristic_needle_error(k: &str, v: &Value) -> Option<String> {
         }
         return None;
     }
+    if k == "match_all" {
+        if let Some(groups) = v.as_array() {
+            if groups.len() < 2 {
+                return Some("`heuristic` key \"match_all\" has fewer than two groups — a one-group conjunction is just `match_any`; write the simpler shape so the spec says what it means".to_string());
+            }
+            for (i, group) in groups.iter().enumerate() {
+                if group.as_array().is_some_and(Vec::is_empty) {
+                    return Some(format!(
+                        "`heuristic` key \"match_all\" group {i} is empty — that group can never fire, so the whole conjunction (and every branch keyed on it) is silently dead"
+                    ));
+                }
+            }
+        }
+        return None;
+    }
+    if k == "score_rules" {
+        if let Some(rules) = v.as_object() {
+            if rules.is_empty() {
+                return Some("`heuristic` key \"score_rules\" has no rows — the backend always returns `score_miss`, so every branch keyed on a real score is silently dead".to_string());
+            }
+            for (score, toks) in rules {
+                if toks.as_array().is_some_and(Vec::is_empty) {
+                    return Some(format!(
+                        "`heuristic` key \"score_rules\" score {score:?} has no needles — that row can never fire and the ladder silently falls through to a lower-priority row"
+                    ));
+                }
+            }
+        }
+        return None;
+    }
     const ARR: &[&str] = &["match_any", "match_mid_any", "match_regex"];
     if !ARR.contains(&k) {
         return None;
@@ -1213,6 +1294,38 @@ fn heuristic_blank_error(k: &str, v: &Value) -> Option<String> {
                     return Some(format!(
                         "`heuristic` key {k:?} carries a blank needle at index {i} - an empty pattern matches at offset 0, so the signal fires on every input (a silent always-hit) or, when the matched text starts with a word character, the scan can never advance and the engine spins without end; give the element a real token or drop it"
                     ));
+                }
+            }
+        }
+        return None;
+    }
+    if k == "match_all" {
+        if let Some(groups) = v.as_array() {
+            for (gi, group) in groups.iter().enumerate() {
+                if let Some(a) = group.as_array() {
+                    for (i, x) in a.iter().enumerate() {
+                        if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                            return Some(format!(
+                                "`heuristic` key \"match_all\" group {gi} carries a blank needle at index {i} - an empty pattern matches at offset 0, so that group fires on every input and the conjunction no longer means AND; give the token a real value or drop it"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+    if k == "score_rules" {
+        if let Some(m) = v.as_object() {
+            for (score, toks) in m {
+                if let Some(a) = toks.as_array() {
+                    for (i, x) in a.iter().enumerate() {
+                        if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                            return Some(format!(
+                                "`heuristic` key \"score_rules\" score {score:?} carries a blank token at index {i} - an empty pattern matches at offset 0, so that row fires on every input and the ordered ladder no longer means first-match-wins; give the token a real value or drop it"
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -1732,9 +1845,9 @@ fn validate_graph_semantics(
         ];
         const KNOWN_HEURISTIC_KEYS: &[&str] = &[
             "answer_field", "field", "extract_numeric", "match_any", "match_mid_any",
-            "match_regex", "match_rules", "fallback", "answer", "p_hit", "p_mid",
-            "p_miss", "p_fallback", "p_violated", "p_ok", "score_hit", "score_mid",
-            "score_miss",
+            "match_regex", "match_rules", "match_all", "score_rules", "fallback", "answer",
+            "p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok", "score_hit",
+            "score_mid", "score_miss",
         ];
         if let Some(qs) = n.get("questions").and_then(Value::as_object) {
             let qn = n.get("name").and_then(Value::as_str).unwrap_or("?");

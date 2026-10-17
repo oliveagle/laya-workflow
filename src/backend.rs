@@ -730,7 +730,34 @@ impl Decide for HeuristicBackend {
                     }
                     (serde_json::json!(chosen), m, conf)
                 }
-                _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
+                _ if qdef.get("heuristic").and_then(|h| h.get("score_rules")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let rules = h.get("score_rules").and_then(|m| m.as_object()).cloned().unwrap_or_default();
+                    let miss = h.get("score_miss").and_then(|x| x.as_f64()).unwrap_or(0.5);
+                    let target_text: String = match h.get("field").and_then(|f| f.as_str()) {
+                        Some(k) => state.get(k).map(|v| match v {
+                            Value::String(sv) => sv.clone(),
+                            other => other.to_string(),
+                        }).unwrap_or_default(),
+                        None => text.clone(),
+                    };
+                    let mut value = miss;
+                    for (score, toks_v) in &rules {
+                        let score: f64 = score.parse().map_err(|_| {
+                            anyhow!("heuristic score_rules score {score:?} for {qid} is not a number")
+                        })?;
+                        let toks: Vec<&str> = toks_v
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
+                            .unwrap_or_default();
+                        if !toks.is_empty() && contains_any(&target_text, &toks) {
+                            value = score;
+                            break;
+                        }
+                    }
+                    bscore(value)
+                }
+                _ if qdef.get("heuristic").and_then(|h| h.get("match_any").or_else(|| h.get("match_all")).or_else(|| h.get("match_regex")).or_else(|| h.get("extract_numeric"))).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
                     // `match_any`: literal substring needles (word-boundary aware).
                     // `match_regex`: full regex patterns (any match counts as a hit),
@@ -760,6 +787,20 @@ impl Decide for HeuristicBackend {
                     if let Some(any) = h.get("match_any").and_then(|a| a.as_array()) {
                         let toks: Vec<&str> = any.iter().filter_map(|x| x.as_str()).collect();
                         hit = contains_any(&target_text, &toks);
+                    }
+                    // `match_all`: each row is an OR-alternative group; *every* row
+                    // must contribute a hit. This is the conjunction the one-group
+                    // `match_any` cannot spell (P248).
+                    if !hit {
+                        if let Some(groups) = h.get("match_all").and_then(|a| a.as_array()) {
+                            hit = groups.iter().all(|group| {
+                                group.as_array().is_some_and(|needles| {
+                                    let toks: Vec<&str> =
+                                        needles.iter().filter_map(|x| x.as_str()).collect();
+                                    contains_any(&target_text, &toks)
+                                })
+                            });
+                        }
                     }
                     // `match_mid_any`: ambiguous tokens (mid / unclear / …) that are
                     // neither a strong hit nor a strong miss. Only consulted when the

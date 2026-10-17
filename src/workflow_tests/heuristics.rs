@@ -817,6 +817,153 @@ Feature: p247rules
             "p247: feature -> spec -> feature -> spec is a fixed point on the graph",
             s47["nodes"] == s47c["nodes"],
         );
+
+        // P248: content_safety_guard needs two more shapes. Six of its choice
+        // questions are conjunctions (“one semantic needle AND one context
+        // needle”), while `match_any` means only “one of these needles”; its
+        // score question is a nine-row ordered ladder, while `score_hit` has one
+        // hit value. Spell both as rules rather than Rust handlers.
+        let src48 = r#"
+@decision
+Feature: p248shapes
+  Scenario: safety
+    Given a choice question "age_blocking" asks "is it age blocking?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    And answer "B" when the text matches every group with hit 0.9 and miss 0.05
+      | group    | needles |
+      | semantic | "graphic_violence", "self_harm" |
+      | audience | "child", "teen" |
+    And a choice question "scoped" asks "is the note age blocking?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    And answer "B" when the field "note" matches every group with hit 0.91 and miss 0.06
+      | group    | needles |
+      | semantic | "artistic_nudity" |
+      | audience | "child" |
+    And a score question "effective_severity" asks "how severe?"
+      | level |
+      | 0     |
+      | 50    |
+      | 90    |
+      | 100   |
+    And score "effective_severity" by rules on the text miss 10
+      | score | needles |
+      | 100   | "targeted_abuse", "prohibited" |
+      | 95    | "graphic_violence", "self_harm" |
+      | 45    | "contact_information" |
+    When any other answer goes to "STOP"
+    Then label "BLOCK" when the answer to "age_blocking" is "B"
+    And label "BLOCK" when "effective_severity" is at least 90
+    And label "REVIEW" when "effective_severity" is at least 45
+    And label "ALLOW" otherwise
+"#;
+        let f48 = laya_workflow::bdd::parse(src48, "<p248>").expect("parse p248 feature");
+        let s48 = laya_workflow::bdd::compile_decision(&f48, &json!({})).expect("compile p248 shapes");
+        let a48 = &s48["nodes"][0]["questions"]["age_blocking"]["heuristic"];
+        h.eq(
+            "p248: `matches every group` writes nested OR-groups",
+            a48["match_all"].clone(),
+            json!([["graphic_violence", "self_harm"], ["child", "teen"]]),
+        );
+        h.eq("p248: ... at the declared hit", a48["p_hit"].clone(), json!(0.9));
+        h.eq("p248: ... and miss", a48["p_miss"].clone(), json!(0.05));
+        h.check("p248: ... with no field (whole serialised state)", a48.get("field").is_none());
+        h.eq(
+            "p248: the field form keeps its named match space",
+            s48["nodes"][0]["questions"]["scoped"]["heuristic"]["field"].clone(),
+            json!("note"),
+        );
+        let e48 = &s48["nodes"][0]["questions"]["effective_severity"]["heuristic"];
+        h.eq(
+            "p248: `score by rules` writes an ordered numeric map",
+            e48["score_rules"].clone(),
+            json!({
+                "100": ["targeted_abuse", "prohibited"],
+                "95": ["graphic_violence", "self_harm"],
+                "45": ["contact_information"]
+            }),
+        );
+        h.eq("p248: ... and the miss score", e48["score_miss"].clone(), json!(10.0));
+
+        // Behaviour: the AND cannot fire on one group alone, and ladder order --
+        // not numerical or alphabetical order -- picks the first matching row.
+        let be48 = HeuristicBackend;
+        let qs48 = &s48["nodes"][0]["questions"];
+        let choice48 = |state: serde_json::Value| -> String {
+            be48.decide(&state, qs48)
+                .unwrap()
+                .answer_value("age_blocking")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        h.eq(
+            "p248: one group alone is a miss (true AND)",
+            choice48(json!({"text": "graphic_violence for adults"})),
+            "A".to_string(),
+        );
+        h.eq(
+            "p248: one hit in every group fires",
+            choice48(json!({"text": "graphic_violence for a teen"})),
+            "B".to_string(),
+        );
+        h.eq(
+            "p248: a declared field does not cross-fire into the envelope",
+            be48
+                .decide(&json!({"text": "artistic_nudity child", "note": "science for a child"}), qs48)
+                .unwrap()
+                .answer_value("scoped")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "A",
+        );
+        let sev48 = |state: serde_json::Value| -> f64 {
+            be48.decide(&state, qs48)
+                .unwrap()
+                .answer_value("effective_severity")
+                .unwrap()
+                .as_f64()
+                .unwrap()
+        };
+        h.eq(
+            "p248: the first matching score row wins",
+            sev48(json!({"text": "self_harm targeted_abuse"})),
+            100.0,
+        );
+        h.eq(
+            "p248: a lower-priority row still wins when it is the only match",
+            sev48(json!({"text": "please send contact_information"})),
+            45.0,
+        );
+        h.eq(
+            "p248: no row falls to score_miss",
+            sev48(json!({"text": "educational_science adult"})),
+            10.0,
+        );
+
+        // Both new table steps must survive import and recompile bit-for-bit at
+        // the graph level (the gates the whole 177-spec corpus is held to).
+        let back48 = laya_workflow::bdd::import_spec(&s48).expect("import the p248 spec");
+        h.check(
+            "p248: the conjunction step round-trips through `import`",
+            back48.contains("matches every group with hit 0.9 and miss 0.05"),
+        );
+        h.check(
+            "p248: the score ladder round-trips through `import`",
+            back48.contains("score \"effective_severity\" by rules on the text miss 10"),
+        );
+        let f48b = laya_workflow::bdd::parse(&back48, "<p248b>").expect("parse the imported p248 feature");
+        let s48b = laya_workflow::bdd::compile_decision(&f48b, &json!({}))
+            .expect("recompile the imported p248 feature");
+        h.check(
+            "p248: feature -> spec -> feature -> spec is a fixed point on the graph",
+            s48["nodes"] == s48b["nodes"],
+        );
     }
 }
 

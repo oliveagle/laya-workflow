@@ -3268,6 +3268,14 @@ pub fn test_validate_heuristic_values(h: &mut Harness) {
         ok(&choice(json!({"match_rules": {"A": ["a", "aa"], "B": ["b"]}, "p_hit": 0.9, "p_miss": 0.1, "fallback": "B"}))),
     );
     h.check(
+        "validate heuristic: P248 `match_all` groups of token arrays are OK",
+        ok(&choice(json!({"match_all": [["a", "aa"], ["b"]], "p_hit": 0.9, "p_miss": 0.1}))),
+    );
+    h.check(
+        "validate heuristic: P248 `score_rules` numeric rows of token arrays are OK",
+        ok(&score(json!({"score_rules": {"100": ["a"], "45.5": ["b"]}, "score_miss": 10.0}))),
+    );
+    h.check(
         "validate heuristic: `field` / `extract_numeric` string names are OK",
         ok(&score(json!({"extract_numeric": "amount", "field": "note", "score_hit": 2.0, "score_mid": 1.25, "score_miss": 0.5}))),
     );
@@ -3305,6 +3313,22 @@ pub fn test_validate_heuristic_values(h: &mut Harness) {
     h.check(
         "validate heuristic: a `match_rules` entry that is not a token array is rejected",
         err(&choice(json!({"match_rules": {"A": "a"}, "p_hit": 0.9}))).contains("array of strings"),
+    );
+    h.check(
+        "validate heuristic: a `match_all` that is not a nested token array is rejected",
+        err(&choice(json!({"match_all": ["a", "b"], "p_hit": 0.9}))).contains("group 0"),
+    );
+    h.check(
+        "validate heuristic: a non-string needle inside a `match_all` group is rejected",
+        err(&choice(json!({"match_all": [["a"], [3]], "p_hit": 0.9}))).contains("group 1"),
+    );
+    h.check(
+        "validate heuristic: a non-numeric `score_rules` key is rejected",
+        err(&score(json!({"score_rules": {"high": ["a"]}, "score_miss": 10.0}))).contains("score \"high\""),
+    );
+    h.check(
+        "validate heuristic: a `score_rules` entry that is not a token array is rejected",
+        err(&score(json!({"score_rules": {"100": "a"}, "score_miss": 10.0}))).contains("array of strings"),
     );
     h.check(
         "validate heuristic: a numeric `extract_numeric` is rejected",
@@ -3426,6 +3450,13 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
             "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
         }]})
     };
+    let score = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "score", "instructions": "?", "criteria": ["low", "mid", "high"], "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
 
     // ── a non-empty needle set / rule table stays accepted ──
     h.check(
@@ -3439,6 +3470,14 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
     h.check(
         "validate heuristic-needles: a `match_rules` with one row is OK",
         ok(&choice(json!({"match_rules": {"B": ["refund"]}, "p_hit": 0.9, "fallback": "A"}))),
+    );
+    h.check(
+        "validate heuristic-needles: a two-group `match_all` is OK",
+        ok(&choice(json!({"match_all": [["refund"], ["public"]], "p_hit": 0.9}))),
+    );
+    h.check(
+        "validate heuristic-needles: a one-row `score_rules` ladder is OK",
+        ok(&score(json!({"score_rules": {"100": ["refund"]}, "score_miss": 10.0}))),
     );
     h.check(
         "validate heuristic-needles: a question with no heuristic at all is OK",
@@ -3471,6 +3510,22 @@ pub fn test_validate_heuristic_needles(h: &mut Harness) {
         "validate heuristic-needles: an empty `match_rules` object is rejected",
         err(&choice(json!({"match_rules": {}, "p_hit": 0.9}))).contains("no option rows"),
     );
+    h.check(
+        "validate heuristic-needles: a one-group `match_all` is refused in favour of `match_any`",
+        err(&choice(json!({"match_all": [["refund"]], "p_hit": 0.9}))).contains("fewer than two groups"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `match_all` group is rejected",
+        err(&choice(json!({"match_all": [["refund"], []], "p_hit": 0.9}))).contains("group 1 is empty"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `score_rules` ladder is rejected",
+        err(&score(json!({"score_rules": {}, "score_miss": 10.0}))).contains("has no rows"),
+    );
+    h.check(
+        "validate heuristic-needles: an empty `score_rules` row is rejected",
+        err(&score(json!({"score_rules": {"100": []}, "score_miss": 10.0}))).contains("has no needles"),
+    );
 }
 
 pub fn test_validate_heuristic_blanks(h: &mut Harness) {
@@ -3489,6 +3544,13 @@ pub fn test_validate_heuristic_blanks(h: &mut Harness) {
             "edge": {"condition": {"A": "STOP", "B": "STOP"}, "default": "STOP"},
         }]})
     };
+    let score = |heur: Value| -> Value {
+        json!({"name": "probe", "start": "a", "nodes": [{
+            "name": "a",
+            "questions": {"q": {"type": "score", "instructions": "?", "criteria": ["low", "mid", "high"], "heuristic": heur}},
+            "edge": {"default": "STOP"},
+        }]})
+    };
 
     // ── well-formed needles / field names stay accepted ──
     h.check(
@@ -3498,6 +3560,11 @@ pub fn test_validate_heuristic_blanks(h: &mut Harness) {
     h.check(
         "validate heuristic-blanks: a non-blank `match_rules` table is OK",
         ok(&choice(json!({"match_rules": {"B": ["refund"]}, "p_hit": 0.9, "fallback": "A"}))),
+    );
+    h.check(
+        "validate heuristic-blanks: a non-blank P248 `match_all` / `score_rules` is OK",
+        ok(&choice(json!({"match_all": [["refund"], ["public"]], "p_hit": 0.9})))
+            && ok(&score(json!({"score_rules": {"100": ["refund"]}, "score_miss": 10.0}))),
     );
 
     // ── a blank needle / token is rejected, naming the index ──
@@ -3530,6 +3597,15 @@ pub fn test_validate_heuristic_blanks(h: &mut Harness) {
     h.check(
         "validate heuristic-blanks: a blank `match_rules` token is rejected, naming the option",
         r.contains("key \"match_rules\"") && r.contains("option \"B\"") && r.contains("index 0"),
+    );
+    h.check(
+        "validate heuristic-blanks: a blank `match_all` needle is rejected, naming the group",
+        err(&choice(json!({"match_all": [["refund"], [""]], "p_hit": 0.9})))
+            .contains("group 1") && err(&choice(json!({"match_all": [["refund"], [""]], "p_hit": 0.9}))).contains("index 0"),
+    );
+    h.check(
+        "validate heuristic-blanks: a blank `score_rules` token is rejected, naming the score",
+        err(&score(json!({"score_rules": {"100": [""]}, "score_miss": 10.0}))).contains("score \"100\""),
     );
 
     // ── a blank state-key name is rejected ──
