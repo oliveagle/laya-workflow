@@ -1,8 +1,15 @@
 {
   "name": "aml_screener",
-  "description": "Port of ole-eval code/qwen_vm/app_scenarios/aml_screener. Ordered rules: mandatory BLOCK on sanctioned country, then BLOCK >= 70, REVIEW >= 25, else CLEAR. Python arithmetic (crypto +30, large_amount +25, high_risk_country +35, exchange +20, near_threshold +15) folded into a single model-judged composite_risk score.",
+  "_bdd": {
+    "feature": "aml_screener",
+    "feature_path": "bdd/workflows/ole_eval/aml_screener.feature",
+    "mode": "decision"
+  },
+  "description": "BDD decision workflow: aml_screener",
   "start": "screen",
   "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
   "nodes": [
     {
       "name": "screen",
@@ -11,39 +18,183 @@
         "sanctioned_country": {
           "type": "choice",
           "instructions": "Is origin or destination country in the sanctioned set (CU, IR, KP, SY)?",
-          "criteria": { "A": "no sanctioned country", "B": "yes, sanctioned country" }
+          "criteria": {
+            "A": "no sanctioned country",
+            "B": "yes, sanctioned country"
+          },
+          "heuristic": {
+            "match_regex": [
+              "(?i)(?:\\bcuba\\b|\\biran\\b|north korea|\\bsyria\\b| country_cu|\\bcountry_ir\\b|\\bcountry_kp\\b|\\bcountry_sy\\b|\"CU\"|\"IR\"|\"KP\"|\"SY\")"
+            ],
+            "p_hit": 0.95,
+            "p_miss": 0.05
+          }
         },
         "crypto_category": {
           "type": "choice",
           "instructions": "Is the transaction category crypto?",
-          "criteria": { "A": "not crypto", "B": "yes, crypto category" }
+          "criteria": {
+            "A": "not crypto",
+            "B": "yes, crypto category"
+          },
+          "heuristic": {
+            "match_any": [
+              "crypto",
+              "bitcoin",
+              "ethereum"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "crypto_exchange_counterparty": {
           "type": "choice",
           "instructions": "Is the counterparty type a crypto exchange?",
-          "criteria": { "A": "not crypto exchange", "B": "yes, crypto exchange" }
+          "criteria": {
+            "A": "not crypto exchange",
+            "B": "yes, crypto exchange"
+          },
+          "heuristic": {
+            "match_any": [
+              "crypto_exchange",
+              "exchange"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "high_risk_country": {
           "type": "choice",
           "instructions": "Is origin or destination country in the high-risk set (BY, MM, NG, RU + sanctioned)?",
-          "criteria": { "A": "no high-risk country", "B": "yes, high-risk country" }
+          "criteria": {
+            "A": "no high-risk country",
+            "B": "yes, high-risk country"
+          },
+          "heuristic": {
+            "match_any": [
+              "belarus",
+              "myanmar",
+              "nigeria",
+              "russia",
+              "country_by",
+              "country_mm",
+              "country_ng",
+              "country_ru"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
+          }
         },
         "aml_risk": {
           "type": "score",
           "instructions": "Composite AML risk 0-100 (sum rule points for crypto +30, large_amount +25, high_risk_country +35, crypto_exchange +20, near_threshold +15, charity_high_risk +20).",
-          "criteria": ["0 clear", "25 reviewable", "70 block", "100 maximum"]
+          "criteria": [
+            "0 clear",
+            "25 reviewable",
+            "70 block",
+            "100 maximum"
+          ],
+          "heuristic": {
+            "score_sum": [
+              {
+                "score": 30.0,
+                "needles": [
+                  "crypto",
+                  "bitcoin",
+                  "ethereum"
+                ]
+              },
+              {
+                "score": 25.0,
+                "needles": [
+                  "large_amount",
+                  "large amount",
+                  "above threshold"
+                ]
+              },
+              {
+                "score": 35.0,
+                "needles": [
+                  "high_risk",
+                  "high risk",
+                  "belarus",
+                  "russia",
+                  "country_by",
+                  "country_ru"
+                ]
+              },
+              {
+                "score": 20.0,
+                "needles": [
+                  "crypto_exchange",
+                  "exchange"
+                ]
+              },
+              {
+                "score": 15.0,
+                "needles": [
+                  "near_threshold",
+                  "near threshold"
+                ]
+              },
+              {
+                "score": 20.0,
+                "needles": [
+                  "charity_high_risk",
+                  "charity"
+                ]
+              },
+              {
+                "score": 100.0,
+                "needles": [
+                  "sanctioned",
+                  "country_cu",
+                  "country_ir",
+                  "country_kp",
+                  "country_sy"
+                ]
+              }
+            ],
+            "score_max": 100.0
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "aml_risk",
         "rules": [
-          { "when": { "question": "sanctioned_country", "answer": "B" }, "label": "BLOCK" },
-          { "when": { "value_gte": 70.0 }, "label": "BLOCK" },
-          { "when": { "value_gte": 25.0 }, "label": "REVIEW" },
-          { "when": { "always": true }, "label": "CLEAR" }
+          {
+            "when": {
+              "question": "sanctioned_country",
+              "answer": "B"
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "aml_risk",
+              "value_gte": 70.0
+            },
+            "label": "BLOCK"
+          },
+          {
+            "when": {
+              "question": "aml_risk",
+              "value_gte": 25.0
+            },
+            "label": "REVIEW"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "CLEAR"
+          }
         ]
       }
     }

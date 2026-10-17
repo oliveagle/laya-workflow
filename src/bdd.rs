@@ -963,6 +963,15 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 .unwrap(),
                 "heur_match_all",
             ),
+            // P255: the additive sibling of the ladder below. Every matching
+            // row contributes its points once; `capped at` is optional.
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" by summing rules on the (?:field "(?P<field>[^"]+)"|text)(?: capped at (?P<cap>-?\d+(?:\.\d+)?))?$"#,
+                )
+                .unwrap(),
+                "heur_score_sum",
+            ),
             // P248: the ordered score ladder. `score_hit` has one hit value; an
             // effective-severity table needs “first matching row wins, else miss”.
             (
@@ -1396,6 +1405,7 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "answer \"<ans>\" when the text matches every group with hit <hit> and miss <miss>"),
         ("given", "score \"<ans>\" by rules on the field \"<field>\" miss <miss>"),
         ("given", "score \"<ans>\" by rules on the text miss <miss>"),
+        ("given", "score \"<ans>\" by summing rules on the text capped at <cap>"),
         ("given", "the answer is always \"<a>\""),
         ("given", "the answer comes from the field \"<f>\""),
         ("when", "the answer \"<a>\" goes to \"<node>\""),
@@ -1621,7 +1631,7 @@ fn dec_sample(name: &str, quoted: bool) -> String {
         "cond" => "the answer is \"x\"".to_string(),
         // numeric placeholders.
         "n" | "c" | "hit" | "miss" | "mid" | "midv" | "min" | "block" | "allow" | "w1" | "w2"
-        | "l1" | "l2" | "low" | "high" => "1".to_string(),
+        | "l1" | "l2" | "low" | "high" | "cap" => "1".to_string(),
         // everything else is a bare word where a quoted string is expected.
         _ => "x".to_string(),
     }
@@ -3553,6 +3563,51 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 h.insert("match_all".into(), json!(groups));
                 h.insert("p_hit".into(), json!(hit));
                 h.insert("p_miss".into(), json!(miss));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
+            }
+            "heur_score_sum" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let field = caps.name("field").map(|m| m.as_str().to_string());
+                let mut rows: Vec<Value> = Vec::new();
+                for row in st.table.iter().skip(1) {
+                    if row.len() < 2 || row[0].trim().is_empty() {
+                        bail!(
+                            "line {}: score_sum step needs | points | needles | rows",
+                            st.line
+                        );
+                    }
+                    let score: f64 = row[0].trim().parse().map_err(|e| {
+                        anyhow!("line {}: score_sum points must be a number: {e}", st.line)
+                    })?;
+                    let needles = quoted_tokens_escaped(&row[1]);
+                    if needles.is_empty() {
+                        bail!(
+                            "line {}: score_sum row {row:?} needs quoted needles",
+                            st.line
+                        );
+                    }
+                    // Unlike score_rules, equal point values are legal: independent
+                    // additive rows can naturally carry the same weight.
+                    rows.push(json!({"score": score, "needles": needles}));
+                }
+                if rows.is_empty() {
+                    bail!("line {}: score_sum needs at least one | points | needles | row", st.line);
+                }
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = &field {
+                    h.insert("field".into(), json!(f));
+                }
+                h.insert("score_sum".into(), json!(rows));
+                if let Some(cap) = caps.name("cap") {
+                    let cap: f64 = cap.as_str().parse()?;
+                    h.insert("score_max".into(), json!(cap));
+                }
                 set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
             "heur_score_rules" => {
@@ -9560,6 +9615,52 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
                 imp_num(hit)?,
                 imp_num(miss)?
             ),
+            table,
+        );
+        return Ok(());
+    }
+    if has("score_sum") {
+        let field = s("field");
+        if let Some(f) = field {
+            imp_tok("heuristic.field", f)?;
+        }
+        let rows = h
+            .get("score_sum")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("cannot import: score_sum is not an array"))?;
+        if rows.is_empty() {
+            bail!("cannot import: score_sum has no rows");
+        }
+        let head = match field {
+            Some(f) => format!("the field \"{f}\""),
+            None => "the text".to_string(),
+        };
+        let cap = if let Some(max) = h.get("score_max") {
+            format!(" capped at {}", imp_f64("heuristic.score_max", Some(max))?)
+        } else {
+            String::new()
+        };
+        let mut table = vec!["| points | needles |".to_string()];
+        for (i, row) in rows.iter().enumerate() {
+            let obj = row
+                .as_object()
+                .ok_or_else(|| anyhow!("cannot import: score_sum[{i}] is not an object"))?;
+            let score = imp_f64(
+                "heuristic.score_sum score",
+                Some(obj.get("score").ok_or_else(|| {
+                    anyhow!("cannot import: score_sum[{i}] has no score")
+                })?),
+            )?;
+            let needles = obj
+                .get("needles")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("cannot import: score_sum[{i}] needles is not an array"))?;
+            let toks = imp_tokens_esc("heuristic.score_sum needle", needles)?;
+            table.push(format!("| {} | {} |", imp_num(score)?, toks));
+        }
+        st.push(
+            "given",
+            format!("score \"{qname}\" by summing rules on {head}{cap}"),
             table,
         );
         return Ok(());

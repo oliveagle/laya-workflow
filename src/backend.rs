@@ -807,6 +807,43 @@ impl Decide for HeuristicBackend {
                     }
                     (serde_json::json!(chosen), m, conf)
                 }
+                // P255: generic additive score. Unlike `score_rules` (an ordered,
+                // first-match-wins ladder), each `score_sum` row contributes at
+                // most once when any needle in that row matches. Independent
+                // signal groups therefore compose (AML: crypto + large amount +
+                // high-risk country + ...), while a 100-point override plus the
+                // optional cap reproduces "set to 100" exactly.
+                _ if qdef.get("heuristic").and_then(|h| h.get("score_sum")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let rows = h.get("score_sum").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+                    if rows.is_empty() {
+                        anyhow::bail!("heuristic score_sum for {qid} has no rows");
+                    }
+                    let target_text: String = match h.get("field").and_then(|f| f.as_str()) {
+                        Some(k) => state.get(k).map(|v| match v {
+                            Value::String(sv) => sv.clone(),
+                            other => other.to_string(),
+                        }).unwrap_or_default(),
+                        None => text.clone(),
+                    };
+                    let mut value = 0.0f64;
+                    for (i, row) in rows.iter().enumerate() {
+                        let Some(score) = row.get("score").and_then(Value::as_f64) else {
+                            anyhow::bail!("heuristic score_sum[{i}] score for {qid} is not a number");
+                        };
+                        let Some(needles) = row.get("needles").and_then(Value::as_array) else {
+                            anyhow::bail!("heuristic score_sum[{i}] needles for {qid} is not an array");
+                        };
+                        let toks: Vec<&str> = needles.iter().filter_map(|x| x.as_str()).collect();
+                        if !toks.is_empty() && contains_any(&target_text, &toks) {
+                            value += score;
+                        }
+                    }
+                    if let Some(max) = h.get("score_max").and_then(|x| x.as_f64()) {
+                        value = value.min(max);
+                    }
+                    score_rules_result(qdef, value)
+                }
                 _ if qdef.get("heuristic").and_then(|h| h.get("score_rules")).is_some() => {
                     let h = qdef.get("heuristic").unwrap();
                     let rules = h.get("score_rules").and_then(|m| m.as_object()).cloned().unwrap_or_default();

@@ -1276,6 +1276,188 @@ Feature: p250shapes
             ),
             (2.0, 1.0, 1.0),
         );
+
+        // P255: migrate aml_screener. Its Rust score is genuinely additive --
+        // independent signal groups each contribute once, then a sanctioned
+        // override sets the total to 100. Represent that as generic
+        // `score_sum` rows plus an optional cap; no qid-specific arm remains in
+        // the migrated spec. The exhaustive loop compares every emitted answer,
+        // confidence and probability across all 2^7 Boolean signal combinations.
+        let f55 = laya_workflow::bdd::parse(
+            include_str!("../../bdd/workflows/ole_eval/aml_screener.feature"),
+            "<p255-aml>",
+        )
+        .expect("parse the checked-in AML feature");
+        let s55 = laya_workflow::bdd::compile_decision(&f55, &json!({}))
+            .expect("compile the checked-in AML feature");
+        let qs55 = &s55["nodes"][0]["questions"];
+        let score_h55 = &qs55["aml_risk"]["heuristic"];
+        h.eq(
+            "p255: score_sum preserves every independent point row",
+            score_h55["score_sum"].clone(),
+            json!([
+                {"score":30.0,"needles":["crypto","bitcoin","ethereum"]},
+                {"score":25.0,"needles":["large_amount","large amount","above threshold"]},
+                {"score":35.0,"needles":["high_risk","high risk","belarus","russia","country_by","country_ru"]},
+                {"score":20.0,"needles":["crypto_exchange","exchange"]},
+                {"score":15.0,"needles":["near_threshold","near threshold"]},
+                {"score":20.0,"needles":["charity_high_risk","charity"]},
+                {"score":100.0,"needles":["sanctioned","country_cu","country_ir","country_kp","country_sy"]}
+            ]),
+        );
+        h.eq("p255: the optional cap is declared", score_h55["score_max"].clone(), json!(100.0));
+
+        let mut old55 = qs55.clone();
+        for q in old55.as_object_mut().expect("AML questions").values_mut() {
+            q.as_object_mut().expect("question object").remove("heuristic");
+        }
+        let be55 = HeuristicBackend;
+        let signals55 = [
+            "crypto",
+            "large_amount",
+            "belarus",
+            "exchange",
+            "near_threshold",
+            "charity",
+            "country_cu",
+        ];
+        let mut exhaustive55 = true;
+        for mask in 0..(1_usize << signals55.len()) {
+            let mut text = String::new();
+            for (i, signal) in signals55.iter().enumerate() {
+                if mask & (1 << i) != 0 {
+                    if !text.is_empty() { text.push(' '); }
+                    text.push_str(signal);
+                }
+            }
+            let state = json!({"text": text});
+            let before = be55.decide(&state, &old55).expect("old AML handlers");
+            let after = be55.decide(&state, qs55).expect("declared AML rules");
+            let choice_same = ["sanctioned_country", "crypto_category", "crypto_exchange_counterparty", "high_risk_country"]
+                .iter()
+                .all(|qid| {
+                    before.answer_value(qid).ok() == after.answer_value(qid).ok()
+                        && (before.confidence(qid).unwrap_or(-1.0)
+                            - after.confidence(qid).unwrap_or(-2.0))
+                            .abs()
+                            < 1e-12
+                        && ["A", "B"].iter().all(|k| {
+                            (before.prob(qid, k).unwrap_or(-1.0)
+                                - after.prob(qid, k).unwrap_or(-2.0))
+                                .abs()
+                                < 1e-12
+                        })
+                });
+            let score_same = before.answer_value("aml_risk").ok() == after.answer_value("aml_risk").ok()
+                && (before.confidence("aml_risk").unwrap_or(-1.0)
+                    - after.confidence("aml_risk").unwrap_or(-2.0))
+                    .abs()
+                    < 1e-12
+                && ["0", "1", "2"].iter().all(|k| {
+                    (before.prob("aml_risk", k).unwrap_or(-1.0)
+                        - after.prob("aml_risk", k).unwrap_or(-2.0))
+                        .abs()
+                        < 1e-12
+                });
+            if !choice_same || !score_same {
+                exhaustive55 = false;
+                eprintln!("p255 AML mismatch for mask {mask}: {text}");
+                break;
+            }
+        }
+        h.check("p255: all 128 AML signal combinations match the old handlers", exhaustive55);
+
+        let score55 = |text: &str| -> f64 {
+            be55.decide(&json!({"text":text}), qs55)
+                .unwrap()
+                .answer_value("aml_risk")
+                .unwrap()
+                .as_f64()
+                .unwrap()
+        };
+        h.eq("p255: one additive row contributes once", score55("bitcoin"), 30.0);
+        h.eq("p255: independent rows sum", score55("bitcoin large_amount"), 55.0);
+        h.eq(
+            "p255: equal-point rows remain independent",
+            score55("exchange charity"),
+            40.0,
+        );
+        h.eq(
+            "p255: a 100-point sanctioned row plus lower rows is capped",
+            score55("crypto large_amount belarus exchange country_cu"),
+            100.0,
+        );
+        let bands55 = |text: &str| -> (f64, f64, f64, f64, f64) {
+            let v = be55.decide(&json!({"text":text}), qs55).unwrap();
+            (
+                v.answer_value("aml_risk").unwrap().as_f64().unwrap(),
+                v.confidence("aml_risk").unwrap(),
+                v.prob("aml_risk", "0").unwrap(),
+                v.prob("aml_risk", "1").unwrap(),
+                v.prob("aml_risk", "2").unwrap(),
+            )
+        };
+        h.eq(
+            "p255: additive scores keep the handler's three read-out bands",
+            (
+                bands55("ordinary transaction"),
+                bands55("large_amount"),
+                bands55("crypto exchange charity"),
+            ),
+            (
+                (0.0, 0.9, 0.9, 0.02, 0.02),
+                (25.0, 0.9, 0.02, 0.9, 0.02),
+                (70.0, 0.9, 0.02, 0.02, 0.9),
+            ),
+        );
+
+        // The grammar also has the generic field form (and an omitted cap), so a
+        // state-scoped additive score need not read the serialised envelope.
+        let src55 = r#"
+@decision
+Feature: p255field
+  Scenario: score
+    Given a score question "scoped" asks "how risky?"
+      | level |
+      | 0     |
+      | 10    |
+      | 30    |
+    And score "scoped" by summing rules on the field "note"
+      | points | needles |
+      | 7 | "red" |
+      | 11 | "blue" |
+    When any other answer goes to "STOP"
+    Then label "LOW" when "scoped" is below 10
+    And label "HIGH" otherwise
+    Then the primary question is "scoped"
+"#;
+        let f55field = laya_workflow::bdd::parse(src55, "<p255-field>").expect("parse p255 field form");
+        let s55field = laya_workflow::bdd::compile_decision(&f55field, &json!({}))
+            .expect("compile p255 field form");
+        let h55field = &s55field["nodes"][0]["questions"]["scoped"]["heuristic"];
+        h.eq("p255: the field form keeps its named match space", h55field["field"].clone(), json!("note"));
+        h.check("p255: an omitted cap stays omitted", h55field.get("score_max").is_none());
+        let field55 = be55
+            .decide(&json!({"text":"red blue","note":"blue"}), &s55field["nodes"][0]["questions"])
+            .expect("scoped additive score");
+        h.eq(
+            "p255: a declared score_sum field does not cross-fire into the envelope",
+            field55.answer_value("scoped").unwrap().as_f64().unwrap(),
+            11.0,
+        );
+
+        let back55 = laya_workflow::bdd::import_spec(&s55).expect("import the p255 spec");
+        h.check(
+            "p255: the additive step round-trips through import",
+            back55.contains("score \"aml_risk\" by summing rules on the text capped at 100"),
+        );
+        let f55b = laya_workflow::bdd::parse(&back55, "<p255b>").expect("parse the imported p255 feature");
+        let s55b = laya_workflow::bdd::compile_decision(&f55b, &json!({}))
+            .expect("recompile the imported p255 feature");
+        h.check(
+            "p255: feature -> spec -> feature -> spec is a fixed point on the graph",
+            s55["nodes"] == s55b["nodes"],
+        );
     }
 }
 

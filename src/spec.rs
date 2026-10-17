@@ -1057,7 +1057,7 @@ fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
     // one written.
     const NUM: &[&str] = &[
         "p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok",
-        "score_hit", "score_mid", "score_miss",
+        "score_hit", "score_mid", "score_miss", "score_max",
     ];
     // literal needles / regex patterns: read with `as_array()`; a non-array is an
     // *empty* needle set, so the signal never fires.
@@ -1119,6 +1119,47 @@ fn heuristic_value_error(k: &str, v: &Value) -> Option<String> {
                 return Some(format!(
                     "`heuristic` key {k:?} group {i} must be an array of strings, but it holds {} — that needle is silently dropped",
                     json_kind_name(bad)
+                ));
+            }
+        }
+        return None;
+    }
+    // `score_sum` (additive score): an ordered array only for deterministic
+    // authoring/round-tripping. Each row is `{score, needles}` and contributes
+    // once when any needle matches; rows are independent rather than a ladder.
+    if k == "score_sum" {
+        let Some(rows) = v.as_array() else {
+            return Some(format!(
+                "`heuristic` key {k:?} is {}, but it must be an array of {{score, needles}} rows — the backend reads it with `as_array()` and an invalid shape silently becomes no additive signal",
+                json_kind_name(v)
+            ));
+        };
+        for (i, row) in rows.iter().enumerate() {
+            let Some(obj) = row.as_object() else {
+                return Some(format!(
+                    "`heuristic` key {k:?} row {i} is {}, but it must be an object with a numeric `score` and an array of `needles`",
+                    json_kind_name(row)
+                ));
+            };
+            if let Some(extra) = obj.keys().find(|key| key.as_str() != "score" && key.as_str() != "needles") {
+                return Some(format!(
+                    "`heuristic` key {k:?} row {i} carries unrecognised property {extra:?} — the additive backend reads only `score` and `needles`, so it is silently ignored"
+                ));
+            }
+            if obj.get("score").and_then(Value::as_f64).is_none() {
+                return Some(format!(
+                    "`heuristic` key {k:?} row {i} score is {}, but it must be a number — the backend adds it to the total when the row fires",
+                    obj.get("score").map(json_kind_name).unwrap_or("missing")
+                ));
+            }
+            if !obj
+                .get("needles")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().all(Value::is_string))
+                .unwrap_or(false)
+            {
+                return Some(format!(
+                    "`heuristic` key {k:?} row {i} needles are invalid — they must be an array of strings so the backend can match every trigger",
                 ));
             }
         }
@@ -1296,6 +1337,25 @@ fn heuristic_needle_error(k: &str, v: &Value) -> Option<String> {
         }
         return None;
     }
+    if k == "score_sum" {
+        if let Some(rows) = v.as_array() {
+            if rows.is_empty() {
+                return Some("`heuristic` key \"score_sum\" has no rows — the additive score is always zero, so every threshold branch keyed on a real signal is silently dead".to_string());
+            }
+            for (i, row) in rows.iter().enumerate() {
+                if row
+                    .get("needles")
+                    .and_then(Value::as_array)
+                    .is_some_and(Vec::is_empty)
+                {
+                    return Some(format!(
+                        "`heuristic` key \"score_sum\" row {i} has no needles — that row can never contribute its points"
+                    ));
+                }
+            }
+        }
+        return None;
+    }
     if k == "score_rules" {
         if let Some(rules) = v.as_object() {
             if rules.is_empty() {
@@ -1374,6 +1434,22 @@ fn heuristic_blank_error(k: &str, v: &Value) -> Option<String> {
                         if x.as_str().is_some_and(|s| s.trim().is_empty()) {
                             return Some(format!(
                                 "`heuristic` key \"match_all\" group {gi} carries a blank needle at index {i} - an empty pattern matches at offset 0, so that group fires on every input and the conjunction no longer means AND; give the token a real value or drop it"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        return None;
+    }
+    if k == "score_sum" {
+        if let Some(rows) = v.as_array() {
+            for (ri, row) in rows.iter().enumerate() {
+                if let Some(needles) = row.get("needles").and_then(Value::as_array) {
+                    for (i, x) in needles.iter().enumerate() {
+                        if x.as_str().is_some_and(|s| s.trim().is_empty()) {
+                            return Some(format!(
+                                "`heuristic` key {k:?} row {ri} carries a blank needle at index {i} - an empty pattern matches at offset 0, so that row adds its points on every input and the additive score no longer means \"one independent signal group\"; give the token a real value or drop it"
                             ));
                         }
                     }
@@ -1933,9 +2009,10 @@ fn validate_graph_semantics(
         ];
         const KNOWN_HEURISTIC_KEYS: &[&str] = &[
             "answer_field", "field", "extract_numeric", "match_any", "match_mid_any",
-            "match_regex", "match_rules", "match_rules_all", "match_all", "score_rules", "fallback", "answer",
+            "match_regex", "match_rules", "match_rules_all", "match_all", "score_rules", "score_sum",
+            "fallback", "answer",
             "p_hit", "p_mid", "p_miss", "p_fallback", "p_violated", "p_ok", "score_hit",
-            "score_mid", "score_miss",
+            "score_mid", "score_miss", "score_max",
         ];
         if let Some(qs) = n.get("questions").and_then(Value::as_object) {
             let qn = n.get("name").and_then(Value::as_str).unwrap_or("?");
@@ -2032,6 +2109,11 @@ fn validate_graph_semantics(
                         {
                             bail!("node {qn}: question {qid:?} {msg}");
                         }
+                    }
+                    if h.contains_key("score_max") && !h.contains_key("score_sum") {
+                        bail!(
+                            "node {qn}: question {qid:?} heuristic carries `score_max` without `score_sum` — the cap is silently ignored because only the additive score reads it"
+                        );
                     }
                 }
             }
