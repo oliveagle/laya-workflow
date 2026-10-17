@@ -1,32 +1,15 @@
 {
   "name": "feishu_unread_digest",
-  "dsl_version": 2,
-  "description": "飞书未读消息分类汇总 (Feishu unread digest): collect every unread message across your chats via the bundled `lark-cli`, bucket them by what they ask of you (mention / action / question / decision / info), and emit a short ranked digest. Two nodes: `collect` runs websites/feishu.com/plugin/collect.sh (exec, so policy.allow_exec is required), `classify` runs the Rhai plugin websites/feishu.com/plugin/classify.rhai which does the routing, and a choice node judges whether anything actually needs a reply. Reads only - it never sends, marks read, or reacts. Needs lark-cli on PATH plus `lark-cli auth login`; a stale user token makes the collector report ok:false rather than an empty digest. Both knobs are optional: an unset chats_limit/page_size expands to the empty string and collect.sh falls back to 15 chats / 20 messages.",
+  "_bdd": {
+    "feature": "feishu_unread_digest",
+    "feature_path": "bdd/workflows/capabilities/feishu_unread_digest.feature",
+    "mode": "decision"
+  },
+  "description": "飞书未读消息分类汇总 (Feishu unread digest): collect every unread message across your chats via the bundled `lark-cli`, bucket them by what they ask of you (mention / action / question / decision / info), and emit a short ranked digest. Two nodes: `collect` runs websites/feishu.com/plugin/collect.sh (exec, so policy.allow_exec is required), `classify` runs websites/feishu.com/plugin/classify.rhai which does the routing, and a choice node judges whether anything actually needs a reply. Reads only - it never sends, marks read, or reacts. Needs lark-cli on PATH plus `lark-cli auth login`; a stale user token makes the collector report ok:false rather than an empty digest. Both knobs are optional: an unset chats_limit/page_size expands to the empty string and collect.sh falls back to 15 chats / 20 messages.",
   "start": "collect",
   "max_iterations": 6,
-  "policy": {
-    "allow_exec": true,
-    "allow_hosts": [],
-    "allow_paths": [
-      "${env.HOME}/tmp"
-    ],
-    "max_timeout_ms": 180000,
-    "max_output": 8388608,
-    "retries": 0
-  },
-  "capabilities": {
-    "collect": {
-      "kind": "shell",
-      "command": "sh websites/feishu.com/plugin/collect.sh \"${state.chats_limit}\" \"${state.page_size}\"",
-      "timeout_ms": 170000
-    },
-    "classify": {
-      "kind": "plugin",
-      "dir": "websites/feishu.com/plugin/classify.rhai",
-      "timeout_ms": 60000,
-      "max_operations": 2000000
-    }
-  },
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
   "nodes": [
     {
       "name": "collect",
@@ -45,10 +28,10 @@
         "condition": {},
         "default": "classify"
       },
+      "min_confidence": 0.0,
       "action": {
         "kind": "call",
         "capability": "collect",
-        "with": {},
         "project": {
           "collected": "/stdout",
           "collect_exit": "/exit_code"
@@ -72,6 +55,7 @@
         "condition": {},
         "default": "triage"
       },
+      "min_confidence": 0.0,
       "action": {
         "kind": "call",
         "capability": "classify",
@@ -96,13 +80,46 @@
           "criteria": {
             "A": "no: nothing in the digest needs a reply now",
             "B": "yes: at least one message is waiting on the user"
+          },
+          "heuristic": {
+            "match_any": [
+              "please",
+              "need",
+              "refund"
+            ],
+            "p_hit": 0.7,
+            "p_miss": 0.2
           }
         }
       },
       "edge": {
         "condition": {},
         "default": "STOP"
-      }
+      },
+      "min_confidence": 0.0
     }
-  ]
+  ],
+  "policy": {
+    "allow_exec": true,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}/tmp"
+    ],
+    "max_timeout_ms": 180000,
+    "max_output": 8388608,
+    "retries": 0
+  },
+  "capabilities": {
+    "collect": {
+      "kind": "shell",
+      "command": "sh websites/feishu.com/plugin/collect.sh \"${state.chats_limit}\" \"${state.page_size}\"",
+      "timeout_ms": 170000
+    },
+    "classify": {
+      "kind": "plugin",
+      "dir": "websites/feishu.com/plugin/classify.rhai",
+      "timeout_ms": 60000,
+      "max_operations": 2000000
+    }
+  }
 }

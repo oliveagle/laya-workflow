@@ -1592,6 +1592,100 @@ Feature: p255field
             ),
             (2.0, 1.0, 1.0),
         );
+
+        // P257: the last builtin state shares the email `needs_reply` handler.
+        // Preserve its actual whole-state substring semantics (including nested
+        // bucket/digest text); do not invent the prose's desired bucket priority
+        // while migrating. The original description now lives in the feature so
+        // transpiling no longer replaces it with a generic BDD caption.
+        let f57 = laya_workflow::bdd::parse(
+            include_str!("../../bdd/workflows/capabilities/feishu_unread_digest.feature"),
+            "<p257-feishu>",
+        )
+        .expect("parse the checked-in Feishu feature");
+        let s57 = laya_workflow::bdd::compile_decision(&f57, &json!({}))
+            .expect("compile the checked-in Feishu feature");
+        h.check(
+            "p257: the original Feishu description survives transpile",
+            s57["description"]
+                .as_str()
+                .unwrap_or_default()
+                .starts_with("飞书未读消息分类汇总"),
+        );
+        let qs57 = json!({
+            "needs_reply": s57["nodes"][2]["questions"]["needs_reply"].clone()
+        });
+        let mut old57 = qs57.clone();
+        old57
+            .get_mut("needs_reply")
+            .expect("Feishu question object")
+            .as_object_mut()
+            .expect("needs_reply question object")
+            .remove("heuristic");
+        let be57 = HeuristicBackend;
+        let p57_states = [
+            json!({}),
+            json!({"text":"probe"}),
+            json!({"text":"please review"}),
+            json!({"text":"we need a decision"}),
+            json!({"text":"refund my order"}),
+            json!({"text":"PLEASE REVIEW"}),
+            json!({"text":"needs refundable pleased"}),
+            json!({"digest":"info only"}),
+            json!({"digest":"please review the contract"}),
+            json!({"buckets":{"mention":[],"action":[],"question":[],"decision":[],"info":[]}}),
+            json!({"buckets":{"mention":[{"content":"please review"}]}}),
+            json!({"buckets":{"question":[{"content":"refund?"}]}}),
+        ];
+        let mut equivalent57 = true;
+        for state in p57_states.iter() {
+            let before = be57.decide(state, &old57).expect("old Feishu handler");
+            let after = be57.decide(state, &qs57).expect("declared Feishu rule");
+            let same = before.answer_value("needs_reply").ok() == after.answer_value("needs_reply").ok()
+                && (before.confidence("needs_reply").unwrap_or(-1.0)
+                    - after.confidence("needs_reply").unwrap_or(-2.0))
+                    .abs()
+                        < 1e-12
+                && ["A", "B"].iter().all(|k| {
+                    (before.prob("needs_reply", k).unwrap_or(-1.0)
+                        - after.prob("needs_reply", k).unwrap_or(-2.0))
+                        .abs()
+                        < 1e-12
+                });
+            if !same {
+                equivalent57 = false;
+                eprintln!("p257 Feishu mismatch on {state}");
+                break;
+            }
+        }
+        h.check(
+            "p257: Feishu needs_reply matches the old whole-state handler",
+            equivalent57,
+        );
+        let miss57 = be57.decide(&json!({"text":"probe"}), &qs57).expect("Feishu miss");
+        h.eq(
+            "p257: a miss keeps the handler's no-reply read-out",
+            (
+                miss57.answer_value("needs_reply").unwrap().clone(),
+                miss57.confidence("needs_reply").unwrap(),
+                miss57.prob("needs_reply", "A").unwrap(),
+                miss57.prob("needs_reply", "B").unwrap(),
+            ),
+            (json!("A"), 0.8, 0.8, 0.2),
+        );
+        let hit57 = be57
+            .decide(&json!({"buckets":{"info":[{"content":"please review"}]}}), &qs57)
+            .expect("Feishu nested hit");
+        h.eq(
+            "p257: a nested bucket hit keeps the handler's reply read-out",
+            (
+                hit57.answer_value("needs_reply").unwrap().clone(),
+                hit57.confidence("needs_reply").unwrap(),
+                (hit57.prob("needs_reply", "A").unwrap() * 1000.0).round() / 1000.0,
+                hit57.prob("needs_reply", "B").unwrap(),
+            ),
+            (json!("B"), 0.7, 0.3, 0.7),
+        );
     }
 }
 

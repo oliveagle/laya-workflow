@@ -1,5 +1,6 @@
 @decision
 Feature: feishu_unread_digest
+  飞书未读消息分类汇总 (Feishu unread digest): collect every unread message across your chats via the bundled `lark-cli`, bucket them by what they ask of you (mention / action / question / decision / info), and emit a short ranked digest. Two nodes: `collect` runs websites/feishu.com/plugin/collect.sh (exec, so policy.allow_exec is required), `classify` runs websites/feishu.com/plugin/classify.rhai which does the routing, and a choice node judges whether anything actually needs a reply. Reads only - it never sends, marks read, or reacts. Needs lark-cli on PATH plus `lark-cli auth login`; a stale user token makes the collector report ok:false rather than an empty digest. Both knobs are optional: an unset chats_limit/page_size expands to the empty string and collect.sh falls back to 15 chats / 20 messages.
 
   Background:
     Given the workflow runs at most 6 iterations
@@ -43,5 +44,6 @@ Feature: feishu_unread_digest
       | answer | meaning              |
       | A      | no: nothing in the digest needs a reply now |
       | B      | yes: at least one message is waiting on the user |
+    And answer "B" when the text contains "please", "need", "refund" with hit 0.7 and miss 0.2
     When any other answer goes to "STOP"
 
