@@ -241,6 +241,7 @@ fn sections() -> &'static [(&'static str, fn(&mut Harness))] {
         ("bdd-mcp-validate-err", t_bdd::test_bdd_mcp_validate_err),
         ("bdd-mcp-validate-no-input", t_bdd::test_bdd_mcp_validate_no_input),
         ("bdd-mcp-catalog", t_bdd::test_bdd_mcp_catalog),
+        ("bdd-agent-source-view", t_bdd::test_bdd_agent_source_view),
         ("bdd-mcp-new", t_bdd::test_bdd_mcp_new),
         ("bdd-mcp-transpile", t_bdd::test_bdd_mcp_transpile),
         ("bdd-mcp-import", t_bdd::test_bdd_mcp_import),

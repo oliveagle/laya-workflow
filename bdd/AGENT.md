@@ -131,10 +131,9 @@ laya-workflow bdd run --profile production --base-url <real>
 
 ## 七、决策 workflow（@decision）—— agentic 决策图的 BDD 写法
 
-> 这是把 **agentic 决策 workflow** 变成 BDD 的主路径（也是把 `dsl/<cat>/<name>.json`
-> 里 99 个决策 spec 全量转成 `.feature` 的做法）。一条 `@decision` feature = 一张决策图：
+> 这是把 **agentic 决策 workflow** 变成 BDD 的主路径。一条 `@decision` feature = 一张决策图：
 > **Feature = 整张图，每个 Scenario = 一个决策节点**。编译产物是决策图 spec
-> （`nodes/start/max_iterations/policy/capabilities`），不是浏览器步骤 spec。
+> （`nodes/start/max_iterations/policy/capabilities`），不是浏览器步骤 spec；agent 作者层只看/只改 `.feature`。
 
 ### 文件放哪 / 来源
 
@@ -147,10 +146,11 @@ laya-workflow bdd run --profile production --base-url <real>
   `--pattern loop` 开迭代精修自环（Background `at most N iterations` + verdict 节点
   `revise` 回自身 + `allow up to 3 retries`）；`--pattern` 取值见 `bdd scaffold --help`；
   `--stdout` 只打印不写文件，重复写需 `--force`
-- 源：`bdd/workflows/<cat>/<name>.feature`（层级镜像 `dsl/<cat>/`，如 routing/、agents/、capabilities/…）
-- 编译产物：`dsl/<cat>/<name>.json` —— **这是权威 spec，由 `bdd round-trip` 证明等价，不许手改**
-- 门禁：`laya-workflow bdd round-trip` —— 每个 `@decision` feature 必须逐字段复现其 dsl spec；
-  **反向完整性**：任何有 dsl spec 但没有 `@decision` 源的，round-trip 直接 FAIL（"convert it"）。
+- agent 源：`bdd/workflows/<cat>/<name>.feature`（层级结构如 routing/、agents/、capabilities/…）
+- runtime spec：内存编译即可执行；MCP 显式落盘只进 **ignored `target/bdd-runtime/<cat>/`**
+- 过渡期 mirror：`dsl/<cat>/<name>.json` 仍被 engine gate 使用，**不是作者输入，不许手改**
+- 门禁：`laya-workflow bdd round-trip` —— 每个 `@decision` feature 必须逐字段复现其 runtime mirror；
+  **反向完整性**：任何有 runtime spec 但没有 `@decision` 源的，round-trip 直接 FAIL（"convert it"）。
 
 ### 结构：Feature = 图，Scenario = 节点
 
@@ -667,6 +667,15 @@ Feature: support_ticket_router
   - **诚实边界**：22-state parity 覆盖全部声明 token、大小写、词边界负例、嵌套桶与参数形状，不是任意自然语言穷举；5 个计时字段只做运行噪声剥离。named Rust handler 代码仍作为历史 fallback 存在，但 checked-in decision corpus 已没有 state 的 answer source 被归为 `builtin`。
   - **关键路径**：`bdd/workflows/capabilities/feishu_unread_digest.feature`、`dsl/capabilities/feishu_unread_digest.json`、`src/workflow_tests/heuristics.rs`、本条；ole-eval 报告 / 目标文档 / skill 条目随后同步。
 
+
+- **P258 agent 作者层改为 feature-only（BDD/JSON 隔离从物理层推进到权限层）**：
+  - **先澄清既有事实，不抢功劳**：物理隔离在本轮之前已经成立 —— 真跑计数 `bdd/` 内 workflow JSON **0**、`dsl/` 内 `.feature` **0**；decision feature **177**、workflow JSON **177**、config sidecar **30**。P258 不搬目录，改的是 agent 可见/可用的权威入口：作者只看/只改 `.feature`，JSON 只当 runtime 产物。
+  - **MCP 权威面 before/after**：`bdd_catalog` 从「dsl↔feature 双向审计」改为 **feature-only 编译+validate 审计**（返回 `source:"bdd_features"`，177/177 complete，不再把 JSON 当作者权威）；`bdd_list` 从扫 `dsl/*.json` 改为递归扫 `bdd/workflows/**/*.feature` 并内存编译（每项返回 `source:"feature"` + `feature_path`）；`bdd_decide {name}` 从 JSON name 解析改为 feature name 解析并内存执行；`bdd_transpile write=true` 从 `dsl/<cat>/` 改为 ignored `target/bdd-runtime/<cat>/`（默认仍只内存返回）。
+  - **实现要点**：新增 `DecisionFeatureSource` / `scan_decision_features` / `compile_decision_feature`；保留嵌套 category；只把 `@decision` feature 当 callable corpus；编译时加载既有 config sidecar 并初始化 `${env.LAYA_*}` scratch 目录；runtime spec 内存 normalize（剥 `dsl_version`）后 validate。`bdd_new` 与 CLI scaffold 的下一步提示也不再教 agent `--out dsl/<cat>`，只指向 build/validate/catalog 和内存 runtime spec。
+  - **无 JSON checkout 实测**：新回归 `bdd-agent-source-view` 构造只有 `bdd/workflows/guards/agent_permission_gate.feature`、**没有 `dsl/`** 的 checkout，真实调用 `bdd_catalog`、`bdd_list`、`bdd_decide {name}` 全部成功，并断言全程未创建 JSON 树；同时钉住 `bdd_new`/scaffold 不再把作者导向 JSON。结果 **12 passed / 0 failed**。
+  - **真跑门禁（同机 release）**：`cargo check --all-targets` EXIT=0；`cargo build --release --locked --bins` EXIT=0（终版 172.47s）；`bdd-agent-source-view` 12/0、`bdd-mcp-catalog` 5/0、`bdd-mcp-transpile` 14/0、`bdd-mcp-list` 45/0、`bdd-list-routes` 1559/0、`bdd-decide-stepwise` 20/0；`scripts/verify.sh --no-build` fast **7368/0（198/199 sections，145.77s）**；full **7443/0（199 sections，229.16s）**；`scripts/bdd/check.sh` EXIT=0（13.57s，browser 31/0）；`bdd doc-check` **20/20 + 220 paths**。
+  - **诚实边界**：`dsl/` 里 177 个 checked-in runtime mirror 仍在过渡期存在，`round-trip` / `dsl smoke` / import-check 继续由它们守行为等价；两个嵌套 subworkflow 的展示层展开内部仍用 runtime artifact 解析引用，但不向 agent 暴露 JSON path；`bdd_decide spec_path` 和 CLI 显式 `--out` 只是 runtime/migration 兼容口，不是作者循环。物理隔离计数保持 **0/0**。
+  - **关键路径**：`src/bdd_mcp.rs`、`src/bdd.rs`、`src/workflow_tests/main.rs`、`src/workflow_tests/t_bdd.rs`、`bdd/README.md`、`bdd/AGENT.md`、`docs/bdd_quickstart.md`；回归 section `bdd-agent-source-view`。
 - **P211 runner 的选择器对「谁都不匹配」失败开放 —— `laya-workflow-tests <打错的名字>` 是绿的（正确性 / 一致性轴）**：
   - **问题（真跑暴露的）**：`laya-workflow-tests SECTION ...` 是**前缀匹配**选择器。一个谁都不匹配的名字（打错，或一份更旧的二进制根本没有这个名字）会**跳过所有 section、打印 `0 passed, 0 failed` 并 `exit 0`** —— 与 `scripts/verify.sh` 头注释里反复点名的那个 fail-open（`validate --spec <不存在的文件>` 也打印 `0 passed, 0 failed`）是**同一类**。实测：本机 `~/.cargo/bin/laya-workflow-tests`（184 section，缺 P204/P207 新增的三个 section）跑 `bdd-compare-systems` 得到空输出 + `0 passed, 0 failed` / `rc=0`，而源码有这一段 ⇒ **旧二进制把「这一段不存在」读成了「全过」**。
   - **修法**：`src/workflow_tests/main.rs` 在跑任何 section **之前**校验选择器 —— argv + `LAYA_TEST_SECTIONS` 里每个 filter（`all` 除外）必须至少前缀匹配一个 section，否则把冒犯的名字全部打到 stderr 并 `exit 2`。`all` 通配保留；空选择器（跑全套）不变；**先校验再跑**，所以不会「跑一半才报错」。
@@ -756,24 +765,23 @@ Feature: support_ticket_router
 4. 校验：MCP `bdd_validate`（喂 feature 文本/路径 → per-scenario compile + step coverage +
    validate 逐行错误）或 CLI `laya-workflow bdd build`。拼错会收到 **`line N:` + `did you mean ...?`**
    （P28 步骤层 + P34 语义层 + P35 行号），照建议在对应行改即可。
-5. 出 spec：**MCP `bdd_transpile`**（feature → dsl spec，`@decision` 单图 / browser 逐 scenario；
-   dsl_version 剥离对齐 dsl 约定；`write=true` 落盘 dsl/<cat>/ 带 exists 防覆盖）或 CLI
-   `laya-workflow bdd transpile <file> --out dsl/<cat>`。
-6. 造册审计：MCP `bdd_catalog` —— 双向完整性（dsl↔feature），报 orphan_specs / features_without_spec。
-7. 反向搬运：**MCP `bdd_import`**（已有 JSON workflow spec → `@decision` feature，附 `graph_matches` 往返证明；批量走 CLI
-   `laya-workflow bdd import --dir <DIR> --into <cat>`）—— 让「把已知 workflow 转成 BDD」也能在 MCP 里一把完成。
+5. runtime spec：**MCP `bdd_transpile`** 默认内存返回（`@decision` 单图 / browser 逐 scenario）；
+   只有显式 `write=true` 才落 ignored `target/bdd-runtime/<cat>/`，不落作者 JSON 树。
+6. 造册审计：MCP `bdd_catalog` —— **feature-only**：每个 `@decision` feature 必须能编译 + validate。
+7. 反向搬运（迁移专用）：**MCP `bdd_import`**（legacy JSON workflow spec → `@decision` feature，附 `graph_matches`
+   往返证明；批量走 CLI `laya-workflow bdd import --dir <DIR> --into <cat>`）—— 只用于把旧资产抬进 BDD，不是日常作者循环。
 8. 运行决策：先 **MCP `bdd_list`** 发现可用 workflow（返回每个 `@decision` 图的 `cat`/`name`/`description`/`start`/`nodes`/
    每问 `questions`（id+type+`answer_field`）/ `inputs`（离线调用要喂的 state 字段＝每问 heuristic 的源字段 `answer_field`/`field`/`extract_numeric` ＋ 动作里
    所有 `${state.X}` 插值 ＋ 类型隐含读（如 `ui_proposal` 的 `surface`/`snapshot_hash`））/ `outputs`（各节点能**发出**的 label：阶梯 label / gate 的 BLOCK·ALLOW·CONFIRM / combine 的 `route`（choice criteria 去掉 fallback，再加
    review_label）/ rubric 的 `status`（scored·human_review）；单节点图即全量、多节点图是并集，真正返回的是走到停下那节点的 label）/ `routes` + `default`
    （每节点 `edge.condition` 的 answer→目标映射与兜底目标 —— 多节点图据此读成 DFA，也据此判断某 label 会不会被继续路由而不返回）/ `offline`（true＝该图经 `dsl smoke`
    离线行为验证，离线 `bdd_decide` 可信；false＝只在 live 验证过——`verified_by` 指 gate、`why_live` 说明原因，离线调用只是默认走查）+ 顶层 `offline_count`/`live_count`）
-   —— `bdd_list` 递归扫 `dsl/` 子树（与 `bdd_decide {name}` 的解析同源，`cat` 取相对子路径，如 `routing/sub`）；再用 **MCP `bdd_decide`**
-   （`name` 或 `feature_text`/`feature_path`/`spec_path` + `state` → `label`（终态节点的决策投影：threshold label / gate_action / combine `route` / rubric `status`，都没有才回落 `stop`）+ 全 `trace` + `result` + 决策契约
+   —— `bdd_list` 递归扫 `bdd/workflows/` 子树并内存编译（与 `bdd_decide {name}` 的解析同源，`cat` 取相对子路径，如 `routing/sub`）；再用 **MCP `bdd_decide`**
+   （`name` 或 `feature_text`/`feature_path` + `state` → `label`（终态节点的决策投影：threshold label / gate_action / combine `route` / rubric `status`，都没有才回落 `stop`）+ 全 `trace` + `result` + 决策契约
    `inputs`/`missing_inputs`/`offline`/`verified_by`/`why_live`，与 `dsl smoke` 同一离线确定性引擎）跑它：`missing_inputs` 非空说明有声明字段没喂、
    label 可能来自默认值；`inputs` 为空说明离线引擎确实不读 state（该图需真实模型后端驱动）——
    让 BDD 图成为 agent **可发现、可调用、且诚实**的决策核心，而不只是可写的产物。
-9. 全量门禁：`laya-workflow bdd round-trip`（160/160 复现）+ `scripts/bdd/check.sh`。
+9. 全量门禁：`laya-workflow bdd round-trip`（177/177 复现）+ `scripts/bdd/check.sh`。
 10. 提交时 `bdd round-trip` 会拦：dsl 有 spec 但没 `@decision` 源 = FAIL。
 
 ### 为什么这样是 agentic workflow 的核心
@@ -781,6 +789,6 @@ Feature: support_ticket_router
 - **确定性**：`@decision` 词汇表是确定性编译器（正则 → 决策图），0ms、无歧义；validate 双保险。
 - **正确性可证**：语义图校验 + 决策输出断言 + **决策 trace 全钉** + offline-detection，让"决策对没对"是
   可测、可复现、可回归的（P24-P31），不只是"能编译"。
-- **单一事实来源**：`.feature` 是源，`dsl/*.json` 是编译产物；round-trip 证明等价，杜绝双份漂移。
-- **可直接运行 / 可被 agent 调用**：`laya-workflow run --spec dsl/<cat>/<name>.json` 用 HeuristicBackend / 真实 LLM 跑决策图；MCP `bdd_decide` 让同一张图在进程内被 agent 直接调用（feature/spec + state → label + trace）。
-- **完整性可审计**：`bdd_catalog` 让"所有已知 workflow 都 BDD 化"这件事可测（孤儿即报）。
+- **单一事实来源**：`.feature` 是 agent 源；runtime JSON 是生成产物，round-trip 在过渡期证明 mirror 等价，杜绝双份漂移。
+- **可直接运行 / 可被 agent 调用**：MCP `bdd_decide` 从 `.feature` 内存编译并执行（legacy `--spec` 只是 runtime 兼容口）；agent 不需要读/改 JSON。
+- **完整性可审计**：`bdd_catalog` 对 feature-only 语料做编译 + validate 审计。

@@ -303,11 +303,12 @@ The browser-step corpus above is one BDD mode. There is a second, and it is the
 one that drives the agentic *decision* layer: an `@decision` feature is a whole
 **decision graph** — `Feature` = the graph, each `Scenario` = one decision node.
 It compiles to a decision spec (`nodes/start/max_iterations/policy/capabilities`),
-not a browser step list. Every one of the 177 checked-in `dsl/<cat>/<name>.json`
-specs is the compiled output of a `@decision` feature under
-`bdd/workflows/<cat>/`, and the two are proven equivalent in both directions by
-`laya-workflow bdd round-trip` (a dsl spec with no BDD source, or a feature that
-drifts from its spec, fails the gate).
+not a browser step list. The agent-facing corpus is the 177 `@decision`
+features under `bdd/workflows/`; `bdd_catalog`, `bdd_list`, and `bdd_decide`
+compile them in memory. During the runtime transition, the 177 checked-in
+`dsl/<cat>/<name>.json` specs remain an engine-gate mirror: `bdd round-trip`
+still proves both directions, but it is not an author-facing second source. New
+MCP-generated artifacts go only to the ignored `target/bdd-runtime/` cache.
 
 A two-node router, verbatim from `bdd/workflows/routing/support_ticket_router.feature`:
 
@@ -477,7 +478,10 @@ the single `bdd/` tree, and no workflow spec `.json` outside the single `dsl/`
 tree. `dsl smoke` fails on any violation and otherwise prints
 `isolation: bdd/ holds no json, dsl/ holds no feature; both trees are
 hierarchical`; the `bdd-json-isolation` regression test drives each of the five
-violations and proves it is caught.
+violations and proves it is caught. Physical separation is the floor, not the
+whole contract: the agent-facing surface is feature-only. `bdd_catalog` audits
+features alone; `bdd_list` and `bdd_decide {name}` resolve and execute features
+without a JSON source path.
 
 The **declared output set is held to reality** the same way. For an offline
 single-node graph `bdd_list`'s `outputs` is the graph's *full* output set (there
@@ -528,9 +532,10 @@ For an agent writing a decision workflow, the loop is fully callable
 in-process over MCP: `bdd_new` (intent → a minimal valid `@decision` skeleton
 that already passes `bdd build`, with the authoring vocabulary as comments) →
 extend it → validate mid-authoring with `bdd_validate` (or `bdd build`) →
-emit the dsl spec with `bdd_transpile` (or the CLI `bdd transpile <file>
---out dsl/<cat>`) → audit completeness with `bdd_catalog` → lift any legacy JSON
-workflow back into BDD with `bdd_import` → discover the callable corpus with
+compile the runtime spec in memory with `bdd_transpile` (an optional write goes
+only to ignored `target/bdd-runtime/`) → audit the feature-only corpus with
+`bdd_catalog` → lift a legacy JSON workflow into BDD with `bdd_import` only
+during migration → discover the callable corpus with
 `bdd_list` (each node also reports `outputs` — the labels it can emit: a ladder's
 labels, a gate's BLOCK/ALLOW/CONFIRM, a combine node's `route`, a rubric node's
 `status` — plus `routes`/`default`, the answer -> destination map, so a caller
@@ -549,9 +554,9 @@ state did not supply, so an under-fed call is visible instead of a silent
 defaults-only walk; and `offline` (with `bdd_list`'s `offline_count`/`live_count`)
 says whether the graph is offline-behaviour-verified at all, or only live-tested
 — `verified_by`/`why_live` name the live gate). To drive a graph with your *own* perceptions instead of the offline heuristic's invented answers, pass `answers` — either one `{question: answer}` object per node the walk visits, in visit order (answer shape as `laya-tch` returns it), or one object keyed by node name, `{"<node>": {question: answer}}`, whose entry is reused on every visit to that node — a per-node policy you state once instead of replaying the visit sequence, which is what self-loop and retry graphs want; the graph stays the deterministic decision core and the reply reports `backend: "answers"`. Pass `answers: []` (or too few) to walk one question at a time: the reply is `{ok:false, needs_answer:true, at_node, ask, steps_so_far}` naming the next question, and you append one answer per reply until it returns `ok:true` — the same reply's `ask` field *is* that step's contract — the `{id,type,answers,from_state,primary,satisfied_by}` list for `at_node`, identical to that node's own `questions` in `bdd_list` (the questions *that node* asks, each with the answers it accepts; `primary` marks the node's `primary_q` and, on that question, `satisfied_by` maps each answer to the node it routes to, `edge.condition` else `edge.default`; `pending_options` materialises a dynamic (`criteria.from_state`) question's options from the accumulated `state_so_far`, so even a question whose `answers` is empty is answerable from the reply), so the step-wise reply alone is enough to drive any graph, no separate inventory call — an answer outside a question's accepted set fails loudly, naming it, instead of silently taking the edge's `default` branch, so a typo reads as a typo and not as a deliberate "any other answer" — so the inventory alone is enough to drive any graph — including a composed (sub-workflow) one: `bdd_list` reports the graph the engine actually *walks*, so a `{"workflow": …}` reference node is inlined and its children appear as `{ref}::{node}` with their own contracts (and the step-wise `ask` names the same inlined node) — and the offline heuristic's *own* answers are held to that same contract corpus-wide, so an out-of-contract guess (a `match_any` A/B pick on a multi-option choice) is caught by the inventory gate instead of silently taking the edge's `default` branch → run `bdd round-trip` +
-`check.sh` → commit. The whole loop — intent → skeleton → validate → emit spec →
-audit → lift a legacy spec → list the corpus → run a decision — runs over MCP
-without shelling out.
+`check.sh` → commit. The whole loop — intent → skeleton → validate → materialize
+a runtime spec → audit → lift a legacy spec → list the corpus → run a decision —
+runs over MCP without making JSON the author's working tree.
 The same greenfield start is available on the CLI as
 `bdd scaffold --name <wf> --cat <cat> --intent "<intent>"`. The starter is the
 canonical 2-node graph (choice → score → STOP, with threshold labels and a
@@ -569,8 +574,8 @@ selects a single id — the awesome-jev span-selection shape; its options are
 materialised from `state` at decide time, so the model picks an id and never
 generates the value); an unknown
 pattern is rejected by name, and `bdd scaffold --help` lists them. The
-`.feature` is the source; the `dsl/*.json` is the compiled artifact and is never
-hand-edited.
+`.feature` is the author's source; runtime JSON is generated, owned by engine
+gates, and never hand-edited.
 
 When `bdd build` cannot match a step in an `@decision` feature, the coverage
 gate error names the step **and** suggests the closest decision-vocabulary

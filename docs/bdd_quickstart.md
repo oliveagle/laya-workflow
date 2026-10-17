@@ -427,8 +427,9 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**177/177 决策 workflow 已转换**（`bdd/workflows/<cat>/<name>.feature` ↔ `dsl/<cat>/<name>.json`），
-每个都过 round-trip 逐字段 MATCH + 引擎离线行为等价。**下面按类别列出全部**，条数与名单由
+**177/177 决策 workflow 已转换**（agent 源为 `bdd/workflows/<cat>/<name>.feature`；
+过渡期 runtime mirror 为 `dsl/<cat>/<name>.json`），每个都过 round-trip 逐字段 MATCH +
+引擎离线行为等价。Agent 侧的 catalog/list/decide 不要求 JSON 树存在。**下面按类别列出全部**，条数与名单由
 `bdd doc-check` 对着活语料（`@decision` feature 集合 = `bdd round-trip` 的总数）逐个重算 —— 一个没人重算的数字
 会在下一次移植时烂掉，这份清单曾经就停在 `99/99`：
 

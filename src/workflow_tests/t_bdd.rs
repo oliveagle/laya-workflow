@@ -905,24 +905,109 @@ pub fn test_bdd_mcp_validate_no_input(h: &mut Harness) {
     h.check("bdd_validate: no input errors", t.call(&json!({})).is_err());
 }
 
-/// bdd_catalog: the completeness audit behind "convert all known workflows to
-/// BDD" — every dsl spec has a @decision feature and vice versa.
+/// bdd_catalog: the agent-facing source audit — every @decision feature compiles
+/// and validates. Runtime JSON is not part of the author's catalog.
 pub fn test_bdd_mcp_catalog(h: &mut Harness) {
     let t = bdd_tool("bdd_catalog");
     let r = t.call(&json!({})).unwrap();
+    h.eq("bdd_catalog: source is the feature tree", r["source"].clone(), json!("bdd_features"));
     h.eq("bdd_catalog: complete", r["complete"].as_bool().unwrap(), true);
-    h.check("bdd_catalog: no orphan specs", r["orphan_specs"].as_array().unwrap().is_empty());
-    h.check("bdd_catalog: no features without spec", r["features_without_spec"].as_array().unwrap().is_empty());
-    let total = r["total_dsl_specs"].as_u64().unwrap();
+    h.check("bdd_catalog: no invalid features", r["invalid_features"].as_array().unwrap().is_empty());
+    let total = r["total_decision_features"].as_u64().unwrap();
     let feats = r["total_decision_features"].as_u64().unwrap();
-    h.check("bdd_catalog: dsl specs == decision features", total == feats);
-    h.check("bdd_catalog: at least 99 specs", total >= 99);
+    h.check("bdd_catalog: compiled count == source count", r["compiled_features"].as_u64().unwrap() == total && total == feats);
+    h.check("bdd_catalog: at least 99 sources", total >= 99);
 }
 
-/// `bdd transpile` on an `@decision` feature emits the greenfield spec with
-/// dsl_version stripped (matching the checked-in dsl convention) — so an author
-/// writes a new .feature, generates its dsl/<cat>/<name>.json in one command,
-/// and `bdd round-trip` then proves the pair agree.
+/// P258 agent view: `bdd_catalog`, `bdd_list`, and `bdd_decide {name}` must work
+/// from a checkout that contains the BDD source tree and **no JSON tree at all**.
+/// That is the user-facing invariant behind "agents see and edit .feature only";
+/// runtime JSON cannot be a hidden prerequisite of the authoring/decision loop.
+pub fn test_bdd_agent_source_view(h: &mut Harness) {
+    struct RestoreEnv(Option<std::ffi::OsString>);
+    impl Drop for RestoreEnv {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("LAYA_WORKFLOW_REPO", v),
+                None => std::env::remove_var("LAYA_WORKFLOW_REPO"),
+            }
+        }
+    }
+
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let root = home
+        .join("tmp")
+        .join(format!("laya-bdd-agent-view-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let src_dir = root.join("bdd").join("workflows").join("guards");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    let crate_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    std::fs::copy(
+        crate_root.join("bdd/workflows/guards/agent_permission_gate.feature"),
+        src_dir.join("agent_permission_gate.feature"),
+    )
+    .unwrap();
+    let _restore = RestoreEnv(std::env::var_os("LAYA_WORKFLOW_REPO"));
+    std::env::set_var("LAYA_WORKFLOW_REPO", &root);
+
+    let started = bdd_tool("bdd_new")
+        .call(&json!({"name": "demo_gate", "cat": "guards", "intent": "demo"}))
+        .unwrap();
+    let next = serde_json::to_string(started["next"].as_array().unwrap()).unwrap();
+    h.check(
+        "agent-view: bdd_new never points authors at a JSON tree",
+        !next.contains("dsl/") && !next.contains("--out dsl"),
+    );
+    h.check(
+        "agent-view: bdd_new keeps compilation in memory",
+        next.contains("in memory") && next.contains("bdd_catalog"),
+    );
+    let scaffold = bdd::scaffold_body("demo_gate", "guards", "option", "demo", 2, false);
+    h.check(
+        "agent-view: scaffold never teaches a persistent JSON out dir",
+        !scaffold.contains("--out dsl") && !scaffold.contains("dsl/<cat>"),
+    );
+
+    let catalog = bdd_tool("bdd_catalog").call(&json!({})).unwrap();
+    h.eq("agent-view: catalog total", catalog["total_decision_features"].as_u64().unwrap(), 1);
+    h.eq("agent-view: catalog complete without JSON", catalog["complete"].as_bool().unwrap(), true);
+
+    let list = bdd_tool("bdd_list")
+        .call(&json!({"name": "agent_permission_gate", "summary": true}))
+        .unwrap();
+    h.eq("agent-view: list count", list["count"].as_u64().unwrap(), 1);
+    let entry = &list["workflows"][0];
+    h.eq("agent-view: list source", entry["source"].clone(), json!("feature"));
+    h.eq(
+        "agent-view: list feature path",
+        entry["feature_path"].clone(),
+        json!("bdd/workflows/guards/agent_permission_gate.feature"),
+    );
+
+    let decision = bdd_tool("bdd_decide")
+        .call(&json!({
+            "name": "agent_permission_gate",
+            "state": {"ev_unauthenticated": "halt", "ev_risk": "high"}
+        }))
+        .unwrap();
+    h.eq("agent-view: decide source", decision["source"].clone(), json!("feature"));
+    h.eq(
+        "agent-view: decide feature path",
+        decision["feature_path"].clone(),
+        json!("bdd/workflows/guards/agent_permission_gate.feature"),
+    );
+    h.eq("agent-view: decide label", decision["label"].clone(), json!("BLOCK"));
+    h.check("agent-view: checkout never needed a JSON tree", !root.join("dsl").exists());
+
+    drop(_restore);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `bdd transpile` on an `@decision` feature emits the runtime spec with
+/// dsl_version stripped. The normal author path consumes it in memory; a
+/// persistent write is a generated runtime artifact, never hand-authored input.
 pub fn test_bdd_transpile_decision(h: &mut Harness) {
     let dir = std::env::temp_dir().join(format!("laya-bdd-transpile-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -2380,7 +2465,7 @@ pub fn test_bdd_dsl_coverage_ledger(h: &mut Harness) {
 
 /// `bdd_transpile` MCP tool: compile a `.feature` into its dsl spec — the
 
-/// "emit the dsl spec" step of the authoring loop, in-process. Asserts a known
+/// "materialize the runtime spec" step of the authoring loop, in-process. Asserts a known
 /// `@decision` feature transpiles to a valid decision-graph spec with
 /// dsl_version stripped (matching the dsl convention), and that write=true
 /// persists under the requested root with an exists-guard.
@@ -2420,7 +2505,11 @@ Feature: transpile_demo
     h.eq("bdd_transpile: written path set", r2["written"].is_string(), true);
     let dest = r2["written"].as_str().unwrap().to_string();
     h.check("bdd_transpile: file on disk", std::path::Path::new(&dest).is_file());
-    h.check("bdd_transpile: file under dsl", dest.contains("/dsl/routing/"));
+    h.check(
+        "bdd_transpile: file under the ignored runtime cache",
+        dest.contains("target/bdd-runtime/routing/"),
+    );
+    h.check("bdd_transpile: runtime cache is not the author tree", !dest.contains("/dsl/routing/"));
     // Second write refuses (exists=true) without overwriting.
     let r3 = t
         .call(&json!({"feature_text": src, "cat": "routing", "write": true, "root": root.to_string_lossy().into_owned()}))
@@ -5101,7 +5190,7 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
         q_and["count"].as_u64().unwrap(),
         0,
     );
-    let q_kw = t.call(&json!({"query": "memory store"})).unwrap();
+    let q_kw = t.call(&json!({"query": "permission gate"})).unwrap();
     let q_kw_n = q_kw["count"].as_u64().unwrap();
     h.check(
         "bdd_list: a multi-term query narrows the corpus",
@@ -5127,6 +5216,12 @@ pub fn test_bdd_mcp_list(h: &mut Harness) {
         serde_json::to_string(sw).unwrap().len() < serde_json::to_string(&one["workflows"][0]).unwrap().len(),
     );
     let wf = &one["workflows"][0];
+    h.eq("bdd_list: source", wf["source"].clone(), json!("feature"));
+    h.eq(
+        "bdd_list: feature_path",
+        wf["feature_path"].clone(),
+        json!("bdd/workflows/guards/agent_permission_gate.feature"),
+    );
     h.eq("bdd_list: cat", wf["cat"].clone(), json!("guards"));
     h.eq("bdd_list: start", wf["start"].clone(), json!("unauthenticated"));
     h.eq("bdd_list: node_count", wf["node_count"].as_u64().unwrap(), 5);

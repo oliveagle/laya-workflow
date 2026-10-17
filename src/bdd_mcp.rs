@@ -7,11 +7,11 @@
 //! status, step coverage and line-numbered errors — the exact loop an agent
 //! runs before committing a `.feature`.
 //!
-//! `bdd_catalog` is the completeness audit for "convert all known workflows to
-//! BDD": every `dsl/<cat>/<name>.json` spec must have a `bdd/workflows/<cat>/<name>`
-//! `@decision` source, and vice versa. Orphans on either side are reported so
-//! a workflow that has not been converted (or a feature with no spec) cannot
-//! hide.
+//! `bdd_catalog` is the agent-facing completeness audit for the BDD source
+//! corpus: every `bdd/workflows/<cat>/<name>.feature` `@decision` source must
+//! compile and validate. Runtime JSON is not agent-authority; generated
+//! artifacts live in build/runtime directories and are checked by engine gates,
+//! not offered to authors as a second source tree.
 //!
 //! `bdd_import` and `bdd_decide` close the loop from the other two sides.
 //! `bdd_import` lifts an existing JSON workflow spec back into a `@decision`
@@ -30,6 +30,108 @@ use serde_json::{json, Value};
 
 use crate::bdd;
 use crate::mcp::{DynTool, McpTool, McpToolSet};
+
+/// One agent-visible decision source: a `@decision` feature under
+/// `bdd/workflows/`. `cat` is the directory relative to that root, so nested
+/// categories stay discoverable without exposing generated JSON paths.
+#[derive(Clone, Debug)]
+struct DecisionFeatureSource {
+    cat: String,
+    name: String,
+    rel: String,
+    path: std::path::PathBuf,
+}
+
+fn walk_feature_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = rd.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let p = e.path();
+        if p.is_dir() {
+            walk_feature_files(&p, out);
+        } else if p.extension().and_then(|x| x.to_str()) == Some("feature") {
+            out.push(p);
+        }
+    }
+}
+
+/// Guarantee the scratch `${env.LAYA_*}` directories a checked-in feature may
+/// reference in `policy.allow_paths`, exactly like the build / smoke gates.
+fn ensure_bdd_runtime_env() {
+    if let Ok(env_map) = crate::dsl_smoke::ensure_env_dirs() {
+        for (k, v) in env_map {
+            std::env::set_var(k, v);
+        }
+        let _ = crate::capability::secret::init(None);
+    }
+}
+
+/// Scan the only author-facing workflow corpus: `bdd/workflows/**/*.feature`.
+/// Invalid feature syntax is an error, not a silently shorter inventory.
+fn scan_decision_features(root: &std::path::Path) -> Result<Vec<DecisionFeatureSource>> {
+    let wf_root = root.join("bdd").join("workflows");
+    if !wf_root.is_dir() {
+        anyhow::bail!("bdd source tree is missing: bdd/workflows");
+    }
+    let mut files = Vec::new();
+    walk_feature_files(&wf_root, &mut files);
+    let mut out = Vec::new();
+    for path in files {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow!("cannot read feature {}: {e}", path.display()))?;
+        let feature = bdd::parse(&text, &path.to_string_lossy())?;
+        let decision = feature
+            .tags
+            .iter()
+            .any(|t| t == "decision" || t.starts_with("decision("));
+        if !decision {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&wf_root)
+            .map(|p| p.to_string_lossy().trim_start_matches('/').to_string())
+            .map(|p| p.replace('\\', "/"))
+            .map_err(|_| anyhow!("feature is outside bdd/workflows: {}", path.display()))?;
+        let (cat, filename) = rel.rsplit_once('/').unwrap_or(("", rel.as_str()));
+        let name = filename
+            .strip_suffix(".feature")
+            .unwrap_or(filename)
+            .to_string();
+        out.push(DecisionFeatureSource {
+            cat: cat.to_string(),
+            name,
+            rel,
+            path,
+        });
+    }
+    Ok(out)
+}
+
+/// Compile one author-facing feature into an in-memory runtime spec. No JSON
+/// file needs to exist or be written for an agent to discover or run a graph.
+fn compile_decision_feature(src: &DecisionFeatureSource) -> Result<Value> {
+    let text = std::fs::read_to_string(&src.path)
+        .map_err(|e| anyhow!("cannot read feature {}: {e}", src.path.display()))?;
+    let feature = bdd::parse(&text, &src.path.to_string_lossy())?;
+    let config = bdd::load_config(&src.path)?;
+    let spec = bdd::compile_decision(&feature, &config)?;
+    crate::spec::from_spec_with_dir(&spec, None, None)
+        .map_err(|e| anyhow!("{} fails validate: {e:#}", src.rel))?;
+    let mut runtime = spec;
+    if let Some(o) = runtime.as_object_mut() {
+        o.remove("dsl_version");
+    }
+    Ok(runtime)
+}
+
+/// The coverage-ledger key for a feature, matching the runtime key used by the
+/// offline/live gates without exposing a JSON path to the caller.
+fn feature_rel_key(path: &std::path::Path, root: &std::path::Path) -> Option<String> {
+    let rel = path.strip_prefix(root.join("bdd").join("workflows")).ok()?;
+    let s = rel.to_string_lossy().replace('\\', "/");
+    Some(s.strip_suffix(".feature")?.to_string())
+}
 
 pub struct BddTools;
 
@@ -175,7 +277,7 @@ impl McpTool for CatalogTool {
         "bdd_catalog"
     }
     fn description(&self) -> &str {
-        "Audit the known-workflow catalog: every dsl/<cat>/<name>.json decision spec must have a bdd/workflows/<cat>/<name> @decision source and vice versa. Returns per-category counts plus any orphan specs (converted to JSON but never BDD'd) and any features without a spec — the completeness check behind 'convert all known workflows to BDD'."
+        "Audit the agent-visible BDD source catalog: every bdd/workflows/<cat>/<name>.feature @decision source compiles and validates. Returns per-category source counts and invalid features. Runtime JSON is not agent-authority; engine gates own generated artifacts separately."
     }
     fn input_schema(&self) -> Value {
         json!({"type": "object", "properties": {}})
@@ -186,96 +288,35 @@ impl McpTool for CatalogTool {
         // agent acts on (measured: `mcp serve` with LAYA_WORKFLOW_REPO pointed
         // nowhere). A catalog that read nothing is not a complete catalog.
         let root = bdd::require_checkout("bdd_catalog")?;
-        let wf_root = root.join("bdd").join("workflows");
-        let mut features: Vec<(String, String)> = Vec::new(); // (cat, name)
+        ensure_bdd_runtime_env();
+        let sources = scan_decision_features(&root)?;
         let mut cats: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-        if wf_root.is_dir() {
-            if let Ok(rd) = std::fs::read_dir(&wf_root) {
-                for e in rd.flatten() {
-                    let cat = e.file_name().to_string_lossy().into_owned();
-                    let cd = e.path();
-                    if !cd.is_dir() {
-                        continue;
-                    }
-                    if let Ok(sd) = std::fs::read_dir(&cd) {
-                        for f in sd.flatten() {
-                            let fp = f.path();
-                            if fp.extension().map(|x| x == "feature").unwrap_or(false) {
-                                if let Ok(txt) = std::fs::read_to_string(&fp) {
-                                    let is_dec = txt.lines().any(|l| l.starts_with("@decision"));
-                                    if is_dec {
-                                        let name = fp
-                                            .file_stem()
-                                            .map(|s| s.to_string_lossy().into_owned())
-                                            .unwrap_or_default();
-                                        features.push((cat.clone(), name));
-                                        *cats.entry(cat.clone()).or_insert(0) += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        let mut compiled = 0usize;
+        let mut invalid: Vec<Value> = Vec::new();
+        for src in &sources {
+            *cats.entry(src.cat.clone()).or_insert(0) += 1;
+            match compile_decision_feature(src) {
+                Ok(_) => compiled += 1,
+                Err(e) => invalid.push(json!({
+                    "cat": src.cat,
+                    "name": src.name,
+                    "feature": format!("bdd/workflows/{}", src.rel),
+                    "error": format!("{e:#}"),
+                })),
             }
         }
-        features.sort();
-        let feat_set: std::collections::BTreeSet<(String, String)> = features.iter().cloned().collect();
-
-        let mut specs: Vec<(String, String)> = Vec::new();
-        let mut spec_cats: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-        let dsl_root = root.join("dsl");
-        if let Ok(rd) = std::fs::read_dir(&dsl_root) {
-            for e in rd.flatten() {
-                let cat = e.file_name().to_string_lossy().into_owned();
-                let cd = e.path();
-                if !cd.is_dir() {
-                    continue;
-                }
-                if let Ok(sd) = std::fs::read_dir(&cd) {
-                    for f in sd.flatten() {
-                        let fp = f.path();
-                        if fp.extension().map(|x| x == "json").unwrap_or(false) {
-                            // `<name>.config.json` sidecars are config, not specs:
-                            // exclude so the catalog counts/audits real workflows.
-                            if fp
-                                .file_name()
-                                .map(|n| n.to_string_lossy().ends_with(".config.json"))
-                                .unwrap_or(false)
-                            {
-                                continue;
-                            }
-                            let name = fp
-                                .file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            specs.push((cat.clone(), name));
-                            *spec_cats.entry(cat.clone()).or_insert(0) += 1;
-                        }
-                    }
-                }
-            }
-        }
-        specs.sort();
-        let spec_set: std::collections::BTreeSet<(String, String)> = specs.iter().cloned().collect();
-
-        let orphans: Vec<Value> = (specs.iter().filter(|s| !feat_set.contains(*s)))
-            .map(|(c, n)| json!({"cat": c, "name": n}))
-            .collect();
-        let no_spec: Vec<Value> = (features.iter().filter(|s| !spec_set.contains(*s)))
-            .map(|(c, n)| json!({"cat": c, "name": n}))
-            .collect();
         let cats_out: Value = cats
             .iter()
-            .map(|(c, n)| (c.clone(), json!({"features": n, "specs": spec_cats.get(c).copied().unwrap_or(0)})))
+            .map(|(c, n)| (c.clone(), json!({"features": n})))
             .collect();
 
         Ok(json!({
-            "total_dsl_specs": specs.len(),
-            "total_decision_features": features.len(),
-            "complete": orphans.is_empty() && no_spec.is_empty(),
+            "source": "bdd_features",
+            "total_decision_features": sources.len(),
+            "compiled_features": compiled,
+            "complete": invalid.is_empty(),
             "categories": cats_out,
-            "orphan_specs": orphans,
-            "features_without_spec": no_spec,
+            "invalid_features": invalid,
         }))
     }
 }
@@ -378,21 +419,21 @@ impl McpTool for NewTool {
             "next": [
                 "read the step grammar with bdd_vocabulary (or `bdd vocabulary`) before editing steps",
                 "extend the graph, then validate with bdd_validate (or `bdd build`)",
-                "emit the dsl spec with `bdd transpile <file> --out dsl/<cat>`",
-                "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
+                "compile and inspect the runtime spec in memory with bdd_transpile",
+                "audit the feature-only corpus with bdd_catalog; engine gates own runtime equivalence"
             ]
         }))
     }
 }
 
 
-/// `bdd_transpile`: compile a `.feature` into its dsl spec(s) — the "emit the
-/// dsl spec" step of the authoring loop, in-process. For an `@decision` feature
-/// the result is the single decision-graph spec (dsl_version stripped, matching
-/// the checked-in dsl convention); for a browser-step feature it is one spec per
-/// Scenario. Optional write=true persists to the workspace root's dsl/<cat>/ tree
+/// `bdd_transpile`: compile a `.feature` into runtime spec(s) — the "materialize the
+/// runtime spec" step of the authoring loop, in-process. For an `@decision`
+/// feature the result is the single decision-graph spec (dsl_version stripped);
+/// for a browser-step feature it is one spec per Scenario. Optional write=true
+/// persists only to the workspace's ignored `target/bdd-runtime/<cat>/` cache
 /// with an exists-guard. Together with `bdd_new`/`bdd_validate`/`bdd_catalog`
-/// the whole loop (intent → skeleton → validate → emit spec → audit) runs over
+/// the whole loop (intent → skeleton → validate → materialize runtime → audit) runs over
 /// MCP without shelling out.
 struct TranspileTool;
 
@@ -401,7 +442,7 @@ impl McpTool for TranspileTool {
         "bdd_transpile"
     }
     fn description(&self) -> &str {
-        "Compile a .feature into its dsl spec(s) — the 'emit the dsl spec' step of the authoring loop, in-process. For an @decision feature returns the single decision-graph spec (dsl_version stripped); for a browser-step feature one spec per Scenario. Pass feature_text or a repo-relative feature_path, plus cat and optional write=true (persists to the workspace root's dsl/<cat>/ tree with an exists-guard). Returns the spec JSON plus the validate verdict and written path."
+        "Compile a .feature into an in-memory runtime spec for validation — the source of truth stays the .feature. For an @decision feature returns one decision-graph spec (dsl_version stripped); a browser-step feature returns one spec per Scenario. Pass feature_text or repo-relative feature_path. Optional write=true persists only to the ignored target/bdd-runtime/<cat>/ cache with an exists-guard; it never writes an author-facing JSON tree."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -409,8 +450,8 @@ impl McpTool for TranspileTool {
             "properties": {
                 "feature_text": {"type": "string", "description": "The .feature source text to compile. Provide this or feature_path."},
                 "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature, e.g. bdd/workflows/routing/support_ticket_router.feature. Provide this or feature_text."},
-                "cat": {"type": "string", "description": "Category subdir used for the written spec path and name (default: routing)."},
-                "write": {"type": "boolean", "description": "Write the emitted spec to the workspace root dsl/<cat>/<name>.json (default false = return JSON only)."},
+                "cat": {"type": "string", "description": "Category subdir used for the runtime-cache path and name (default: routing)."},
+                "write": {"type": "boolean", "description": "Write the emitted spec to the ignored target/bdd-runtime/<cat>/<name>.json cache (default false = in-memory only)."},
                 "root": {"type": "string", "description": "Workspace root to write under (default: the laya-workflow repo root)."}
             }
         })
@@ -476,7 +517,7 @@ impl McpTool for TranspileTool {
         let mut written: Option<String> = None;
         let mut exists = false;
         if write {
-            let dir = root.join("dsl").join(cat);
+            let dir = root.join("target").join("bdd-runtime").join(cat);
             std::fs::create_dir_all(&dir)?;
             let dest = dir.join(format!("{name}.json"));
             if dest.exists() {
@@ -499,13 +540,16 @@ impl McpTool for TranspileTool {
             "cat": cat,
             "decision": decision,
             "valid": true,
+            "source": "feature",
+            "runtime_dir": "target/bdd-runtime",
+            "persistent_runtime_artifact": write,
             "spec_count": specs.len(),
             "spec": if specs.len() == 1 { specs[0].clone() } else { Value::Null },
             "specs": if specs.len() > 1 { Value::Array(specs) } else { Value::Null },
             "exists": exists,
             "written": written,
             "next": [
-                "prove .feature == dsl with `bdd round-trip`; audit with bdd_catalog"
+                "edit only the .feature; validate with bdd_validate and audit with bdd_catalog"
             ]
         }))
     }
@@ -678,17 +722,17 @@ impl McpTool for DecideTool {
         "bdd_decide"
     }
     fn description(&self) -> &str {
-        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. Compiles the feature (or loads a checked-in spec_path) and executes it with the offline heuristic backend, the same deterministic engine `dsl smoke` and `bdd score --run` drive. Pass feature_text or feature_path, or spec_path, plus state (a JSON object). Returns the final label, the full trace (per-step node/action/answer), the result object, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when `dsl smoke` behaviour-verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, pending_options, state_so_far, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state, primary, satisfied_by}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts (`primary` marks the node's `primary_q`, and its `satisfied_by` maps answer -> destination node) — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed). `pending_options` materialises the waiting node's dynamic (`criteria.from_state`) questions from the accumulated state as {qid: {id: meaning}} (empty `{}` when none), and `state_so_far` is that accumulated state (the input state plus each completed node's merged payload) - together they let a caller answer a dynamic question (whose contract `answers` is empty) from the reply alone."
+        "Run a @decision workflow against a state and return the decision — the callable core of a BDD graph. The agent-facing inputs are feature_text, feature_path, or the feature name returned by bdd_list; the graph is compiled in memory from .feature source and executed with the offline heuristic backend, the same deterministic engine family `dsl smoke` and `bdd score --run` drive. A spec_path input remains as an internal runtime-compatibility escape hatch. Returns the final label, the full trace (per-step node/action/answer), the result object, the source feature_path when resolved from source, and the decision contract: `inputs` (the declared offline state fields the graph reads — heuristic source fields plus `${state.*}` interpolations plus kind-implicit reads) and `missing_inputs` (declared but absent from `state` — when non-empty the label may come from defaults; only when `inputs` is empty does the graph read no state at all and every call return the same default walk, so drive that with a real backend). `label_source` says how to read the returned label: `decision` (a declared output — the enumerable decision), `terminal` (the run's terminal verb, e.g. stop/escalate — no decision on that path), or `capability` (an undeclared label a `call` node's payload supplied; `outputs_complete` is then false, so `bdd_list`'s `outputs` is not exhaustive for this graph). `offline` is true when the behaviour gate verified this graph offline (an offline call is then trustworthy); when false the graph was only verified live (`verified_by` names the live gate, `why_live` why it cannot go offline) and the offline label is a defaults-only walk. Pass `answers` — an array of per-node answer objects, one per node the walk visits, or an object keyed by node name whose entry is reused on every visit to that node — to drive the graph with the caller's own answers instead of the offline heuristic: the graph stays the deterministic decision core and the caller supplies the perceptions, and the response then reports `backend: answers`. With `answers: []` (or `{}`) the call instead returns {ok:false, needs_answer:true, at_node, ask, pending_options, state_so_far, steps_so_far}: `at_node` is where the walk is waiting and `ask` is that node's own question contract — the same per-node `{id, type, answers, from_state, primary, satisfied_by}` shape `bdd_list` exposes at `nodes[].questions`, each entry listing the answers that question accepts (`primary` marks the node's `primary_q`, and its `satisfied_by` maps answer -> destination node) — so a caller can walk the graph one question at a time straight from the reply, appending one answer object per needs_answer reply until it returns ok:true (no separate `bdd_list` call needed). `pending_options` materialises the waiting node's dynamic (`criteria.from_state`) questions from the accumulated state as {qid: {id: meaning}} (empty `{}` when none), and `state_so_far` is that accumulated state (the input state plus each completed node's merged payload) - together they let a caller answer a dynamic question (whose contract `answers` is empty) from the reply alone."
     }
     fn input_schema(&self) -> Value {
         json!({
             "type": "object",
             "required": ["state"],
             "properties": {
-                "feature_text": {"type": "string", "description": "The .feature source text to compile and run. Provide this, feature_path, or spec_path."},
+                "feature_text": {"type": "string", "description": "The .feature source text to compile and run. Authors provide this or feature_path; spec_path is internal runtime compatibility only."},
                 "feature_path": {"type": "string", "description": "Repo-relative path to an existing .feature decision workflow, e.g. bdd/workflows/guards/agent_permission_gate.feature."},
-                "spec_path": {"type": "string", "description": "Repo-relative path to a checked-in dsl spec .json to run directly, e.g. dsl/guards/agent_permission_gate.json."},
-                "name": {"type": "string", "description": "Port name of a decision workflow to resolve across the repo dsl/ tree (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path/spec_path."},
+                "name": {"type": "string", "description": "Port name of a decision feature to resolve across bdd/workflows/ (as returned by bdd_list), e.g. agent_permission_gate. Use instead of feature_text/feature_path."},
+                "spec_path": {"type": "string", "description": "Internal runtime-compatibility escape hatch: repo-relative path to a runtime spec .json. Authors should pass a feature or name instead."},
                 "state": {"type": "object", "description": "The run state, e.g. {\"text\": \"Payments API returns 500\"} or the ev_* answer fields a heuristic-driven workflow reads."},
                 "answers": {"type": ["array", "object"], "description": "Drive the graph with your own answers instead of the offline heuristic. Two shapes: (a) an ARRAY of one {<qid>: {type: choice|score|noul, choice|score|noul, probabilities, confidence}} object per node the walk visits, consumed in visit order; or (b) an OBJECT keyed by node name, {\"<node>\": {<qid>: <answer>}}, whose entry for a node is reused on every visit to it — a per-node policy you state once instead of replaying the visit sequence (handy for self-loop / retry graphs). Answers are in the same shape laya-tch returns. Pass [] (or {}) to start a step-wise walk: the reply then names the node the walk is waiting on (`at_node`) and its `ask` contract (ok:false, needs_answer:true, at_node, ask, steps_so_far) — `ask` is that node's own questions, each with the answers it accepts (`{id,type,answers,from_state,primary,satisfied_by}`, the same shape `bdd_list` reports), `pending_options` holds the waiting node's dynamic-question options materialised from the accumulated `state_so_far`, and you append one answer (array) or add one keyed entry (object) per reply until ok:true."}
             }
@@ -712,6 +756,7 @@ impl McpTool for DecideTool {
         }
 
         let mut rel_key: Option<String> = None;
+        let mut feature_path_out: Option<String> = None;
         let (wf, spec_value, spec_dir) = if let Some(rel) = args.get("spec_path").and_then(Value::as_str) {
             let path = if std::path::Path::new(rel).is_absolute() {
                 std::path::PathBuf::from(rel)
@@ -730,37 +775,37 @@ impl McpTool for DecideTool {
                 path.parent().map(|d| d.to_path_buf()),
             )
         } else if let Some(name) = args.get("name").and_then(Value::as_str) {
-            // Resolve a workflow by its port name across the repo dsl tree, so
-            // `bdd_list` -> `bdd_decide {name}` composes without a path.
-            let dsl = bdd::require_checkout("bdd_decide")?.join("dsl");
-            let hits: Vec<std::path::PathBuf> = crate::spec::discover(&dsl.to_string_lossy())
-                .map_err(|e| anyhow!("bdd_decide: scanning dsl/: {e:#}"))?
+            // Resolve a workflow by its port name across the agent-facing
+            // feature tree, so `bdd_list` -> `bdd_decide {name}` composes without
+            // ever exposing or requiring a JSON source file.
+            let root = bdd::require_checkout("bdd_decide")?;
+            let hits: Vec<DecisionFeatureSource> = scan_decision_features(&root)?
                 .into_iter()
-                .filter(|(stem, _)| stem == name)
-                .map(|(_, path)| path)
+                .filter(|src| src.name == name)
                 .collect();
             match hits.len() {
-                0 => return Err(anyhow!("bdd_decide: no decision spec named {name:?} under dsl/")),
+                0 => return Err(anyhow!("bdd_decide: no @decision feature named {name:?} under bdd/workflows/")),
                 1 => {
-                    rel_key = spec_rel_key(&hits[0]);
-                    let txt = std::fs::read_to_string(&hits[0])
-                        .map_err(|e| anyhow!("bdd_decide: cannot read {:?}: {e:#}", hits[0]))?;
-                    let sv = serde_json::from_str::<Value>(&txt)
-                        .map_err(|e| anyhow!("bdd_decide: {:?} is not valid json: {e:#}", hits[0]))?;
+                    let src = hits.into_iter().next().expect("one hit");
+                    rel_key = Some(format!("{}/{}", src.cat, src.name));
+                    feature_path_out = Some(format!("bdd/workflows/{}", src.rel));
+                    let sv = compile_decision_feature(&src)?;
+                    let runtime_dir = root.join("dsl").join(&src.cat);
                     (
-                        crate::spec::load_file(&hits[0].to_string_lossy())
-                            .map_err(|e| anyhow!("bdd_decide: cannot load {:?}: {e:#}", hits[0]))?,
+                        crate::spec::from_spec_with_dir(&sv, None, None)
+                            .map_err(|e| anyhow!("bdd_decide: {}: {e:#}", src.rel))?,
                         sv,
-                        hits[0].parent().map(|d| d.to_path_buf()),
+                        Some(runtime_dir),
                     )
                 }
                 n => {
                     return Err(anyhow!(
-                        "bdd_decide: {name:?} is ambiguous ({n} specs share that name); pass spec_path instead"
+                        "bdd_decide: {name:?} is ambiguous ({n} features share that name); pass feature_path instead"
                     ))
                 }
             }
         } else {
+            let root = bdd::repo_root();
             let (text, src_name) = match args.get("feature_text").and_then(Value::as_str) {
                 Some(t) => (t.to_string(), "<mcp>".to_string()),
                 None => {
@@ -770,7 +815,9 @@ impl McpTool for DecideTool {
                         .ok_or_else(|| {
                             anyhow!("bdd_decide: provide feature_text, feature_path, or spec_path")
                         })?;
-                    let p = bdd::repo_root().join(rel);
+                    let p = root.join(rel);
+                    rel_key = feature_rel_key(&p, &root);
+                    feature_path_out = Some(rel.to_string());
                     (
                         std::fs::read_to_string(&p)
                             .map_err(|e| anyhow!("bdd_decide: cannot read {rel}: {e}"))?,
@@ -788,7 +835,11 @@ impl McpTool for DecideTool {
                     "bdd_decide: only @decision workflows are runnable here; {src_name} is a browser-step feature (use `bdd run` for those)"
                 ));
             }
-            let mut spec = bdd::compile_decision(&feature, &json!({}))?;
+            let config = match args.get("feature_path").and_then(Value::as_str) {
+                Some(rel) => bdd::load_config(&bdd::repo_root().join(rel))?,
+                None => json!({}),
+            };
+            let mut spec = bdd::compile_decision(&feature, &config)?;
             if let Some(o) = spec.as_object_mut() {
                 o.remove("dsl_version");
             }
@@ -934,6 +985,8 @@ impl McpTool for DecideTool {
         let label = decision_label(j.get("result").unwrap_or(&Value::Null), out.final_action());
         Ok(json!({
             "ok": true,
+            "source": if feature_path_out.is_some() { "feature" } else { "runtime_spec" },
+            "feature_path": feature_path_out,
             "backend": backend_mode,
             "label": label,
             "label_source": label_source(&spec_value, j.get("result").unwrap_or(&Value::Null), out.final_action()),
@@ -1355,7 +1408,7 @@ impl McpTool for ListTool {
         "bdd_list"
     }
     fn description(&self) -> &str {
-        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null), primary (true for the node's `primary_q` - the question its routing is keyed by), satisfied_by (on the primary question only: answer -> the node it routes to, `edge.condition` else `edge.default`, so the next hop is readable from this one reply)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans the dsl/ tree recursively (as `bdd_decide {name}` resolves), so nested categories are both discoverable and callable; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The unfiltered inventory is hundreds of KB: pass `query` (a keyword filter - every whitespace-separated term must appear, case-insensitive) to find a graph by intent, and `summary` to get the discovery fields only; `total` always reports the unfiltered corpus size. The inventory behind 'use a BDD graph as a decision core'."
+        "List the callable BDD decision corpus: every @decision workflow as {cat, name, description, start, node_count, nodes, questions, inputs, outputs}. `questions` gives each question's id and type (with its `answer_field` when a heuristic drives it), and each node's own `questions` gives the questions *that node* asks — the exact contract for one `bdd_decide` `answers` step: {id, type, answers (the values it accepts), from_state (the state list a dynamic question's options are materialised from, else null), primary (true for the node's `primary_q` - the question its routing is keyed by), satisfied_by (on the primary question only: answer -> the node it routes to, `edge.condition` else `edge.default`, so the next hop is readable from this one reply)} (the node list is authoritative; the workflow-level `questions` is a deduped union and a shared id can be asked by several nodes); `inputs` is the sorted set of state fields the graph reads for a deterministic (offline) call — every question's heuristic source field (`answer_field` / `field` / `extract_numeric`) plus every `${state.<field>}` a node action interpolates and the fields a kind reads directly (`ui_proposal`'s surface / snapshot_hash) — exactly what to put in `state` for `bdd_decide`; `outputs` is the union of the labels any node can emit (each node's `outputs` = its threshold-ladder labels or its gate verbs BLOCK/ALLOW/CONFIRM) — for a single-node graph (no routing) that is exactly the set a call returns; a multi-node graph *returns* only the label of the node where the walk stops (the last emitted one, visible in the trace), so read each node's `routes` (the answer -> destination map) and `default` to see which of a node's labels continue onward versus stop there: emitting a label with a `routes` entry walks on, without one it stops and is what the caller gets back. Each entry also carries `offline` — true when `dsl smoke` behaviour-verified the graph offline (an offline `bdd_decide` on it is trustworthy) and false when it is only verified live (`verified_by` names the live gate, `why_live` why); the top-level `offline_count` / `live_count` summarise the returned set. Scans bdd/workflows/ recursively and compiles each @decision feature in memory (as `bdd_decide {name}` resolves), so nested categories are discoverable and callable without a JSON source path; filter with cat (a category, or a parent of nested ones) and/or name. Each graph also carries `outputs_complete` — false when a node's action is a `call` (a capability whose runtime payload can set a state key `bdd_decide` projects as the label), so `outputs` there is not a proven-complete set and a returned label may fall outside it. The unfiltered inventory is hundreds of KB: pass `query` (a keyword filter - every whitespace-separated term must appear, case-insensitive) to find a graph by intent, and `summary` to get the discovery fields only; `total` always reports the unfiltered corpus size. The inventory behind 'use a BDD graph as a decision core'."
     }
     fn input_schema(&self) -> Value {
         json!({
@@ -1363,8 +1416,8 @@ impl McpTool for ListTool {
             "properties": {
                 "cat": {"type": "string", "description": "Only list workflows in this category (e.g. guards, ole_eval, routing)."},
                 "name": {"type": "string", "description": "Only list the workflow whose port name matches this exactly."},
-                "query": {"type": "string", "description": "Keyword discovery filter: keep only graphs whose searchable text (name, cat, description, inputs, outputs, node names and question ids) contains EVERY whitespace-separated term, case-insensitive. The unfiltered corpus is hundreds of KB, so a query is the cheap way to find the right workflow by intent (e.g. \"memory store\" or \"ticket route\")."},
-                "summary": {"type": "boolean", "description": "When true, drop each graph's heavy per-node `nodes` and workflow-level `questions`, keeping the discovery fields (cat, name, description, start, node_count, inputs, outputs, offline, verified_by, why_live, outputs_complete). Read the full contract for one graph with bdd_list {name} or bdd_decide. Default false (full graph)."}
+                "query": {"type": "string", "description": "Keyword discovery filter: keep only graphs whose searchable text (name, cat, description, inputs, outputs, node names and question ids) contains EVERY whitespace-separated term, case-insensitive. The unfiltered corpus is hundreds of KB, so a query is the cheap way to find the right workflow by intent (e.g. \"permission gate\" or \"ticket route\")."},
+                "summary": {"type": "boolean", "description": "When true, drop each graph's heavy per-node `nodes` and workflow-level `questions`, keeping the discovery fields (cat, name, feature_path, description, start, node_count, inputs, outputs, offline, verified_by, why_live, outputs_complete). Read the full contract for one graph with bdd_list {name} or bdd_decide. Default false (full graph)."}
             }
         })
     }
@@ -1375,36 +1428,32 @@ impl McpTool for ListTool {
         let summary = args.get("summary").and_then(Value::as_bool).unwrap_or(false);
         // An empty list is not a list of nothing: with no checkout this used to
         // report "0 workflows" as a success.
-        let dsl = bdd::require_checkout("bdd_list")?.join("dsl");
+        let root = bdd::require_checkout("bdd_list")?;
+        ensure_bdd_runtime_env();
         // The specs the corpus cannot behaviour-verify offline (chrome/network/
         // manual), from the same ledger `dsl smoke` counts. An agent that only
         // calls over MCP needs to know which graphs it can actually trust.
         let live_only = crate::dsl_smoke::coverage_ledger_live_only().unwrap_or_default();
         let mut workflows: Vec<Value> = Vec::new();
-        for (cat, p) in scan_dsl_specs(&dsl) {
+        for src in scan_decision_features(&root)? {
+            let cat = src.cat.as_str();
+            let stem = src.name.as_str();
             if cat_filter
                 .map(|f| cat != f && !cat.starts_with(&format!("{f}/")))
                 .unwrap_or(false)
             {
                 continue;
             }
-            let stem = p
-                .file_stem()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
             if name_filter.map(|f| f != stem).unwrap_or(false) {
                 continue;
             }
-            let Ok(txt) = std::fs::read_to_string(&p) else { continue };
-            let Ok(spec) = serde_json::from_str::<Value>(&txt) else { continue };
-            if spec.get("nodes").and_then(Value::as_array).is_none() || spec.get("start").is_none() {
-                continue;
-            }
+            let spec = compile_decision_feature(&src)?;
             // Report the graph the engine *walks*: inline every `{"workflow": …}`
             // reference node (namespaced) so a composed workflow's inner nodes
             // appear with their own contracts. Falls back to the raw node list if
             // expansion fails (a broken reference would fail the engine too).
-            let spec = crate::spec::expand_spec_nodes(&spec, p.parent()).unwrap_or(spec);
+            let spec = crate::spec::expand_spec_nodes(&spec, Some(&root.join("dsl").join(cat)))
+                .unwrap_or(spec);
             // The closed output vocabulary of the graph: every label any node can
             // emit (for a single-node graph this is exactly its output set; a
             // multi-node graph's terminal label is the last node's, visible in the
@@ -1470,8 +1519,10 @@ impl McpTool for ListTool {
                 .collect();
             let live = live_only.get(&format!("{cat}/{stem}"));
             workflows.push(json!({
+                "source": "feature",
                 "cat": cat,
                 "name": stem,
+                "feature_path": format!("bdd/workflows/{}", src.rel),
                 "spec_name": spec.get("name").cloned().unwrap_or(Value::Null),
                 "description": spec.get("description").cloned().unwrap_or(Value::Null),
                 "start": spec.get("start").cloned().unwrap_or(Value::Null),
@@ -1539,7 +1590,7 @@ impl McpTool for ListTool {
 fn summary_projection(w: &Value) -> Value {
     let mut o = serde_json::Map::new();
     for k in [
-        "cat", "name", "spec_name", "description", "start", "node_count",
+        "source", "cat", "name", "feature_path", "spec_name", "description", "start", "node_count",
         "inputs", "outputs", "offline", "verified_by", "why_live", "outputs_complete",
     ] {
         if let Some(v) = w.get(k) {

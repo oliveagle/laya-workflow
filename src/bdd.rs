@@ -5155,10 +5155,10 @@ pub fn transpile_cli(
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| fp.clone());
         // An `@decision` feature is one whole decision graph (each Scenario one
-        // node), so it transpiles to a single spec — the exact file an author
-        // drops at dsl/<cat>/<name>.json. This closes the greenfield loop: write
-        // the .feature, transpile to the dsl spec, and `bdd round-trip` proves
-        // the two agree (the same semantic canonicalisation round-trip applies).
+        // node), so it transpiles to a single runtime spec. Authors stop at the
+        // feature; `bdd round-trip` remains the engine gate that proves a
+        // runtime mirror agrees during the transition (the same semantic
+        // canonicalisation round-trip applies).
         if has_tag(&feature.tags, "decision") {
             total += 1;
             let spec = match compile_decision(&feature, &config) {
@@ -5468,8 +5468,8 @@ fn scaffold_header(name: &str, cat: &str, desc: &str, pattern: &str, blurb: &str
     body.push_str("#   nesting:      `And when the sub workflow completes continue at \"<node>\"` hands control back\n");
     body.push_str("# Keep this file the single source of truth, then:\n");
     body.push_str("#   laya-workflow bdd build <file>                     # compile + validate + 100% coverage\n");
-    body.push_str("#   laya-workflow bdd transpile <file> --out dsl/<cat> # emit the dsl spec\n");
-    body.push_str("#   laya-workflow bdd round-trip                       # prove .feature == dsl spec\n");
+    body.push_str("#   MCP bdd_catalog                                   # audit the feature-only corpus\n");
+    body.push_str("# Runtime specs are generated; never edit workflow JSON by hand\n");
     body
 }
 
@@ -5507,8 +5507,8 @@ fn scaffold_body_classic(
         body.push_str("# 1-node start. Keep this file the single source of truth, then:\n");
     }
     body.push_str("#   laya-workflow bdd build <file>                     # compile + validate + 100% coverage\n");
-    body.push_str("#   laya-workflow bdd transpile <file> --out dsl/<cat> # emit the dsl spec\n");
-    body.push_str("#   laya-workflow bdd round-trip                       # prove .feature == dsl spec\n");
+    body.push_str("#   MCP bdd_catalog                                   # audit the feature-only corpus\n");
+    body.push_str("# Runtime specs are generated; never edit workflow JSON by hand\n");
     body.push_str("@decision\n");
     body.push_str(&format!("Feature: {name}\n"));
     body.push_str(&format!("  {desc}\n\n"));
@@ -5651,7 +5651,7 @@ pub fn scaffold(o: &ScaffoldOptions) -> Result<i32> {
     std::fs::write(&dest, &body)?;
     println!("wrote {}", dest.display());
     println!("ok: {name} compiles and validates as a @decision graph ({nodes} nodes)");
-    println!("next: extend the graph, then `laya-workflow bdd build {}` and `bdd transpile {} --out dsl/{}`", dest.display(), dest.display(), cat);
+    println!("next: extend the graph, then validate with `laya-workflow bdd build {}` and audit the feature corpus with MCP bdd_catalog", dest.display());
     Ok(0)
 }
 
@@ -6969,7 +6969,7 @@ pub fn doc_check_impl(
         (Regex::new(r"(\d+) labelled expectation sets").unwrap(), "ledger", README),
         (Regex::new(r"(\d+) offline-verified \+ (\d+) live-declared = (\d+)").unwrap(), "ledger", README),
         // The round-trip authority and its enumerated pin list.
-        (Regex::new(r"Every one of the (\d+) checked-in").unwrap(), "roundtrip", README),
+        (Regex::new(r"The agent-facing corpus is the (\d+) `?@decision").unwrap(), "roundtrip", README),
         (
             Regex::new(r"\+(\d+) pinned in the decision workflows").unwrap(),
             "pinned",
