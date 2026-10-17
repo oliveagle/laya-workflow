@@ -1458,6 +1458,140 @@ Feature: p255field
             "p255: feature -> spec -> feature -> spec is a fixed point on the graph",
             s55["nodes"] == s55b["nodes"],
         );
+        // P256: the non-hybrid support router uses the same shared category and
+        // severity handlers as P254. Reuse the declarative shapes instead of
+        // adding another Rust arm. Shipping/account/hr are deliberately kept in
+        // the table even though this graph's criteria reject them: the old
+        // handler returned those ids and the engine failed closed.
+        let f56 = laya_workflow::bdd::parse(
+            include_str!("../../bdd/workflows/routing/support_ticket_router.feature"),
+            "<p256-ticket-router>",
+        )
+        .expect("parse the checked-in ticket router feature");
+        let s56 = laya_workflow::bdd::compile_decision(&f56, &json!({}))
+            .expect("compile the checked-in ticket router feature");
+        let qs56 = json!({
+            "category": s56["nodes"][0]["questions"]["category"].clone(),
+            "severity": s56["nodes"][1]["questions"]["severity"].clone(),
+        });
+        let mut old56 = qs56.clone();
+        for q in old56
+            .as_object_mut()
+            .expect("ticket router questions")
+            .values_mut()
+        {
+            q.as_object_mut()
+                .expect("question object")
+                .remove("heuristic");
+        }
+        let be56 = HeuristicBackend;
+        let p56_states = [
+            json!({"text":"outage"}),
+            json!({"text":"refund"}),
+            json!({"text":"pricing"}),
+            json!({"text":"package"}),
+            json!({"text":"login"}),
+            json!({"text":"payroll"}),
+            json!({"text":"production"}),
+            json!({"text":"1500 errors"}),
+            json!({"text":"OUTAGE"}),
+            json!({"text":"outage refund pricing package login payroll"}),
+            json!({"text":"outage vermin"}),
+            json!({"text":"refund watch your back"}),
+        ];
+        let category56_keys = [
+            "billing",
+            "technical",
+            "sales",
+            "shipping",
+            "account",
+            "hr",
+            "other",
+        ];
+        let mut equivalent56 = true;
+        for state in p56_states.iter() {
+            let before = be56
+                .decide(state, &old56)
+                .expect("old ticket router handlers");
+            let after = be56
+                .decide(state, &qs56)
+                .expect("declared ticket router rules");
+            let same = ["category", "severity"].iter().all(|qid| {
+                before.answer_value(qid).ok() == after.answer_value(qid).ok()
+                    && (before.confidence(qid).unwrap_or(-1.0)
+                        - after.confidence(qid).unwrap_or(-2.0))
+                    .abs()
+                        < 1e-12
+                    && {
+                        let keys: Vec<&str> = if *qid == "category" {
+                            category56_keys.to_vec()
+                        } else {
+                            vec!["0", "1", "2"]
+                        };
+                        keys.iter().all(|k| {
+                            (before.prob(qid, k).unwrap_or(-1.0)
+                                - after.prob(qid, k).unwrap_or(-2.0))
+                            .abs()
+                                < 1e-12
+                        })
+                    }
+            });
+            if !same {
+                equivalent56 = false;
+                eprintln!("p256 ticket router mismatch on {}", state["text"]);
+                break;
+            }
+        }
+        h.check(
+            "p256: router category/severity match the old handlers",
+            equivalent56,
+        );
+        let category56 = |text: &str| -> serde_json::Value {
+            be56.decide(&json!({"text":text}), &qs56)
+                .unwrap()
+                .answer_value("category")
+                .unwrap()
+                .clone()
+        };
+        h.eq(
+            "p256: shipping remains an explicit fail-closed label",
+            category56("package"),
+            json!("shipping"),
+        );
+        h.eq(
+            "p256: account remains an explicit fail-closed label",
+            category56("login"),
+            json!("account"),
+        );
+        h.eq(
+            "p256: hr remains an explicit fail-closed label",
+            category56("payroll"),
+            json!("hr"),
+        );
+        let miss56 = be56
+            .decide(&json!({"text":"outage with no risk words"}), &qs56)
+            .expect("router severity miss");
+        h.eq(
+            "p256: a router severity miss keeps the handler read-out",
+            (
+                miss56.answer_value("severity").unwrap().as_f64().unwrap(),
+                miss56.confidence("severity").unwrap(),
+                miss56.prob("severity", "2").unwrap(),
+            ),
+            (0.5, 0.833, 0.5),
+        );
+        let hit56 = be56
+            .decide(&json!({"text":"outage and 123-45-6789"}), &qs56)
+            .expect("router severity hit");
+        h.eq(
+            "p256: a router severity hit keeps the handler read-out",
+            (
+                hit56.answer_value("severity").unwrap().as_f64().unwrap(),
+                hit56.confidence("severity").unwrap(),
+                hit56.prob("severity", "2").unwrap(),
+            ),
+            (2.0, 1.0, 1.0),
+        );
     }
 }
 

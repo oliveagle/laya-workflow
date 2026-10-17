@@ -1,6 +1,11 @@
 {
   "name": "support_ticket_router",
-  "description": "Multi-node routing: classify (choice) -> escalate (score threshold) or STOP; demonstrates data-driven edges and ordered threshold rules.",
+  "_bdd": {
+    "feature": "support_ticket_router",
+    "feature_path": "bdd/workflows/routing/support_ticket_router.feature",
+    "mode": "decision"
+  },
+  "description": "Multi-node routing: classify (choice) -> escalate (score threshold) or STOP.\nDemonstrates data-driven edges and ordered threshold rules.",
   "start": "classify",
   "max_iterations": 20,
   "convergence_window": 5,
@@ -18,16 +23,107 @@
             "technical": "bugs, outages, system errors",
             "sales": "pricing, new contracts",
             "other": "everything else"
+          },
+          "heuristic": {
+            "match_rules_all": {
+              "technical": [
+                [
+                  [
+                    "outage",
+                    "500",
+                    "hotfix",
+                    "incident",
+                    "prod",
+                    "unavailable"
+                  ]
+                ]
+              ],
+              "billing": [
+                [
+                  [
+                    "refund",
+                    "invoice",
+                    "billed",
+                    "payment",
+                    "duplicate charge"
+                  ]
+                ]
+              ],
+              "sales": [
+                [
+                  [
+                    "pricing",
+                    "demo",
+                    "purchase",
+                    "quote",
+                    "trial"
+                  ]
+                ]
+              ],
+              "shipping": [
+                [
+                  [
+                    "package",
+                    "parcel",
+                    "delivery",
+                    "deliver",
+                    "courier",
+                    "shipment",
+                    "shipping",
+                    "arrived",
+                    "arrive",
+                    "customs",
+                    "tracking"
+                  ]
+                ]
+              ],
+              "account": [
+                [
+                  [
+                    "login",
+                    "password",
+                    "access",
+                    "profile",
+                    "reset"
+                  ]
+                ]
+              ],
+              "hr": [
+                [
+                  [
+                    "leave",
+                    "payroll",
+                    "hiring",
+                    "vacation",
+                    "pto"
+                  ]
+                ]
+              ]
+            },
+            "p_hit": 0.9,
+            "p_miss": 0.02,
+            "fallback": "other",
+            "p_fallback": 0.9
           }
         }
       },
       "edge": {
-        "condition": { "technical": "severity_probe", "billing": "severity_probe" },
+        "condition": {
+          "technical": "severity_probe",
+          "billing": "severity_probe",
+          "sales": "STOP",
+          "other": "STOP"
+        },
         "default": "STOP"
       },
       "min_confidence": 0.4,
       "max_retries": 3,
-      "action": { "kind": "copy_keys", "keys": ["category"] }
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "category"
+        ]
+      }
     },
     {
       "name": "severity_probe",
@@ -36,18 +132,53 @@
         "severity": {
           "type": "score",
           "instructions": "How severe is the impact?",
-          "criteria": ["minor", "degraded", "outage"]
+          "criteria": [
+            "minor",
+            "degraded",
+            "outage"
+          ],
+          "heuristic": {
+            "score_rules": {
+              "2": [
+                "vermin",
+                "watch your back",
+                "get rich",
+                "123-45-6789"
+              ]
+            },
+            "score_miss": 0.5
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
       "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "severity",
         "rules": [
-          { "when": { "value_gte": 1.5 }, "label": "PAGE_ONCALL" },
-          { "when": { "value_gte": 0.5 }, "label": "QUEUE_TODAY" },
-          { "when": { "always": true }, "label": "BACKLOG" }
+          {
+            "when": {
+              "question": "severity",
+              "value_gte": 1.5
+            },
+            "label": "PAGE_ONCALL"
+          },
+          {
+            "when": {
+              "question": "severity",
+              "value_gte": 0.5
+            },
+            "label": "QUEUE_TODAY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "BACKLOG"
+          }
         ]
       }
     }
