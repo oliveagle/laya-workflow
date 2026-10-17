@@ -368,7 +368,8 @@ The decision vocabulary (a deterministic compiler, not a model — regex to grap
   `answer by all-group rules on the field/text ...` (one table row per label
   alternative; every additional cell in that row is an OR group, and all cells
   must hit), `the
-  answer is always "X"`, ….
+  answer is always "X"` (the declared option is emitted with probability 1 and
+  confidence 1), ….
 * **When (edges)** — `the answer "X" goes to "NODE"`, `any other answer goes to "NODE"`.
 * **Then (actions)** — ordered threshold labels (`label "L" when "Q" is at least
   N` / `below N` / `otherwise`, and per-option confidence

@@ -86,6 +86,7 @@ Feature: dialogue_policy
     Given a choice question "intent" asks "Terminal DONE state accepts no further intents except a duplicate confirm (rejected)."
       | answer | meaning              |
       | noop   | no action                      |
+    And the answer is always "noop"
     When any other answer goes to "STOP"
     Then keep the answer to "intent"
 
@@ -93,6 +94,7 @@ Feature: dialogue_policy
     Given a choice question "intent" asks "Terminal ESCALATED state accepts no further intents."
       | answer | meaning              |
       | noop   | no action                      |
+    And the answer is always "noop"
     When any other answer goes to "STOP"
     Then keep the answer to "intent"
 
@@ -100,6 +102,7 @@ Feature: dialogue_policy
     Given a choice question "intent" asks "Terminal ABORTED state accepts no further intents."
       | answer | meaning              |
       | noop   | no action                      |
+    And the answer is always "noop"
     When any other answer goes to "STOP"
     Then keep the answer to "intent"
 

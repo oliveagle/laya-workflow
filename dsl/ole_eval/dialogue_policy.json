@@ -1,8 +1,15 @@
 {
   "name": "dialogue_policy",
-  "description": "Port of ole-eval code/qwen_vm/app_scenarios/dialogue_policy. The deterministic Intent→State→Action DFA is preserved as edge routing across nodes: each node asks the LLM for the user's intent given the current dialogue state, and the edge condition advances to the next state node. Final escalation abort and duplicate-confirm guards map to terminal-state STOP rules.",
+  "_bdd": {
+    "feature": "dialogue_policy",
+    "feature_path": "bdd/workflows/ole_eval/dialogue_policy.feature",
+    "mode": "decision"
+  },
+  "description": "BDD decision workflow: dialogue_policy",
   "start": "greeting",
   "max_iterations": 12,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
   "nodes": [
     {
       "name": "greeting",
@@ -16,15 +23,32 @@
             "escalate": "hand off to a human",
             "abort": "cancel the session"
           },
-          "heuristic": { "answer_field": "i_greet" }
+          "heuristic": {
+            "answer_field": "i_greet"
+          }
         }
       },
       "edge": {
-        "condition": { "greet": "identifying", "escalate": "escalated", "abort": "aborted" },
+        "condition": {
+          "greet": "identifying",
+          "escalate": "escalated",
+          "abort": "aborted"
+        },
         "default": "STOP"
       },
-      "action": { "kind": "copy_keys", "keys": ["intent"] },
-      "state": { "keep": ["user_id", "reason"] }
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      },
+      "state": {
+        "keep": [
+          "user_id",
+          "reason"
+        ]
+      }
     },
     {
       "name": "identifying",
@@ -39,7 +63,9 @@
             "escalate": "hand off",
             "abort": "cancel"
           },
-          "heuristic": { "answer_field": "i_identify" }
+          "heuristic": {
+            "answer_field": "i_identify"
+          }
         }
       },
       "edge": {
@@ -51,7 +77,13 @@
         },
         "default": "STOP"
       },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     },
     {
       "name": "authenticated",
@@ -65,7 +97,9 @@
             "escalate": "hand off",
             "abort": "cancel"
           },
-          "heuristic": { "answer_field": "i_auth" }
+          "heuristic": {
+            "answer_field": "i_auth"
+          }
         }
       },
       "edge": {
@@ -76,7 +110,13 @@
         },
         "default": "STOP"
       },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     },
     {
       "name": "collecting",
@@ -91,7 +131,9 @@
             "escalate": "hand off",
             "abort": "cancel"
           },
-          "heuristic": { "answer_field": "i_coll" }
+          "heuristic": {
+            "answer_field": "i_coll"
+          }
         }
       },
       "edge": {
@@ -103,7 +145,13 @@
         },
         "default": "STOP"
       },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     },
     {
       "name": "confirm",
@@ -117,7 +165,9 @@
             "escalate": "hand off",
             "abort": "cancel"
           },
-          "heuristic": { "answer_field": "i_confirm" }
+          "heuristic": {
+            "answer_field": "i_confirm"
+          }
         }
       },
       "edge": {
@@ -128,15 +178,35 @@
         },
         "default": "STOP"
       },
+      "min_confidence": 0.0,
       "action": {
         "kind": "threshold",
         "question": "intent",
         "rules": [
-          { "when": { "answer": "confirm" }, "label": "execute_transfer" },
-          { "when": { "always": true }, "label": "noop" }
+          {
+            "when": {
+              "answer": "confirm"
+            },
+            "label": "execute_transfer"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "noop"
+          }
         ]
       },
-      "state": { "keep": ["request_id", "user_id", "recipient_id", "amount", "currency", "purpose"] }
+      "state": {
+        "keep": [
+          "request_id",
+          "user_id",
+          "recipient_id",
+          "amount",
+          "currency",
+          "purpose"
+        ]
+      }
     },
     {
       "name": "done",
@@ -145,11 +215,25 @@
         "intent": {
           "type": "choice",
           "instructions": "Terminal DONE state accepts no further intents except a duplicate confirm (rejected).",
-          "criteria": { "noop": "no action" }
+          "criteria": {
+            "noop": "no action"
+          },
+          "heuristic": {
+            "answer": "noop"
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     },
     {
       "name": "escalated",
@@ -158,11 +242,25 @@
         "intent": {
           "type": "choice",
           "instructions": "Terminal ESCALATED state accepts no further intents.",
-          "criteria": { "noop": "no action" }
+          "criteria": {
+            "noop": "no action"
+          },
+          "heuristic": {
+            "answer": "noop"
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     },
     {
       "name": "aborted",
@@ -171,11 +269,25 @@
         "intent": {
           "type": "choice",
           "instructions": "Terminal ABORTED state accepts no further intents.",
-          "criteria": { "noop": "no action" }
+          "criteria": {
+            "noop": "no action"
+          },
+          "heuristic": {
+            "answer": "noop"
+          }
         }
       },
-      "edge": { "condition": {}, "default": "STOP" },
-      "action": { "kind": "copy_keys", "keys": ["intent"] }
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "copy_keys",
+        "keys": [
+          "intent"
+        ]
+      }
     }
   ]
 }

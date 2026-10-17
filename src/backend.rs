@@ -580,6 +580,26 @@ impl Decide for HeuristicBackend {
                 .and_then(|v| v.as_str())
                 .unwrap_or("choice");
             let (answer, probabilities, confidence) = match qid.as_str() {
+                // P252: `heuristic.answer` is the compiler's existing
+                // `the answer is always "X"` shape, but it previously fell through
+                // to `default_choice` (which picks the first criterion). That bug is
+                // invisible when the declared answer happens to be first, yet makes
+                // the advertised step false for every other option. Treat it as a
+                // real deterministic verdict: the named option has probability 1 and
+                // confidence 1. An id outside the declared criteria is returned as-is
+                // so the engine's existing in-contract check fails loudly.
+                _ if qdef.get("heuristic").and_then(|h| h.get("answer")).is_some() => {
+                    let h = qdef.get("heuristic").unwrap();
+                    let chosen = h.get("answer").and_then(|v| v.as_str()).unwrap_or("");
+                    let mut m = Map::new();
+                    if let Some(criteria) = qdef.get("criteria").and_then(Value::as_object) {
+                        for k in criteria.keys() {
+                            m.insert(k.clone(), serde_json::json!(if k == chosen { 1.0 } else { 0.0 }));
+                        }
+                    }
+                    m.insert(chosen.to_string(), serde_json::json!(1.0));
+                    (serde_json::json!(chosen), m, 1.0)
+                }
                 // Spec-declared offline determinism — evaluated FIRST, before any
                 // named handler: a question whose definition carries
                 // `heuristic.answer_field` is answered straight from that state

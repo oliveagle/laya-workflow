@@ -557,6 +557,29 @@ pub fn test_answer_field_authority(h: &mut Harness) {
             !laya_workflow::dsl_smoke::missing_trace_pins(&Value::Null, 2).is_empty(),
         );
 
+        // P252: `heuristic.answer` is not documentation; it owns the answer. Use a
+        // shared qid with a named handler and a state whose text would otherwise
+        // select `authenticate`, while the declared fixed answer is `abort` (not
+        // the first criterion either).
+        let q_fixed = json!({"intent": {"type": "choice", "instructions": "intent",
+            "criteria": {"greet": "g", "authenticate": "auth", "abort": "a"},
+            "heuristic": {"answer": "abort"}}});
+        let v_fixed = be.decide(&json!({"text": "authenticate with mfa_code"}), &q_fixed).unwrap();
+        let d_fixed = v_fixed.answers.get("intent").unwrap();
+        h.eq(
+            "p252: heuristic.answer beats the named handler and first criterion",
+            d_fixed.as_str(),
+            "abort".to_string(),
+        );
+        h.check(
+            "p252: heuristic.answer gives the declared option probability 1",
+            (d_fixed.prob("abort") - 1.0).abs() < 1e-12,
+        );
+        h.check(
+            "p252: heuristic.answer gives the declared option confidence 1",
+            (d_fixed.confidence - 1.0).abs() < 1e-12,
+        );
+
         // P245: a declared `match_any` / `match_rules` / `extract_numeric` heuristic must
         // win over a *named* Rust handler for the same question id, exactly as
         // `answer_field` does above. Before P245 the named arms sat between the

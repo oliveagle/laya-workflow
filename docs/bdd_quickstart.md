@@ -406,7 +406,7 @@ Feature: support_ticket_router
 | And（given） | `answer "B" when the text matches every group with hit 0.9 and miss 0.05`（后跟 `\| group \| needles \|` 表） | `heuristic.match_all`（每行是一组 OR 词；**所有行都要命中**）+ `p_hit`/`p_miss` |
 | And（given） | `score "Q" by rules on the text miss 10`（后跟 `\| score \| needles \|` 表，行序即优先级） | `heuristic.score_rules`（首个命中行 → 该分数，否则 `score_miss`；level 表给出 0/30/70/100 这类数值带时，概率/置信度按 low/review/blocking 三带输出） |
 | And（given） | `answer by all-group rules on the text with hit 0.9 and miss 0.02 and fallback "allow" at 0.9`（后跟 `\| label \| all of \|` 表；同一 label 可多行，行内每个额外 cell 是一个 OR 组） | `heuristic.match_rules_all`（多分类 AND 规则：组内 OR、组间 AND、label 声明序优先；未命中走 fallback 与 `p_fallback`） |
-| And（given） | `the answer is always "A"` | `heuristic.answer`（确定性答案） |
+| And（given） | `the answer is always "A"` | `heuristic.answer`（确定性答案；声明项概率 1、confidence 1，P252 起真正压过默认/具名 handler） |
 | And（given） | `the answer comes from the field "f"` | `heuristic.answer_field`（答案取自已存字段） |
 | Then | `gate "Q" on option "O" with block 0.6 allow 0.7` | `action {kind:gate, question, option, block_at, allow_at}` |
 | Then | `merge open probabilities on "Q"` | `action {kind:merge_open_probs, question}` |
