@@ -606,6 +606,105 @@ pub fn test_answer_field_authority(h: &mut Harness) {
                 answer_field < match_rules && match_rules < match_any && match_any < first_literal,
             );
         }
+
+        // P246: the migration of the built-in handlers into specs needed two
+        // compile shapes the vocabulary could not spell.
+        //   (a) A score that is one needle *set* against a single miss value:
+        //       `score "..." when the text contains ... scoring X miss Y`. The
+        //       choice step could not stand in - it writes `p_hit` / `p_miss`,
+        //       which P184 refuses above 1.0 and the score reader never reads.
+        //   (b) A middle band with no `field`: `answer "..." with mid M when the
+        //       text contains ...`, which matches the whole serialised state the
+        //       way the built-in handlers do (the pre-P246 step accepted a field
+        //       and silently dropped it).
+        let src46 = r#"
+@decision
+Feature: p246shapes
+  Scenario: gate
+    Given a score question "risk" asks "how risky?"
+      | level |
+      | low   |
+      | mid   |
+      | high  |
+    And score "2.0" when the text contains "rm ", "drop " or "delete" scoring 2.0 miss 0.2
+    And a choice question "exfil" asks "does it phone home with a secret?"
+      | answer | meaning |
+      | A      | no      |
+      | B      | yes     |
+    And answer "B" when the text contains "curl " with hit 0.9 and miss 0.1
+    And answer "B" with mid 0.45 when the text contains "/etc/passwd"
+    Then label "HOT" when "risk" is at least 2
+    And label "LEAK" when the answer to "exfil" is "B"
+    And label "COLD" otherwise
+"#;
+        let f46 = laya_workflow::bdd::parse(src46, "<p246>").expect("parse p246 feature");
+        let s46 = laya_workflow::bdd::compile_decision(&f46, &json!({})).expect("compile p246 shapes");
+        let q46 = &s46["nodes"][0]["questions"]["risk"]["heuristic"];
+        h.eq(
+            "p246: `score ... when the text contains ... scoring X miss Y` writes score_hit",
+            q46["score_hit"].clone(),
+            json!(2.0),
+        );
+        h.eq("p246: ... and score_miss", q46["score_miss"].clone(), json!(0.2));
+        h.check(
+            "p246: ... and no probability key on a score question",
+            q46.get("p_hit").is_none() && q46.get("p_miss").is_none(),
+        );
+        h.eq(
+            "p246: ... keeping every needle of the set",
+            q46["match_any"].clone(),
+            json!(["rm ", "drop ", "delete"]),
+        );
+        h.check(
+            "p246: ... and declaring no field, so it matches the whole serialised state",
+            q46.get("field").is_none(),
+        );
+        let h46 = &s46["nodes"][0]["questions"]["exfil"]["heuristic"];
+        h.eq(
+            "p246: a mid band spelled `with mid M when the text contains ...` writes match_mid_any",
+            h46["match_mid_any"].clone(),
+            json!(["/etc/passwd"]),
+        );
+        h.eq("p246: ... at the declared p_mid", h46["p_mid"].clone(), json!(0.45));
+        h.check("p246: ... with no field", h46.get("field").is_none());
+
+        // Behaviour, not shape: the declared heuristics own the two questions.
+        let be46 = HeuristicBackend;
+        let qs46 = &s46["nodes"][0]["questions"];
+        let hit46 = be46.decide(&json!({"command": "rm -rf /"}), qs46).unwrap();
+        h.check(
+            "p246: the declared score heuristic answers 2.0 on a hit",
+            hit46.answer_value("risk").unwrap().as_f64() == Some(2.0),
+        );
+        let miss46 = be46.decide(&json!({"command": "ls -la /tmp"}), qs46).unwrap();
+        h.check(
+            "p246: ... and 0.2 on a miss (not the 2.0 / 0.5 default pair)",
+            miss46.answer_value("risk").unwrap().as_f64() == Some(0.2),
+        );
+        let mid46 = be46.decide(&json!({"command": "cat /etc/passwd"}), qs46).unwrap();
+        h.check(
+            "p246: a field-less mid band reads the whole state at its p_mid",
+            (mid46.prob("exfil", "B").unwrap_or(-1.0) - 0.45).abs() < 1e-9,
+        );
+
+        // The inverse direction: both shapes must come back out of `import`, and
+        // the round trip must be a fixed point on the decision graph (the shape the
+        // `round-trip` / `import-check` gates hold the whole corpus to).
+        let back46 = laya_workflow::bdd::import_spec(&s46).expect("import the p246 spec");
+        h.check(
+            "p246: the score step round-trips through `import`",
+            back46.contains("scoring 2 miss 0.2"),
+        );
+        h.check(
+            "p246: the field-less mid step round-trips through `import`",
+            back46.contains("with mid 0.45 when the text contains"),
+        );
+        let f46b = laya_workflow::bdd::parse(&back46, "<p246b>").expect("parse the imported p246 feature");
+        let s46b = laya_workflow::bdd::compile_decision(&f46b, &json!({})).expect("recompile the imported p246 feature");
+        h.check(
+            "p246: feature -> spec -> feature -> spec is a fixed point on the graph",
+            s46["nodes"] == s46b["nodes"],
+        );
     }
 }
 

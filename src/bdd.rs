@@ -968,7 +968,7 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
-                    r#"^answer "(?P<ans>[^"]+)" with mid (?P<mid>\d+(?:\.\d+)?) when the field "(?P<field>[^"]+)" contains (?P<needles>.+)$"#,
+                    r#"^answer "(?P<ans>[^"]+)" with mid (?P<mid>\d+(?:\.\d+)?) when the (?:field "(?P<field>[^"]+)"|text) contains (?P<needles>.+)$"#,
                 )
                 .unwrap(),
                 "heur_mid",
@@ -986,6 +986,28 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
                 )
                 .unwrap(),
                 "heur_score_bands",
+            ),
+            // P246: the bands step above needs exactly one high needle and a mid
+            // band. A score that is one needle *set* against a single miss value
+            // (the shape the built-in handlers use: `rm|drop|delete -> 2.0, else
+            // 0.2`) had no step at all -- and the choice step could not stand in,
+            // because it emits `p_hit` / `p_miss`, which are probabilities: a score
+            // like 2.0 is refused by the P184 range gate, and even a legal one
+            // landed in keys the score reader never reads. These two read as the
+            // bands step minus the middle, so the wording stays in the same idiom.
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" when the field "(?P<field>[^"]+)" contains (?P<needles>.+) scoring (?P<hit>\d+(?:\.\d+)?) miss (?P<miss>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_score_any",
+            ),
+            (
+                Regex::new(
+                    r#"^score "(?P<ans>[^"]+)" when the text contains (?P<needles>.+) scoring (?P<hit>\d+(?:\.\d+)?) miss (?P<miss>\d+(?:\.\d+)?)$"#,
+                )
+                .unwrap(),
+                "heur_score_any",
             ),
             (
                 Regex::new(r#"^the answer is always "(?P<a>.+)"$"#).unwrap(),
@@ -1335,6 +1357,8 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "answer \"<ans>\" with mid <mid> when the field \"<field>\" contains <needles>"),
         ("given", "answer by rules on the field \"<field>\" with hit <hit>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
+        ("given", "score \"<ans>\" when the text contains <needles> scoring <hit> miss <miss>"),
+        ("given", "score \"<ans>\" when the field \"<field>\" contains <needles> scoring <hit> miss <miss>"),
         ("given", "the answer is always \"<a>\""),
         ("given", "the answer comes from the field \"<f>\""),
         ("when", "the answer \"<a>\" goes to \"<node>\""),
@@ -3404,6 +3428,34 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 h.insert("match_mid_any".into(), json!([caps["mid"].to_string()]));
                 h.insert("score_hit".into(), json!(hit));
                 h.insert("score_mid".into(), json!(midv));
+                h.insert("score_miss".into(), json!(miss));
+                set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
+            }
+            // P246: the bands step's middle-less sibling. Same keys minus
+            // `match_mid_any` / `score_mid`, so the backend's score branch takes
+            // `score_hit` on a hit and `score_miss` otherwise, with no middle band
+            // in between (`mid` is only consulted when the strong signal did not
+            // fire, and there is none).
+            "heur_score_any" => {
+                let lq = last_question.clone().ok_or_else(|| {
+                    anyhow!("line {}: heuristic step before any question", st.line)
+                })?;
+                let needles = quoted_tokens(&caps["needles"]);
+                if needles.is_empty() {
+                    bail!("line {}: heuristic needs at least one needle", st.line);
+                }
+                let hit: f64 = caps["hit"].to_string().parse()?;
+                let miss: f64 = caps["miss"].to_string().parse()?;
+                let q = questions
+                    .get_mut(&lq)
+                    .and_then(Value::as_object_mut)
+                    .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
+                let mut h = Map::new();
+                if let Some(f) = caps.name("field") {
+                    h.insert("field".into(), json!(f.as_str()));
+                }
+                h.insert("match_any".into(), json!(needles));
+                h.insert("score_hit".into(), json!(hit));
                 h.insert("score_miss".into(), json!(miss));
                 set_heuristic(&mut declared, q, &lq, st.line, Value::Object(h))?;
             }
@@ -9318,6 +9370,35 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
     let any = h.get("match_any").and_then(Value::as_array);
     let mid_any = h.get("match_mid_any").and_then(Value::as_array);
     let field = s("field");
+    // P246: the bands step's middle-less sibling -- `match_any` + `score_hit` +
+    // `score_miss`, with no `match_mid_any` / `score_mid` to spell a middle band.
+    if has("score_hit") && !has("score_mid") && has("score_miss") {
+        let any = any
+            .ok_or_else(|| anyhow!("cannot import: score heuristic needs match_any"))?;
+        let needles = imp_tokens("heuristic.match_any[]", any)?;
+        if needles.is_empty() {
+            bail!("cannot import: match_any heuristic has no needles");
+        }
+        let hit = imp_f64("heuristic.score_hit", h.get("score_hit"))?;
+        let miss = imp_f64("heuristic.score_miss", h.get("score_miss"))?;
+        let body = match field {
+            Some(f) => {
+                imp_tok("heuristic.field", f)?;
+                format!(
+                    "score \"{qname}\" when the field \"{f}\" contains {needles} scoring {} miss {}",
+                    imp_num(hit)?,
+                    imp_num(miss)?
+                )
+            }
+            None => format!(
+                "score \"{qname}\" when the text contains {needles} scoring {} miss {}",
+                imp_num(hit)?,
+                imp_num(miss)?
+            ),
+        };
+        st.push("given", body, vec![]);
+        return Ok(());
+    }
     if has("score_hit") && has("score_mid") && has("score_miss") {
         let (any, mid_any) = match (any, mid_any) {
             (Some(a), Some(m)) => (a, m),
@@ -9371,18 +9452,27 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
         };
         st.push("given", body, vec![]);
         if let Some(mid_any) = mid_any {
-            let f = field
-                .ok_or_else(|| anyhow!("cannot import: match_mid_any heuristic needs a field"))?;
+            // P246: the middle band carries no `field` of its own; a heuristic
+            // that names one reads it, and one that does not matches the whole
+            // serialised state. Emit the wording that compiles back to the same
+            // `field` (present or absent) rather than refusing the field-less
+            // shape the backend already supports.
             let mid = imp_f64("heuristic.p_mid", h.get("p_mid"))?;
             let needles = imp_tokens("heuristic.match_mid_any[]", mid_any)?;
-            st.push(
-                "given",
-                format!(
-                    "answer \"{qname}\" with mid {} when the field \"{f}\" contains {needles}",
+            let body = match field {
+                Some(f) => {
+                    imp_tok("heuristic.field", f)?;
+                    format!(
+                        "answer \"{qname}\" with mid {} when the field \"{f}\" contains {needles}",
+                        imp_num(mid)?
+                    )
+                }
+                None => format!(
+                    "answer \"{qname}\" with mid {} when the text contains {needles}",
                     imp_num(mid)?
                 ),
-                vec![],
-            );
+            };
+            st.push("given", body, vec![]);
         }
         return Ok(());
     }
