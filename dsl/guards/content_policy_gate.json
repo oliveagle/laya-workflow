@@ -21,6 +21,15 @@
           "criteria": {
             "A": "no, it is neutral or positive",
             "B": "yes, it dehumanises or attacks an identity group"
+          },
+          "heuristic": {
+            "match_any": [
+              "vermin",
+              "deport",
+              "slur"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
           }
         },
         "is_threat": {
@@ -29,6 +38,15 @@
           "criteria": {
             "A": "no, it is safe or merely critical",
             "B": "yes, it threatens violence or harm"
+          },
+          "heuristic": {
+            "match_any": [
+              "find you",
+              "watch your back",
+              "kill you"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
           }
         },
         "is_pii": {
@@ -37,6 +55,15 @@
           "criteria": {
             "A": "no, it does not expose personal data",
             "B": "yes, it leaks full SSN / card / home address"
+          },
+          "heuristic": {
+            "match_any": [
+              "ssn",
+              "123-45-6789",
+              "credit card"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.05
           }
         },
         "is_spam": {
@@ -45,6 +72,16 @@
           "criteria": {
             "A": "no, it is a normal message",
             "B": "yes, it is spam or unsolicited promo"
+          },
+          "heuristic": {
+            "match_any": [
+              "get rich",
+              "limited offer",
+              "buy now",
+              "5000/week"
+            ],
+            "p_hit": 0.9,
+            "p_miss": 0.1
           }
         },
         "severity": {
@@ -54,7 +91,17 @@
             "safe to publish",
             "needs light edit",
             "must be blocked"
-          ]
+          ],
+          "heuristic": {
+            "match_any": [
+              "vermin",
+              "watch your back",
+              "get rich",
+              "123-45-6789"
+            ],
+            "score_hit": 2.0,
+            "score_miss": 0.5
+          }
         },
         "category": {
           "type": "choice",
@@ -66,6 +113,33 @@
             "leaky_pii": "leaks personal data",
             "spam": "spam or promo",
             "off_topic": "irrelevant or low-quality"
+          },
+          "heuristic": {
+            "match_rules": {
+              "hateful": [
+                "vermin",
+                "deport",
+                "slur"
+              ],
+              "threatening": [
+                "find you",
+                "watch your back",
+                "kill you"
+              ],
+              "leaky_pii": [
+                "ssn",
+                "123-45-6789",
+                "credit card"
+              ],
+              "spam": [
+                "get rich",
+                "limited offer",
+                "buy now",
+                "5000/week"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "safe"
           }
         }
       },

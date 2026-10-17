@@ -975,7 +975,7 @@ fn dec_given_table() -> &'static Vec<(Regex, &'static str)> {
             ),
             (
                 Regex::new(
-                    r#"^answer by rules on the field "(?P<field>[^"]+)" with hit (?P<hit>\d+(?:\.\d+)?)(?: and fallback "(?P<fallback>[^"]+)")?$"#,
+                    r#"^answer by rules on the (?:field "(?P<field>[^"]+)"|text) with hit (?P<hit>\d+(?:\.\d+)?)(?: and fallback "(?P<fallback>[^"]+)")?$"#,
                 )
                 .unwrap(),
                 "heur_match_rules",
@@ -1356,6 +1356,7 @@ pub fn decision_templates() -> &'static [(&'static str, &'static str)] {
         ("given", "answer \"<ans>\" when the text matches <patterns> with hit <hit>"),
         ("given", "answer \"<ans>\" with mid <mid> when the field \"<field>\" contains <needles>"),
         ("given", "answer by rules on the field \"<field>\" with hit <hit>"),
+        ("given", "answer by rules on the text with hit <hit>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains \"<high>\" scoring <hit> and \"<mid>\" scoring <midv> miss <miss>"),
         ("given", "score \"<ans>\" when the text contains <needles> scoring <hit> miss <miss>"),
         ("given", "score \"<ans>\" when the field \"<field>\" contains <needles> scoring <hit> miss <miss>"),
@@ -3369,7 +3370,13 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                 let lq = last_question.clone().ok_or_else(|| {
                     anyhow!("line {}: heuristic step before any question", st.line)
                 })?;
-                let field = caps["field"].to_string();
+                // P247: the field is optional, exactly as the backend reads it:
+                // with a field the rule matches that key's value, without one it
+                // matches the whole serialised state (the shape the built-in
+                // multi-class `category` handlers use, whose pick is computed from
+                // the raw text). P246 made the mid band and the score step
+                // field-less; this is the same seam for the multi-way rule step.
+                let field = caps.name("field").map(|m| m.as_str().to_string());
                 let hit: f64 = caps["hit"].to_string().parse()?;
                 let fallback = caps.name("fallback").map(|m| m.as_str().to_string());
                 let mut rules: Map<String, Value> = Map::new();
@@ -3402,7 +3409,9 @@ fn compile_decision_node(feature: &Feature, scenario: &Scenario) -> Result<Value
                     .and_then(Value::as_object_mut)
                     .ok_or_else(|| anyhow!("line {}: question {lq:?} not found", st.line))?;
                 let mut h = Map::new();
-                h.insert("field".into(), json!(field));
+                if let Some(f) = &field {
+                    h.insert("field".into(), json!(f));
+                }
                 h.insert("match_rules".into(), Value::Object(rules));
                 h.insert("p_hit".into(), json!(hit));
                 if let Some(fb) = fallback {
@@ -9337,23 +9346,28 @@ fn imp_heuristic(st: &mut ImpSteps, qname: &str, h: &Map<String, Value>) -> Resu
         return Ok(());
     }
     if has("match_rules") {
-        let field = s("field")
-            .ok_or_else(|| anyhow!("cannot import: match_rules heuristic needs a field"))?;
-        imp_tok("heuristic.field", field)?;
+        // P247: the rule step's field is optional (see the compiler arm): with no
+        // `field` the step reads `the text`, i.e. the whole serialised state. Only
+        // a *declared* field is name-checked.
+        let field = s("field");
+        if let Some(f) = field {
+            imp_tok("heuristic.field", f)?;
+        }
         let hit = imp_f64("heuristic.p_hit", h.get("p_hit"))?;
         let rules = h
             .get("match_rules")
             .and_then(Value::as_object)
             .ok_or_else(|| anyhow!("cannot import: match_rules is not an object"))?;
+        let head = match field {
+            Some(f) => format!("the field \"{f}\""),
+            None => "the text".to_string(),
+        };
         let body = match s("fallback") {
             Some(fb) => format!(
-                "answer by rules on the field \"{field}\" with hit {} and fallback \"{fb}\"",
+                "answer by rules on {head} with hit {} and fallback \"{fb}\"",
                 imp_num(hit)?
             ),
-            None => format!(
-                "answer by rules on the field \"{field}\" with hit {}",
-                imp_num(hit)?
-            ),
+            None => format!("answer by rules on {head} with hit {}", imp_num(hit)?),
         };
         let mut table = vec!["| label | needles |".to_string()];
         for (label, needles) in rules {

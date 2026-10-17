@@ -705,6 +705,118 @@ Feature: p246shapes
             "p246: feature -> spec -> feature -> spec is a fixed point on the graph",
             s46["nodes"] == s46b["nodes"],
         );
+
+        // P247: the multi-way rule step's `field` is optional, exactly as the
+        // backend already reads it. content_policy_gate's moderation `category` is a
+        // six-way pick the built-in handler computes from the whole serialised state,
+        // and `answer by rules on the field "F"` demanded a key that does not exist --
+        // the same seam P246 opened for the mid band and the score step.
+        let src47 = r#"
+@decision
+Feature: p247rules
+  Scenario: moderate
+    Given a choice question "category" asks "Best single label?"
+      | answer      | meaning |
+      | safe        | no concerns |
+      | hateful     | hate or harassment |
+      | threatening | violent threat |
+      | spam        | spam or promo |
+    And answer by rules on the text with hit 0.9 and fallback "safe"
+      | label       | needles |
+      | hateful     | "vermin", "deport" |
+      | threatening | "kill you" |
+      | spam        | "get rich" |
+    And a choice question "flavoured" asks "Which flavour?"
+      | answer | meaning |
+      | A      | no |
+      | B      | yes |
+    And answer by rules on the field "note" with hit 0.94 and fallback "A"
+      | label | needles |
+      | B     | "yes" |
+    Then label "WARM" when the answer to "category" is one of "hateful", "threatening", "spam"
+    And label "COOL" otherwise
+"#;
+        let f47 = laya_workflow::bdd::parse(src47, "<p247>").expect("parse p247 feature");
+        let s47 = laya_workflow::bdd::compile_decision(&f47, &json!({})).expect("compile p247 shapes");
+        let c47 = &s47["nodes"][0]["questions"]["category"]["heuristic"];
+        h.check(
+            "p247: `answer by rules on the text ...` writes match_rules with no field",
+            c47.get("field").is_none() && c47["match_rules"].is_object(),
+        );
+        h.eq("p247: ... at the declared hit", c47["p_hit"].clone(), json!(0.9));
+        h.eq(
+            "p247: ... and the declared fallback",
+            c47["fallback"].clone(),
+            json!("safe"),
+        );
+        h.check(
+            "p247: ... keeping the labels in declared order",
+            c47["match_rules"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<Vec<String>>()
+                == vec![
+                    "hateful".to_string(),
+                    "threatening".to_string(),
+                    "spam".to_string(),
+                ],
+        );
+        h.eq(
+            "p247: the field form still declares its field",
+            s47["nodes"][0]["questions"]["flavoured"]["heuristic"]["field"].clone(),
+            json!("note"),
+        );
+
+        // Behaviour, not shape: the declared rules own the multi-way pick.
+        let be47 = HeuristicBackend;
+        let qs47 = &s47["nodes"][0]["questions"];
+        let pick47 = |state: serde_json::Value| -> String {
+            be47.decide(&state, qs47)
+                .unwrap()
+                .answer_value("category")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        h.eq(
+            "p247: a hit picks its label",
+            pick47(json!({"text": "you vermin"})),
+            "hateful".to_string(),
+        );
+        h.eq(
+            "p247: a miss falls back to the declared label, not the `other` default",
+            pick47(json!({"text": "thanks for the help"})),
+            "safe".to_string(),
+        );
+        h.eq(
+            "p247: declared order wins over alphabetical order (`spam` < `threatening`)",
+            pick47(json!({"text": "get rich and kill you"})),
+            "threatening".to_string(),
+        );
+
+        // The inverse direction: the field-less rule step must come back out of
+        // `import`, and the round trip must be a fixed point on the graph (the shape
+        // `round-trip` / `import-check` hold the whole corpus to).
+        let back47 = laya_workflow::bdd::import_spec(&s47).expect("import the p247 spec");
+        h.check(
+            "p247: the field-less rule step round-trips through `import`",
+            back47.contains("answer by rules on the text with hit 0.9 and fallback \"safe\""),
+        );
+        h.check(
+            "p247: ... and the field form keeps its field",
+            back47.contains("answer by rules on the field \"note\" with hit 0.94 and fallback \"A\""),
+        );
+        let f47c =
+            laya_workflow::bdd::parse(&back47, "<p247b>").expect("parse the imported p247 feature");
+        let s47c = laya_workflow::bdd::compile_decision(&f47c, &json!({}))
+            .expect("recompile the imported p247 feature");
+        h.check(
+            "p247: feature -> spec -> feature -> spec is a fixed point on the graph",
+            s47["nodes"] == s47c["nodes"],
+        );
     }
 }
 
