@@ -9569,8 +9569,9 @@ pub fn test_bdd_live_decisions_backend_error(h: &mut Harness) {
 pub fn test_bdd_compare_systems(h: &mut Harness) {
     use laya_workflow::bdd::{
         agnostic_agreement, attribute_split, default_system_backends, derive_agreement,
-        diff_systems, format_diff, format_split_attribution, format_strata, rank_systems, repo_root,
-        spec_is_echo, stratify_systems, system_probe_questions, CategorySplit, LiveSummary,
+        diff_systems, format_diff, format_split_attribution, format_strata, rank_systems,
+        read_noul_at_boundary, repo_root, spec_is_echo, stratify_systems, system_probe_questions,
+        CategorySplit, LiveSummary,
         SpecLiveResult, SystemVerdict,
     };
     use laya_workflow::dsl_smoke::{expect_pins_backend_number, BACKEND_AGNOSTIC_NUMBER_KEYS};
@@ -10157,6 +10158,123 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
             && b0["agnostic_agreement"]["agreed"] == 5
             && b0["agnostic_agreement"]["comparable"] == 5
             && b0["derive_agreement"]["agreed"] == 5,
+    );
+    let _ = std::fs::remove_file(&jsonp);
+
+    // ── P243: `--model-boundary` — read the spec's `noul` gates on the model's scale ──
+    // The spec cuts a `noul` at the margin its own offline heuristics chose
+    // (`value_gte: 0.85` beside `p_hit: 0.9`), which is not the scale a trained
+    // System-1 answers on. This re-cuts only those gates, only where the spec is
+    // looser than the boundary, and never a `score` question's count gate (a line
+    // count is not a probability). Pure, so the rule pins offline.
+    let spec = json!({
+        "name": "mb",
+        "start": "n",
+        "nodes": [{
+            "name": "n",
+            "primary_q": "q_noul",
+            "questions": {
+                "q_noul": {"type": "noul", "instructions": "is it so?"},
+                "q_score": {"type": "score", "instructions": "how many?"},
+                "q_choice": {"type": "choice", "instructions": "pick", "criteria": {"A": "a"}}
+            },
+            "edge": {"condition": {"A": "STOP"}, "default": "STOP"},
+            "action": {
+                "kind": "threshold",
+                "question": "q_noul",
+                "rules": [
+                    {"when": {"question": "q_noul", "value_gte": 0.85}, "label": "A"},
+                    {"when": {"all": [
+                        {"question": "q_score", "value_gte": 500.5},
+                        {"question": "q_noul", "value_lt": 0.9}
+                    ]}, "label": "B"},
+                    {"when": {"question": "q_noul", "value_gte": 0.4}, "label": "C"},
+                    {"when": {"always": true}, "label": "D"}
+                ]
+            },
+            "min_confidence": 0.0
+        }]
+    });
+    let cut = read_noul_at_boundary(&spec, 0.5);
+    h.check(
+        "p243: a `noul` gate looser than the boundary is re-cut at it",
+        cut["nodes"][0]["action"]["rules"][0]["when"]["value_gte"] == json!(0.5),
+    );
+    h.check(
+        "p243: a `score` count gate is left exactly as written (500.5 is not a probability)",
+        cut["nodes"][0]["action"]["rules"][1]["when"]["all"][0]["value_gte"] == json!(500.5),
+    );
+    h.check(
+        "p243: a `noul` gate nested in `all` is re-cut too",
+        cut["nodes"][0]["action"]["rules"][1]["when"]["all"][1]["value_lt"] == json!(0.5),
+    );
+    h.check(
+        "p243: a gate already stricter than the boundary is left as written",
+        cut["nodes"][0]["action"]["rules"][2]["when"]["value_gte"] == json!(0.4),
+    );
+    h.check(
+        "p243: only the cuts move — the rest of the spec is byte-identical, key order kept",
+        {
+            let mut stripped = cut.clone();
+            stripped["nodes"][0]["action"]["rules"][0]["when"]["value_gte"] = json!(0.85);
+            stripped["nodes"][0]["action"]["rules"][1]["when"]["all"][1]["value_lt"] = json!(0.9);
+            stripped == spec
+        },
+    );
+    h.check(
+        "p243: the default boundary is None — the spec's own semantics, unchanged",
+        bdd::CompareSystemsOptions::default().noul_boundary.is_none(),
+    );
+
+    // End to end, offline, no live server: the reference row walks one spec with its
+    // `noul` gate re-cut at 0.5. `capabilities/rag_triage` cuts at 0.85 (beside its own
+    // `p_hit: 0.9`); asking for the model's own 0.5 boundary moves one state's label
+    // (rag_triage.feature, `human_review`), which the header and JSON both report.
+    // Note this *detunes* the reference row — its cuts are its own heuristics' scale —
+    // which is exactly the diagnostic: it is the live models the boundary is read on.
+    let jsonp = std::env::temp_dir().join(format!("laya-p243-{}.json", std::process::id()));
+    let run = std::process::Command::new(super::cli_bin())
+        .args([
+            "bdd",
+            "compare-systems",
+            "--backend",
+            "rules",
+            "--filter",
+            "capabilities/rag_triage",
+            "--model-boundary",
+            "0.5",
+            "--json",
+            &jsonp.to_string_lossy(),
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run bdd compare-systems --model-boundary");
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    h.check(
+        "p243: the header names the boundary the `noul` gates were read at",
+        run.status.code() == Some(0) && text.contains("noul read at 0.5"),
+    );
+    let rep: Value = serde_json::from_str(&std::fs::read_to_string(&jsonp).unwrap_or_default())
+        .unwrap_or(Value::Null);
+    h.check(
+        "p243: the corpus records the boundary it re-cut at, for the machine reader",
+        rep["corpus"]["noul_boundary"] == json!(0.5),
+    );
+    let b0 = &rep["backends"][0];
+    h.check(
+        "p243: re-cutting at 0.5 moves the label on one state of the one spec walked",
+        b0["kind"] == "rules"
+            && b0["summary"]["states_run"] == 4
+            && b0["agnostic_agreement"]["agreed"] == 3
+            && b0["agnostic_agreement"]["comparable"] == 4
+            && b0["state_verdicts"]
+                .as_array()
+                .map(|a| a.iter().any(|e| e["agreed"] == json!(false)))
+                .unwrap_or(false),
     );
     let _ = std::fs::remove_file(&jsonp);
 

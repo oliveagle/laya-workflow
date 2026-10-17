@@ -12448,6 +12448,7 @@ fn walk_decision_corpus(
     filter: Option<&str>,
     quiet: bool,
     derive_only: bool,
+    noul_boundary: Option<f64>,
     backend: &dyn crate::workflow::Decide,
 ) -> Result<Vec<SpecLiveResult>> {
     let mut per_spec: Vec<SpecLiveResult> = Vec::new();
@@ -12491,6 +12492,12 @@ fn walk_decision_corpus(
         if derive_only && spec_is_echo(&spec) {
             continue;
         }
+        // P243: with `--model-boundary`, re-cut every `noul` gate at that boundary
+        // before the graph is built, so the walk reads the model on its own scale.
+        let spec = match noul_boundary {
+            Some(b) => read_noul_at_boundary(&spec, b),
+            None => spec,
+        };
         let wf = match crate::spec::from_spec_with_dir(&spec, None, None) {
             Ok(w) => w,
             Err(e) => {
@@ -12619,7 +12626,7 @@ pub fn live_decisions(o: &LiveDecisionsOptions) -> Result<i32> {
         .filter(|u| !u.trim().is_empty())
         .unwrap_or_else(|| "http://127.0.0.1:18405".to_string());
     let backend = crate::backend::LayaBackend::new(&base_url);
-    let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), false, false, &backend)?;
+    let per_spec = walk_decision_corpus(&corpus, o.filter.as_deref(), false, false, None, &backend)?;
 
     let s = summarize_live(&per_spec);
     for r in &per_spec {
@@ -12724,11 +12731,25 @@ pub struct CompareSystemsOptions {
     /// carries the answer key (P240), so it measures field-name lookup, not
     /// judgement; skipping them ranks the backends on the honest basis.
     pub derive_only: bool,
+    /// P243: read every `noul` gate at this boundary instead of the value the spec
+    /// wrote. The spec's cuts are calibrated to its own offline heuristics
+    /// (`value_gte: 0.85` beside `p_hit: 0.9`), which is not the scale a trained
+    /// System-1 answers on — `Some(0.5)` asks "what would the labels be if the
+    /// model's own decision boundary decided?", the diagnostic that separates a
+    /// miscalibrated model from a wrong one. `None` (default) = the spec's semantics.
+    pub noul_boundary: Option<f64>,
 }
 
 impl Default for CompareSystemsOptions {
     fn default() -> Self {
-        Self { backends: Vec::new(), filter: None, json: None, no_preflight: false, derive_only: false }
+        Self {
+            backends: Vec::new(),
+            filter: None,
+            json: None,
+            no_preflight: false,
+            derive_only: false,
+            noul_boundary: None,
+        }
     }
 }
 
@@ -12754,6 +12775,77 @@ pub fn system_probe_questions() -> Value {
             "criteria": { "A": "yes" }
         }
     })
+}
+
+/// P243: re-cut a spec's numeric **`noul` gates** at the model's own decision boundary.
+///
+/// A `noul` answer is a probability that the question's `truthy` reading holds, and
+/// the spec cuts it at a margin the *offline heuristics* chose — `value_gte: 0.85`
+/// next to `p_hit: 0.9`, or `value_gte: 0.4` next to `p_miss: 0.1`. A trained
+/// System-1 is not on that scale: a state whose decisive question the model scores
+/// 0.44 still reads as "false" and the label flips, even though the model put that
+/// question *highest*. This rewrites only those cuts — never a `score` question's
+/// count gate (`value_gte: 500.5` on a line count is not a probability) — and only
+/// when the spec's cut is *looser* than the boundary, so a stricter-than-boundary
+/// gate (`value_gte: 0.4`) is left exactly as written. The reading it produces is a
+/// diagnostic ("what would the labels be if the model's own 0.5 boundary decided?"),
+/// not the specification's semantics. Pure, so the rule pins offline.
+pub fn read_noul_at_boundary(spec: &Value, boundary: f64) -> Value {
+    let mut out = spec.clone();
+    let Some(nodes) = out.get_mut("nodes").and_then(Value::as_array_mut) else {
+        return out;
+    };
+    for node in nodes.iter_mut() {
+        let noul: std::collections::BTreeSet<String> = node
+            .get("questions")
+            .and_then(Value::as_object)
+            .map(|o| {
+                o.iter()
+                    .filter(|(_, d)| d.get("type").and_then(Value::as_str) == Some("noul"))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if noul.is_empty() {
+            continue;
+        }
+        let Some(action) = node.get_mut("action") else { continue };
+        cut_noul_gates(action, &noul, boundary);
+    }
+    out
+}
+
+/// Clamp every `value_gte` / `value_lt` that reads a `noul` question — anywhere in
+/// the node action, including inside `all` / `any` — down to `boundary`. In place,
+/// so key order is preserved.
+fn cut_noul_gates(v: &mut Value, noul: &std::collections::BTreeSet<String>, boundary: f64) {
+    match v {
+        Value::Object(o) => {
+            let reads_noul = o
+                .get("question")
+                .and_then(Value::as_str)
+                .map(|q| noul.contains(q))
+                .unwrap_or(false);
+            if reads_noul {
+                for key in ["value_gte", "value_lt"] {
+                    if o.get(key).and_then(Value::as_f64).map(|c| c > boundary).unwrap_or(false) {
+                        if let Some(slot) = o.get_mut(key) {
+                            *slot = json!(boundary);
+                        }
+                    }
+                }
+            }
+            for (_, sub) in o.iter_mut() {
+                cut_noul_gates(sub, noul, boundary);
+            }
+        }
+        Value::Array(a) => {
+            for sub in a.iter_mut() {
+                cut_noul_gates(sub, noul, boundary);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// P242: is this `--backend` value the **offline reference backend** rather than a
@@ -13452,11 +13544,19 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 o.filter.as_deref(),
                 true,
                 o.derive_only,
+                o.noul_boundary,
                 &crate::backend::HeuristicBackend,
             )?
         } else {
             let backend = crate::backend::LayaBackend::new(url);
-            walk_decision_corpus(&corpus, o.filter.as_deref(), true, o.derive_only, &backend)?
+            walk_decision_corpus(
+                &corpus,
+                o.filter.as_deref(),
+                true,
+                o.derive_only,
+                o.noul_boundary,
+                &backend,
+            )?
         };
         v.wall_ms = t0.elapsed().as_secs_f64() * 1000.0;
         v.summary = summarize_live(&per_spec);
@@ -13479,11 +13579,15 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         Some(f) => format!("; filter {f:?}"),
         None => String::new(),
     };
-    let basis = if o.derive_only {
-        "; derive-only (echo specs skipped: their state carries the answer key)"
-    } else {
-        ""
-    };
+    let mut basis = String::new();
+    if o.derive_only {
+        basis.push_str("; derive-only (echo specs skipped: their state carries the answer key)");
+    }
+    if let Some(b) = o.noul_boundary {
+        basis.push_str(&format!(
+            "; noul read at {b} (the spec's gates are cut at the offline heuristics' p_hit, not at a trained model's scale)"
+        ));
+    }
     println!(
         "system-1 comparison over the decision corpus ({specs_registered} specs / {states_registered} states registered, {} backend(s){scope}{basis})",
         vs.len()
@@ -13578,6 +13682,8 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 "specs_registered": specs_registered,
                 "states_registered": states_registered,
                 "filter": o.filter,
+                // P243: the boundary every `noul` gate was re-cut at, when asked for.
+                "noul_boundary": o.noul_boundary,
             },
             "backends": vs.iter().map(|v| json!({
                 "url": v.url,

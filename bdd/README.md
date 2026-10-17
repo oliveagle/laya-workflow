@@ -21,6 +21,7 @@ laya-workflow bdd compare-systems           # ... + the agnostic column, per-spe
 laya-workflow bdd compare-systems           # ... + split attribution: which backend won the states they disagree on (P204)
 laya-workflow bdd compare-systems --derive-only   # ... rank on the honest basis: skip the echo specs, whose state carries the answer key (P241)
 laya-workflow bdd compare-systems --backend rules   # ... vs the spec's own offline heuristics: the reference line the models are read against (P242)
+laya-workflow bdd compare-systems --model-boundary 0.5   # ... read every `noul` at the model's own scale, not the spec's: is it miscalibrated, or wrong? (P243)
 laya-workflow bdd live                    # 29 real external websites (needs Chrome)
 ```
 

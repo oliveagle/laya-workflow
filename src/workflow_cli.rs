@@ -580,6 +580,16 @@ enum BddCmd {
         /// judgement; this skips those specs entirely.
         #[arg(long)]
         derive_only: bool,
+        /// Read every `noul` gate at this boundary instead of the value the spec
+        /// wrote. The spec's cuts are calibrated to its own offline heuristics
+        /// (`value_gte: 0.85` beside `p_hit: 0.9`), which is not the scale a trained
+        /// System-1 answers on; `--model-boundary 0.5` asks "what would the labels
+        /// be if the model's own decision boundary decided?", a diagnostic that
+        /// separates a miscalibrated model from a wrong one. Only `noul` gates are
+        /// re-cut, never a `score` count gate, and only where the spec's cut is
+        /// looser than the boundary.
+        #[arg(long)]
+        model_boundary: Option<f64>,
     },
     /// Round-trip gate: every @decision feature must compile back to the same
     /// decision-graph spec as its checked-in dsl/<cat>/<name>.json counterpart.
@@ -2812,12 +2822,14 @@ fn run_bdd(cmd: &BddCmd) -> Result<()> {
             json,
             no_preflight,
             derive_only,
+            model_boundary,
         } => bdd::compare_systems(&bdd::CompareSystemsOptions {
             backends: backend.clone(),
             filter: filter.clone(),
             json: json.clone(),
             no_preflight: *no_preflight,
             derive_only: *derive_only,
+            noul_boundary: *model_boundary,
         })?,
         BddCmd::RoundTrip { json } => {
             bdd::round_trip(&bdd::RoundTripOptions { json: json.clone() })?
