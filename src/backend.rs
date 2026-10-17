@@ -429,6 +429,81 @@ impl Decide for AnswersBackend {
 /// parity tests use `LayaBackend`.
 pub struct HeuristicBackend;
 
+/// P244: the question ids the built-in heuristic backend answers by a
+/// **hand-written handler**. The match in `Decide for HeuristicBackend` keys on
+/// the question id (`qid.as_str()`), not on the declared type, so this is the
+/// list of ids that have a real answer in Rust.
+///
+/// A question id that is not listed here *and* carries no spec-declared
+/// `heuristic` falls through to the type-generic default (`default_choice` /
+/// `bscore(1.0)` / `noul` at 0.5) — that is a *shape*, not an answer. Nothing but
+/// a model answers such a question, which is what `bdd::AnswerSource` reads this
+/// list to say.
+///
+/// The list is duplicated from the match arms on purpose:
+/// `workflow_tests::test_bdd_answer_source` scans `src/backend.rs` and fails when
+/// the two drift, so a new arm cannot land without updating the list — the same
+/// rule the docs follow, that a count nobody recomputes rots on the next edit.
+pub const BUILTIN_QUESTION_HANDLERS: &[&str] = &[
+    "is_destructive",
+    "is_exfiltration",
+    "is_hate",
+    "is_threat",
+    "is_pii",
+    "is_spam",
+    "spam",
+    "phishing",
+    "severity",
+    "has_typo",
+    "is_sensitive",
+    "tone",
+    "clarity",
+    "professionalism",
+    "urgency",
+    "sentiment",
+    "needs_reply",
+    "intent_match",
+    "category",
+    "risk",
+    "is_prohibited",
+    "pii_public_high",
+    "pii_public_low",
+    "age_blocking",
+    "age_review",
+    "context_blocking",
+    "context_review",
+    "effective_severity",
+    "intent",
+    "behaviour",
+    "mfa_failed_pending",
+    "composite_risk",
+    "service_name_safe",
+    "health_path_safe",
+    "canary_within_cap",
+    "rollback_threshold_ok",
+    "stage_shape_ok",
+    "hold_within_cap",
+    "canary_risk",
+    "sanctioned_country",
+    "crypto_category",
+    "crypto_exchange_counterparty",
+    "high_risk_country",
+    "aml_risk",
+    "known_signature",
+    "failed_login_velocity",
+    "port_scan_window",
+    "impossible_travel",
+    "unusual_country",
+    "off_hours_access",
+    "intrusion_verdict",
+];
+
+/// P244: does the built-in heuristic backend answer this question id by name
+/// (as opposed to falling through to the type-generic default)?
+pub fn has_builtin_handler(qid: &str) -> bool {
+    BUILTIN_QUESTION_HANDLERS.contains(&qid)
+}
+
 /// Count words in the **user-authored prose** of a state, not the JSON envelope.
 ///
 /// Scoring `clarity` off the serialised state counted field names and quotes, so

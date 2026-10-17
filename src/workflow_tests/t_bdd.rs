@@ -10278,6 +10278,203 @@ pub fn test_bdd_compare_systems(h: &mut Harness) {
     );
     let _ = std::fs::remove_file(&jsonp);
 
+    // ── P244: where the answer the walk consumed comes from ──
+    // P240's echo / derivation pair was still a lump: a `score` question answered by
+    // `extract_numeric` is the *same* lookup as an `answer_field`, a `match_regex`
+    // question is a rule the spec declares, and a question with no spec heuristic at
+    // all is often answered by the built-in backend's hand-written handler. `AnswerSource`
+    // splits the remainder by who actually answers; only `model` tests System-1 judgement.
+    use laya_workflow::bdd::{
+        format_sources, question_source, source_agreement, source_ledger, spec_source, AnswerSource,
+    };
+    h.check(
+        "p244: a `call` node's question is the capability's outcome, not a judgement",
+        question_source(Some("call"), "whatever", &json!({})) == AnswerSource::Capability,
+    );
+    h.check(
+        "p244: `answer_field` is a lookup — the state carries the answer",
+        question_source(None, "intent", &json!({"heuristic": {"answer_field": "intent"}}))
+            == AnswerSource::Carried,
+    );
+    h.check(
+        "p244: `extract_numeric` is the same lookup as `answer_field` (P240 tested only one)",
+        question_source(None, "count", &json!({"heuristic": {"extract_numeric": "n"}}))
+            == AnswerSource::Carried,
+    );
+    h.check(
+        "p244: a declared `match_any` is a rule the spec computes, not a lookup",
+        question_source(None, "verdict", &json!({"heuristic": {"match_any": ["a", "b"]}}))
+            == AnswerSource::Rule,
+    );
+    h.check(
+        "p244: no spec rule but a built-in handler is the migration backlog (behaviour in Rust)",
+        question_source(None, "risk", &json!({})) == AnswerSource::Builtin,
+    );
+    h.check(
+        "p244: neither a rule nor a handler — nothing but a model answers it",
+        question_source(None, "zzz_not_a_handler", &json!({})) == AnswerSource::Model,
+    );
+    h.check(
+        "p244: a spec's source is its strongest question (one model question makes it a model spec)",
+        spec_source(&json!({"nodes": [
+            {"name": "n0", "questions": {"c": {"heuristic": {"answer_field": "x"}}}},
+            {"name": "n1", "questions": {"m": {"type": "choice"}}}
+        ]})) == AnswerSource::Model,
+    );
+    h.check(
+        "p244: strength order is capability < carried < rule < builtin < model",
+        AnswerSource::Capability < AnswerSource::Carried
+            && AnswerSource::Carried < AnswerSource::Rule
+            && AnswerSource::Rule < AnswerSource::Builtin
+            && AnswerSource::Builtin < AnswerSource::Model,
+    );
+    h.check(
+        "p244: the ledger counts a spec only when it has a comparable state",
+        source_ledger(&[
+            SpecLiveResult {
+                source: AnswerSource::Rule,
+                label_agreements: vec![("a".into(), true)],
+                ..Default::default()
+            },
+            SpecLiveResult {
+                source: AnswerSource::Model,
+                label_agreements: vec![],
+                ..Default::default()
+            },
+        ]) == vec![(AnswerSource::Rule, 1, 1)],
+    );
+    h.check(
+        "p244: the per-backend by-source split counts agreements over comparable states",
+        source_agreement(&SystemVerdict {
+            url: "http://x".into(),
+            per_spec: vec![SpecLiveResult {
+                source: AnswerSource::Model,
+                label_agreements: vec![("a".into(), true), ("b".into(), false)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }) == vec![(AnswerSource::Model, 1, 2)],
+    );
+    h.check(
+        "p244: the rendered section names each source and its count",
+        {
+            let s = format_sources(
+                &[(AnswerSource::Model, 1, 6)],
+                &[("rules", vec![(AnswerSource::Model, 6, 6)])],
+            );
+            s.contains("answer source over 1 spec(s) / 6 state(s)")
+                && s.contains("model")
+                && s.contains("rules")
+                && s.contains("model 6/6")
+        },
+    );
+
+    // The const list and the match arms must not drift: scan `src/backend.rs` for the
+    // arm heads of the `match qid.as_str()` in `HeuristicBackend` and require them to be
+    // exactly `BUILTIN_QUESTION_HANDLERS`. A new hand-written handler cannot land without
+    // updating the list — the same rule the docs follow, that a count nobody recomputes
+    // rots on the next edit.
+    {
+        let src = std::fs::read_to_string(repo_root().join("src/backend.rs"))
+            .expect("read src/backend.rs");
+        let mut ids: Vec<String> = Vec::new();
+        let mut in_match = false;
+        for line in src.lines() {
+            if !in_match {
+                if line.contains("match qid.as_str() {") {
+                    in_match = true;
+                }
+                continue;
+            }
+            if line.starts_with("            }") {
+                break; // closes the match
+            }
+            if !line.starts_with("                \"") || !line.contains("=>") {
+                continue;
+            }
+            let head = line.split("=>").next().unwrap_or("");
+            if head.contains(" if ") {
+                continue; // the type-generic default arm, not a named handler
+            }
+            for (i, part) in head.split('"').enumerate() {
+                if i % 2 == 1 && !part.is_empty() {
+                    ids.push(part.to_string());
+                }
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        let mut declared: Vec<String> = laya_workflow::backend::BUILTIN_QUESTION_HANDLERS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        declared.sort();
+        h.check(
+            "p244: `BUILTIN_QUESTION_HANDLERS` is exactly the match arms in `src/backend.rs`",
+            ids == declared,
+        );
+        h.check(
+            "p244: the built-in handler list holds 51 ids",
+            declared.len() == 51,
+        );
+    }
+
+    // End to end, offline (the `rules` row, no live server): `apps/draft_scorer` is a
+    // *model* spec — six states nothing but a model answers — and the report renders the
+    // new section. `capabilities/exec_preflight_guard` runs a `call`, so its answer is the
+    // capability's outcome, not a judgement.
+    let jsonp = std::env::temp_dir().join(format!("laya-p244-{}.json", std::process::id()));
+    let run = std::process::Command::new(super::cli_bin())
+        .args([
+            "bdd", "compare-systems", "--backend", "rules",
+            "--filter", "apps/draft_scorer", "--json", &jsonp.to_string_lossy(),
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run bdd compare-systems --filter apps/draft_scorer");
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    h.check(
+        "p244: the report renders the `answer source` section",
+        run.status.code() == Some(0)
+            && text.contains("answer source over 1 spec(s) / 6 state(s)"),
+    );
+    let rep: Value = serde_json::from_str(&std::fs::read_to_string(&jsonp).unwrap_or_default())
+        .unwrap_or(Value::Null);
+    h.check(
+        "p244: `apps/draft_scorer` is one model spec — six states nothing but a model answers",
+        rep["corpus"]["source_ledger"]["model"]["specs"] == json!(1)
+            && rep["corpus"]["source_ledger"]["model"]["states"] == json!(6),
+    );
+    h.check(
+        "p244: the reference row agrees on all six model states (rules answers them by construction)",
+        rep["backends"][0]["sources"]["model"]["agreed"] == json!(6)
+            && rep["backends"][0]["sources"]["model"]["comparable"] == json!(6),
+    );
+    let _ = std::fs::remove_file(&jsonp);
+
+    let jsonp2 = std::env::temp_dir().join(format!("laya-p244b-{}.json", std::process::id()));
+    let run2 = std::process::Command::new(super::cli_bin())
+        .args([
+            "bdd", "compare-systems", "--backend", "rules",
+            "--filter", "capabilities/exec_preflight_guard", "--json", &jsonp2.to_string_lossy(),
+        ])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("run bdd compare-systems --filter capabilities/exec_preflight_guard");
+    let rep2: Value = serde_json::from_str(&std::fs::read_to_string(&jsonp2).unwrap_or_default())
+        .unwrap_or(Value::Null);
+    h.check(
+        "p244: a capability spec is `capability`, never `model`",
+        run2.status.code() == Some(0)
+            && rep2["corpus"]["source_ledger"]["capability"]["specs"] == json!(1)
+            && rep2["corpus"]["source_ledger"].get("model").is_none(),
+    );
+    let _ = std::fs::remove_file(&jsonp2);
+
     // ── P204: attribute the states two backends disagree on ──
     // a = :18400-style winner on cat2, b = the other on cat1; s3 is pinned.
     let ma = mk_stratum(

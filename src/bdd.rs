@@ -12294,6 +12294,14 @@ pub struct SpecLiveResult {
     /// confusion, never to a wrong judgement. `compare-systems` reports these
     /// apart from the derivation specs so the hard tail is read honestly.
     pub echo: bool,
+    /// P244: the strongest [`AnswerSource`] any question in this spec needs — the
+    /// honest basis split one level finer than P240's echo / derivation pair.
+    /// `Model` means the spec asks at least one question nothing but a model can
+    /// answer; `Builtin` means the answer lives in the backend's hand-written
+    /// handlers, not in the spec; `Carried` means the state carries it; `Rule`
+    /// means the spec declares a rule over the state; `Capability` means the
+    /// node's `call` action answers it.
+    pub source: AnswerSource,
 }
 
 /// Did a completed walk actually *terminate*? `ResilientWorkflow::run` returns
@@ -12520,7 +12528,12 @@ fn walk_decision_corpus(
         // cannot exercise the spec, not that the deployed model regressed.
         // Evaluated once per spec: they depend only on the spec and the machine.
         let env_gap = live_env_gap(&spec);
-        let mut res = SpecLiveResult { rel, echo: spec_is_echo(&spec), ..Default::default() };
+        let mut res = SpecLiveResult {
+            rel,
+            echo: spec_is_echo(&spec),
+            source: spec_source(&spec),
+            ..Default::default()
+        };
         for (label, st) in state_map {
             if let Some(why) = &env_gap {
                 if !quiet {
@@ -13118,6 +13131,223 @@ pub fn spec_is_echo(spec: &Value) -> bool {
     asked > 0
 }
 
+/// P244: where a decision question's answer actually comes from.
+///
+/// P240 split the corpus into echo specs (the state carries the answer key) and
+/// derivation specs ("the model must judge"), and P241/P242 ranked on the
+/// derivation remainder. The remainder was still a lump: a `score` question
+/// answered by `heuristic.extract_numeric` is the *same* lookup as an
+/// `answer_field` (P240's test only looked for the latter), a `match_regex`
+/// question is a rule the spec declares, and a question with no spec heuristic at
+/// all is often answered by the built-in backend's **hand-written** handler —
+/// behaviour that lives in Rust, not in the spec.
+///
+/// Declared order is the strength order (`Ord`): a spec that asks even one
+/// question a model must answer is a *model* spec.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum AnswerSource {
+    /// The node runs a capability (`action.kind == "call"`): the engine runs it
+    /// and its outcome is the answer, so the spec declares no judgement here.
+    #[default]
+    Capability,
+    /// The state carries the answer verbatim — `heuristic.answer_field` (P240's
+    /// echo test) or `heuristic.extract_numeric`, its `score` twin. A lookup.
+    Carried,
+    /// The spec declares a rule that computes the answer from the state
+    /// (`match_any` / `match_regex` / `match_rules` / the `mid` bands).
+    Rule,
+    /// No spec-declared answer, but the built-in backend has a hand-written
+    /// handler for this question id (see
+    /// [`crate::backend::BUILTIN_QUESTION_HANDLERS`]): the behaviour lives in
+    /// Rust. This is the migration backlog — a decision the spec does not carry.
+    Builtin,
+    /// Neither a declared rule nor a handler: nothing but a model (or the
+    /// type-generic default) answers it. The only states that test System-1
+    /// judgement.
+    Model,
+}
+
+impl AnswerSource {
+    /// The wire/print name. Stable — the JSON keys and the report line use it.
+    pub fn label(self) -> &'static str {
+        match self {
+            AnswerSource::Capability => "capability",
+            AnswerSource::Carried => "carried",
+            AnswerSource::Rule => "rule",
+            AnswerSource::Builtin => "builtin",
+            AnswerSource::Model => "model",
+        }
+    }
+}
+
+/// P244: where one question's answer comes from, from the spec alone.
+///
+/// `node_kind` is the node's `action.kind` (`None` when the node carries no
+/// action — a routing node still needs its question answered, so it is
+/// classified like any other). A question on a `call` node is the capability's
+/// outcome; otherwise the spec's own declaration decides, and only a question the
+/// spec does not declare and the built-in backend has no handler for is
+/// [`AnswerSource::Model`].
+pub fn question_source(node_kind: Option<&str>, qid: &str, qdef: &Value) -> AnswerSource {
+    if node_kind == Some("call") {
+        return AnswerSource::Capability;
+    }
+    let h = qdef.get("heuristic");
+    let declared = h.and_then(Value::as_object).is_some_and(|o| !o.is_empty());
+    if declared {
+        let h = h.unwrap();
+        if h.get("answer_field").is_some() || h.get("extract_numeric").is_some() {
+            return AnswerSource::Carried;
+        }
+        return AnswerSource::Rule;
+    }
+    if crate::backend::has_builtin_handler(qid) {
+        return AnswerSource::Builtin;
+    }
+    AnswerSource::Model
+}
+
+/// P244: one spec's source — the **strongest** one any of its questions needs.
+/// A spec is a *model* spec if any question in it is one a model must answer.
+pub fn spec_source(spec: &Value) -> AnswerSource {
+    let mut out = AnswerSource::Capability;
+    let mut seen = false;
+    let Some(nodes) = spec.get("nodes").and_then(Value::as_array) else {
+        return out;
+    };
+    for n in nodes {
+        let kind = n.get("action").and_then(|a| a.get("kind")).and_then(Value::as_str);
+        let Some(qs) = n.get("questions").and_then(Value::as_object) else {
+            continue;
+        };
+        for (qid, qdef) in qs {
+            seen = true;
+            let src = question_source(kind, qid, qdef);
+            if src > out {
+                out = src;
+            }
+        }
+    }
+    if seen {
+        out
+    } else {
+        AnswerSource::Capability
+    }
+}
+
+/// P244: one spec's source, split per question id — the detail the report's
+/// per-spec line cannot show (a spec can carry a lookup *and* a model question).
+pub fn spec_question_sources(spec: &Value) -> Vec<(String, String, AnswerSource)> {
+    let mut out = Vec::new();
+    let Some(nodes) = spec.get("nodes").and_then(Value::as_array) else {
+        return out;
+    };
+    for n in nodes {
+        let kind = n.get("action").and_then(|a| a.get("kind")).and_then(Value::as_str);
+        let node = n.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+        let Some(qs) = n.get("questions").and_then(Value::as_object) else {
+            continue;
+        };
+        for (qid, qdef) in qs {
+            out.push((node.clone(), qid.clone(), question_source(kind, qid, qdef)));
+        }
+    }
+    out
+}
+
+/// P244: the corpus ledger — per source, how many specs and how many comparable
+/// states carry it. Read from any one backend's `per_spec` (all of them walk the
+/// same corpus).
+pub fn source_ledger(per_spec: &[SpecLiveResult]) -> Vec<(AnswerSource, usize, usize)> {
+    let mut agg: std::collections::BTreeMap<AnswerSource, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for r in per_spec {
+        if r.label_agreements.is_empty() {
+            continue;
+        }
+        let e = agg.entry(r.source).or_insert((0, 0));
+        e.0 += 1;
+        e.1 += r.label_agreements.len();
+    }
+    agg.into_iter().map(|(k, (a, b))| (k, a, b)).collect()
+}
+
+/// P244: one backend's agreement **per source** — the honest basis split by who
+/// the question belonged to. `carried` misses are field-name confusion, `rule`
+/// misses are a declared rule the model did not follow, and `model` misses are the
+/// only ones that mean the model judged wrong.
+pub fn source_agreement(v: &SystemVerdict) -> Vec<(AnswerSource, usize, usize)> {
+    let mut agg: std::collections::BTreeMap<AnswerSource, (usize, usize)> =
+        std::collections::BTreeMap::new();
+    for r in &v.per_spec {
+        let e = agg.entry(r.source).or_insert((0, 0));
+        for (_, ok) in &r.label_agreements {
+            e.1 += 1;
+            if *ok {
+                e.0 += 1;
+            }
+        }
+    }
+    agg.into_iter()
+        .filter(|(_, (_, all))| *all > 0)
+        .map(|(k, (a, b))| (k, a, b))
+        .collect()
+}
+
+/// P244: the rendered "where the answer comes from" section.
+pub fn format_sources(
+    ledger: &[(AnswerSource, usize, usize)],
+    per_backend: &[(&str, Vec<(AnswerSource, usize, usize)>)],
+) -> String {
+    if ledger.is_empty() {
+        return String::new();
+    }
+    let note = |s: AnswerSource| -> &'static str {
+        match s {
+            AnswerSource::Capability => {
+                "the node runs a capability (`call`); its outcome is the answer"
+            }
+            AnswerSource::Carried => {
+                "the state carries it: a named field copied verbatim (`answer_field` / `extract_numeric`)"
+            }
+            AnswerSource::Rule => {
+                "the spec declares a rule that computes it from the state"
+            }
+            AnswerSource::Builtin => {
+                "no spec rule - the built-in backend's hand-written handler answers it (behaviour in Rust, not in the spec)"
+            }
+            AnswerSource::Model => {
+                "neither a rule nor a handler: nothing but a model answers it"
+            }
+        }
+    };
+    let specs: usize = ledger.iter().map(|(_, s, _)| s).sum();
+    let states: usize = ledger.iter().map(|(_, _, t)| t).sum();
+    let mut out = format!(
+        "answer source over {specs} spec(s) / {states} state(s) - where the answer the walk consumed comes from:\n"
+    );
+    for (src, n_specs, n_states) in ledger {
+        out.push_str(&format!(
+            "      {:<10} {:>4} spec(s) / {:>4} state(s)   {}\n",
+            src.label(),
+            n_specs,
+            n_states,
+            note(*src)
+        ));
+    }
+    if !per_backend.is_empty() {
+        out.push_str("  agreement by source, per ranked backend:\n");
+        for (url, rows) in per_backend {
+            let mut parts: Vec<String> = Vec::new();
+            for (src, ok, all) in rows {
+                parts.push(format!("{} {ok}/{all}", src.label()));
+            }
+            out.push_str(&format!("      {:<28}  {}\n", url, parts.join("   ")));
+        }
+    }
+    out
+}
+
 /// P203: one spec's comparable states, **split by whether the expectation is
 /// one another backend could ever meet**. `agnostic` states are routing / label
 /// / step-count assertions — a fair basis for comparing models. `pinned` states
@@ -13568,6 +13798,15 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
     let ranking = rank_systems(&vs);
     let rank_of: std::collections::HashMap<usize, usize> =
         ranking.iter().enumerate().map(|(pos, &i)| (i, pos + 1)).collect();
+    // P244: the corpus ledger by answer source. One backend's `per_spec` is enough
+    // — every backend walks the same specs; prefer a ranked one so the ledger
+    // matches the table above it.
+    let source_ledger: Vec<(AnswerSource, usize, usize)> = ranking
+        .first()
+        .copied()
+        .or_else(|| vs.iter().position(|v| v.walked))
+        .map(|i| source_ledger(&vs[i].per_spec))
+        .unwrap_or_default();
     let specs_registered = corpus.decision_specs;
     let states_registered: usize = corpus
         .states
@@ -13676,6 +13915,20 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
         print!("{}", format_strata(&stratify_systems(&vs, &ranking), 5));
     }
 
+    // P244: P240's echo / derivation pair was still a lump. Where does the answer
+    // the walk consumed actually come from — the state (a lookup), a rule the spec
+    // declares, the backend's own hand-written handlers, a capability the node
+    // runs, or a model? The `model` line is the only part of the corpus that tests
+    // System-1 judgement, and `builtin` is the migration backlog (a decision that
+    // lives in Rust rather than in the spec).
+    if !source_ledger.is_empty() {
+        let per_backend: Vec<(&str, Vec<(AnswerSource, usize, usize)>)> = ranking
+            .iter()
+            .map(|&i| (vs[i].url.as_str(), source_agreement(&vs[i])))
+            .collect();
+        print!("{}", format_sources(&source_ledger, &per_backend));
+    }
+
     if let Some(path) = &o.json {
         let report = json!({
             "corpus": {
@@ -13684,6 +13937,10 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                 "filter": o.filter,
                 // P243: the boundary every `noul` gate was re-cut at, when asked for.
                 "noul_boundary": o.noul_boundary,
+                // P244: how many specs / comparable states each answer source holds.
+                "source_ledger": source_ledger.iter().map(|(s, n, t)| {
+                    (s.label().to_string(), json!({"specs": n, "states": t}))
+                }).collect::<serde_json::Map<String, Value>>(),
             },
             "backends": vs.iter().map(|v| json!({
                 "url": v.url,
@@ -13712,6 +13969,11 @@ pub fn compare_systems(o: &CompareSystemsOptions) -> Result<i32> {
                     "agreed": agnostic_agreement(v).0,
                     "comparable": agnostic_agreement(v).1,
                 },
+                // P244: this backend's agreement split by answer source — `model`
+                // is the only bucket where a miss means the model judged wrong.
+                "sources": source_agreement(v).iter().map(|(s, a, c)| {
+                    (s.label().to_string(), json!({"agreed": a, "comparable": c}))
+                }).collect::<serde_json::Map<String, Value>>(),
                 "derive_agreement": {
                     "agreed": derive_agreement(v).0,
                     "comparable": derive_agreement(v).1,
