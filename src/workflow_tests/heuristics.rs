@@ -556,6 +556,56 @@ pub fn test_answer_field_authority(h: &mut Harness) {
             "p41: a multi-node state with no expect entry is rejected",
             !laya_workflow::dsl_smoke::missing_trace_pins(&Value::Null, 2).is_empty(),
         );
+
+        // P245: a declared `match_any` / `match_rules` / `extract_numeric` heuristic must
+        // win over a *named* Rust handler for the same question id, exactly as
+        // `answer_field` does above. Before P245 the named arms sat between the
+        // `answer_field` arm and the `match_*` guards, so a spec that migrated a
+        // built-in question (`risk`, `is_destructive`, …) was silently ignored — the
+        // "new project == new JSON only" promise was false precisely where it mattered.
+        h.check(
+            "p245: `risk` still has a named handler, so the probe below is meaningful",
+            laya_workflow::backend::has_builtin_handler("risk"),
+        );
+        let q_risk = json!({"risk": {"type": "score", "instructions": "how risky?",
+            "criteria": ["low", "mid", "high"],
+            "heuristic": {"match_any": ["zzz_unique_marker"], "score_hit": 3.0, "score_miss": 0.0}}});
+        let v_hit = be.decide(&json!({"note": "zzz_unique_marker"}), &q_risk).unwrap();
+        h.check(
+            "p245: a declared `match_any` beats the named `risk` handler on a hit",
+            v_hit.answer_value("risk").unwrap().as_f64() == Some(3.0),
+        );
+        let v_miss = be.decide(&json!({"note": "nothing"}), &q_risk).unwrap();
+        h.check(
+            "p245: ... and on a miss — the declared heuristic owns the answer outright",
+            v_miss.answer_value("risk").unwrap().as_f64() == Some(0.0),
+        );
+        // A question with no declaration still falls to the named handler (0.2 here):
+        // the reordering changes *precedence*, not the default.
+        let q_plain = json!({"risk": {"type": "score", "instructions": "how risky?",
+            "criteria": ["low", "mid", "high"]}});
+        let v_plain = be.decide(&json!({"note": "nothing"}), &q_plain).unwrap();
+        h.check(
+            "p245: with no declaration the named handler is still the default (risk = 0.2)",
+            v_plain.answer_value("risk").unwrap().as_f64() == Some(0.2),
+        );
+        // And the *order* itself is pinned, so no later edit can quietly move the
+        // guards back behind the named handlers: in `src/backend.rs` the
+        // `answer_field` arm comes first, then `match_rules`, then `match_any`, and
+        // only then the first literal question-id arm.
+        {
+            let src = std::fs::read_to_string(laya_workflow::bdd::repo_root().join("src/backend.rs"))
+                .expect("read src/backend.rs");
+            let pos = |needle: &str| src.find(needle).unwrap_or_else(|| panic!("missing {needle}"));
+            let answer_field = pos("h.get(\"answer_field\")");
+            let match_rules = pos("h.get(\"match_rules\")");
+            let match_any = pos("h.get(\"match_any\")");
+            let first_literal = pos("\"is_destructive\" => {");
+            h.check(
+                "p245: the declared-heuristic guards sit before the named-handler arms",
+                answer_field < match_rules && match_rules < match_any && match_any < first_literal,
+            );
+        }
     }
 }
 
