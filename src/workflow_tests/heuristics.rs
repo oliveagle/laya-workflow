@@ -1190,6 +1190,92 @@ Feature: p250shapes
             ),
             (45.0, 0.02, 0.02, 0.9),
         );
+
+        // P254: migrate support_ticket_router_hybrid without another Rust arm.
+        // The checked-in category ladder includes shipping/account/hr even though
+        // this node does not accept them as edges: the old shared category handler
+        // returned those ids too, so preserving the fail-closed behaviour matters
+        // more than making an unrelated text “nicer”. Severity keeps the handler's
+        // odd-but-real four-token high-score rule and its 0.5 miss.
+        let f54 = laya_workflow::bdd::parse(
+            include_str!("../../bdd/workflows/routing/support_ticket_router_hybrid.feature"),
+            "<p254-ticket-hybrid>",
+        )
+        .expect("parse the checked-in ticket hybrid feature");
+        let s54 = laya_workflow::bdd::compile_decision(&f54, &json!({}))
+            .expect("compile the checked-in ticket hybrid feature");
+        let qs54 = json!({
+            "category": s54["nodes"][0]["questions"]["category"].clone(),
+            "severity": s54["nodes"][2]["questions"]["severity"].clone(),
+        });
+        let mut old54 = qs54.clone();
+        for q in old54.as_object_mut().expect("ticket questions").values_mut() {
+            q.as_object_mut().expect("question object").remove("heuristic");
+        }
+        let be54 = HeuristicBackend;
+        let p54_states = [
+            json!({"text":"outage"}),
+            json!({"text":"refund"}),
+            json!({"text":"pricing"}),
+            json!({"text":"package"}),
+            json!({"text":"login"}),
+            json!({"text":"payroll"}),
+            json!({"text":"production"}),
+            json!({"text":"outage and refund"}),
+        ];
+        for state in p54_states.iter() {
+            let before = be54.decide(state, &old54).expect("old ticket handlers");
+            let after = be54.decide(state, &qs54).expect("declared ticket rules");
+            let category_keys =
+                ["billing", "technical", "sales", "shipping", "account", "hr", "other"];
+            let equivalent = ["category", "severity"].iter().all(|qid| {
+                let answer_same = before.answer_value(qid).ok() == after.answer_value(qid).ok();
+                let conf_same = (before.confidence(qid).unwrap_or(-1.0)
+                    - after.confidence(qid).unwrap_or(-2.0))
+                    .abs()
+                        < 1e-12;
+                let keys: Vec<&str> = if *qid == "category" {
+                    category_keys.to_vec()
+                } else {
+                    vec!["0", "1", "2"]
+                };
+                let probs_same = keys.iter().all(|k| {
+                    (before.prob(qid, k).unwrap_or(-1.0)
+                        - after.prob(qid, k).unwrap_or(-2.0))
+                    .abs()
+                        < 1e-12
+                });
+                answer_same && conf_same && probs_same
+            });
+            h.check(
+                "p254: ticket category/severity match the old handlers",
+                equivalent,
+            );
+        }
+        let miss54 = be54
+            .decide(&json!({"text":"outage with no risk words"}), &qs54)
+            .expect("ticket severity miss");
+        h.eq(
+            "p254: a severity miss keeps the handler's ordinal read-out",
+            (
+                miss54.answer_value("severity").unwrap().as_f64().unwrap(),
+                miss54.confidence("severity").unwrap(),
+                miss54.prob("severity", "2").unwrap(),
+            ),
+            (0.5, 0.833, 0.5),
+        );
+        let hit54 = be54
+            .decide(&json!({"text":"outage and 123-45-6789"}), &qs54)
+            .expect("ticket severity hit");
+        h.eq(
+            "p254: a severity hit keeps the handler's high-band read-out",
+            (
+                hit54.answer_value("severity").unwrap().as_f64().unwrap(),
+                hit54.confidence("severity").unwrap(),
+                hit54.prob("severity", "2").unwrap(),
+            ),
+            (2.0, 1.0, 1.0),
+        );
     }
 }
 

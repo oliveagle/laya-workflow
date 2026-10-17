@@ -1,27 +1,15 @@
 {
   "name": "support_ticket_router_hybrid",
-  "description": "Hybrid support-ticket routing: cheap heuristic substring classify first; escalate 'other' (no keyword hit) to on-device Needle 3 with per-action tools + regex triggers (the pattern the A/B bench proved: needle-only 60%, hybrid 75%).",
-  "dsl_version": 2,
+  "_bdd": {
+    "feature": "support_ticket_router_hybrid",
+    "feature_path": "bdd/workflows/routing/support_ticket_router_hybrid.feature",
+    "mode": "decision"
+  },
+  "description": "Port of support_ticket_router_hybrid: converted from dsl/routing/support_ticket_router_hybrid.json (BDD round-trip).",
   "start": "classify",
   "max_iterations": 20,
   "convergence_window": 5,
   "convergence_eps": 0.0001,
-  "policy": {
-    "allow_exec": false,
-    "allow_hosts": [],
-    "allow_paths": [
-      "${env.HOME}"
-    ],
-    "max_timeout_ms": 20000,
-    "max_output": 65536
-  },
-  "capabilities": {
-    "cls": {
-      "kind": "needle",
-      "op": "complete",
-      "cact": "${env.NEEDLE3_CACT}"
-    }
-  },
   "nodes": [
     {
       "name": "classify",
@@ -35,6 +23,87 @@
             "technical": "bugs, outages, system errors",
             "sales": "pricing, new contracts",
             "other": "everything else"
+          },
+          "heuristic": {
+            "match_rules_all": {
+              "technical": [
+                [
+                  [
+                    "outage",
+                    "500",
+                    "hotfix",
+                    "incident",
+                    "prod",
+                    "unavailable"
+                  ]
+                ]
+              ],
+              "billing": [
+                [
+                  [
+                    "refund",
+                    "invoice",
+                    "billed",
+                    "payment",
+                    "duplicate charge"
+                  ]
+                ]
+              ],
+              "sales": [
+                [
+                  [
+                    "pricing",
+                    "demo",
+                    "purchase",
+                    "quote",
+                    "trial"
+                  ]
+                ]
+              ],
+              "shipping": [
+                [
+                  [
+                    "package",
+                    "parcel",
+                    "delivery",
+                    "deliver",
+                    "courier",
+                    "shipment",
+                    "shipping",
+                    "arrived",
+                    "arrive",
+                    "customs",
+                    "tracking"
+                  ]
+                ]
+              ],
+              "account": [
+                [
+                  [
+                    "login",
+                    "password",
+                    "access",
+                    "profile",
+                    "reset"
+                  ]
+                ]
+              ],
+              "hr": [
+                [
+                  [
+                    "leave",
+                    "payroll",
+                    "hiring",
+                    "vacation",
+                    "pto"
+                  ]
+                ]
+              ]
+            },
+            "p_hit": 0.9,
+            "p_miss": 0.02,
+            "fallback": "other",
+            "p_fallback": 0.9
           }
         }
       },
@@ -79,7 +148,6 @@
       },
       "min_confidence": 0.0,
       "max_retries": 1,
-      "has_action": true,
       "action": {
         "kind": "call",
         "capability": "cls",
@@ -162,7 +230,18 @@
             "minor",
             "degraded",
             "outage"
-          ]
+          ],
+          "heuristic": {
+            "score_rules": {
+              "2": [
+                "vermin",
+                "watch your back",
+                "get rich",
+                "123-45-6789"
+              ]
+            },
+            "score_miss": 0.5
+          }
         }
       },
       "edge": {
@@ -176,12 +255,14 @@
         "rules": [
           {
             "when": {
+              "question": "severity",
               "value_gte": 1.5
             },
             "label": "PAGE_ONCALL"
           },
           {
             "when": {
+              "question": "severity",
               "value_gte": 0.5
             },
             "label": "QUEUE_TODAY"
@@ -195,5 +276,21 @@
         ]
       }
     }
-  ]
+  ],
+  "policy": {
+    "allow_exec": false,
+    "allow_hosts": [],
+    "allow_paths": [
+      "${env.HOME}"
+    ],
+    "max_timeout_ms": 20000,
+    "max_output": 65536
+  },
+  "capabilities": {
+    "cls": {
+      "kind": "needle",
+      "op": "complete",
+      "cact": "${env.NEEDLE3_CACT}"
+    }
+  }
 }
