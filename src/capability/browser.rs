@@ -26,10 +26,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use super::browser_config::BrowserProfileConfig;
 use super::human;
 use super::util::{stamp_downloaded, urlencoding_utf8};
 use super::{
-    bounded_timeout, check_host, expand_required_str, host_of, stringify, truncate, Policy,
+    bounded_timeout, check_host, expand, expand_required_str, host_of, stringify, truncate, Policy,
 };
 
 #[derive(Clone, Debug)]
@@ -552,6 +553,38 @@ fn ensure_extension_loaded(endpoint: &str, extension: &str, timeout: Duration) {
     }
 }
 
+/// Apply the profile config's `extensions` (unpacked dirs/themes) to a
+/// running Chrome. Re-applied on every launch *and* on every reuse of a
+/// Laya-owned instance, so editing `browser.json` takes effect without a
+/// browser restart. Idempotent: `Extensions.loadUnpacked` returns the same id
+/// for the same path. A missing directory or a bad manifest is a warning, not
+/// a failure — the built-in observation extension is what workflows actually
+/// require, and one bad config entry must not take a whole session down.
+fn apply_profile_config(
+    config: &BrowserProfileConfig,
+    endpoint: &str,
+    c: &BrowserCap,
+    state: &Value,
+    with: &Value,
+    policy: &Policy,
+) {
+    for raw in &config.extensions {
+        let path = stringify(&expand(&Value::String(raw.clone()), state, with));
+        if path.is_empty() || !std::path::Path::new(&path).join("manifest.json").is_file() {
+            eprintln!(
+                "[browser] warning: profile config extension {path:?} has no manifest.json; skipping"
+            );
+            continue;
+        }
+        match load_unpacked_extension(endpoint, &path, bounded_timeout(c.timeout_ms, policy)) {
+            Ok(id) => debug_extension_loaded(&id),
+            Err(e) => {
+                eprintln!("[browser] warning: could not load profile config extension {path}: {e}")
+            }
+        }
+    }
+}
+
 fn normalized_endpoint(c: &BrowserCap, with: &Value, state: &Value) -> Result<String> {
     let raw = if c.endpoint.is_empty() {
         std::env::var("LAYA_BROWSER_CDP").unwrap_or_else(|_| "http://127.0.0.1:9222".to_string())
@@ -695,6 +728,7 @@ pub(crate) fn ensure_runtime(
 ) -> Result<String> {
     let endpoint = normalized_endpoint(c, with, state)?;
     check_host(&endpoint, policy)?;
+    let profile_config = super::browser_config::load();
     let mut guard = runtime_cell()
         .lock()
         .map_err(|_| anyhow!("browser runtime lock poisoned"))?;
@@ -732,8 +766,15 @@ pub(crate) fn ensure_runtime(
         if !c.extension_path.is_empty() {
             let extension =
                 expand_required_str(&c.extension_path, state, with, "browser extension_path")?;
-            if std::path::Path::new(&extension).join("manifest.json").is_file() {
-                ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
+            if std::path::Path::new(&extension)
+                .join("manifest.json")
+                .is_file()
+            {
+                ensure_extension_loaded(
+                    &endpoint,
+                    &extension,
+                    bounded_timeout(c.timeout_ms, policy),
+                );
             }
         }
         let owner_dir = attach_owner_dir(&endpoint)?;
@@ -796,6 +837,7 @@ pub(crate) fn ensure_runtime(
         {
             ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
         }
+        apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
         initialize_owned_targets(&profile_path, &endpoint);
         *guard = Some(BrowserRuntime {
             endpoint: endpoint.clone(),
@@ -848,6 +890,7 @@ pub(crate) fn ensure_runtime(
                             bounded_timeout(c.timeout_ms, policy),
                         );
                     }
+                    apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
                     initialize_owned_targets(&profile_path, &endpoint);
                     *guard = Some(BrowserRuntime {
                         endpoint: endpoint.clone(),
@@ -895,10 +938,13 @@ pub(crate) fn ensure_runtime(
             .arg("--no-sandbox")
             .arg("--disable-gpu");
     }
+    for extra in &profile_config.args {
+        cmd.arg(extra);
+    }
     cmd.arg("--start-maximized")
-    .arg("about:blank")
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null());
+        .arg("about:blank")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
     let child = cmd
         .spawn()
         .map_err(|e| anyhow!("spawn Chrome {binary:?} failed: {e}"))?;
@@ -944,6 +990,7 @@ pub(crate) fn ensure_runtime(
                 }
             };
             debug_extension_loaded(&extension);
+            apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
             validate_owned_endpoint(
                 &endpoint,
                 &profile_path,
@@ -4396,7 +4443,10 @@ mod tests {
             resolved.is_file(),
             "resolved chrome_binary {resolved:?} is not the bundled script"
         );
-        assert!(binary.ends_with("scripts/bdd/chrome-headless.sh"), "{binary}");
+        assert!(
+            binary.ends_with("scripts/bdd/chrome-headless.sh"),
+            "{binary}"
+        );
 
         // A base that holds the path resolves it even when the cwd does not:
         // this is the property that makes the Chrome launch cwd-independent.
@@ -4410,6 +4460,49 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
 
         assert_eq!(launch_binary(&cap("", true)), default_chrome_binary());
+    }
+
+    /// Profile-config extensions are advisory, not a precondition: a bad path
+    /// is skipped with a warning, and an unreachable CDP endpoint is logged
+    /// rather than turned into a launch failure. Both properties must hold
+    /// without a live browser, which is what makes the function safe to call
+    /// from the reuse fast-path where the endpoint may have just died.
+    #[test]
+    fn profile_config_extensions_are_non_fatal() {
+        let c = cap("", true);
+        let policy = crate::capability::Policy::default();
+        let state = serde_json::json!({});
+        let with = serde_json::json!({});
+
+        // Nothing declared: a no-op, not an error.
+        apply_profile_config(
+            &BrowserProfileConfig::default(),
+            "http://127.0.0.1:1",
+            &c,
+            &state,
+            &with,
+            &policy,
+        );
+
+        // A directory without manifest.json is skipped.
+        let dir = std::env::temp_dir().join("laya-profile-cfg-no-manifest");
+        let _ = std::fs::create_dir_all(&dir);
+        let cfg = BrowserProfileConfig {
+            extensions: vec![dir.to_string_lossy().into_owned()],
+            args: Vec::new(),
+        };
+        apply_profile_config(&cfg, "http://127.0.0.1:1", &c, &state, &with, &policy);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // A real manifest against an unreachable endpoint warns but returns.
+        let real = super::repo_extension_path();
+        if std::path::Path::new(&real).join("manifest.json").is_file() {
+            let cfg = BrowserProfileConfig {
+                extensions: vec![real],
+                args: Vec::new(),
+            };
+            apply_profile_config(&cfg, "http://127.0.0.1:1", &c, &state, &with, &policy);
+        }
     }
 
     /// `bdd.release` counts a *tab that is gone*, not a request that was
@@ -4448,7 +4541,14 @@ mod tests {
             .expect("spawn headless Chrome");
         let endpoint = format!("http://127.0.0.1:{port}");
         let deadline = Instant::now() + Duration::from_secs(30);
-        while http_json(&endpoint, "GET", "/json/version", Duration::from_millis(500)).is_err() {
+        while http_json(
+            &endpoint,
+            "GET",
+            "/json/version",
+            Duration::from_millis(500),
+        )
+        .is_err()
+        {
             if Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = std::fs::remove_dir_all(&profile);
@@ -4481,7 +4581,10 @@ mod tests {
         // The first close must always count; a first close that does not would
         // mean the teardown confirmation is too strict and `bdd.release` would
         // refuse a tab it had just closed.
-        assert_eq!(first_short, 0, "{first_short}/{TRIALS} first closes counted zero");
+        assert_eq!(
+            first_short, 0,
+            "{first_short}/{TRIALS} first closes counted zero"
+        );
         // The second must never count - the rule under test.
         assert_eq!(
             second_counted, 0,
@@ -5017,6 +5120,122 @@ mod real_browser_tests {
         })();
         *runtime_cell().lock().unwrap() = None;
         let _ = std::fs::remove_dir_all(&profile);
+        result.unwrap();
+    }
+
+    /// The profile config (`browser.json`) is applied on launch. The probe is
+    /// a content script in the MAIN world that sets a global on every page it
+    /// matches — the same signal the observation-extension test uses — so the
+    /// assertion does not depend on chrome:// UI parsing or on which CDP
+    /// target types `/json/list` reports. The `LAYA_BROWSER_CONFIG` env var
+    /// points the loader at a config written inside the test's own temp root.
+    #[test]
+    #[ignore = "requires Google Chrome; run with --ignored"]
+    fn real_chrome_applies_profile_config() {
+        let Some(binary) = chrome_binary() else {
+            panic!("real Chrome profile-config test requires Google Chrome");
+        };
+        let cdp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let cdp_port = cdp_listener.local_addr().unwrap().port();
+        drop(cdp_listener);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let body = br#"<!doctype html><title>cfg-probe</title>"#;
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf).unwrap();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+
+        let root = std::env::temp_dir().join(format!("laya-chrome-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let profile = root.join("profile");
+        let state = root.join("state");
+        let ext_dir = root.join("cfg-ext");
+        std::fs::create_dir_all(&ext_dir).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            ext_dir.join("manifest.json"),
+            r#"{"manifest_version":3,"name":"Laya Profile Config Probe","version":"1.0.0","content_scripts":[{"matches":["http://*/*"],"js":["probe.js"],"run_at":"document_idle","world":"MAIN"}]}"#,
+        ).unwrap();
+        std::fs::write(
+            ext_dir.join("probe.js"),
+            "window.__layaCfgProbe = 'cfg-loaded';\n",
+        )
+        .unwrap();
+        let cfg_path = state.join("browser.json");
+        std::fs::write(
+            &cfg_path,
+            serde_json::json!({
+                "extensions": [ext_dir.to_string_lossy()],
+                "args": ["--window-size=1024,768"]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let saved_cfg = std::env::var_os("LAYA_BROWSER_CONFIG");
+        std::env::set_var("LAYA_BROWSER_CONFIG", &cfg_path);
+
+        let mut policy = Policy::default();
+        policy.allow_exec = true;
+        policy.allow_hosts = vec!["127.0.0.1".to_string()];
+        policy.allow_paths = vec![root.to_string_lossy().to_string()];
+        let cap = BrowserCap {
+            endpoint: format!("http://127.0.0.1:{cdp_port}"),
+            chrome_binary: binary,
+            profile_dir: profile.to_string_lossy().to_string(),
+            extension_path: repo_extension_path(),
+            launch: true,
+            attach: false,
+            startup_timeout_ms: 20_000,
+            timeout_ms: 8_000,
+            max_text: 6_000,
+            max_owned_pages: 32,
+            owned_idle_ms: 5 * 60_000,
+            human: false,
+        };
+        *runtime_cell().lock().unwrap() = None;
+        let result = (|| -> Result<()> {
+            call_browser(&cap, &json!({"op":"status"}), &json!({}), &policy)?;
+            let opened = call_browser(
+                &cap,
+                &json!({"op":"open", "url": format!("http://127.0.0.1:{port}/")}),
+                &json!({}),
+                &policy,
+            )?;
+            let target_id = opened["target_id"].as_str().unwrap().to_string();
+            std::thread::sleep(Duration::from_millis(900));
+            let value = call_browser(
+                &cap,
+                &json!({"op":"evaluate", "target_id": target_id, "expression":
+                    "[typeof window.__layaCfgProbe, window.__layaCfgProbe || null]"}),
+                &json!({}),
+                &policy,
+            )?;
+            println!("real browser profile config: {}", value["value"]);
+            assert_eq!(
+                value["value"],
+                json!(["string", "cfg-loaded"]),
+                "profile-config content script did not run on the page"
+            );
+            call_browser(&cap, &json!({"op":"shutdown"}), &json!({}), &policy)?;
+            Ok(())
+        })();
+        *runtime_cell().lock().unwrap() = None;
+        match saved_cfg {
+            Some(v) => std::env::set_var("LAYA_BROWSER_CONFIG", v),
+            None => std::env::remove_var("LAYA_BROWSER_CONFIG"),
+        }
+        let _ = std::fs::remove_dir_all(&root);
         result.unwrap();
     }
 }

@@ -83,6 +83,43 @@ The first call:
 Subsequent capability calls reuse the browser. Workflow threads may operate on
 different `target_id` values concurrently. The plugin is loaded once.
 
+## Profile config (`browser.json`)
+
+A profile is not just a directory: it carries the extra unpacked extensions,
+themes and Chrome arguments a workflow set expects. Declaring that in the
+capability spec repeats it in every spec and nothing survives `cargo clean`.
+The profile config file declares it once, in the same state root as the
+profile, and the engine applies it on every launch:
+
+```json
+{
+  "extensions": [
+    "/path/to/an-unpacked-extension-or-theme",
+    "${env.HOME}/extensions/my-theme"
+  ],
+  "args": ["--window-size=1280,900"]
+}
+```
+
+- Path: `$LAYA_BROWSER_CONFIG` → `<state>/browser.json`
+  (`~/.laya-workflow/browser.json` by default). Missing file = no extra state.
+- `extensions` — unpacked directories, each with a `manifest.json`, loaded via
+  `Extensions.loadUnpacked` **after** the built-in observation extension. They
+  are re-applied on every launch *and* on every reuse of a Laya-owned instance,
+  so editing the file takes effect without a browser restart (Chrome derives
+  the same id for the same path, so re-applying is idempotent). A missing
+  directory or bad manifest is a warning, not a failure — one bad entry must
+  not take a whole session down.
+- `args` — extra Chrome command-line arguments appended after the engine's
+  own set at launch time (window size, proxy, …). Applied only on a fresh
+  launch; a reused browser is already running with its own args.
+- `${env.NAME}` / `${state.*}` placeholders expand, the same as capability
+  `profile_dir` / `extension_path`.
+
+An `attach: true` run leaves the borrowed browser's profile untouched: config
+is applied only to browsers Laya launches or already owns, the same rule as
+the observation-extension injection above.
+
 ## Automatic resource lifetime
 
 Workflow specs normally do not need a `close` node. Pages created by `open`,

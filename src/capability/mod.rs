@@ -26,6 +26,7 @@
 //! by a timeout and an output-size cap.
 
 pub mod browser;
+pub mod browser_config;
 pub mod call_project;
 pub mod computer_use;
 pub mod data;
