@@ -234,6 +234,23 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
         return Ok(true);
     }
 
+    // Strict single-instance guard: the GUI singleton is one-of-a-kind. If a
+    // GUI (non-headless) Chrome already serves CDP on another canonical port,
+    // refuse to spawn a duplicate instead of silently creating a second window.
+    // Headless is a separate singleton kind and does not count.
+    if !req.headless {
+        for p in [DEFAULT_CDP_PORT, DEFAULT_CDP_HEADLESS_PORT] {
+            if p != port && gui_chrome_on(p) {
+                eprintln!(
+                    "fail a GUI Chrome already serves CDP on 127.0.0.1:{p}; strict mode refuses \
+                     a second GUI instance \u{2014} attach to it (bdd run --cdp http://127.0.0.1:{p}) \
+                     or stop it first"
+                );
+                return Ok(false);
+            }
+        }
+    }
+
     let chrome_bin = req.chrome_bin();
     let Some(chrome) = resolve_in_path(&chrome_bin) else {
         eprintln!("fail Google Chrome not found at {chrome_bin} (set CHROME_BIN)");
@@ -301,6 +318,35 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     }
     eprintln!("fail Chrome CDP did not come up on :{port}");
     Ok(false)
+}
+
+/// Is a **GUI** (non-headless) Chrome already serving CDP on `port`?
+///
+/// `/json/version` reports `Chrome/<ver>` for a windowed Chrome and
+/// `HeadlessChrome/<ver>` for a headless one — that distinction is what keeps
+/// the GUI singleton and the headless singleton independent.
+fn gui_chrome_on(port: u16) -> bool {
+    if !tcp_up(port, Duration::from_millis(300)) {
+        return false;
+    }
+    let url = format!("http://127.0.0.1:{port}/json/version");
+    match ureq::get(&url).timeout(Duration::from_millis(1500)).call() {
+        Ok(resp) => {
+            let mut body = String::new();
+            if resp.into_reader().take(64 * 1024).read_to_string(&mut body).is_err() {
+                return false;
+            }
+            match serde_json::from_str::<Value>(&body) {
+                Ok(v) => v
+                    .get("Browser")
+                    .and_then(|b| b.as_str())
+                    .map(|b| b.starts_with("Chrome/") && !b.starts_with("HeadlessChrome/"))
+                    .unwrap_or(false),
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
 }
 
 /// Resolve the profile directory `browser ensure` launches with.
