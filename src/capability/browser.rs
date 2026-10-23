@@ -329,6 +329,28 @@ fn touch_owned_target(endpoint: &str, id: &str) {
     }
 }
 
+/// Resolve the Chrome profile directory to launch with.
+///
+/// Precedence: the capability's own `profile_dir` → `$LAYA_BROWSER_PROFILE` →
+/// the profile config's `profile_dir` → the engine default (`<state>/chrome`).
+/// The env var outranks the config file because state.rs's convention is that
+/// an explicit per-purpose env var beats the state root; the config file is
+/// the machine-level default below it.
+fn resolve_profile_source(c: &BrowserCap, config: &BrowserProfileConfig) -> String {
+    if !c.profile_dir.is_empty() {
+        return c.profile_dir.clone();
+    }
+    if std::env::var_os("LAYA_BROWSER_PROFILE").is_some_and(|v| !v.is_empty()) {
+        // Resolved with the existing helper so the `…/chrome` join stays
+        // identical to the pre-config behaviour.
+        return default_profile_dir();
+    }
+    if let Some(p) = config.profile_dir.clone() {
+        return p;
+    }
+    default_profile_dir()
+}
+
 fn default_profile_dir() -> String {
     crate::state::browser_profile_dir()
         .unwrap_or_else(|| ".laya-workflow/chrome".into())
@@ -478,7 +500,11 @@ fn launch_binary(c: &BrowserCap) -> String {
 /// Chrome 137+ intentionally ignores `--load-extension` in branded builds.
 /// The supported replacement is a browser-level CDP `Extensions.loadUnpacked`
 /// call after Chrome is launched with `--enable-unsafe-extension-debugging`.
-fn load_unpacked_extension(endpoint: &str, extension: &str, timeout: Duration) -> Result<String> {
+pub(crate) fn load_unpacked_extension(
+    endpoint: &str,
+    extension: &str,
+    timeout: Duration,
+) -> Result<String> {
     let version = http_json(endpoint, "GET", "/json/version", timeout)?;
     let ws = version
         .get("webSocketDebuggerUrl")
@@ -563,10 +589,9 @@ fn ensure_extension_loaded(endpoint: &str, extension: &str, timeout: Duration) {
 fn apply_profile_config(
     config: &BrowserProfileConfig,
     endpoint: &str,
-    c: &BrowserCap,
+    timeout: Duration,
     state: &Value,
     with: &Value,
-    policy: &Policy,
 ) {
     for raw in &config.extensions {
         let path = stringify(&expand(&Value::String(raw.clone()), state, with));
@@ -576,7 +601,7 @@ fn apply_profile_config(
             );
             continue;
         }
-        match load_unpacked_extension(endpoint, &path, bounded_timeout(c.timeout_ms, policy)) {
+        match load_unpacked_extension(endpoint, &path, timeout) {
             Ok(id) => debug_extension_loaded(&id),
             Err(e) => {
                 eprintln!("[browser] warning: could not load profile config extension {path}: {e}")
@@ -788,11 +813,7 @@ pub(crate) fn ensure_runtime(
         return Ok(endpoint);
     }
 
-    let profile_source = if c.profile_dir.is_empty() {
-        default_profile_dir()
-    } else {
-        c.profile_dir.clone()
-    };
+    let profile_source = resolve_profile_source(c, &profile_config);
     let profile = expand_required_str(&profile_source, state, with, "browser profile_dir")?;
     let profile_path = std::path::PathBuf::from(&profile);
     if !policy.allow_paths.is_empty() {
@@ -837,7 +858,13 @@ pub(crate) fn ensure_runtime(
         {
             ensure_extension_loaded(&endpoint, &extension, bounded_timeout(c.timeout_ms, policy));
         }
-        apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
+        apply_profile_config(
+            &profile_config,
+            &endpoint,
+            bounded_timeout(c.timeout_ms, policy),
+            state,
+            with,
+        );
         initialize_owned_targets(&profile_path, &endpoint);
         *guard = Some(BrowserRuntime {
             endpoint: endpoint.clone(),
@@ -890,7 +917,13 @@ pub(crate) fn ensure_runtime(
                             bounded_timeout(c.timeout_ms, policy),
                         );
                     }
-                    apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
+                    apply_profile_config(
+                        &profile_config,
+                        &endpoint,
+                        bounded_timeout(c.timeout_ms, policy),
+                        state,
+                        with,
+                    );
                     initialize_owned_targets(&profile_path, &endpoint);
                     *guard = Some(BrowserRuntime {
                         endpoint: endpoint.clone(),
@@ -990,7 +1023,13 @@ pub(crate) fn ensure_runtime(
                 }
             };
             debug_extension_loaded(&extension);
-            apply_profile_config(&profile_config, &endpoint, c, state, with, policy);
+            apply_profile_config(
+                &profile_config,
+                &endpoint,
+                bounded_timeout(c.timeout_ms, policy),
+                state,
+                with,
+            );
             validate_owned_endpoint(
                 &endpoint,
                 &profile_path,
@@ -4462,6 +4501,62 @@ mod tests {
         assert_eq!(launch_binary(&cap("", true)), default_chrome_binary());
     }
 
+    /// The profile directory precedence: capability → env → config file →
+    /// engine default. The env var outranks the config file (state.rs's
+    /// "explicit per-purpose env var beats the state root" convention).
+    #[test]
+    fn profile_dir_precedence_is_cap_env_config_default() {
+        let _lock = crate::state::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let saved_env = std::env::var_os("LAYA_BROWSER_PROFILE");
+        let saved_home = std::env::var_os("HOME");
+        let saved_laya_home = std::env::var_os("LAYA_HOME");
+        std::env::remove_var("LAYA_BROWSER_PROFILE");
+        std::env::remove_var("LAYA_HOME");
+        std::env::set_var("HOME", "/tmp/laya-profile-home");
+
+        let cfg = BrowserProfileConfig {
+            profile_dir: Some("/cfg/profile".into()),
+            ..Default::default()
+        };
+        // Config beats the engine default.
+        let mut c = cap("", true);
+        c.profile_dir = String::new();
+        assert_eq!(resolve_profile_source(&c, &cfg), "/cfg/profile");
+        // The capability beats the config.
+        c.profile_dir = "/cap/profile".into();
+        assert_eq!(resolve_profile_source(&c, &cfg), "/cap/profile");
+        // The env var beats the config.
+        c.profile_dir = String::new();
+        std::env::set_var("LAYA_BROWSER_PROFILE", "/env/profile");
+        assert_eq!(
+            resolve_profile_source(&c, &cfg),
+            "/env/profile/chrome",
+            "the env override keeps the pre-config `…/chrome` join"
+        );
+        // No config, no env → the engine default.
+        std::env::remove_var("LAYA_BROWSER_PROFILE");
+        let empty = BrowserProfileConfig::default();
+        assert_eq!(
+            resolve_profile_source(&c, &empty),
+            "/tmp/laya-profile-home/.laya-workflow/chrome"
+        );
+
+        match saved_env {
+            Some(v) => std::env::set_var("LAYA_BROWSER_PROFILE", v),
+            None => std::env::remove_var("LAYA_BROWSER_PROFILE"),
+        }
+        match saved_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match saved_laya_home {
+            Some(v) => std::env::set_var("LAYA_HOME", v),
+            None => std::env::remove_var("LAYA_HOME"),
+        }
+    }
+
     /// Profile-config extensions are advisory, not a precondition: a bad path
     /// is skipped with a warning, and an unreachable CDP endpoint is logged
     /// rather than turned into a launch failure. Both properties must hold
@@ -4478,30 +4573,43 @@ mod tests {
         apply_profile_config(
             &BrowserProfileConfig::default(),
             "http://127.0.0.1:1",
-            &c,
+            Duration::from_millis(50),
             &state,
             &with,
-            &policy,
         );
 
         // A directory without manifest.json is skipped.
         let dir = std::env::temp_dir().join("laya-profile-cfg-no-manifest");
         let _ = std::fs::create_dir_all(&dir);
         let cfg = BrowserProfileConfig {
+            profile_dir: None,
             extensions: vec![dir.to_string_lossy().into_owned()],
             args: Vec::new(),
         };
-        apply_profile_config(&cfg, "http://127.0.0.1:1", &c, &state, &with, &policy);
+        apply_profile_config(
+            &cfg,
+            "http://127.0.0.1:1",
+            Duration::from_millis(50),
+            &state,
+            &with,
+        );
         let _ = std::fs::remove_dir_all(&dir);
 
         // A real manifest against an unreachable endpoint warns but returns.
         let real = super::repo_extension_path();
         if std::path::Path::new(&real).join("manifest.json").is_file() {
             let cfg = BrowserProfileConfig {
+                profile_dir: None,
                 extensions: vec![real],
                 args: Vec::new(),
             };
-            apply_profile_config(&cfg, "http://127.0.0.1:1", &c, &state, &with, &policy);
+            apply_profile_config(
+                &cfg,
+                "http://127.0.0.1:1",
+                Duration::from_millis(50),
+                &state,
+                &with,
+            );
         }
     }
 
@@ -4920,6 +5028,40 @@ mod real_browser_tests {
     use super::*;
     use std::io::{Read, Write};
 
+    /// The Chrome CDP singleton is process-wide (`BROWSER_RUNTIME`), and the
+    /// profile config is read from an environment variable. Two ignored tests
+    /// running concurrently would therefore fight over one runtime cell and one
+    /// `LAYA_BROWSER_CONFIG` value. This guard serialises them: the second
+    /// test waits until the first has shut its browser down and restored the
+    /// environment.
+    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_MUTEX
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Point the profile-config loader at an empty config for the duration of
+    /// a test, so a developer's real `~/.laya-workflow/browser.json` (with its
+    /// own extensions) cannot leak into an isolated test run. Returns the
+    /// previous value so the caller can restore it.
+    fn isolate_profile_config(root: &std::path::Path) -> std::ffi::OsString {
+        let cfg_path = root.join("browser-isolated.json");
+        std::fs::write(&cfg_path, r#"{"extensions":[],"args":[]}"#).unwrap();
+        let saved = std::env::var_os("LAYA_BROWSER_CONFIG");
+        std::env::set_var("LAYA_BROWSER_CONFIG", &cfg_path);
+        saved.unwrap_or_default()
+    }
+
+    fn restore_profile_config(saved: std::ffi::OsString) {
+        if saved.is_empty() {
+            std::env::remove_var("LAYA_BROWSER_CONFIG");
+        } else {
+            std::env::set_var("LAYA_BROWSER_CONFIG", saved);
+        }
+    }
+
     fn chrome_binary() -> Option<String> {
         let candidates = [
             "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -4938,9 +5080,17 @@ mod real_browser_tests {
     #[test]
     #[ignore = "requires Google Chrome; run with --ignored"]
     fn real_chrome_singleton_observes_and_drives_page() {
+        let _guard = test_guard();
         let Some(binary) = chrome_binary() else {
             panic!("real Chrome round-trip requires Google Chrome");
         };
+        // Isolate from the developer's real profile config: this test asserts
+        // one extension (the observation one) and a clean page, so an
+        // unrelated `~/.laya-workflow/browser.json` would only add noise.
+        let cfg_root = std::env::temp_dir().join(format!("laya-chrome-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cfg_root);
+        std::fs::create_dir_all(&cfg_root).unwrap();
+        let saved_cfg = isolate_profile_config(&cfg_root);
         let cdp_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let cdp_port = cdp_listener.local_addr().unwrap().port();
         drop(cdp_listener);
@@ -5119,7 +5269,9 @@ mod real_browser_tests {
             call_browser(&cap, &json!({"op":"shutdown"}), &json!({}), &policy)
         })();
         *runtime_cell().lock().unwrap() = None;
+        restore_profile_config(saved_cfg);
         let _ = std::fs::remove_dir_all(&profile);
+        let _ = std::fs::remove_dir_all(&cfg_root);
         result.unwrap();
     }
 
@@ -5132,6 +5284,7 @@ mod real_browser_tests {
     #[test]
     #[ignore = "requires Google Chrome; run with --ignored"]
     fn real_chrome_applies_profile_config() {
+        let _guard = test_guard();
         let Some(binary) = chrome_binary() else {
             panic!("real Chrome profile-config test requires Google Chrome");
         };

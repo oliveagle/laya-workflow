@@ -30,6 +30,36 @@ knobs (`--chrome-bin`, `--profile`) and env fallbacks (`CHROME_BIN` /
 `LAYA_CDP_PROFILE`; port via `LAYA_CDP_PORT`) apply to that backend — flags win
 over env. `chrome ensure` remains as a hidden alias for the chrome backend.
 
+### The profile config: every launch starts from `browser.json`
+
+`ensure` builds the browser from the **profile config**
+(`~/.laya-workflow/browser.json`, override `$LAYA_BROWSER_CONFIG`):
+
+```json
+{
+  "profile_dir": "~/.laya-workflow/chrome",
+  "extensions": ["/path/to/unpacked-extension-or-theme"],
+  "args": ["--window-size=1280,900"]
+}
+```
+
+* `profile_dir` — below `--profile` and `$LAYA_CDP_PROFILE`.
+* `extensions` — unpacked dirs/themes, installed over CDP
+  (`Extensions.loadUnpacked`) after the browser is up; each prints
+  `ok profile config extension <path> -> <id>`. Idempotent, so `ensure` also
+  applies them to an instance that was already listening.
+* `args` — extra Chrome flags appended at launch.
+
+A missing file means "no extras"; a bad path is a warning, not a failure.
+Inspect what is in effect with:
+
+```sh
+laya-workflow browser config      # path + resolved profile_dir/args/extensions
+```
+
+The same config drives the engine's own `chrome_cdp` capability, so a workflow
+and a hand-started browser come up with the same extensions.
+
 ### Exactly two modes: GUI (default) and `--headless`
 
 There are only two launch modes. The **GUI** one is the preferred way to drive

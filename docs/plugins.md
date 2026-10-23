@@ -505,7 +505,11 @@ stays in `devine_int`). Nothing here is devine- or site-specific:
   if a better backend arrives. Chrome env fallbacks: `LAYA_CDP_PORT` /
   `CHROME_BIN` / `LAYA_CDP_PROFILE` (`chrome ensure` is a hidden alias). Point
   the spec's `chrome_cdp` endpoint at it and run it via an `exec` capability
-  (`policy.allow_exec: true`) before the browser nodes.
+  (`policy.allow_exec: true`) before the browser nodes. The launched browser is
+  built from the **profile config** `~/.laya-workflow/browser.json`
+  (`profile_dir` / `extensions` / `args`; override `$LAYA_BROWSER_CONFIG`), so
+  every launch comes up with the same extensions and themes;
+  `laya-workflow browser config` prints what is in effect.
 * `laya-workflow server ensure | start [--daemon] | stop | status [--port N]
   [--command C] [--health-path P]` — generic local HTTP server lifecycle for any
   command and port. Liveness = "the port answers HTTP at all" (2xx–5xx), so a

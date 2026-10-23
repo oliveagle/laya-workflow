@@ -28,6 +28,11 @@ pub fn config_path() -> Option<PathBuf> {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct BrowserProfileConfig {
+    /// Chrome profile directory to launch with. Precedence: a capability's
+    /// `profile_dir` and `$LAYA_BROWSER_PROFILE` win; this is the machine-level
+    /// default before the engine's `<state>/chrome`.
+    #[serde(default)]
+    pub profile_dir: Option<String>,
     /// Unpacked extension / theme directories to load via CDP
     /// `Extensions.loadUnpacked` on every launch. Re-applied on reuse so
     /// edits take effect without a restart; idempotent because Chrome derives
@@ -146,6 +151,29 @@ mod tests {
         let cfg = load();
         assert_eq!(cfg.extensions, vec!["~/ext/a", "${env.HOME}/ext/b"]);
         assert_eq!(cfg.args, vec!["--window-size=1280,900"]);
+        match saved {
+            Some(v) => std::env::set_var("LAYA_BROWSER_CONFIG", v),
+            None => std::env::remove_var("LAYA_BROWSER_CONFIG"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_parses_profile_dir() {
+        let dir = std::env::temp_dir().join("laya-browser-cfg-prof");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("browser.json");
+        std::fs::write(
+            &path,
+            r#"{"profile_dir":"${env.HOME}/prof","extensions":["/x"],"args":["--a"]}"#,
+        )
+        .unwrap();
+        let saved = std::env::var_os("LAYA_BROWSER_CONFIG");
+        std::env::set_var("LAYA_BROWSER_CONFIG", &path);
+        let cfg = load();
+        assert_eq!(cfg.profile_dir.as_deref(), Some("${env.HOME}/prof"));
+        assert_eq!(cfg.extensions, vec!["/x"]);
+        assert_eq!(cfg.args, vec!["--a"]);
         match saved {
             Some(v) => std::env::set_var("LAYA_BROWSER_CONFIG", v),
             None => std::env::remove_var("LAYA_BROWSER_CONFIG"),

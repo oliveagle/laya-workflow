@@ -17,6 +17,7 @@
 //!   * server:  `/tmp/laya-ensure-server-<port>.{pid,base,log}`
 
 use anyhow::{bail, Context, Result};
+use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -131,11 +132,7 @@ impl BrowserEnsureRequest {
             backend.default_port()
         };
         let port = port
-            .or_else(|| {
-                std::env::var(port_env)
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-            })
+            .or_else(|| std::env::var(port_env).ok().and_then(|v| v.parse().ok()))
             .or(Some(default_port));
         let chrome_bin = chrome_bin
             .or_else(|| nonempty(std::env::var("CHROME_BIN").ok()))
@@ -217,10 +214,23 @@ pub fn ensure_browser(req: &BrowserEnsureRequest) -> Result<bool> {
 }
 
 /// The `chrome` backend: launch (or confirm) a CDP Chrome on an isolated profile.
+///
+/// The launched instance is built from the **profile config**
+/// (`<state>/browser.json`): the declared `profile_dir` (below the flag and
+/// `$LAYA_CDP_PROFILE`), the declared extra `args`, and the declared
+/// unpacked `extensions`. The extensions are installed over CDP
+/// (`Extensions.loadUnpacked`) rather than `--load-extension`, because Chrome
+/// 137+ ignores that flag in branded builds — which is also why the launch
+/// passes `--enable-unsafe-extension-debugging`.
 fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     let port = req.port();
+    let config = crate::capability::browser_config::load();
     if tcp_up(port, Duration::from_millis(300)) {
         println!("ok Chrome CDP already listening on 127.0.0.1:{port}");
+        // "Ensure" means "make the running instance match my profile", so the
+        // declared extensions are applied to an instance that is already up.
+        // Idempotent: the same path yields the same extension id.
+        apply_config_extensions(&config, port);
         return Ok(true);
     }
 
@@ -230,19 +240,27 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
         return Ok(false);
     };
 
-    let profile = req.profile();
+    // flag > `$LAYA_CDP_PROFILE` > profile config > built-in default.
+    let profile = resolve_ensure_profile(req, &config);
     std::fs::create_dir_all(&profile)
         .with_context(|| format!("create Chrome profile dir {profile:?} failed"))?;
 
     let mut cmd = Command::new(&chrome);
     cmd.arg(format!("--remote-debugging-port={port}"))
-        .arg(format!("--user-data-dir={profile}"));
+        .arg(format!("--user-data-dir={profile}"))
+        // Required for `Extensions.loadUnpacked` on Chrome 137+ branded builds.
+        .arg("--enable-unsafe-extension-debugging");
     if req.headless {
         // Servers / CI have no display: a windowed Chrome can never expose CDP
         // there. Use the new headless mode (CDP and `Extensions.loadUnpacked`
         // both work) and drop the sandbox, which a container without user
         // namespaces cannot start.
-        cmd.arg("--headless=new").arg("--no-sandbox").arg("--disable-gpu");
+        cmd.arg("--headless=new")
+            .arg("--no-sandbox")
+            .arg("--disable-gpu");
+    }
+    for extra in &config.args {
+        cmd.arg(extra);
     }
     cmd.args([
         "--no-first-run",
@@ -253,21 +271,96 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     .stdin(Stdio::null())
     .stdout(Stdio::null())
     .stderr(Stdio::null());
+    // Detach into a new session so the browser outlives this launcher:
+    // without `setsid` the child stays in the CLI's process group and a
+    // later `exit` / SIGHUP kills it — measured on macOS, where the standalone
+    // `browser ensure` Chrome died with the shell that ran it. `bdd` and the
+    // capability path own their browser for the workflow's lifetime instead,
+    // so only this standalone launcher needs the escape hatch.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        let _ = cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn Chrome {chrome:?} failed"))?;
-    // Do not wait: the child is detached (own process group) and outlives us.
+    // Do not wait: the child is in its own session and outlives us.
     drop(child);
 
     for _ in 0..30 {
         if tcp_up(port, Duration::from_millis(300)) {
             println!("ok Chrome CDP up on 127.0.0.1:{port} (profile {profile})");
+            apply_config_extensions(&config, port);
             return Ok(true);
         }
         std::thread::sleep(Duration::from_millis(500));
     }
     eprintln!("fail Chrome CDP did not come up on :{port}");
     Ok(false)
+}
+
+/// Resolve the profile directory `browser ensure` launches with.
+///
+/// Precedence: `--profile` / `$LAYA_CDP_PROFILE` → the profile config's
+/// `profile_dir` → the built-in default for the mode (GUI vs headless, which
+/// are independent singletons with separate defaults).
+fn resolve_ensure_profile(
+    req: &BrowserEnsureRequest,
+    config: &crate::capability::browser_config::BrowserProfileConfig,
+) -> String {
+    req.profile
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or_else(|| config.profile_dir.clone())
+        .unwrap_or_else(|| {
+            if req.headless {
+                DEFAULT_CDP_HEADLESS_PROFILE
+            } else {
+                DEFAULT_CDP_PROFILE
+            }
+            .to_string()
+        })
+}
+
+/// Load the profile config's unpacked extensions into the Chrome listening on
+/// `port`. A missing directory, a bad manifest or an unreachable CDP endpoint
+/// is a warning: the browser is up either way, and one bad config entry must
+/// not turn "ensure the browser" into a failure.
+fn apply_config_extensions(
+    config: &crate::capability::browser_config::BrowserProfileConfig,
+    port: u16,
+) {
+    if config.extensions.is_empty() {
+        return;
+    }
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let state = Value::Null;
+    let with = Value::Null;
+    for raw in &config.extensions {
+        let path = crate::capability::expand(&Value::String(raw.clone()), &state, &with);
+        let path = match path {
+            Value::String(s) => s,
+            other => other.to_string(),
+        };
+        if path.is_empty() || !std::path::Path::new(&path).join("manifest.json").is_file() {
+            eprintln!("[browser] warning: profile config extension {path:?} has no manifest.json; skipping");
+            continue;
+        }
+        match crate::capability::browser::load_unpacked_extension(
+            &endpoint,
+            &path,
+            Duration::from_secs(10),
+        ) {
+            Ok(id) => println!("ok profile config extension {path} -> {id}"),
+            Err(e) => {
+                eprintln!("[browser] warning: could not load profile config extension {path}: {e}")
+            }
+        }
+    }
 }
 
 // ───────────────────────── local HTTP server ─────────────────────────
@@ -718,6 +811,37 @@ mod tests {
         assert_eq!(log, PathBuf::from("/tmp/laya-ensure-server-18766.log"));
         let (pid2, _, _) = server_paths(1);
         assert_ne!(pid, pid2);
+    }
+
+    /// `browser ensure` profile precedence: flag/env > profile config >
+    /// mode default.
+    #[test]
+    fn ensure_profile_precedence_is_flag_config_default() {
+        use crate::capability::browser_config::BrowserProfileConfig;
+        let base = BrowserEnsureRequest::from_env(BrowserBackend::Chrome, None, None, None, false);
+        let cfg = BrowserProfileConfig {
+            profile_dir: Some("/cfg/profile".into()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_ensure_profile(&base, &cfg), "/cfg/profile");
+        let flagged = BrowserEnsureRequest::from_env(
+            BrowserBackend::Chrome,
+            None,
+            None,
+            Some("/flag/profile".into()),
+            false,
+        );
+        assert_eq!(resolve_ensure_profile(&flagged, &cfg), "/flag/profile");
+        assert_eq!(
+            resolve_ensure_profile(&base, &BrowserProfileConfig::default()),
+            DEFAULT_CDP_PROFILE
+        );
+        let headless =
+            BrowserEnsureRequest::from_env(BrowserBackend::Chrome, None, None, None, true);
+        assert_eq!(
+            resolve_ensure_profile(&headless, &BrowserProfileConfig::default()),
+            DEFAULT_CDP_HEADLESS_PROFILE
+        );
     }
 
     #[test]

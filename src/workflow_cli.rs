@@ -974,6 +974,10 @@ enum DbCmd {
 
 #[derive(Subcommand)]
 enum BrowserCmd {
+    /// Print the browser profile config (`browser.json`) as resolved for the
+    /// current environment, with each declared extension path marked present
+    /// or missing. Reads the same file the engine and `browser ensure` use.
+    Config,
     /// Launch (or confirm) the backend on an isolated profile.
     Ensure {
         /// Browser backend (default: chrome).
@@ -1631,6 +1635,33 @@ fn run_browser(cmd: &BrowserCmd) -> Result<()> {
             );
             if !orch::ensure_browser(&req)? {
                 std::process::exit(1);
+            }
+            Ok(())
+        }
+        BrowserCmd::Config => {
+            let cfg = laya_workflow::capability::browser_config::load();
+            let path = laya_workflow::capability::browser_config::config_path()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<no state dir>".to_string());
+            println!("config: {path}");
+            println!(
+                "profile_dir: {}",
+                cfg.profile_dir.as_deref().unwrap_or("<engine default>")
+            );
+            println!("args: {:?}", cfg.args);
+            println!("extensions: {} declared", cfg.extensions.len());
+            for ext in &cfg.extensions {
+                let expanded = laya_workflow::capability::expand(
+                    &serde_json::Value::String(ext.clone()),
+                    &serde_json::Value::Null,
+                    &serde_json::Value::Null,
+                );
+                let path = match expanded {
+                    serde_json::Value::String(p) => p,
+                    other => other.to_string(),
+                };
+                let ok = std::path::Path::new(&path).join("manifest.json").is_file();
+                println!("  {} {path}", if ok { "present" } else { "MISSING " });
             }
             Ok(())
         }

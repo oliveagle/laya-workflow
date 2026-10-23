@@ -103,6 +103,9 @@ profile, and the engine applies it on every launch:
 
 - Path: `$LAYA_BROWSER_CONFIG` → `<state>/browser.json`
   (`~/.laya-workflow/browser.json` by default). Missing file = no extra state.
+- `profile_dir` — the Chrome profile to launch with. Precedence: the
+  capability's `profile_dir` and `$LAYA_BROWSER_PROFILE` win; this is the
+  machine-level default before the engine's `<state>/chrome`.
 - `extensions` — unpacked directories, each with a `manifest.json`, loaded via
   `Extensions.loadUnpacked` **after** the built-in observation extension. They
   are re-applied on every launch *and* on every reuse of a Laya-owned instance,
@@ -115,6 +118,18 @@ profile, and the engine applies it on every launch:
   launch; a reused browser is already running with its own args.
 - `${env.NAME}` / `${state.*}` placeholders expand, the same as capability
   `profile_dir` / `extension_path`.
+
+`laya-workflow browser config` prints the config as resolved for the current
+environment, with each declared extension marked present or missing.
+
+The standalone launcher reads the same file, so both entry points produce the
+same browser: `laya-workflow browser ensure` launches with the declared
+`profile_dir` (below `--profile` / `$LAYA_CDP_PROFILE`), the declared `args`,
+and installs the declared `extensions` over CDP — including into an instance
+that was already listening, which is what makes "ensure" mean "make the running
+instance match my profile". Chrome 137+ ignores `--load-extension` in branded
+builds, which is why the install goes through `Extensions.loadUnpacked` and the
+launch passes `--enable-unsafe-extension-debugging`.
 
 An `attach: true` run leaves the borrowed browser's profile untouched: config
 is applied only to browsers Laya launches or already owns, the same rule as
