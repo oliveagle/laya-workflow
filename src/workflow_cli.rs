@@ -978,6 +978,14 @@ enum BrowserCmd {
     /// current environment, with each declared extension path marked present
     /// or missing. Reads the same file the engine and `browser ensure` use.
     Config,
+    /// Read-only report of the managed singleton: is the canonical CDP
+    /// endpoint up, does it belong to laya-workflow, and are there foreign
+    /// GUI Chrome CDP instances around. Never launches or kills anything.
+    Status {
+        /// Print the report as JSON (for agents / scripts).
+        #[arg(long)]
+        json: bool,
+    },
     /// Launch (or confirm) the backend on an isolated profile.
     Ensure {
         /// Browser backend (default: chrome).
@@ -1634,6 +1642,62 @@ fn run_browser(cmd: &BrowserCmd) -> Result<()> {
                 *headless,
             );
             if !orch::ensure_browser(&req)? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        BrowserCmd::Status { json } => {
+            let st = orch::browser_status();
+            if *json {
+                let payload = json!({
+                    "endpoint": st.endpoint,
+                    "port": st.port,
+                    "profile": st.profile,
+                    "reachable": st.reachable,
+                    "browser": st.browser,
+                    "owned_by_laya": st.owned,
+                    "adoptable": st.adoptable,
+                    "owner_marker": st.marker_path,
+                    "foreign_cdp_instances": st.foreign_instances.iter().map(|f| json!({
+                        "pid": f.pid,
+                        "port": f.port,
+                    })).collect::<Vec<_>>(),
+                    "ok": st.is_ok(),
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else {
+                println!("endpoint: {}", st.endpoint);
+                println!("profile: {}", st.profile);
+                println!("reachable: {}", st.reachable);
+                println!(
+                    "browser: {}",
+                    st.browser.as_deref().unwrap_or("<none>")
+                );
+                println!("owned_by_laya: {}", st.owned);
+                println!("adoptable: {}", st.adoptable);
+                match &st.marker_path {
+                    Some(mp) => println!("owner_marker: {mp}"),
+                    None => println!("owner_marker: <none>"),
+                }
+                if st.foreign_instances.is_empty() {
+                    println!("foreign_cdp_instances: none");
+                } else {
+                    for f in &st.foreign_instances {
+                        println!("foreign_cdp_instance: pid={} port={}", f.pid, f.port);
+                    }
+                }
+                println!(
+                    "status: {}",
+                    if st.is_ok() {
+                        "ok"
+                    } else {
+                        "needs-attention"
+                    }
+                );
+            }
+            // Non-zero when the managed singleton is not in the expected state,
+            // so a workflow can gate on it instead of silently starting another.
+            if !st.is_ok() {
                 std::process::exit(1);
             }
             Ok(())
@@ -2417,6 +2481,7 @@ fn print_overview() {
     println!("  plugin i|l|d   install/list/inspect Rhai plugins (the extension seam)");
     println!("  rules i|v|c|r|a  enforce AGENTS.md rules: init / validate / check / report / audit");
     println!("  browser ensure  bring up a browser backend on 127.0.0.1:<port> (--backend chrome, idempotent)");
+    println!("  browser status  read-only singleton report: reachable / owned / foreign CDP instances [--json]");
     println!("  server e|s|p|st  ensure/start/stop/status a local HTTP server");
     println!("  db s|e|st|p    serve/ensure/status/stop the HTAP SQLite+DuckDB daemon");
     println!("  notify         post a macOS Notification Center banner (osascript) with a log-file fallback");

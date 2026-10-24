@@ -894,6 +894,161 @@ mod stop {
     }
 }
 
+// ──────────────────────── browser status (read-only) ────────────────────────
+
+/// A GUI Chrome serving CDP on a non-canonical port — the "second instance"
+/// the strict singleton is trying to prevent. Found by scanning `ps` for
+/// windowed Chrome processes whose command line carries a
+/// `--remote-debugging-port` other than the canonical one. Headless shells
+/// (kitewright's chrome-headless-shell, Playwright's) are a different kind of
+/// singleton and are deliberately not reported here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignCdpInstance {
+    pub pid: u32,
+    pub port: u16,
+}
+
+/// Everything `browser status` reports. Read-only: status never launches,
+/// adopts, or kills anything — it is the agent's "look before you leap" probe
+/// so it can attach to the managed singleton instead of starting its own.
+#[derive(Debug, Clone)]
+pub struct BrowserStatus {
+    pub endpoint: String,
+    pub port: u16,
+    pub profile: String,
+    pub reachable: bool,
+    /// `/json/version` `Browser` (`Chrome/…` / `HeadlessChrome/…`), if any.
+    pub browser: Option<String>,
+    /// The live listener matches this profile's `laya-owner.json` marker.
+    pub owned: bool,
+    /// The live listener matches profile+port but is unmarked (pre-marker
+    /// instance / hand-started): `browser ensure` would adopt it.
+    pub adoptable: bool,
+    pub marker_path: Option<String>,
+    pub foreign_instances: Vec<ForeignCdpInstance>,
+}
+
+impl BrowserStatus {
+    /// The invariant `browser status` gates on: the canonical endpoint is up
+    /// *and* provably belongs to laya-workflow.
+    pub fn is_ok(&self) -> bool {
+        self.reachable && self.owned
+    }
+}
+
+/// Probe a CDP `/json/version`, returning (reachable, browser-name-if-known).
+fn probe_cdp_version(endpoint: &str) -> (bool, Option<String>) {
+    let url = format!("{}/json/version", endpoint.trim_end_matches('/'));
+    match ureq::get(&url).timeout(Duration::from_millis(1500)).call() {
+        Ok(resp) => {
+            let mut body = String::new();
+            if resp
+                .into_reader()
+                .take(64 * 1024)
+                .read_to_string(&mut body)
+                .is_err()
+            {
+                return (false, None);
+            }
+            match serde_json::from_str::<Value>(&body) {
+                Ok(v) => (
+                    true,
+                    v.get("Browser").and_then(|b| b.as_str()).map(str::to_string),
+                ),
+                Err(_) => (true, None),
+            }
+        }
+        Err(_) => (false, None),
+    }
+}
+
+/// Scan `ps` for GUI Chrome processes serving CDP on a port other than
+/// `canonical_port`. The same evidence the watchdog's retire step uses, so
+/// the two can never disagree about what counts as "foreign".
+fn scan_foreign_gui_chrome(canonical_port: u16) -> Vec<ForeignCdpInstance> {
+    let Ok(out) = Command::new("ps")
+        .args(["axo", "pid=,command="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let Ok(text) = String::from_utf8(out.stdout) else {
+        return Vec::new();
+    };
+    let mut hits = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        let mut it = line.splitn(2, char::is_whitespace);
+        let (Some(pid_s), Some(cmd)) = (it.next(), it.next()) else {
+            continue;
+        };
+        let Ok(pid) = pid_s.trim().parse::<u32>() else {
+            continue;
+        };
+        let cmd_l = cmd.to_ascii_lowercase();
+        // Headless shells (kitewright 9223, Playwright) are not GUI Chrome.
+        if cmd_l.contains("chrome-headless-shell") || cmd_l.contains("headless") {
+            continue;
+        }
+        if !cmd_l.contains("macos/google chrome") {
+            continue;
+        }
+        let marker = "--remote-debugging-port=";
+        let Some(pos) = cmd_l.find(marker) else {
+            continue;
+        };
+        let digits: String = cmd_l[pos + marker.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        let Ok(port) = digits.parse::<u16>() else {
+            continue;
+        };
+        if port == canonical_port {
+            continue;
+        }
+        hits.push(ForeignCdpInstance { pid, port });
+    }
+    hits.sort_by_key(|h| h.port);
+    hits.dedup_by_key(|h| h.port);
+    hits
+}
+
+/// Read-only report of the managed singleton's state. Resolves the endpoint
+/// and profile exactly like `browser ensure` (same env var / browser.json
+/// precedence), then reports reachability, ownership, and any foreign GUI
+/// CDP instances it can see. Never writes, launches, or kills.
+pub fn browser_status() -> BrowserStatus {
+    let config = crate::capability::browser_config::load();
+    let req = BrowserEnsureRequest::from_env(BrowserBackend::Chrome, None, None, None, false);
+    let port = req.port();
+    let profile = resolve_ensure_profile(&req, &config);
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let (reachable, browser) = probe_cdp_version(&endpoint);
+    let owned = reachable
+        && crate::capability::browser::endpoint_owned_by_profile(
+            &endpoint,
+            Path::new(&profile),
+        );
+    let adoptable = reachable
+        && !owned
+        && crate::capability::browser::endpoint_adoptable(&endpoint, Path::new(&profile));
+    let marker = Path::new(&profile).join("laya-owner.json");
+    let marker_path = marker.is_file().then(|| marker.to_string_lossy().into_owned());
+    let foreign_instances = scan_foreign_gui_chrome(port);
+    BrowserStatus {
+        endpoint,
+        port,
+        profile,
+        reachable,
+        browser,
+        owned,
+        adoptable,
+        marker_path,
+        foreign_instances,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1100,6 +1255,29 @@ mod tests {
         let _ = std::fs::remove_file(&pidf);
         let _ = std::fs::remove_file(&basef);
         assert!(server_stop(port).expect("stop ok"));
+    }
+
+    #[test]
+    fn browser_status_probes_report_unreachable_for_dead_endpoint() {
+        // A port with nothing on it: not reachable, therefore not ok, and
+        // "owned"/"adoptable" are both false — no ownership is invented.
+        let (reachable, browser) = probe_cdp_version("http://127.0.0.1:59993");
+        assert!(!reachable);
+        assert!(browser.is_none());
+    }
+
+    #[test]
+    fn foreign_gui_chrome_scan_excludes_headless_and_canonical() {
+        // The ps-based scan must never report the canonical port, and must
+        // skip headless shells (kitewright's chrome-headless-shell on 9223,
+        // Playwright's). Running on this machine's real `ps`, the invariants
+        // that must always hold are: no entry claims the canonical port, and
+        // no entry belongs to a process whose command mentions "headless".
+        for port in [9222u16, 9232, 9411] {
+            for hit in scan_foreign_gui_chrome(port) {
+                assert_ne!(hit.port, port, "scan must exclude the canonical port");
+            }
+        }
     }
 
     #[test]

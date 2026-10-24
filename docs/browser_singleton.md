@@ -153,6 +153,25 @@ live Chrome command line before reusing an endpoint. An unmarked CDP listener is
 rejected instead of being adopted accidentally. The process-wide endpoint binding
 and the marked profile keep one Laya singleton.
 
+### `browser status` — look before you launch
+
+`laya-workflow browser status` is the read-only counterpart of `browser ensure`.
+It resolves the same canonical endpoint and profile (same env var and
+`browser.json` precedence), probes `/json/version`, and reports:
+
+- `reachable` — is the CDP endpoint up;
+- `browser` — the `/json/version` Browser string (`Chrome/…`);
+- `owned_by_laya` / `adoptable` — marker-validated ownership;
+- `owner_marker` — the `laya-owner.json` path;
+- `foreign_cdp_instances` — GUI Chrome processes serving CDP on a port other
+  than the canonical one (the "second instance" the strict singleton exists
+  to prevent; the watchdog's retire step scans with the same evidence);
+- exit code 0 only when the endpoint is up **and** owned.
+
+`--json` prints the same report as machine-readable JSON. It never launches,
+adopts, or kills anything — an agent can check the managed singleton before
+it decides what to do instead of starting a browser of its own.
+
 ### `browser ensure` and ownership
 
 The standalone `laya-workflow browser ensure` launcher follows the same rules —
