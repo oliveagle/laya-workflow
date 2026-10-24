@@ -84,10 +84,16 @@ impl Decide for LayaBackend {
     fn decide(&self, state: &Value, questions: &Value) -> Result<Verdict> {
         let t0 = Instant::now();
         let body = serde_json::json!({ "state": state, "questions": questions });
-        let resp = self
+        let mut req = self
             .agent
             .post(&format!("{}/v1/systemone", self.base_url))
-            .set("Content-Type", "application/json")
+            .set("Content-Type", "application/json");
+        if let Ok(tok) = std::env::var("LAYAWORKFLOW_BACKEND_TOKEN") {
+            if !tok.trim().is_empty() {
+                req = req.set("Authorization", &format!("Bearer {}", tok.trim()));
+            }
+        }
+        let resp = req
             .send_string(&body.to_string())
             .map_err(|e| BackendError::err(format!("laya backend request failed: {e}")))?;
         let text = resp
