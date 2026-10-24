@@ -1,0 +1,284 @@
+{
+  "name": "dns_check",
+  "_bdd": {
+    "feature": "dns_check",
+    "feature_path": "bdd/workflows/network/dns_check.feature",
+    "mode": "decision"
+  },
+  "description": "Machine DNS check: confirm the resolver actually in effect, resolve a known\nbaseline domain through it, judge whether the answer is the expected address\n(vs poisoned / fake-ip), then probe the candidate public DNS servers directly\nand name the conclusion. It is a first-fail walk over four probes, in the\norder a real check runs them:\n1. resolver_probe -- is any DNS server configured on this machine?\n(macOS `scutil --dns`, Linux `resolvectl status`).\n2. resolve_probe  -- does the machine's own resolver return an answer for\nthe baseline domain (`dig <name>`, `nslookup <name>`)?\n3. answer_probe   -- is that answer the expected real address, or is it\npoisoned (GFW-style) / a 198.18.0.0/16 fake-ip?\n4. public_probe   -- query the candidate public DNS servers directly\n(`dig @<ip> <name> +short`): which ones answer right?\nThe harness (the agent doing the check) fills four evidence fields; the graph\nreads nothing else. Every evidence value must START with its canonical token\n(present / ok / expected / all_ok ...); free-form detail may follow, but must\nnot repeat another answer's token (e.g. an \"expected ...\" detail on a\n\"poisoned ...\" line would be misread):\n- ev_resolver  the machine's DNS configuration, e.g.\n\"nameserver 192.168.2.1\", \"dns servers 10.126.126.6\",\n\"none\" or \"empty\".\n- ev_resolve   the machine resolver's answer, e.g. \"ok 93.184.216.34\",\n\"timeout\", \"servfail\", \"nxdomain\".\n- ev_answer    the quality of that answer, e.g.\n\"expected 93.184.216.34\", \"poisoned 1.2.3.4\",\n\"fake-ip 198.18.0.5\".\n- ev_public    the direct public-DNS probe results, e.g.\n\"all ok\", \"partial 223.5.5.5,119.29.29.29\", \"none ok\".\nPublic DNS catalog (probe with `dig @<ip> <name> +short`):\nAliDNS      223.5.5.5 / 223.6.6.6        (ECS-aware, good domestic reach)\nDNSPod      119.29.29.29 / 182.254.116.116 (fast, multi-ISP)\n114DNS      114.114.114.114 / 114.114.115.115\n(security 114.114.114.119, family 114.114.114.110)\nBaidu DNS   180.76.76.76\nGoogle DNS  8.8.8.8 / 8.8.4.4\nEmitted labels: FIX_NO_RESOLVER, FIX_RESOLVER, FIX_NXDOMAIN, FIX_POISONED,\nSUGGEST_PUBLIC_DNS, FIX_UPSTREAM, DNS_OK.",
+  "start": "resolver_probe",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "resolver_probe",
+      "primary_q": "resolver_state",
+      "questions": {
+        "resolver_state": {
+          "type": "choice",
+          "instructions": "Does this machine have any DNS server configured? macOS: scutil --dns; Linux: resolvectl status. 'absent' means the system config lists no nameserver at all.",
+          "criteria": {
+            "present": "At least one nameserver/resolver is configured in the system DNS settings.",
+            "absent": "No DNS server appears anywhere in the system configuration."
+          },
+          "heuristic": {
+            "field": "ev_resolver",
+            "match_rules": {
+              "absent": [
+                "none",
+                "empty",
+                "no dns",
+                "未配置",
+                "空"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "present"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "present": "resolve_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "resolver_state",
+        "rules": [
+          {
+            "when": {
+              "question": "resolver_state",
+              "answer": "absent"
+            },
+            "label": "FIX_NO_RESOLVER"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_RESOLVER_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolve_probe",
+      "primary_q": "resolve_state",
+      "questions": {
+        "resolve_state": {
+          "type": "choice",
+          "instructions": "Does the machine's own resolver return an answer for the baseline domain? ok = an A/AAAA answer; timeout = no response; servfail = the server answered with a failure; nxdomain = the server says the name does not exist.",
+          "criteria": {
+            "ok": "The resolver returned an address.",
+            "timeout": "No response before the query deadline.",
+            "servfail": "The resolver answered SERVFAIL / refused.",
+            "nxdomain": "The resolver answered NXDOMAIN (the name itself does not exist)."
+          },
+          "heuristic": {
+            "field": "ev_resolve",
+            "match_rules": {
+              "ok": [
+                "ok",
+                "answer",
+                "成功",
+                "resolved"
+              ],
+              "timeout": [
+                "timeout",
+                "超时",
+                "no response",
+                "无响应"
+              ],
+              "servfail": [
+                "servfail",
+                "refused",
+                "失败",
+                "error"
+              ],
+              "nxdomain": [
+                "nxdomain",
+                "no such",
+                "不存在",
+                "解析不到"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "timeout"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "ok": "answer_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "resolve_state",
+        "rules": [
+          {
+            "when": {
+              "question": "resolve_state",
+              "answer_in": [
+                "timeout",
+                "servfail"
+              ]
+            },
+            "label": "FIX_RESOLVER"
+          },
+          {
+            "when": {
+              "question": "resolve_state",
+              "answer": "nxdomain"
+            },
+            "label": "FIX_NXDOMAIN"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_RESOLVE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "answer_probe",
+      "primary_q": "answer_state",
+      "questions": {
+        "answer_state": {
+          "type": "choice",
+          "instructions": "Is the resolver's address the expected real one? expected = matches the known-good address; poisoned = a wrong real-looking address (DNS hijacking); fake_ip = a 198.18.0.0/16 address, i.e. a local resolver (OpenClash & co.) took the name over.",
+          "criteria": {
+            "expected": "The answer matches the known-good address.",
+            "poisoned": "A wrong real-looking address: DNS hijacking / poisoning.",
+            "fake_ip": "A 198.18.0.0/16 fake-ip: a local DNS proxy answered instead of upstream."
+          },
+          "heuristic": {
+            "field": "ev_answer",
+            "match_rules": {
+              "poisoned": [
+                "poisoned",
+                "poison",
+                "污染",
+                "wrong ip",
+                "gfw",
+                "hijacked",
+                "hijack",
+                "劫持"
+              ],
+              "fake_ip": [
+                "198.18",
+                "fake-ip",
+                "fake_ip",
+                "fake ip",
+                "fakeip"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "expected"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fake_ip": "public_probe",
+          "poisoned": "public_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "answer_state",
+        "rules": [
+          {
+            "when": {
+              "question": "answer_state",
+              "answer": "expected"
+            },
+            "label": "DNS_OK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_ANSWER_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "public_probe",
+      "primary_q": "public_state",
+      "questions": {
+        "public_state": {
+          "type": "choice",
+          "instructions": "Querying the candidate public DNS servers directly (dig @<ip> <name> +short), which of them return the expected address? all_ok = every one; partial = at least one; none_ok = none of them.",
+          "criteria": {
+            "all_ok": "Every candidate public DNS returned the expected address.",
+            "partial": "Some candidates returned the expected address; at least one failed.",
+            "none_ok": "No candidate public DNS returned the expected address."
+          },
+          "heuristic": {
+            "field": "ev_public",
+            "match_rules": {
+              "all_ok": [
+                "all ok",
+                "all_ok",
+                "全部",
+                "every"
+              ],
+              "partial": [
+                "partial",
+                "部分",
+                "some"
+              ],
+              "none_ok": [
+                "none",
+                "none ok",
+                "全失败",
+                "all fail"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "none_ok"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "public_state",
+        "rules": [
+          {
+            "when": {
+              "question": "public_state",
+              "answer_in": [
+                "all_ok",
+                "partial"
+              ]
+            },
+            "label": "SUGGEST_PUBLIC_DNS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "FIX_UPSTREAM"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,276 @@
+{
+  "name": "dns_auto_evolution",
+  "_bdd": {
+    "feature": "dns_auto_evolution",
+    "feature_path": "bdd/workflows/network/dns_auto_evolution.feature",
+    "mode": "decision"
+  },
+  "description": "Decide, per candidate domain harvested from the bypass router's DNS logs,\nwhether it must be pinned to domestic resolution (the auto-evolution step of\nthe Feishu-style fix). The harness fills five evidence fields; the graph\nreads nothing else:\n- ev_domain    the candidate domain, e.g. \"www.feishu.cn\".\n- ev_drift     \"overseas\" (clash DNS returned an overseas edge while a\ndirect domestic DoH returned a domestic one), \"none\" (no\ndrift), or \"unknown\".\n- ev_kind      \"domestic\" (.cn / .com.cn / domestic CDN shapes / geosite:cn\nhint), \"foreign\", or \"unknown\".\n- ev_pinned    \"yes\" (already in nameserver-policy / fake-ip-filter /\nDIRECT rules) or \"no\".\n- ev_outbound  \"proxy\" (clash returned a fake-ip 198.18.x for it, i.e. the\nrule sends it through the proxy), \"direct\", or \"unknown\".\nDecision ladder (first-fail):\n1. drift     -- no drift: nothing to do. unknown: needs a human look.\n2. kind      -- foreign by design: do not touch. unknown: review.\n3. pinned    -- already pinned: nothing new to apply.\n4. outbound  -- proxy: pin DNS + fake-ip-filter + DIRECT rule.\ndirect/unknown: pin DNS + fake-ip-filter only.\nEmitted labels: SKIP_NO_DRIFT, SKIP_FOREIGN, SKIP_ALREADY, REVIEW,\nADD_DNS_PIN, ADD_DNS_PIN_DIRECT.",
+  "start": "drift",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "drift",
+      "primary_q": "drift_state",
+      "questions": {
+        "drift_state": {
+          "type": "choice",
+          "instructions": "Did clash DNS return an overseas edge while a direct domestic DoH returned a domestic one? overseas = real drift worth fixing; none = both agree; unknown = the cross-check could not be completed.",
+          "criteria": {
+            "overseas": "clash answered with an overseas IP; direct domestic DoH answered domestic.",
+            "none": "clash and direct DoH agree; no drift.",
+            "unknown": "The cross-check could not be completed."
+          },
+          "heuristic": {
+            "field": "ev_drift",
+            "match_rules": {
+              "overseas": [
+                "overseas",
+                "海外",
+                "drift",
+                "漂移"
+              ],
+              "unknown": [
+                "unknown",
+                "无法",
+                "failed"
+              ],
+              "none": [
+                "none",
+                "agree",
+                "一致"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "none"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "overseas": "kind"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "drift_state",
+        "rules": [
+          {
+            "when": {
+              "question": "drift_state",
+              "answer": "none"
+            },
+            "label": "SKIP_NO_DRIFT"
+          },
+          {
+            "when": {
+              "question": "drift_state",
+              "answer": "unknown"
+            },
+            "label": "REVIEW"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_DRIFT_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "kind",
+      "primary_q": "kind_state",
+      "questions": {
+        "kind_state": {
+          "type": "choice",
+          "instructions": "Is this domain a domestic service by shape (.cn / .com.cn / domestic CDN suffix / geosite:cn)? foreign = it is meant to be overseas; unknown = cannot tell.",
+          "criteria": {
+            "domestic": "The domain shape says it is a domestic service.",
+            "foreign": "The domain is a foreign service by design.",
+            "unknown": "The domain's intent cannot be determined."
+          },
+          "heuristic": {
+            "field": "ev_kind",
+            "match_rules": {
+              "domestic": [
+                "domestic",
+                "国内",
+                "cn",
+                "geosite"
+              ],
+              "foreign": [
+                "foreign",
+                "海外服务",
+                "google",
+                "github",
+                "openai"
+              ],
+              "unknown": [
+                "unknown",
+                "不确定"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "unknown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "domestic": "pinned"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "kind_state",
+        "rules": [
+          {
+            "when": {
+              "question": "kind_state",
+              "answer": "foreign"
+            },
+            "label": "SKIP_FOREIGN"
+          },
+          {
+            "when": {
+              "question": "kind_state",
+              "answer": "unknown"
+            },
+            "label": "REVIEW"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_KIND_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "pinned",
+      "primary_q": "pinned_state",
+      "questions": {
+        "pinned_state": {
+          "type": "choice",
+          "instructions": "Is this domain already covered by the DNS optimization (nameserver-policy / fake-ip-filter / DIRECT rules)? yes = already applied, nothing new.",
+          "criteria": {
+            "yes": "Already pinned in at least one of the optimization lists.",
+            "no": "Not pinned anywhere yet."
+          },
+          "heuristic": {
+            "field": "ev_pinned",
+            "match_rules": {
+              "yes": [
+                "yes",
+                "pinned",
+                "已配置",
+                "已钉"
+              ],
+              "no": [
+                "no",
+                "absent",
+                "未配置"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "no": "outbound"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "pinned_state",
+        "rules": [
+          {
+            "when": {
+              "question": "pinned_state",
+              "answer": "yes"
+            },
+            "label": "SKIP_ALREADY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_PINNED_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "outbound",
+      "primary_q": "outbound_state",
+      "questions": {
+        "outbound_state": {
+          "type": "choice",
+          "instructions": "What outbound does this domain's rule use? proxy (clash returned a fake-ip 198.18.x for it) means it also needs a DIRECT rule; direct/unknown means DNS pinning suffices.",
+          "criteria": {
+            "proxy": "The rule sends this domain through the proxy (fake-ip answer).",
+            "direct": "The rule already sends this domain direct.",
+            "unknown": "The outbound cannot be determined."
+          },
+          "heuristic": {
+            "field": "ev_outbound",
+            "match_rules": {
+              "proxy": [
+                "proxy",
+                "代理",
+                "fake-ip",
+                "198.18"
+              ],
+              "direct": [
+                "direct",
+                "直连"
+              ],
+              "unknown": [
+                "unknown",
+                "不确定"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "unknown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "outbound_state",
+        "rules": [
+          {
+            "when": {
+              "question": "outbound_state",
+              "answer": "proxy"
+            },
+            "label": "ADD_DNS_PIN_DIRECT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ADD_DNS_PIN"
+          }
+        ]
+      }
+    }
+  ]
+}

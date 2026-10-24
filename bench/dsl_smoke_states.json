@@ -7495,5 +7495,141 @@
       "ev_intercept": "saw 192.168.2.83 youtube",
       "ev_proxy": "200 ok"
     }
+  },
+  "access_path_diag": {
+    "split": {
+      "ev_dns_diff": "differs"
+    },
+    "edge_overseas": {
+      "ev_dns_diff": "same",
+      "ev_edge": "overseas"
+    },
+    "edge_unknown": {
+      "ev_dns_diff": "same",
+      "ev_edge": "unknown"
+    },
+    "proxied": {
+      "ev_dns_diff": "same",
+      "ev_edge": "domestic",
+      "ev_proxy": "proxied"
+    },
+    "slow": {
+      "ev_dns_diff": "same",
+      "ev_edge": "domestic",
+      "ev_proxy": "direct",
+      "ev_rtt": "slow"
+    },
+    "ok": {
+      "ev_dns_diff": "same",
+      "ev_edge": "domestic",
+      "ev_proxy": "direct",
+      "ev_rtt": "fast"
+    }
+  },
+  "dns_auto_evolution": {
+    "no_drift": {
+      "ev_drift": "none"
+    },
+    "drift_unknown": {
+      "ev_drift": "unknown"
+    },
+    "foreign": {
+      "ev_drift": "overseas",
+      "ev_kind": "foreign"
+    },
+    "kind_unknown": {
+      "ev_drift": "overseas",
+      "ev_kind": "unknown"
+    },
+    "already": {
+      "ev_drift": "overseas",
+      "ev_kind": "domestic",
+      "ev_pinned": "yes"
+    },
+    "pin_direct": {
+      "ev_drift": "overseas",
+      "ev_kind": "domestic",
+      "ev_pinned": "no",
+      "ev_outbound": "direct"
+    },
+    "pin_proxy": {
+      "ev_drift": "overseas",
+      "ev_kind": "domestic",
+      "ev_pinned": "no",
+      "ev_outbound": "proxy"
+    }
+  },
+  "dns_check": {
+    "no_resolver": {
+      "ev_resolver": "none"
+    },
+    "timeout": {
+      "ev_resolver": "present",
+      "ev_resolve": "timeout"
+    },
+    "servfail": {
+      "ev_resolver": "present",
+      "ev_resolve": "servfail"
+    },
+    "nxdomain": {
+      "ev_resolver": "present",
+      "ev_resolve": "nxdomain"
+    },
+    "ok": {
+      "ev_resolver": "present",
+      "ev_resolve": "ok",
+      "ev_answer": "expected"
+    },
+    "poisoned_upstream": {
+      "ev_resolver": "present",
+      "ev_resolve": "ok",
+      "ev_answer": "poisoned",
+      "ev_public": "none_ok"
+    },
+    "poisoned_suggest": {
+      "ev_resolver": "present",
+      "ev_resolve": "ok",
+      "ev_answer": "poisoned",
+      "ev_public": "partial"
+    },
+    "fake_ip_suggest": {
+      "ev_resolver": "present",
+      "ev_resolve": "ok",
+      "ev_answer": "fake_ip",
+      "ev_public": "all_ok"
+    },
+    "fake_ip_upstream": {
+      "ev_resolver": "present",
+      "ev_resolve": "ok",
+      "ev_answer": "fake_ip",
+      "ev_public": "none_ok"
+    }
+  },
+  "route_optimization": {
+    "keep": {
+      "ev_fault": "none"
+    },
+    "pin_dns": {
+      "ev_fault": "dns_split",
+      "ev_dns_policy": "absent"
+    },
+    "add_rule_split": {
+      "ev_fault": "dns_split",
+      "ev_dns_policy": "present",
+      "ev_rule": "absent"
+    },
+    "escalate_split": {
+      "ev_fault": "dns_split",
+      "ev_dns_policy": "present",
+      "ev_rule": "present"
+    },
+    "add_rule_proxy": {
+      "ev_fault": "proxy_rule",
+      "ev_rule": "absent"
+    },
+    "escalate_path": {
+      "ev_fault": "path_quality",
+      "ev_rule": "present"
+    }
   }
 }

@@ -1,0 +1,217 @@
+{
+  "name": "route_optimization",
+  "_bdd": {
+    "feature": "route_optimization",
+    "feature_path": "bdd/workflows/network/route_optimization.feature",
+    "mode": "decision"
+  },
+  "description": "Turn an access_path_diag verdict into one concrete routing action. The graph\nowns the decision order: fix the DNS policy first (it picks the edge), then\nthe direct rule (it picks the path), and only escalate when both are already\nin place and the path is still slow.\nInputs (filled by the harness from the diagnosis):\n- ev_fault      \"none\" / \"dns_split\" / \"overseas_edge\" / \"proxy_rule\" /\n\"path_quality\" (the access_path_diag label, lowercased)\n- ev_dns_policy \"present\" / \"absent\" -- is the domain pinned to a domestic\nresolver (nameserver-policy / fake-ip excluded)?\n- ev_rule       \"present\" / \"absent\" -- is there already a DIRECT rule for\nthe domain in the proxy config?\nEmitted labels (the optimization advice, in fix order):\nKEEP_AS_IS        -- nothing to do.\nPIN_DOMESTIC_DNS  -- pin the domain to a domestic resolver (223.5.5.5 /\n119.29.29.29), exclude it from fake-ip.\nADD_DIRECT_RULE   -- add the domain to the DIRECT rule set (bypass proxy).\nESCALATE_UPSTREAM -- DNS and DIRECT are already right; the remaining\nslowness is link/upstream quality, escalate.\nReference advice for the Feishu case (measured 2026-10-24):\ndomains   feishu.cn, feishucdn.com, bytedns1.com, cdnbuild.net,\ncdngslb.com, queniurc.com, larksuite.com\ndns       223.5.5.5 / 223.6.6.6 (AliDNS), 119.29.29.29 (DNSPod)\nverify    re-run access_path_diag: dns_split -> consistent, edge -> domestic,\nrtt -> fast (TTFB < 500ms)",
+  "start": "fault",
+  "max_iterations": 3,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "fault",
+      "primary_q": "fault_kind",
+      "questions": {
+        "fault_kind": {
+          "type": "choice",
+          "instructions": "What did access_path_diag conclude for this domain? none = healthy; dns_split = :53 differs from DoH; overseas_edge = domestic service served from an overseas edge; proxy_rule = a domestic domain is proxied; path_quality = clean path but RTT over budget.",
+          "criteria": {
+            "none": "The path is healthy; no optimization needed.",
+            "dns_split": "The system resolver and DoH disagree.",
+            "overseas_edge": "The resolved CDN edge is outside mainland China.",
+            "proxy_rule": "The domain's traffic goes through a proxy.",
+            "path_quality": "DNS and path are clean but RTT exceeds budget."
+          },
+          "heuristic": {
+            "field": "ev_fault",
+            "match_rules": {
+              "dns_split": [
+                "dns_split",
+                "dns split",
+                "不一致"
+              ],
+              "overseas_edge": [
+                "overseas",
+                "海外",
+                "hk",
+                "香港",
+                "tokyo",
+                "东京"
+              ],
+              "proxy_rule": [
+                "proxy",
+                "代理",
+                "tun",
+                "旁路由"
+              ],
+              "path_quality": [
+                "path_quality",
+                "slow",
+                "慢",
+                "timeout"
+              ],
+              "none": [
+                "none",
+                "ok",
+                "healthy",
+                "正常"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "none"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "dns_split": "dns_policy",
+          "overseas_edge": "dns_policy",
+          "proxy_rule": "rule_state",
+          "path_quality": "rule_state"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "fault_kind",
+        "rules": [
+          {
+            "when": {
+              "question": "fault_kind",
+              "answer": "none"
+            },
+            "label": "KEEP_AS_IS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_FAULT_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "dns_policy",
+      "primary_q": "dns_policy_state",
+      "questions": {
+        "dns_policy_state": {
+          "type": "choice",
+          "instructions": "Is this domain already pinned to a domestic resolver (nameserver-policy / DNS split), and excluded from fake-ip? Pinning DNS first is what makes the edge domestic; a direct rule alone cannot fix a foreign edge.",
+          "criteria": {
+            "present": "The domain already resolves through a domestic resolver.",
+            "absent": "The domain still resolves through the proxy DNS / fake-ip."
+          },
+          "heuristic": {
+            "field": "ev_dns_policy",
+            "match_rules": {
+              "present": [
+                "present",
+                "pinned",
+                "已配置",
+                "nameserver-policy",
+                "国内解析"
+              ],
+              "absent": [
+                "absent",
+                "missing",
+                "未配置",
+                "fake-ip",
+                "proxy dns"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "absent"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "present": "rule_state"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "dns_policy_state",
+        "rules": [
+          {
+            "when": {
+              "question": "dns_policy_state",
+              "answer": "absent"
+            },
+            "label": "PIN_DOMESTIC_DNS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_DNS_POLICY_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rule_state",
+      "primary_q": "rule_present",
+      "questions": {
+        "rule_present": {
+          "type": "choice",
+          "instructions": "Is there already a DIRECT rule for this domain in the proxy config? With DNS pinned, a DIRECT rule removes the proxy hop; with everything already in place, the remaining slowness is upstream/link quality.",
+          "criteria": {
+            "present": "A DIRECT rule for the domain already exists.",
+            "absent": "The domain has no DIRECT rule and may still be proxied."
+          },
+          "heuristic": {
+            "field": "ev_rule",
+            "match_rules": {
+              "present": [
+                "present",
+                "exists",
+                "已有",
+                "direct rule"
+              ],
+              "absent": [
+                "absent",
+                "missing",
+                "没有",
+                "no rule"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "absent"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "rule_present",
+        "rules": [
+          {
+            "when": {
+              "question": "rule_present",
+              "answer": "absent"
+            },
+            "label": "ADD_DIRECT_RULE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ESCALATE_UPSTREAM"
+          }
+        ]
+      }
+    }
+  ]
+}

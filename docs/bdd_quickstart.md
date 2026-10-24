@@ -427,7 +427,7 @@ Feature: support_ticket_router
 
 ### 已验证的转换（BDD ↔ 原 JSON 行为等价）
 
-**178/178 决策 workflow 已转换**（agent 源为 `bdd/workflows/<cat>/<name>.feature`；
+**182/182 决策 workflow 已转换**（agent 源为 `bdd/workflows/<cat>/<name>.feature`；
 过渡期 runtime mirror 为 `dsl/<cat>/<name>.json`），每个都过 round-trip 逐字段 MATCH +
 引擎离线行为等价。Agent 侧的 catalog/list/decide 不要求 JSON 树存在。**下面按类别列出全部**，条数与名单由
 `bdd doc-check` 对着活语料（`@decision` feature 集合 = `bdd round-trip` 的总数）逐个重算 —— 一个没人重算的数字
@@ -441,6 +441,7 @@ Feature: support_ticket_router
 - guards（17）：ab_promote_gate、agent_command_gate、agent_permission_gate、ar_coding_gate、content_policy_gate、deadlock_watchdog_gate、deploy_gate、diffusion_coding_gate、int4_patch_gate、longhorizon_action_gate、parity_gate、reliable_state_reader、report_gen_gate、routing_gate、s4_gate、toolcall_fix_verify、wld_e2e_gate
 - laya_mem（9）：admission、consolidation、memory_type、persist_memory、relation_pair、retrieve_loop、routing、stopping、traversal
 - loops（1）：iterative_refine_loop
+- network（4）：access_path_diag、dns_auto_evolution、dns_check、route_optimization
 - ole_eval（66）：accessibility_content_guard、adaptive_risk_control、alert_noise_reduction、aml_screener、api_key_rotation_guard、api_quota_guard、approval_workflow、bracket_matcher、cache_invalidation_guard、cache_policy_enforcer、circuit_breaker_guard、code_review_gate、code_self_repair、compliance_audit_evidence_guard、config_schema_migration_guard、content_safety_guard、contract_conflict_guard、crawler_schema_guard、credential_issuance_guard、credential_rotation_guard、data_contract_schema_guard、data_retention_expiry_guard、dead_letter_queue_guard、deployment_canary_guard、dialogue_policy、dns_record_validator、endpoint_health_checker、experiment_design_gate、feature_flag_rollout_guard、file_upload_scanner、formal_checker、incident_response_guard、indentation_guard、intrusion_signal_guard、inventory_replenishment_guard、keyword_order_guard、knowledge_graph_guard、literature_synthesis_guard、loan_dialogue、log_redaction_guard、model_drift_detector、network_bandwidth_allocation_guard、order_tracker、policy_as_code、pricing_discount_guard、privacy_retention_guard、protocol_parser、query_complexity_limiter、rate_limit_budget_guard、rate_limiter_config_guard、reasoning_audit、refactor_plan_guard、resource_scheduler_guard、rpa_action_guard、self_healing_gate、session_token_validator、settlement_allocation_guard、shift_assignment_guard、shipping_route_guard、sla_checker、subscription_churn_retention_guard、subscription_entitlement_guard、test_case_generator、verifiable_cot、webhook_signature_verifier、workflow_dag_validator
 - pipelines（1）：intake_pipeline_nested
 - routing（4）：proxy_diag、support_ticket_router、support_ticket_router_hybrid、triage_then_moderate

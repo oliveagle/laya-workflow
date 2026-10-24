@@ -1,0 +1,265 @@
+{
+  "name": "access_path_diag",
+  "_bdd": {
+    "feature": "access_path_diag",
+    "feature_path": "bdd/workflows/network/access_path_diag.feature",
+    "mode": "decision"
+  },
+  "description": "Diagnose why a domestic service is slow to reach (the Feishu-docs case).\nIt is a first-fail walk over four probes, in the order a real diagnosis runs\nthem:\n1. dns_split  -- does the system resolver (:53) return the same answer as a\nDoH resolver bypassing the :53 path (AliDNS 223.5.5.5,\ndoh.pub)? A mismatch means a local DNS proxy / bypass\nrouter is choosing the edge, not the real DNS.\n2. edge_geo   -- is the resolved CDN edge domestic? A domestic service\nserved from an overseas edge is pure added RTT.\n3. proxy_path -- does this domain's traffic traverse a proxy (system proxy,\nTUN, or a bypass-router rule)? A domestic domain behind a\nproxy pays the proxy chain twice.\n4. rtt_budget -- are TLS handshake and TTFB within budget\n(TLS < 300ms, TTFB < 500ms)?\nThe harness fills four evidence fields; the graph reads nothing else. Each\nvalue must START with its canonical token (same / differs / domestic /\noverseas / direct / proxied / fast / slow); detail may follow but must not\nrepeat another answer's token:\n- ev_dns_diff  \"same\" (system :53 == DoH) or \"differs <detail>\"\n(e.g. \"differs :53 139.177.246.207 (HK) vs DoH 183.192.176.85\").\n- ev_edge      \"domestic 183.192.176.85\", \"overseas 139.177.246.207 (HK)\",\n\"overseas 155.102.209.202 (JP)\" or \"unknown\".\n- ev_proxy     \"direct\", \"proxied (system proxy)\", \"proxied (TUN)\",\n\"proxied (gateway rule)\" or \"unknown\".\n- ev_rtt       \"fast tls=31ms ttfb=93ms\" or \"slow tls=878ms ttfb=1352ms\"\n(the leading word is the harness's budget verdict; detail\nafter it is free-form).\nCalibration (measured 2026-10-24 on the Feishu case):\ndomestic edge 183.192.176.85  TLS 25-32ms  TTFB 93-155ms   -> healthy\nHK edge       139.177.246.207 TLS 388-878ms TTFB 644-1352ms -> 5-10x slower\n:53 hijack returned HK/Tokyo edges for every resolver tested\n(223.5.5.5 / 119.29.29.29 / 180.76.76.76 / 8.8.8.8), while DoH returned\ndomestic edges (183.192.176.85 / 36.156.72.x / 223.111.230.x).\nEmitted labels: FIX_DNS_SPLIT, FIX_EDGE_OVERSEAS, FIX_PROXY_RULE,\nFIX_ROUTE_QUALITY, NETWORK_OK.",
+  "start": "dns_split",
+  "max_iterations": 5,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "dns_split",
+      "primary_q": "dns_state",
+      "questions": {
+        "dns_state": {
+          "type": "choice",
+          "instructions": "Does the system :53 resolver return the same answer as DoH (dig @223.5.5.5 vs https://doh.pub/dns-query)? A mismatch means a local DNS proxy (bypass router / OpenClash / fake-ip) is choosing the edge.",
+          "criteria": {
+            "same": ":53 and DoH agree: no DNS interception for this domain.",
+            "differs": ":53 and DoH disagree: a local resolver is answering instead of real DNS."
+          },
+          "heuristic": {
+            "field": "ev_dns_diff",
+            "match_rules": {
+              "differs": [
+                "differs",
+                "differ",
+                "mismatch",
+                "不一致",
+                "vs doh"
+              ],
+              "same": [
+                "same",
+                "match",
+                "一致"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "same"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "same": "edge_geo"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "dns_state",
+        "rules": [
+          {
+            "when": {
+              "question": "dns_state",
+              "answer": "differs"
+            },
+            "label": "FIX_DNS_SPLIT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_DNS_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "edge_geo",
+      "primary_q": "edge_state",
+      "questions": {
+        "edge_state": {
+          "type": "choice",
+          "instructions": "Is the resolved CDN edge domestic? A domestic service (feishu.cn, feishucdn.com) served from an overseas edge pays the cross-border RTT on every request.",
+          "criteria": {
+            "domestic": "The edge IP is in mainland China.",
+            "overseas": "The edge IP is outside mainland China (HK/Tokyo/US...).",
+            "unknown": "The edge location cannot be determined."
+          },
+          "heuristic": {
+            "field": "ev_edge",
+            "match_rules": {
+              "domestic": [
+                "domestic",
+                "境内",
+                "mainland",
+                "cn",
+                "上海",
+                "北京",
+                "广州"
+              ],
+              "overseas": [
+                "overseas",
+                "海外",
+                "hk",
+                "hong kong",
+                "香港",
+                "tokyo",
+                "东京",
+                "jp",
+                "us"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "unknown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "domestic": "proxy_path"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "edge_state",
+        "rules": [
+          {
+            "when": {
+              "question": "edge_state",
+              "answer_in": [
+                "overseas",
+                "unknown"
+              ]
+            },
+            "label": "FIX_EDGE_OVERSEAS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_EDGE_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "proxy_path",
+      "primary_q": "proxy_state",
+      "questions": {
+        "proxy_state": {
+          "type": "choice",
+          "instructions": "Does this domain's traffic traverse a proxy (system proxy, TUN, or a bypass-router rule)? A domestic domain sent through a proxy chain is slower than direct, and the proxy's DNS can also pick a foreign edge.",
+          "criteria": {
+            "direct": "Traffic goes direct to the domestic edge.",
+            "proxied": "Traffic goes through a proxy/TUN/bypass-router rule.",
+            "unknown": "The path cannot be determined from the evidence."
+          },
+          "heuristic": {
+            "field": "ev_proxy",
+            "match_rules": {
+              "direct": [
+                "direct",
+                "直连"
+              ],
+              "proxied": [
+                "proxy",
+                "proxied",
+                "代理",
+                "tun",
+                "gateway rule",
+                "旁路由"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "unknown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "direct": "rtt_budget"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proxy_state",
+        "rules": [
+          {
+            "when": {
+              "question": "proxy_state",
+              "answer_in": [
+                "proxied",
+                "unknown"
+              ]
+            },
+            "label": "FIX_PROXY_RULE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_PROXY_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rtt_budget",
+      "primary_q": "rtt_state",
+      "questions": {
+        "rtt_state": {
+          "type": "choice",
+          "instructions": "Are TLS handshake and TTFB within budget (TLS < 300ms, TTFB < 500ms on a domestic edge)? Above budget with a clean path points at link quality / MTU / congestion rather than DNS or proxy.",
+          "criteria": {
+            "fast": "TLS < 300ms and TTFB < 500ms: the path is healthy.",
+            "slow": "TLS >= 300ms or TTFB >= 500ms: the path itself is slow."
+          },
+          "heuristic": {
+            "field": "ev_rtt",
+            "match_rules": {
+              "fast": [
+                "fast",
+                "预算内",
+                "ok"
+              ],
+              "slow": [
+                "slow",
+                "超预算",
+                "慢",
+                "timeout",
+                "超时"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "slow"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "rtt_state",
+        "rules": [
+          {
+            "when": {
+              "question": "rtt_state",
+              "answer": "fast"
+            },
+            "label": "NETWORK_OK"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "FIX_ROUTE_QUALITY"
+          }
+        ]
+      }
+    }
+  ]
+}

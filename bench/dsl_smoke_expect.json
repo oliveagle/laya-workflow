@@ -4754,5 +4754,341 @@
       "trace.steps.3.action": "stop",
       "trace.steps.3.answer": "ok"
     }
+  },
+  "access_path_diag": {
+    "split": {
+      "trace.step_count": 1,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "differs"
+    },
+    "edge_overseas": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "same",
+      "trace.steps.1.node": "edge_geo",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "overseas"
+    },
+    "edge_unknown": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "same",
+      "trace.steps.1.node": "edge_geo",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "unknown"
+    },
+    "proxied": {
+      "trace.step_count": 3,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "same",
+      "trace.steps.1.node": "edge_geo",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "proxy_path",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "proxied"
+    },
+    "slow": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "same",
+      "trace.steps.1.node": "edge_geo",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "proxy_path",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "direct",
+      "trace.steps.3.node": "rtt_budget",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "slow"
+    },
+    "ok": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "dns_split",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "same",
+      "trace.steps.1.node": "edge_geo",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "proxy_path",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "direct",
+      "trace.steps.3.node": "rtt_budget",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "fast"
+    }
+  },
+  "dns_auto_evolution": {
+    "no_drift": {
+      "trace.step_count": 1,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "none"
+    },
+    "drift_unknown": {
+      "trace.step_count": 1,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "unknown"
+    },
+    "foreign": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "overseas",
+      "trace.steps.1.node": "kind",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "foreign"
+    },
+    "kind_unknown": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "overseas",
+      "trace.steps.1.node": "kind",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "unknown"
+    },
+    "already": {
+      "trace.step_count": 3,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "overseas",
+      "trace.steps.1.node": "kind",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "pinned",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "yes"
+    },
+    "pin_direct": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "overseas",
+      "trace.steps.1.node": "kind",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "pinned",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "no",
+      "trace.steps.3.node": "outbound",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "direct"
+    },
+    "pin_proxy": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "drift",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "overseas",
+      "trace.steps.1.node": "kind",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "domestic",
+      "trace.steps.2.node": "pinned",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "no",
+      "trace.steps.3.node": "outbound",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "proxy"
+    }
+  },
+  "dns_check": {
+    "no_resolver": {
+      "trace.step_count": 1,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "absent"
+    },
+    "timeout": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "timeout"
+    },
+    "servfail": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "servfail"
+    },
+    "nxdomain": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "nxdomain"
+    },
+    "ok": {
+      "trace.step_count": 3,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "ok",
+      "trace.steps.2.node": "answer_probe",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "expected"
+    },
+    "poisoned_upstream": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "ok",
+      "trace.steps.2.node": "answer_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "poisoned",
+      "trace.steps.3.node": "public_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "none_ok"
+    },
+    "poisoned_suggest": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "ok",
+      "trace.steps.2.node": "answer_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "poisoned",
+      "trace.steps.3.node": "public_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "partial"
+    },
+    "fake_ip_suggest": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "ok",
+      "trace.steps.2.node": "answer_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "fake_ip",
+      "trace.steps.3.node": "public_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "all_ok"
+    },
+    "fake_ip_upstream": {
+      "trace.step_count": 4,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "resolver_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "present",
+      "trace.steps.1.node": "resolve_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "ok",
+      "trace.steps.2.node": "answer_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "fake_ip",
+      "trace.steps.3.node": "public_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "none_ok"
+    }
+  },
+  "route_optimization": {
+    "keep": {
+      "trace.step_count": 1,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "none"
+    },
+    "pin_dns": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "dns_split",
+      "trace.steps.1.node": "dns_policy",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "absent"
+    },
+    "add_rule_split": {
+      "trace.step_count": 3,
+      "trace.final_action": "max_iterations",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "dns_split",
+      "trace.steps.1.node": "dns_policy",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "present",
+      "trace.steps.2.node": "rule_state",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "absent"
+    },
+    "escalate_split": {
+      "trace.step_count": 3,
+      "trace.final_action": "max_iterations",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "dns_split",
+      "trace.steps.1.node": "dns_policy",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "present",
+      "trace.steps.2.node": "rule_state",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "present"
+    },
+    "add_rule_proxy": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "proxy_rule",
+      "trace.steps.1.node": "rule_state",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "absent"
+    },
+    "escalate_path": {
+      "trace.step_count": 2,
+      "trace.final_action": "stop",
+      "trace.steps.0.node": "fault",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "path_quality",
+      "trace.steps.1.node": "rule_state",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "present"
+    }
   }
 }
