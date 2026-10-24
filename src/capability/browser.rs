@@ -664,7 +664,14 @@ fn attach_owner_dir(endpoint: &str) -> Result<std::path::PathBuf> {
     Ok(std::env::temp_dir().join(format!("laya-cdp-attach-{}", endpoint_port(endpoint)?)))
 }
 
-fn write_owner_marker(
+/// Mark `profile_path` as owned by this Laya build, serving `endpoint`.
+///
+/// Public within the crate: the standalone `browser ensure` launcher
+/// (`crate::orchestrate`) launches Chrome outside the capability runtime, so
+/// only the capability path wrote a marker — and an unmarked instance was
+/// rejected by [`validate_owned_endpoint`] as "not a laya-workflow-owned
+/// singleton". Every path that launches a Laya Chrome must mark it.
+pub(crate) fn write_owner_marker(
     profile_path: &std::path::Path,
     endpoint: &str,
     pid: Option<u32>,
@@ -732,17 +739,99 @@ fn validate_owned_endpoint(
     {
         bail!("Laya Chrome owner marker does not identify {endpoint}");
     }
-    let canonical = profile_path
-        .canonicalize()
-        .unwrap_or_else(|_| profile_path.to_path_buf());
-    let needles = vec![
-        format!("--remote-debugging-port={}", endpoint_port(endpoint)?),
-        canonical.display().to_string(),
-    ];
-    if !process_command_contains(&needles) {
+    // The live Chrome must still name this profile and port. Accept the profile
+    // path in any of the spellings it may have been launched with: the raw
+    // input path, its canonical form (macOS `/tmp` → `/private/tmp`), and the
+    // canonical path the owner marker recorded at launch time.
+    let port_needle = format!("--remote-debugging-port={}", endpoint_port(endpoint)?);
+    let mut path_needles = vec![profile_path.display().to_string()];
+    if let Ok(canonical) = profile_path.canonicalize() {
+        path_needles.push(canonical.display().to_string());
+    }
+    if let Some(marked) = marker.get("profile").and_then(Value::as_str) {
+        path_needles.push(marked.to_string());
+    }
+    path_needles.dedup();
+    let found = path_needles
+        .iter()
+        .any(|path| process_command_contains(&[port_needle.clone(), path.clone()]));
+    if !found {
         bail!("Laya-owned Chrome process was not found for {endpoint}");
     }
     Ok(())
+}
+
+/// Is the CDP listener at `endpoint` a **Laya-owned** Chrome for `profile_path`?
+///
+/// Unlike [`validate_owned_endpoint`] this never *migrates* (writes) a marker:
+/// it is a read-only ownership probe for callers that only need to know whether
+/// the running instance is theirs. A listener without a matching marker (or
+/// without a live process command line naming this profile and port) belongs
+/// to somebody else and must not be treated as Laya's singleton.
+/// Is the CDP listener at `endpoint` a Chrome we may **adopt** as ours?
+///
+/// Adoption is for instances launched before owner markers existed (the old
+/// `browser ensure` never wrote one) or started by hand with exactly the
+/// configured profile and port. Adoption is safe only when the live process
+/// command line names this profile and port — the same evidence
+/// [`validate_owned_endpoint`] demands — because that process is provably the
+/// listener on the port. This function never writes anything.
+pub(crate) fn endpoint_adoptable(endpoint: &str, profile_path: &std::path::Path) -> bool {
+    // Must actually be a browser speaking CDP, not any squatting process.
+    if http_json(endpoint, "GET", "/json/version", Duration::from_millis(1500)).is_err() {
+        return false;
+    }
+    let Ok(port) = endpoint_port(endpoint) else {
+        return false;
+    };
+    let mut path_needles = vec![profile_path.display().to_string()];
+    if let Ok(canonical) = profile_path.canonicalize() {
+        path_needles.push(canonical.display().to_string());
+    }
+    path_needles.dedup();
+    let port_needle = format!("--remote-debugging-port={port}");
+    path_needles
+        .iter()
+        .any(|path| process_command_contains(&[port_needle.clone(), path.clone()]))
+}
+
+pub(crate) fn endpoint_owned_by_profile(endpoint: &str, profile_path: &std::path::Path) -> bool {
+    let Ok(port) = endpoint_port(endpoint) else {
+        return false;
+    };
+    let marker_path = owner_marker_path(profile_path);
+    let Ok(raw) = std::fs::read_to_string(&marker_path) else {
+        return false;
+    };
+    let Ok(marker) = serde_json::from_str::<Value>(&raw) else {
+        return false;
+    };
+    if marker.get("owner").and_then(Value::as_str) != Some("laya-workflow")
+        || marker.get("port").and_then(Value::as_u64) != Some(port as u64)
+    {
+        return false;
+    }
+    // The marker must name *this* endpoint (not just this port).
+    if let Some(marked) = marker.get("endpoint").and_then(Value::as_str) {
+        if endpoint_port(marked).ok() != Some(port) {
+            return false;
+        }
+    }
+    // Accept the profile path as launched (raw), canonicalized, or as the
+    // marker recorded it — the launcher may have passed a non-canonical path
+    // (macOS `/tmp/...` is common) and the marker stores the canonical one.
+    let mut path_needles = vec![profile_path.display().to_string()];
+    if let Ok(canonical) = profile_path.canonicalize() {
+        path_needles.push(canonical.display().to_string());
+    }
+    if let Some(marked) = marker.get("profile").and_then(Value::as_str) {
+        path_needles.push(marked.to_string());
+    }
+    path_needles.dedup();
+    let port_needle = format!("--remote-debugging-port={port}");
+    path_needles
+        .iter()
+        .any(|path| process_command_contains(&[port_needle.clone(), path.clone()]))
 }
 
 pub(crate) fn ensure_runtime(

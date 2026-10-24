@@ -225,7 +225,43 @@ pub fn ensure_browser(req: &BrowserEnsureRequest) -> Result<bool> {
 fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     let port = req.port();
     let config = crate::capability::browser_config::load();
+    // Resolve the profile before probing the port: the ownership check needs
+    // it, and "ensure" is about *this* profile's singleton, not any listener.
+    let profile = resolve_ensure_profile(req, &config);
     if tcp_up(port, Duration::from_millis(300)) {
+        // The port is up — but is it *our* singleton? A foreign Chrome (or any
+        // other process) squatting the port must not be rubber-stamped as
+        // "ok": the capability path would reject it later as not laya-owned,
+        // which is how a workflow ends up "ensuring" forever against a
+        // listener it will never accept. Refuse loudly instead.
+        let endpoint = format!("http://127.0.0.1:{port}");
+        let profile_path = std::path::Path::new(&profile);
+        if !crate::capability::browser::endpoint_owned_by_profile(&endpoint, profile_path) {
+            // An instance launched before owner markers existed (the old
+            // `browser ensure` never wrote one) is adoptable when its process
+            // command line already names this profile and port. Adopt it
+            // instead of forcing the user to restart a long-running browser.
+            if crate::capability::browser::endpoint_adoptable(&endpoint, profile_path) {
+                match crate::capability::browser::write_owner_marker(profile_path, &endpoint, None)
+                {
+                    Ok(()) => println!(
+                        "ok adopted the running Chrome on 127.0.0.1:{port} as a laya-workflow \
+                         singleton (profile {profile})"
+                    ),
+                    Err(e) => {
+                        eprintln!("fail could not adopt the Chrome on 127.0.0.1:{port}: {e}");
+                        return Ok(false);
+                    }
+                }
+            } else {
+                eprintln!(
+                    "fail 127.0.0.1:{port} is listening but is not a laya-workflow-owned Chrome for \
+                     profile {profile} \u{2014} stop the foreign instance, or attach to it \
+                     (bdd run --cdp http://127.0.0.1:{port}) instead of ensuring"
+                );
+                return Ok(false);
+            }
+        }
         println!("ok Chrome CDP already listening on 127.0.0.1:{port}");
         // "Ensure" means "make the running instance match my profile", so the
         // declared extensions are applied to an instance that is already up.
@@ -258,7 +294,7 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     };
 
     // flag > `$LAYA_CDP_PROFILE` > profile config > built-in default.
-    let profile = resolve_ensure_profile(req, &config);
+    // (already resolved above for the ownership probe)
     std::fs::create_dir_all(&profile)
         .with_context(|| format!("create Chrome profile dir {profile:?} failed"))?;
 
@@ -305,12 +341,25 @@ fn ensure_chrome(req: &BrowserEnsureRequest) -> Result<bool> {
     let child = cmd
         .spawn()
         .with_context(|| format!("spawn Chrome {chrome:?} failed"))?;
+    let child_pid = child.id();
     // Do not wait: the child is in its own session and outlives us.
     drop(child);
 
     for _ in 0..30 {
         if tcp_up(port, Duration::from_millis(300)) {
             println!("ok Chrome CDP up on 127.0.0.1:{port} (profile {profile})");
+            // Mark the instance we just launched as Laya-owned. `browser ensure`
+            // is the one launcher that used to skip the marker, which made its
+            // instances invisible to the capability ownership check — the root
+            // of "singleton not working". Every path that launches a Laya
+            // Chrome must mark it.
+            if let Err(e) = crate::capability::browser::write_owner_marker(
+                std::path::Path::new(&profile),
+                &format!("http://127.0.0.1:{port}"),
+                Some(child_pid),
+            ) {
+                eprintln!("warning could not write Laya owner marker for {profile}: {e}");
+            }
             apply_config_extensions(&config, port);
             return Ok(true);
         }
@@ -978,9 +1027,13 @@ mod tests {
     }
 
     #[test]
-    fn browser_ensure_is_idempotent_when_something_listens() {
-        // Bind an ephemeral port, then ask `ensure_browser` to "ensure" it. It
-        // must notice the listener and return true without spawning a browser.
+    fn browser_ensure_refuses_a_foreign_listener() {
+        // Bind an ephemeral port, then ask `ensure_browser` to "ensure" it. The
+        // listener is not a Laya-owned Chrome for the profile, so ensure must
+        // *refuse* instead of rubber-stamping "ok": the old rubber stamp let a
+        // workflow treat somebody else's Chrome as its own singleton, which the
+        // capability path then rejected as not laya-owned — the "singleton not
+        // working" loop.
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let port = listener.local_addr().expect("addr").port();
         let req = BrowserEnsureRequest {
@@ -990,7 +1043,53 @@ mod tests {
             profile: None,
             headless: false,
         };
-        assert!(ensure_browser(&req).expect("ensure ok"));
+        assert!(!ensure_browser(&req).expect("ensure probe"));
+    }
+
+    #[test]
+    fn browser_ensure_is_idempotent_for_a_marked_instance() {
+        // When the listener is genuinely Laya-owned for the requested profile,
+        // ensure is idempotent: no spawn, just "already listening". The marker
+        // check needs a real profile dir + matching process command line, so
+        // this test builds the same shape the launcher writes.
+        let dir = std::env::temp_dir().join(format!(
+            "laya-ensure-owned-test-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let profile = dir.join("profile");
+        std::fs::create_dir_all(&profile).expect("mkdir profile");
+        // Marker naming this profile and port.
+        crate::capability::browser::write_owner_marker(
+            &profile,
+            &format!("http://127.0.0.1:{port}"),
+            Some(std::process::id()),
+        )
+        .expect("write marker");
+        // The ownership probe also wants a live process whose command line
+        // names this profile and port — that is what ties the running Chrome
+        // to the marked profile. A cheap holder process carries both needles.
+        // A compound body keeps /bin/sh from exec-optimizing itself away —
+        // the needles must stay visible in `ps` for the ownership probe.
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.arg("-c")
+            .arg("sleep 30; :")
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg(profile.display().to_string());
+        let mut holder = cmd.spawn().expect("spawn holder");
+        let req = BrowserEnsureRequest {
+            backend: BrowserBackend::Chrome,
+            port: Some(port),
+            chrome_bin: Some("/nonexistent/chrome".to_string()),
+            profile: Some(profile.display().to_string()),
+            headless: false,
+        };
+        let ok = ensure_browser(&req).expect("ensure ok");
+        let _ = holder.kill();
+        let _ = holder.wait();
+        assert!(ok);
     }
 
     #[test]

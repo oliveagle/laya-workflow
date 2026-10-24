@@ -153,6 +153,27 @@ live Chrome command line before reusing an endpoint. An unmarked CDP listener is
 rejected instead of being adopted accidentally. The process-wide endpoint binding
 and the marked profile keep one Laya singleton.
 
+### `browser ensure` and ownership
+
+The standalone `laya-workflow browser ensure` launcher follows the same rules —
+every Laya path that starts a Chrome marks it, and every Laya path that reuses a
+listener proves it owns it:
+
+- **Launch**: a freshly started instance gets its `laya-owner.json` marker
+  written right after CDP is reachable (the old ensure skipped this, which made
+  its own instances invisible to the capability ownership check — the "singleton
+  not working" loop).
+- **Reuse**: a listener that is already up is accepted only when the marker and
+  the live process command line match this profile and port.
+- **Adopt**: a listener without a marker is adopted (and marked) only when a
+  live process command line names this profile and port — the same evidence the
+  capability path demands. This covers instances started by `browser ensure`
+  before markers existed.
+- **Refuse**: anything else listening on the port — somebody else's Chrome, a
+  headless shell, a random process — fails `ensure` with a clear message instead
+  of being rubber-stamped "ok" (the old behavior that let a workflow "ensure"
+  forever against a listener the capability path would never accept).
+
 Use `{"keep_open": true}` on `open` or `open_many` only when a page must outlive
 the workflow process. Research uses `{"keep_open_pages": true}` for the same
 purpose. Explicit `close` remains available for special cases, but should not
