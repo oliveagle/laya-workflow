@@ -4634,5 +4634,125 @@
       "trace.steps.1.action": "stop",
       "trace.steps.1.answer": "some"
     }
+  },
+  "proxy_diag": {
+    "dns_poisoned": {
+      "result.label": "FIX_DNS",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "poisoned"
+    },
+    "dns_timeout": {
+      "result.label": "FIX_DNS",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "no_answer"
+    },
+    "dns_real_ip": {
+      "result.label": "FIX_DNS",
+      "trace.step_count": 1,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "stop",
+      "trace.steps.0.answer": "real_ip"
+    },
+    "gateway_main_router": {
+      "result.label": "FIX_GATEWAY",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "main_router"
+    },
+    "gateway_unknown": {
+      "result.label": "FIX_GATEWAY",
+      "trace.step_count": 2,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "stop",
+      "trace.steps.1.answer": "unknown"
+    },
+    "intercept_missing": {
+      "result.label": "FIX_INTERCEPT",
+      "trace.step_count": 3,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "openclash",
+      "trace.steps.2.node": "intercept_probe",
+      "trace.steps.2.action": "stop",
+      "trace.steps.2.answer": "no"
+    },
+    "proxy_auth": {
+      "result.label": "FIX_PROXY_AUTH",
+      "trace.step_count": 4,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "openclash",
+      "trace.steps.2.node": "intercept_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "yes",
+      "trace.steps.3.node": "proxy_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "auth_required"
+    },
+    "proxy_port_down": {
+      "result.label": "FIX_PROXY_PORT",
+      "trace.step_count": 4,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "openclash",
+      "trace.steps.2.node": "intercept_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "yes",
+      "trace.steps.3.node": "proxy_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "port_down"
+    },
+    "proxy_node_down": {
+      "result.label": "FIX_NODE",
+      "trace.step_count": 4,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "openclash",
+      "trace.steps.2.node": "intercept_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "yes",
+      "trace.steps.3.node": "proxy_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "node_down"
+    },
+    "all_good": {
+      "result.label": "ALL_GOOD",
+      "trace.step_count": 4,
+      "trace.steps.0.node": "dns_probe",
+      "trace.steps.0.action": "route",
+      "trace.steps.0.answer": "fake_ip",
+      "trace.steps.1.node": "gateway_probe",
+      "trace.steps.1.action": "route",
+      "trace.steps.1.answer": "openclash",
+      "trace.steps.2.node": "intercept_probe",
+      "trace.steps.2.action": "route",
+      "trace.steps.2.answer": "yes",
+      "trace.steps.3.node": "proxy_probe",
+      "trace.steps.3.action": "stop",
+      "trace.steps.3.answer": "ok"
+    }
   }
 }

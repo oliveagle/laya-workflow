@@ -7447,5 +7447,53 @@
       "ev_sources": "ok",
       "ev_problems": "some"
     }
+  },
+  "proxy_diag": {
+    "dns_poisoned": {
+      "ev_dns": "poisoned 104.244.42.197"
+    },
+    "dns_timeout": {
+      "ev_dns": "timeout"
+    },
+    "dns_real_ip": {
+      "ev_dns": "real 142.250.1.1"
+    },
+    "gateway_main_router": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.1 main router"
+    },
+    "gateway_unknown": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "cannot determine the gateway"
+    },
+    "intercept_missing": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.249 openclash box",
+      "ev_intercept": "no client traffic seen"
+    },
+    "proxy_auth": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.249 openclash box",
+      "ev_intercept": "saw 192.168.2.83 youtube",
+      "ev_proxy": "407 auth required"
+    },
+    "proxy_port_down": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.249 openclash box",
+      "ev_intercept": "saw 192.168.2.83 youtube",
+      "ev_proxy": "connection refused"
+    },
+    "proxy_node_down": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.249 openclash box",
+      "ev_intercept": "saw 192.168.2.83 youtube",
+      "ev_proxy": "upstream node dial error"
+    },
+    "all_good": {
+      "ev_dns": "fake-ip 198.18.0.23",
+      "ev_gateway": "192.168.2.249 openclash box",
+      "ev_intercept": "saw 192.168.2.83 youtube",
+      "ev_proxy": "200 ok"
+    }
   }
 }

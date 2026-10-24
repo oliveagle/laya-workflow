@@ -1,0 +1,305 @@
+{
+  "name": "proxy_diag",
+  "_bdd": {
+    "feature": "proxy_diag",
+    "feature_path": "bdd/workflows/routing/proxy_diag.feature",
+    "mode": "decision"
+  },
+  "description": "Diagnose why a LAN client behind an OpenClash fake-ip bypass router cannot\nreach a blocked site (e.g. Chrome cannot open YouTube). It is a first-fail\nwalk over four probes, in the order a real diagnosis runs them:\n1. dns_probe      -- what the client's resolver returned for the blocked\ndomain: fake-ip (198.18.0.0/16) / poisoned / real-ip /\nno answer.\n2. gateway_probe  -- is the client default gateway the OpenClash box itself?\nfake-ip only gets intercepted when traffic traverses it.\n3. intercept_probe-- does the clash log show this client's connections?\n(proof the nft redirect/tproxy actually applied).\n4. proxy_probe    -- end-to-end via the proxy port: reachable, auth, or\nupstream node dead.\nThe harness (the agent doing the diagnosis) fills four evidence fields before\neach call; the graph reads nothing else:\n- ev_dns       what the client's resolver returned for the blocked domain,\nas a classification plus the raw answer, e.g.\n\"fake-ip 198.18.0.23\", \"poisoned 104.244.42.197\",\n\"real-ip 142.250.x.x\" or \"timeout\". Distinguishing GFW\npoisoning from a plain real IP needs the diagnosing agent's\njudgement, so it carries its own label; the raw IP alone\nfalls back to real_ip (the safe reading for a non-fake-ip\nanswer).\n- ev_gateway   the client's default gateway, e.g. \"192.168.2.1 main router\"\nor \"192.168.2.249 openclash box\".\n- ev_intercept whether /tmp/openclash.log shows this client IP at all,\ne.g. \"no client traffic seen\" or \"saw 192.168.2.83 youtube\".\n- ev_proxy     the curl result through the proxy port, e.g. \"200 ok\",\n\"407 auth required\", \"refused\", \"node timeout\".\nThe first probe that fails ends the walk and names the fix:\nFIX_DNS / FIX_GATEWAY / FIX_INTERCEPT / FIX_PROXY_AUTH / FIX_PROXY_PORT /\nFIX_NODE; a run that clears every probe reaches ALL_GOOD.",
+  "start": "dns_probe",
+  "max_iterations": 4,
+  "convergence_window": 5,
+  "convergence_eps": 0.0001,
+  "nodes": [
+    {
+      "name": "dns_probe",
+      "primary_q": "dns_state",
+      "questions": {
+        "dns_state": {
+          "type": "choice",
+          "instructions": "What did the client's resolver return for the blocked domain? fake-ip means OpenClash's DNS took over; poisoned or real-ip means it did not; no answer means DNS itself is broken.",
+          "criteria": {
+            "fake_ip": "A 198.18.0.0/16 fake-ip address: OpenClash DNS is serving this client.",
+            "poisoned": "A wrong real-looking IP (GFW DNS poisoning): DNS bypassed OpenClash.",
+            "real_ip": "The real blocked-site IP: DNS bypassed OpenClash entirely.",
+            "no_answer": "No response or timeout: DNS is broken for this client."
+          },
+          "heuristic": {
+            "field": "ev_dns",
+            "match_rules": {
+              "fake_ip": [
+                "198.18",
+                "fake-ip",
+                "fake_ip",
+                "fake ip",
+                "fakeip"
+              ],
+              "poisoned": [
+                "poison",
+                "poisoned",
+                "污染",
+                "wrong ip",
+                "gfw"
+              ],
+              "real_ip": [
+                "real",
+                "real-ip",
+                "real_ip",
+                "real ip",
+                "bypass"
+              ],
+              "no_answer": [
+                "timeout",
+                "no answer",
+                "no response",
+                "无响应",
+                "超时"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "real_ip"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "fake_ip": "gateway_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "dns_state",
+        "rules": [
+          {
+            "when": {
+              "question": "dns_state",
+              "answer_in": [
+                "poisoned",
+                "real_ip",
+                "no_answer"
+              ]
+            },
+            "label": "FIX_DNS"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_DNS_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "gateway_probe",
+      "primary_q": "gateway_state",
+      "questions": {
+        "gateway_state": {
+          "type": "choice",
+          "instructions": "Is the client's default gateway the OpenClash bypass router itself? fake-ip addresses are only intercepted by OpenClash's nftables when traffic routes through that box; a gateway pointing at the main router sends fake-ip packets straight into the internet blackhole.",
+          "criteria": {
+            "openclash": "The default gateway is the OpenClash box, so fake-ip can be intercepted.",
+            "main_router": "The default gateway is the main/ISP router: fake-ip traffic bypasses OpenClash. The single most common fake-ip misconfiguration.",
+            "unknown": "The gateway cannot be determined from the evidence."
+          },
+          "heuristic": {
+            "field": "ev_gateway",
+            "match_rules": {
+              "openclash": [
+                "openclash",
+                "旁路由",
+                "249"
+              ],
+              "main_router": [
+                "main router",
+                "主路由",
+                "192.168.2.1",
+                "isp router"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "unknown"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "openclash": "intercept_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "gateway_state",
+        "rules": [
+          {
+            "when": {
+              "question": "gateway_state",
+              "answer": "main_router"
+            },
+            "label": "FIX_GATEWAY"
+          },
+          {
+            "when": {
+              "question": "gateway_state",
+              "answer": "unknown"
+            },
+            "label": "FIX_GATEWAY"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_GATEWAY_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "intercept_probe",
+      "primary_q": "intercept_state",
+      "questions": {
+        "intercept_state": {
+          "type": "choice",
+          "instructions": "Does the OpenClash log show any connection from this client IP? fake-ip being returned plus a correct gateway should produce visible client connections; their absence means the nft redirect/tproxy rules are not applying.",
+          "criteria": {
+            "yes": "The clash log lists this client IP (traffic is being intercepted).",
+            "no": "The clash log only shows the router's own IP: interception is not happening."
+          },
+          "heuristic": {
+            "field": "ev_intercept",
+            "match_rules": {
+              "yes": [
+                "yes",
+                "saw",
+                "出现",
+                "matched"
+              ],
+              "no": [
+                "no",
+                "未见",
+                "empty",
+                "only router",
+                "没有"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "no"
+          }
+        }
+      },
+      "edge": {
+        "condition": {
+          "yes": "proxy_probe"
+        },
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "intercept_state",
+        "rules": [
+          {
+            "when": {
+              "question": "intercept_state",
+              "answer": "no"
+            },
+            "label": "FIX_INTERCEPT"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "PROBE_INTERCEPT_OK"
+          }
+        ]
+      }
+    },
+    {
+      "name": "proxy_probe",
+      "primary_q": "proxy_state",
+      "questions": {
+        "proxy_state": {
+          "type": "choice",
+          "instructions": "End-to-end result of fetching the blocked site through the proxy port? Distinguishes a healthy proxy, an auth requirement on the port, a dead port, and a dead upstream node.",
+          "criteria": {
+            "ok": "The proxy port served the blocked site (HTTP 200): the whole chain works.",
+            "auth_required": "The port answers but demands authentication (407).",
+            "port_down": "The port refuses connections or times out.",
+            "node_down": "The port works but the upstream node fails the fetch."
+          },
+          "heuristic": {
+            "field": "ev_proxy",
+            "match_rules": {
+              "ok": [
+                "200",
+                "ok",
+                "通"
+              ],
+              "auth_required": [
+                "407",
+                "auth",
+                "认证"
+              ],
+              "node_down": [
+                "node",
+                "节点",
+                "upstream",
+                "dial error"
+              ],
+              "port_down": [
+                "refused",
+                "timeout",
+                "reject",
+                "reject"
+              ]
+            },
+            "p_hit": 0.9,
+            "fallback": "port_down"
+          }
+        }
+      },
+      "edge": {
+        "condition": {},
+        "default": "STOP"
+      },
+      "min_confidence": 0.0,
+      "action": {
+        "kind": "threshold",
+        "question": "proxy_state",
+        "rules": [
+          {
+            "when": {
+              "question": "proxy_state",
+              "answer": "auth_required"
+            },
+            "label": "FIX_PROXY_AUTH"
+          },
+          {
+            "when": {
+              "question": "proxy_state",
+              "answer": "port_down"
+            },
+            "label": "FIX_PROXY_PORT"
+          },
+          {
+            "when": {
+              "question": "proxy_state",
+              "answer": "node_down"
+            },
+            "label": "FIX_NODE"
+          },
+          {
+            "when": {
+              "always": true
+            },
+            "label": "ALL_GOOD"
+          }
+        ]
+      }
+    }
+  ]
+}
